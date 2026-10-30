@@ -56,7 +56,7 @@ OPTIONAL_EXTENSION_ERRORS = frozenset({"42501", "0A000"})
 # Extension -> what runs unindexed without it
 OPTIONAL_EXTENSIONS = {
     "pg_trgm": "message search will run unindexed",
-    "btree_gin": "pending queue work by observer will be found without its index",
+    "btree_gin": "message search and pending queue work by observer will run without their tenant-scoped indexes",
 }
 
 

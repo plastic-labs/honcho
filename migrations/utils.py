@@ -324,12 +324,14 @@ def create_index_online(
     table: str,
     columns: str,
     *,
+    using: str | None = None,
     include: str | None = None,
     where: str | None = None,
 ) -> None:
     """Create an index on a plain or a partitioned table, with no long write block.
 
-    `columns`, `include` and `where` are SQL, e.g. columns="tenant_id, created_at DESC".
+    `columns`, `include` and `where` are SQL, e.g. columns="tenant_id, created_at DESC";
+    `using` is the access method, e.g. "gin", with operator classes in `columns`.
 
     A plain table gets CREATE INDEX CONCURRENTLY. Postgres refuses CONCURRENTLY on
     a partitioned table, so there the steps are: CREATE INDEX ... ON ONLY the
@@ -355,6 +357,7 @@ def create_index_online(
     transactional CREATE INDEX. Nothing in this repo takes it.
     """
     schema = get_schema()
+    method = f" USING {using}" if using else ""
     tail = (f" INCLUDE ({include})" if include else "") + (
         f" WHERE {where}" if where else ""
     )
@@ -362,7 +365,8 @@ def create_index_online(
     def create(index: str, target: str, concurrently: bool) -> None:
         how = "CONCURRENTLY " if concurrently else ""
         op.execute(
-            f'CREATE INDEX {how}IF NOT EXISTS "{index}" ON {target} ({columns}){tail}'
+            f'CREATE INDEX {how}IF NOT EXISTS "{index}" ON {target}{method}'
+            + f" ({columns}){tail}"
         )
 
     parent = f'"{schema}"."{table}"'
@@ -390,10 +394,9 @@ def create_index_online(
         return
     with op.get_context().autocommit_block():
         if parent_valid is None:
-            # ai: ON ONLY takes SHARE on the parent table even when the index exists,
-            # so a rerun that finds the parent skips it.
             _execute_short_lock(
-                f'CREATE INDEX IF NOT EXISTS "{name}" ON ONLY {parent} ({columns}){tail}'
+                f'CREATE INDEX IF NOT EXISTS "{name}" ON ONLY {parent}{method}'
+                + f" ({columns}){tail}"
             )
         attached = _attached_partitions(name)
         for partition in _partitions(table):

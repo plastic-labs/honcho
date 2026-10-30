@@ -373,13 +373,17 @@ def test_search_function_reads_only_the_bound_tenant(rls_engine: Engine) -> None
         raw.close()
 
 
-def _search_plan(conn: Connection) -> str:
+_FTS_MATCH = "to_tsvector('english', content) @@ plainto_tsquery('english', 'fox')"
+_ILIKE_MATCH = "content ILIKE '%fox%'"
+
+
+def _search_plan(conn: Connection, match: str = _FTS_MATCH) -> str:
     conn.execute(text("SET enable_seqscan = off"))
     rows = conn.execute(
         text(
             "EXPLAIN SELECT id FROM messages WHERE tenant_id = 't-search-1'"
             + " AND workspace_name = 'ws-search'"
-            + " AND to_tsvector('english', content) @@ plainto_tsquery('english', 'fox')"
+            + f" AND {match}"
         )
     )
     return "\n".join(str(r[0]) for r in rows)
@@ -401,5 +405,44 @@ def test_rls_keeps_the_content_index_from_the_app_role(rls_engine: Engine) -> No
     finally:
         raw.close()
 
-    assert "ix_messages_content_gin" in owner_plan, owner_plan
-    assert "ix_messages_content_gin" not in app_plan, app_plan
+    assert "ix_messages_tenant_content_fts" in owner_plan, owner_plan
+    assert "ix_messages_tenant_content_fts" not in app_plan, app_plan
+
+
+def test_text_indexes_lead_with_the_tenant_and_workspace(rls_engine: Engine) -> None:
+    # Both text matches reach a GIN index whose first keys are tenant_id and
+    # workspace_name, so the bitmap is already narrowed to the workspace, and the
+    # tenant and workspace predicates are index conditions, not a recheck filter.
+    # The workspace is padded to 40k rows inside a rolled-back transaction: with
+    # 3k rows the planner prefers a btree on workspace_name plus an ILIKE filter.
+    with rls_engine.connect() as conn:
+        seeded = conn.scalar(
+            text("SELECT 1 FROM tenants WHERE tenant_id = 't-search-1'")
+        )
+    if not seeded:
+        _seed_same_named_workspaces(rls_engine)
+
+    with rls_engine.connect() as conn:
+        conn.execute(text("RESET ROLE"))
+        _bind_tenant(conn, "t-search-1")
+        conn.execute(
+            text(
+                "INSERT INTO messages (tenant_id, id, public_id, workspace_name,"
+                + " session_name, peer_name, content, seq_in_session, token_count)"
+                + " SELECT 't-search-1', 100000 + g, 'd4b8e2f7a913' || lpad(g::text, 9, '0'),"
+                + " 'ws-search', 's', 'p', 'padding message number ' || g, 50000 + g, 4"
+                + " FROM generate_series(1, 40000) AS g"
+            )
+        )
+        conn.execute(text("ANALYZE messages"))
+        fts_plan = _search_plan(conn, _FTS_MATCH)
+        ilike_plan = _search_plan(conn, _ILIKE_MATCH)
+        conn.rollback()
+
+    for plan, index in (
+        (fts_plan, "ix_messages_tenant_content_fts"),
+        (ilike_plan, "ix_messages_tenant_content_trgm"),
+    ):
+        assert f"Bitmap Index Scan on {index}" in plan, plan
+        index_cond = next(line for line in plan.splitlines() if "Index Cond" in line)
+        assert "tenant_id" in index_cond and "workspace_name" in index_cond, plan

@@ -499,22 +499,18 @@ class Message(Base, TenantPartitioned):
             "session_name",
             "seq_in_session",
         ),
-        # region ai
-        # GIN can't lead with a scalar column without btree_gin; the table is
-        # HASH(tenant_id)-partitioned, so this index is per-partition — queries
-        # prune to one partition, then tenant_id filters the FTS candidates.
-        # endregion
         Index(
-            "ix_messages_content_gin",
+            "ix_messages_tenant_content_fts",
+            "tenant_id",
+            "workspace_name",
             text("to_tsvector('english', content)"),
             postgresql_using="gin",
         ),
         # Trigram index so content ILIKE '%q%' in message search can use an index.
-        # Declared unconditionally, but migration 3e7a1c9d5b20 skips it when
-        # pg_trgm is missing, so autogenerate against such a database will keep
-        # proposing it; drop that op from the generated revision.
         Index(
-            "ix_messages_content_trgm",
+            "ix_messages_tenant_content_trgm",
+            "tenant_id",
+            "workspace_name",
             "content",
             postgresql_using="gin",
             postgresql_ops={"content": "gin_trgm_ops"},

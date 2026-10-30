@@ -233,33 +233,41 @@ The `IF NOT EXISTS` calls then short-circuit and the application role needs no e
 
 You won't hit this with `docker compose` — the bundled stack connects as `postgres`, a superuser, and its database service also creates the extension from `database/init.sql` on first boot. It comes up on managed Postgres, Kubernetes operators, and other setups where you bring your own database and its role is deliberately not a superuser.
 
-### "pg_trgm is not installed; skipping ix_messages_content_trgm"
+### "pg_trgm is not installed; skipping ix_messages_tenant_content_trgm"
 
-**Cause:** Migrations couldn't create the `pg_trgm` extension, so they skipped the trigram index on `messages.content`. Search still works, but `ILIKE` matching scans the workspace's messages, which gets slow on large workspaces.
+**Cause:** Migrations couldn't create the `pg_trgm` extension, so they skipped the trigram index on `messages.content`. Search still works, but `ILIKE` matching scans the workspace's messages, which gets slow on large workspaces. (Older releases named this index `ix_messages_content_trgm`.)
 
-**Fix:** Install the extension as a privileged role, then create the index with the statement printed in the warning (the migration is already recorded as applied, so re-running migrations won't add it):
+**Fix:** Install the extension as a privileged role, then create the index (the migration is already recorded as applied, so re-running migrations won't add it):
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
-CREATE INDEX CONCURRENTLY ix_messages_content_trgm ON "<schema>".messages USING gin (content gin_trgm_ops);
+CREATE INDEX CONCURRENTLY ix_messages_tenant_content_trgm ON "<schema>".messages USING gin (tenant_id, workspace_name, content gin_trgm_ops);
 ```
 
-### "btree_gin is not installed; skipping ix_queue_pending_observers"
+Where `messages` is partitioned (the multi-tenant schema), `CONCURRENTLY` is refused on the parent: run `CREATE INDEX ... ON ONLY "<schema>".messages`, then `CREATE INDEX CONCURRENTLY` on each partition, then `ALTER INDEX ... ATTACH PARTITION` each one. The parent turns valid once every partition is attached.
 
-**Cause:** Migrations couldn't create the `btree_gin` extension, so they skipped the queue index that finds pending work fanning out to a peer within a workspace. Nothing reads it in normal operation; lookups that would use it fall back to other queue indexes.
+### "btree_gin is not installed; skipping ix_messages_tenant_content_fts"
 
-**Fix:** Install the extension as a privileged role, then create the index with the statement printed in the warning (the migration is already recorded as applied, so re-running migrations won't add it):
+**Cause:** Migrations couldn't create the `btree_gin` extension, so they kept the previous message search indexes (`ix_messages_content_gin` and `ix_messages_content_trgm`), which index only the text. Search still works and still uses those, but on a multi-tenant (partitioned) database each text match reads every tenant's matches in the partition before the tenant and workspace filters apply. The same cause skips `ix_queue_pending_observers`, the queue index that finds pending work fanning out to a peer within a workspace; lookups that would use it fall back to other queue indexes.
+
+**Fix:** Install the extension as a privileged role, then create the indexes (the migration is already recorded as applied, so re-running migrations won't add them), and drop the old text indexes once the new ones are valid:
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS btree_gin;
+CREATE INDEX CONCURRENTLY ix_messages_tenant_content_fts ON "<schema>".messages USING gin (tenant_id, workspace_name, to_tsvector('english', content));
+CREATE INDEX CONCURRENTLY ix_messages_tenant_content_trgm ON "<schema>".messages USING gin (tenant_id, workspace_name, content gin_trgm_ops);
 CREATE INDEX CONCURRENTLY ix_queue_pending_observers ON "<schema>".queue USING gin (workspace_name, (payload -> 'observers')) WHERE processed = false AND (payload -> 'observers') IS NOT NULL;
+DROP INDEX CONCURRENTLY ix_messages_content_gin;
+DROP INDEX CONCURRENTLY ix_messages_content_trgm;
 ```
 
-### Migration waits a long time on "Building ix_messages_content_trgm concurrently"
+On a partitioned `messages`, build each index with the `ON ONLY` / per-partition / `ATTACH PARTITION` steps described above.
 
-**Cause:** A concurrent index build waits for every open transaction that has touched `messages` (including sessions left `idle in transaction`), and then for every transaction in the database still holding an older snapshot, such as a long-running query on any table. Either one holds it up, and the build itself takes time proportional to the size of `messages`. The migration gives up after 60 minutes and leaves an invalid index, which the next run drops and rebuilds.
+### Migration waits a long time on "Building ix_messages_tenant_content_… concurrently"
 
-**Fix:** On large or busy databases, build the index before upgrading, with the `CREATE INDEX CONCURRENTLY` statement above. The migration then finds it and returns immediately. To see what the build is waiting on, check `pg_stat_activity` for sessions in `idle in transaction` and for old `xact_start` or `backend_xmin` values.
+**Cause:** A concurrent index build waits for every open transaction that has touched `messages` (including sessions left `idle in transaction`), and then for every transaction in the database still holding an older snapshot, such as a long-running query on any table. Either one holds it up, and the build itself takes time proportional to the size of `messages`, once per partition on a partitioned table. The migration gives up after 60 minutes on a build and leaves an invalid index, which the next run drops and rebuilds.
+
+**Fix:** On large or busy databases, build the indexes before upgrading, with the statements above under the same names (and, on a partitioned table, the partition index named after the parent plus the partition suffix, e.g. `ix_messages_tenant_content_fts_p7` on `messages_p7`). The migration then finds them and only drops the old indexes. To see what the build is waiting on, check `pg_stat_activity` for sessions in `idle in transaction` and for old `xact_start` or `backend_xmin` values.
 
 ## Cache & Redis
 
