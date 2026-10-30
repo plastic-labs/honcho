@@ -1659,6 +1659,7 @@ class AppSettings(HonchoSettings):
     )
 
     MAX_MESSAGE_SIZE: Annotated[int, Field(default=25_000, gt=0)] = 25_000
+    PAGINATION_COUNT_LIMIT: Annotated[int, Field(default=10_000, ge=1)] = 10_000
     EMBED_MESSAGES: bool = True
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None

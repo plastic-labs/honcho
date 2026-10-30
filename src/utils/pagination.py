@@ -12,30 +12,40 @@ per page. Two things here remove that cost:
   iterating when `pages` is missing from the response. Servers that predate
   cursor mode ignore the unknown `cursor` parameter and answer with a `Page`,
   so clients can detect support from the response shape.
-- The offset shim (`_paginate_offset_via_keyset`) makes offset requests cheap
-  without changing their response, for clients that keep sending `?page=N`.
-  It needs the cache, and turns off with `CACHE_PAGINATION_OFFSET_SHIM`.
+- Offset requests (`_paginate_offset`) run through the same keyset machinery,
+  so each page knows whether a next one exists, and `total` is counted through
+  a subquery that stops at `PAGINATION_COUNT_LIMIT` + 1 rows: exact up to the
+  limit, the limit plus one beyond it, and raised past the current page while
+  a next page exists so `pages` never ends a walk early.
+- The offset shim makes offset requests cheap without changing their response,
+  for clients that keep sending `?page=N`: after each page the position of its
+  last row is cached, so the next page seeks instead of scanning. It needs the
+  cache, and turns off with `CACHE_PAGINATION_OFFSET_SHIM`.
 """
 
 import asyncio
 import hashlib
 import logging
 from collections.abc import Coroutine
-from typing import Any, ClassVar, Generic, TypeVar, cast
+from typing import Any, ClassVar, Generic, TypeVar
 
 from fastapi import HTTPException, Query, status
-from fastapi_pagination import Page, Params
+from fastapi_pagination import Page as _Page
+from fastapi_pagination import Params
 from fastapi_pagination.bases import AbstractParams, CursorRawParams
 from fastapi_pagination.config import Config
 from fastapi_pagination.cursor import CursorPage as _CursorPage
 from fastapi_pagination.cursor import CursorParams as _CursorParams
 from fastapi_pagination.cursor import decode_cursor
-from fastapi_pagination.ext.sqlalchemy import apaginate, create_count_query
+from fastapi_pagination.ext.sqlalchemy import apaginate
+from fastapi_pagination.types import GreaterEqualZero
+from pydantic import Field
 from sqlakeyset import InvalidPage, unserialize_bookmark
-from sqlalchemy import Select
+from sqlalchemy import Select, func, select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import DataError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import noload
 
 from src.cache.client import cache, cache_key_namespace, safe_cache_get
 from src.config import settings
@@ -47,6 +57,20 @@ T = TypeVar("T")
 
 # ai: the shim's cache traffic is an optimization on the request path, so a slow cache costs at most this per call, then counts as a miss
 _CACHE_TIMEOUT_SECONDS = 0.25
+
+
+class Page(_Page[T], Generic[T]):
+    """Offset page whose `total` is counted up to `PAGINATION_COUNT_LIMIT`."""
+
+    total: GreaterEqualZero = Field(
+        description=(
+            "Number of matching rows, exact up to the server's "
+            "PAGINATION_COUNT_LIMIT (default 10000) and reported as that limit "
+            "plus one when there are more. While a next page exists it is at "
+            "least one more than this page's last row, so `pages` always "
+            "reaches the end of the list."
+        )
+    )
 
 
 class CursorParams(_CursorParams):
@@ -134,28 +158,48 @@ async def _cache_set_once(key: str, value: Any, expire: int) -> None:
         logger.warning("Pagination cache set failed for key %s", key, exc_info=True)
 
 
-async def _paginate_offset_via_keyset(
+def _capped_count_query(stmt: Select[Any]) -> Select[Any]:
+    """Count `stmt`'s rows, stopping one past `PAGINATION_COUNT_LIMIT`.
+
+    A plain COUNT walks every row the statement selects, so a list call on a
+    large workspace pays for the whole workspace on every page. Counting
+    through a LIMITed subquery lets Postgres stop once the limit is passed, and
+    a result of limit + 1 tells the client there are more.
+    """
+    bounded = (
+        stmt.order_by(None)
+        .options(noload("*"))
+        .limit(settings.PAGINATION_COUNT_LIMIT + 1)
+    )
+    return select(func.count()).select_from(bounded.subquery())
+
+
+async def _paginate_offset(
     db: AsyncSession,
     stmt: Select[Any],
     params: Params,
+    *,
+    use_cache: bool,
     **apaginate_kwargs: Any,
 ) -> Page[Any]:
     """
-    Serve an offset request with a keyset seek wherever possible.
+    Serve an offset request through a keyset seek wherever possible.
 
-    After serving page N, the position of its last row is stored under page
-    N+1, so a sequential walk seeks instead of scanning past every earlier row.
-    Requests with no stored position (page 1, random access, expired entries,
-    the page after a last page) run the OFFSET query, but through the same
-    keyset machinery, so they still record a position for the page after them.
-    The response is the unchanged offset `Page`.
+    Every page runs through the cursor machinery, so it knows whether a next
+    page exists. `total` comes from `_capped_count_query`, and while a next
+    page exists it is kept large enough that `pages` reaches past this page,
+    so neither the cap nor a stale cached count can end a walk early. On the
+    last page `total` is at least the number of rows walked so far, so a
+    client that walks to the end sees an exact count.
 
-    On pages after the first, `total` comes from the cache and is recounted
-    when it expires, so a long walk counts about once per TTL instead of once
-    per page. Page 1 always counts, so a list read right after a write is
-    exact. While a next page exists, `total` is kept large enough that `pages`
-    reaches past this page, so a cached count from before rows were appended
-    can't end a walk early.
+    With `use_cache`, after serving page N the position of its last row is
+    stored under page N+1, so a sequential walk seeks instead of scanning past
+    every earlier row. Requests with no stored position (page 1, random
+    access, expired entries, the page after a last page) run the OFFSET query,
+    but still record a position for the page after them. On pages after the
+    first, `total` comes from the cache and is recounted when it expires, so a
+    long walk counts about once per TTL instead of once per page. Page 1
+    always counts, so a list read right after a write is exact.
 
     Positions are shared by every caller that runs the same query. A client
     that jumps ahead instead of walking can get a page positioned by another
@@ -163,20 +207,19 @@ async def _paginate_offset_via_keyset(
     repeated, for up to the position TTL. A sequential walker re-seeds every
     position it uses.
     """
-    try:
-        prefix = f"{cache_key_namespace()}:v1:pagination:{_statement_digest(stmt)}"
-    except Exception:
-        logger.warning("Pagination shim could not key a statement", exc_info=True)
-        return await apaginate(
-            db, stmt, params=params, config=Config(page_cls=Page), **apaginate_kwargs
-        )
-    count_key = f"{prefix}:count"
-    position_key = f"{prefix}:size={params.size}:page="
+    count_key = position_key = ""
+    if use_cache:
+        try:
+            prefix = f"{cache_key_namespace()}:v1:pagination:{_statement_digest(stmt)}"
+            count_key = f"{prefix}:count"
+            position_key = f"{prefix}:size={params.size}:page="
+        except Exception:
+            logger.warning("Pagination shim could not key a statement", exc_info=True)
+            use_cache = False
 
-    if params.page == 1:
-        outcome = PaginationShimOutcomes.FIRST
-        position, cached_total = None, None
-    else:
+    position, cached_total = None, None
+    outcome = PaginationShimOutcomes.FIRST
+    if use_cache and params.page > 1:
         position, cached_total = await asyncio.gather(
             safe_cache_get(
                 f"{position_key}{params.page}", timeout=_CACHE_TIMEOUT_SECONDS
@@ -194,10 +237,11 @@ async def _paginate_offset_via_keyset(
         CursorParams(cursor=position, size=params.size),
         **apaginate_kwargs,
     )
-    prometheus_metrics.record_pagination_offset_shim(outcome)
+    if use_cache:
+        prometheus_metrics.record_pagination_offset_shim(outcome)
 
     writes: list[Coroutine[Any, Any, None]] = []
-    if cursor_page.next_page:
+    if use_cache and cursor_page.next_page:
         # ai: nothing is stored after a last page: a position taken there would skip rows appended later that OFFSET puts on the next page
         writes.append(
             _cache_set_once(
@@ -208,17 +252,19 @@ async def _paginate_offset_via_keyset(
         )
     total = cached_total
     if total is None:
-        total = await db.scalar(cast(Select[Any], create_count_query(stmt)))
-        writes.append(
-            _cache_set_once(
-                count_key, total, settings.CACHE.PAGINATION_COUNT_TTL_SECONDS
+        total = await db.scalar(_capped_count_query(stmt))
+        if use_cache:
+            writes.append(
+                _cache_set_once(
+                    count_key, total, settings.CACHE.PAGINATION_COUNT_TTL_SECONDS
+                )
             )
-        )
     await asyncio.gather(*writes)
 
-    if cursor_page.next_page:
-        total = max(total or 0, params.page * params.size + 1)
-    return Page.create(list(cursor_page.items), params=params, total=total)
+    items = list(cursor_page.items)
+    seen = (params.page - 1) * params.size + len(items)
+    total = max(total or 0, seen + 1 if cursor_page.next_page else seen)
+    return Page[Any].create(items, params=params, total=total)
 
 
 async def paginate_offset_or_cursor(
@@ -244,14 +290,14 @@ async def paginate_offset_or_cursor(
             logger.info("Rejected a cursor that doesn't fit its query", exc_info=True)
             raise _invalid_cursor() from None
 
-    if (
-        isinstance(params, Params)
-        and settings.CACHE.ENABLED
-        and settings.CACHE.PAGINATION_OFFSET_SHIM
-    ):
-        return await _paginate_offset_via_keyset(db, stmt, params, **apaginate_kwargs)
-    return await apaginate(
-        db, stmt, params=params, config=Config(page_cls=Page), **apaginate_kwargs
+    if not isinstance(params, Params):
+        raise TypeError(f"Unsupported pagination params: {type(params).__name__}")
+    return await _paginate_offset(
+        db,
+        stmt,
+        params,
+        use_cache=settings.CACHE.ENABLED and settings.CACHE.PAGINATION_OFFSET_SHIM,
+        **apaginate_kwargs,
     )
 
 
