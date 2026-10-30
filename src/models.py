@@ -1162,6 +1162,7 @@ class QueueItemBatch(Base):
     - ``trg_queue_item_batches_update``
     - ``trg_queue_item_batches_delete``
     - ``_queue_item_batches_recompute(key)``
+    - ``_queue_item_batches_drain(key, drained_tokens)``
     - ``_queue_item_token_count(tenant_id, message_id, task_type)``
 
     The ``validate_queue_item_batches`` boot validator will crash the app
@@ -1175,8 +1176,9 @@ class QueueItemBatch(Base):
     # queue's two GROUP BYs plus messages join are ~O(depth²) per poll on a
     # shared queue, while this stays one indexed row per pending work unit. Rows
     # are written ONLY by the triggers installed in the queue_item_batches
-    # migration (insert = fast increment; completion/delete = exact recompute
-    # over the unit's remaining unprocessed rows; a unit with nothing pending
+    # migration (insert = fast increment; completion = subtract the completed
+    # rows' tokens and recount what is left; delete = exact recompute over the
+    # unit's remaining unprocessed rows; a unit with nothing pending
     # has NO row — existence, not pending_count, is what the delete guard keys
     # on, so a live unit never loses its row to a racing recompute). Application
     # code must never write it. pending_count is bookkeeping, not a claim
