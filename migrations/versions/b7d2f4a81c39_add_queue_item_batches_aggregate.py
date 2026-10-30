@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 
 from migrations.utils import get_schema, index_exists, table_exists
-from src.config import settings
+from src.models import instance_tenant_id
 
 # revision identifiers, used by Alembic.
 revision: str = "b7d2f4a81c39"
@@ -30,9 +30,7 @@ depends_on: str | Sequence[str] | None = None
 
 schema = get_schema()
 
-# ai: a literal, not a bind: it lands in a function body. TENANT_ID's pattern
-# (alphanumerics, '_' and '-') keeps it a safe one.
-instance_tenant = settings.TENANT_ID or "default"
+instance_tenant = instance_tenant_id()
 
 # region ai
 # Trigger design notes the SQL below encodes:

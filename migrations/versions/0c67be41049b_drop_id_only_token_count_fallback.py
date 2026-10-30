@@ -19,7 +19,7 @@ from collections.abc import Sequence
 from alembic import op
 
 from migrations.utils import get_schema
-from src.config import settings
+from src.models import instance_tenant_id
 
 # revision identifiers, used by Alembic.
 revision: str = "0c67be41049b"
@@ -30,7 +30,7 @@ depends_on: str | Sequence[str] | None = None
 schema = get_schema()
 
 
-instance_tenant = settings.TENANT_ID or "default"
+instance_tenant = instance_tenant_id()
 
 
 def _token_count_function(tenantless_probe: str) -> str:

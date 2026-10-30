@@ -22,7 +22,7 @@ from migrations.utils import (
     index_exists,
     table_exists,
 )
-from src.config import settings
+from src.models import instance_tenant_id
 
 # revision identifiers, used by Alembic.
 revision: str = "e5fe7f8bcf62"
@@ -32,7 +32,7 @@ depends_on: str | Sequence[str] | None = None
 
 schema = get_schema()
 
-DEFAULT_TENANT_ID = settings.TENANT_ID or "default"
+DEFAULT_TENANT_ID = instance_tenant_id()
 
 # Tables that gain tenant_id + a composite PK + composite FKs (session_peers has
 # an all-natural composite PK and is handled with the rest).

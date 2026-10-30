@@ -59,6 +59,11 @@ DEFAULT_TENANT_ID = "default"
 
 def instance_tenant_id() -> str:
     """The tenant a flag-off instance operates as: TENANT_ID, else 'default'."""
+    # region ai
+    # The migrations read it too, and two write it into a function body as a SQL
+    # literal (no bind there); TENANT_ID's pattern (alphanumerics, '_' and '-')
+    # keeps it a safe one.
+    # endregion
     return settings.TENANT_ID or DEFAULT_TENANT_ID
 
 
