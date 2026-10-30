@@ -162,6 +162,8 @@ def _build_database(db_url: URL, partitions: int, role: str) -> dict[str, str]:
                 conn.execute(text(f"CREATE EXTENSION IF NOT EXISTS {extension}"))
         Base.metadata.create_all(engine)
         with engine.begin() as conn:
+            for statement in models.message_text_matches_ddl(settings.DB.SCHEMA):
+                conn.execute(text(statement))
             for table in _partitioned_tables():
                 for remainder in range(partitions):
                     conn.execute(
@@ -190,6 +192,13 @@ def _build_database(db_url: URL, partitions: int, role: str) -> dict[str, str]:
             )
             conn.execute(
                 text(f"GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO {role}")
+            )
+            conn.execute(
+                text(
+                    "GRANT EXECUTE ON FUNCTION"
+                    + f" {models.MESSAGE_TEXT_MATCHES}{models.MESSAGE_TEXT_MATCHES_ARGS}"
+                    + f" TO {role}"
+                )
             )
     finally:
         engine.dispose()
