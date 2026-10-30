@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 from nanoid import generate as generate_nanoid
-from sqlalchemy import Select, delete, func, select
+from sqlalchemy import Select, delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -216,6 +216,39 @@ class TestCompletionRecomputesTheBatches:
 
         assert await read_batch_row(db_session, work_unit_key) is None
         assert await read_batch_keys(db_session) == set()
+
+    async def test_a_completion_prices_only_the_items_it_completed(
+        self,
+        db_session: AsyncSession,
+        seed_work_unit: SeedWorkUnit,
+    ) -> None:
+        """A deep unit's completion reads messages per completed item, not per pending one."""
+        work_unit_key = "representation:deep-unit"
+        queue_items = await seed_work_unit(work_unit_key, token_counts=(1,) * 1000)
+        completed_ids = [item.id for item in queue_items[:10]]
+        # This transaction's reads of messages, partitioned or not.
+        messages_scans = text(
+            "SELECT coalesce(sum(seq_scan + coalesce(idx_scan, 0)), 0) "
+            + "FROM pg_stat_xact_user_tables "
+            + "WHERE relid = CAST(:messages AS regclass) OR relid IN "
+            + "(SELECT relid FROM pg_partition_tree(CAST(:messages AS regclass)))"
+        ).bindparams(messages=f"{settings.DB.SCHEMA}.messages")
+
+        before = (await db_session.execute(messages_scans)).scalar_one()
+        await db_session.execute(
+            update(models.QueueItem)
+            .where(models.QueueItem.id.in_(completed_ids))
+            .values(processed=True)
+        )
+        scans = (await db_session.execute(messages_scans)).scalar_one() - before
+        await db_session.commit()
+
+        batch_row = await read_batch_row(db_session, work_unit_key)
+
+        assert scans <= len(completed_ids)
+        assert batch_row is not None
+        assert batch_row.pending_count == 990
+        assert batch_row.total_tokens == 990
 
     async def test_reopening_a_completed_item_brings_the_row_back(
         self,
