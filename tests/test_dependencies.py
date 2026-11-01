@@ -276,11 +276,13 @@ async def test_read_only_session_works_with_tracing_checkout_hook() -> None:
     from sqlalchemy import event, text
 
     from src.db import (
+        SessionLocal,
         _set_application_name_on_checkout,  # pyright: ignore[reportPrivateUsage]
-        engine,
         read_engine,
     )
 
+    # The engine tracked_db sessions are bound to (the test database's)
+    engine = SessionLocal.kw["bind"]
     context_token = request_context.set("tracing-regression")
     event.listen(engine.sync_engine, "checkout", _set_application_name_on_checkout)
     try:
