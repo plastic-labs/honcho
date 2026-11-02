@@ -249,6 +249,18 @@ def verify_add_tenant_id_primitive(verifier: MigrationVerifier) -> None:
         ).scalar()
         assert backfilled == 0, f"{table} has rows not backfilled to the default tenant"
 
+    # The previous release never sets tenant_id; its inserts get the instance tenant.
+    with verifier.conn.begin_nested() as old_writer:
+        tenant = conn.execute(
+            text(
+                f'INSERT INTO "{schema}"."workspaces" ("id", "name") '
+                + "VALUES (:id, :name) RETURNING tenant_id"
+            ),
+            {"id": generate_nanoid(), "name": "written-by-old-image"},
+        ).scalar()
+        old_writer.rollback()
+    assert tenant == "default", f"old-image insert got tenant {tenant!r}"
+
     # Composite PK (tenant_id, id) on workspaces.
     pk = verifier.get_inspector().get_pk_constraint("workspaces", schema=schema)
     assert pk["constrained_columns"] == [

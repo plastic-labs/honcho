@@ -660,19 +660,22 @@ def upgrade() -> None:
         ).bindparams(tid=DEFAULT_TENANT_ID)
     )
 
-    # 2. Add tenant_id everywhere + backfill + NOT NULL on the tenant-scoped set.
+    # 2. Add tenant_id NOT NULL on the tenant-scoped set, defaulting to this
+    #    instance's tenant. A constant default fills existing rows without
+    #    rewriting the table, and lets the previous release, which never sets
+    #    tenant_id, keep inserting during a rolling deploy.
     for tname in TENANT_SCOPED:
         if not column_exists(tname, "tenant_id"):
             op.add_column(
-                tname, sa.Column("tenant_id", sa.TEXT(), nullable=True), schema=schema
+                tname,
+                sa.Column(
+                    "tenant_id",
+                    sa.TEXT(),
+                    nullable=False,
+                    server_default=DEFAULT_TENANT_ID,
+                ),
+                schema=schema,
             )
-        op.execute(
-            sa.text(
-                f'UPDATE "{schema}"."{tname}" SET tenant_id = :tid '
-                + "WHERE tenant_id IS NULL"
-            ).bindparams(tid=DEFAULT_TENANT_ID)
-        )
-        op.alter_column(tname, "tenant_id", nullable=False, schema=schema)
 
     # 3. Drop ALL old FKs first (they block the PK/unique changes below), incl.
     #    queue.session_id -> sessions.id from an earlier revision.
