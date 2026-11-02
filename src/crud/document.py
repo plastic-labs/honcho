@@ -1636,8 +1636,12 @@ def _score_semantic_dup(
     The richer text wins: tokens the other side lacks are weighted ten times a
     shared token, and a tie keeps the incoming document.
     """
-    tokens_new = set(embedding_client.encoding.encode(doc.content))
-    tokens_existing = set(embedding_client.encoding.encode(existing_doc.content))
+    tokens_new = set(
+        embedding_client.encoding.encode(doc.content, disallowed_special=())
+    )
+    tokens_existing = set(
+        embedding_client.encoding.encode(existing_doc.content, disallowed_special=())
+    )
     unique_new = len(tokens_new - tokens_existing)
     unique_existing = len(tokens_existing - tokens_new)
     score_new = len(tokens_new) + (unique_new * 10)

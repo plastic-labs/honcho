@@ -1148,7 +1148,7 @@ async def test_simple_batch_embed_truncate_reencodes_until_under_cap(
 
     encode_calls = {"n": 0}
 
-    def encode(text: str) -> list[int]:
+    def encode(text: str, **_: object) -> list[int]:
         encode_calls["n"] += 1
         if text.startswith("LONG"):
             # 1: original oversize; 2: still over after first slice; 3+: fits.
@@ -1243,6 +1243,26 @@ def test_prepare_chunks_returns_ordered_chunks(
     assert len(out["long"]) > 1
     # Order preserved
     assert isinstance(out["long"][0], str)
+
+
+@pytest.mark.asyncio
+async def test_simple_batch_embed_treats_special_token_strings_as_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Text quoting tokenizer special tokens embeds as-is instead of raising."""
+    client, fake_embeddings = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 4,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=4,
+    )
+    text = "The model emitted <|endoftext|> right after <|fim_prefix|>."
+
+    out = await client.simple_batch_embed([text])
+
+    assert out == [[0.1] * 4]
+    assert fake_embeddings.calls[0]["input"] == [text]
 
 
 def test_embedding_model_config_parses_max_batch_size_from_env(
