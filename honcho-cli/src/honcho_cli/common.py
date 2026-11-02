@@ -64,10 +64,13 @@ def get_flag_overrides() -> dict[str, str | None]:
 def maybe_refresh_token(config: CLIConfig) -> None:
     """Refresh an expired OAuth access token in place and persist it.
 
-    No-op when there is no grant for the current host or the token is still
-    valid. A dead grant degrades to the saved apiKey with a warning; exits
-    only when nothing is left to authenticate with.
+    No-op when HONCHO_API_KEY is set (the env key wins, so the grant goes
+    unused), when there is no grant for the current host, or when the token is
+    still valid. A dead grant degrades to the saved apiKey with a warning;
+    exits only when nothing is left to authenticate with.
     """
+    if config.api_key_from_env:
+        return
     tokens = config.usable_oauth()
     if tokens is None or tokens.access_valid():
         return

@@ -12,7 +12,8 @@ The CLI owns these top-level keys in that file:
 
 ``apiKey`` (manual admin JWT) is shared with sibling tools: the CLI writes it
 on paste-key login and reads it as a fallback, but never deletes it. A live
-OAuth token takes precedence over ``apiKey`` for the CLI's own calls.
+OAuth token takes precedence over ``apiKey`` for the CLI's own calls, and
+``HONCHO_API_KEY`` takes precedence over both.
 
 All other top-level keys (``hosts``, ``sessions``, ``saveMessages``,
 ``sessionStrategy``, …) are written by sibling Honcho tools and are
@@ -148,6 +149,7 @@ class CLIConfig:
     peer_id: str = ""
     session_id: str = ""
     oauth: OAuthTokens | None = None
+    api_key_from_env: bool = False  # api_key came from HONCHO_API_KEY, not the file
 
     def usable_oauth(self) -> OAuthTokens | None:
         """The OAuth grant, if present and bound to the current host."""
@@ -160,12 +162,15 @@ class CLIConfig:
         return None
 
     def resolved_api_key(self) -> str:
-        """The key handed to the SDK: a live OAuth token wins, else apiKey.
+        """The key handed to the SDK: HONCHO_API_KEY, else a live OAuth token, else apiKey.
 
-        An expired grant loses to a saved apiKey (a dead grant degrades to the
-        shared key) but still wins over nothing, since the server is the final
-        judge.
+        An env key is an explicit per-run choice, so it beats the stored grant
+        (flag > env > file). An expired grant loses to a saved apiKey (a dead
+        grant degrades to the shared key) but still wins over nothing, since
+        the server is the final judge.
         """
+        if self.api_key_from_env:
+            return self.api_key
         tokens = self.usable_oauth()
         if tokens and tokens.access_valid():
             return tokens.access_token
@@ -214,6 +219,7 @@ class CLIConfig:
                 # strings with a Pydantic ValidationError. Drop them so the
                 # SDK falls back to kwargs / defaults.
                 os.environ.pop(env_var, None)
+        config.api_key_from_env = bool(os.environ.get(ENV_MAP["api_key"]))
 
         return config
 
@@ -275,7 +281,7 @@ class CLIConfig:
         result: dict[str, str] = {}
         for fld in fields(self):
             val = getattr(self, fld.name)
-            if not val:
+            if not val or fld.name == "api_key_from_env":
                 continue
             if fld.name == "api_key":
                 # Show ``***<last4>`` only — enough to compare keys without

@@ -97,11 +97,13 @@ def test_expired_token_refreshes_and_persists(cfg_path):
     assert on_disk["refreshToken"] == "new-rt"
 
 
-def test_refresh_does_not_persist_env_api_key(cfg_path, monkeypatch):
-    """A refresh writes the new grant only, never the HONCHO_API_KEY overlay.
+def test_refresh_does_not_persist_env_overrides(cfg_path, monkeypatch):
+    """A refresh writes the new grant only, never the HONCHO_BASE_URL overlay.
 
-    Sibling tools read ``apiKey`` from the shared file, so a leaked env key
-    silently moves them to another org.
+    Sibling tools read ``environmentUrl`` and ``apiKey`` from the shared file,
+    so a leaked override silently moves them to another server or org. (With
+    HONCHO_API_KEY set the refresh is skipped altogether.) A legacy grant with
+    no recorded host is trusted on any URL, so it refreshes under the override.
     """
     original = {
         "apiKey": "file-key",
@@ -112,12 +114,11 @@ def test_refresh_does_not_persist_env_api_key(cfg_path, monkeypatch):
             "accessExpiresAt": time.time() - 100,
             "clientId": "honcho-cli",
             "scope": "write",
-            "host": "http://localhost:8000",
         },
         "hosts": {"harness": {"workspace": "harness-honcho"}},
     }
     cfg_path.write_text(json.dumps(original))
-    monkeypatch.setenv("HONCHO_API_KEY", "other-org-key")
+    monkeypatch.setenv("HONCHO_BASE_URL", "http://127.0.0.1:9000")
     rotated = TokenResponse(
         access_token="new-at", refresh_token="new-rt", expires_in=3600, scope="write"
     )
@@ -136,6 +137,40 @@ def test_refresh_does_not_persist_env_api_key(cfg_path, monkeypatch):
     assert on_disk["hosts"] == original["hosts"]
     assert on_disk["oauth"]["accessToken"] == "new-at"
     assert on_disk["oauth"]["refreshToken"] == "new-rt"
+
+
+def test_env_api_key_beats_live_oauth_grant(cfg_path, monkeypatch):
+    """HONCHO_API_KEY is an explicit per-run choice, so it outranks the saved grant."""
+    cfg_path.write_text(json.dumps({
+        "environmentUrl": "http://localhost:8000",
+        "oauth": {
+            "accessToken": "oauth-at",
+            "refreshToken": "oauth-rt",
+            "accessExpiresAt": time.time() + 3600,
+            "host": "http://localhost:8000",
+        },
+    }))
+    monkeypatch.setenv("HONCHO_API_KEY", "other-org-key")
+    client = MagicMock()
+    client.workspaces.return_value = ["ws-a"]
+    with patch("honcho_cli.common.Honcho", return_value=client) as honcho:
+        result = CliRunner().invoke(app, ["workspace", "list"])
+    assert result.exit_code == 0, result.output
+    assert honcho.call_args.kwargs["api_key"] == "other-org-key"
+
+
+def test_env_api_key_skips_refresh(cfg_path, monkeypatch):
+    """The env key wins, so an expired grant it won't use is neither refreshed nor saved."""
+    cfg_path.write_text(json.dumps(
+        {"oauth": {"accessToken": "old-at", "refreshToken": "old-rt", "accessExpiresAt": 0}}
+    ))
+    before = cfg_path.read_text()
+    monkeypatch.setenv("HONCHO_API_KEY", "other-org-key")
+    config = CLIConfig.load()
+    with patch("honcho_cli.oauth.refresh_access_token") as refresh:
+        common.maybe_refresh_token(config)
+    refresh.assert_not_called()
+    assert cfg_path.read_text() == before
 
 
 def test_refresh_failure_exits(cfg_path):
