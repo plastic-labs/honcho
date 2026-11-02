@@ -53,7 +53,7 @@ from src.telemetry.sentry import initialize_sentry
 from src.utils.queue_payload import RETRY_ATTEMPTS_PAYLOAD_KEY
 from src.utils.retryable_errors import is_retryable_error
 from src.utils.sanitization import escape_unstorable
-from src.utils.work_unit import parse_work_unit_key
+from src.utils.work_unit import ParsedWorkUnit, parse_work_unit_key
 from src.webhooks.events import (
     QueueEmptyEvent,
     publish_webhook_event,
@@ -190,7 +190,21 @@ class QueueManager:
     def add_task(self, task: asyncio.Task[None]) -> None:
         """Track a new task"""
         self.active_tasks.add(task)
-        task.add_done_callback(self.active_tasks.discard)
+        task.add_done_callback(self._on_task_done)
+
+    def _on_task_done(self, task: asyncio.Task[None]) -> None:
+        """Retrieve unexpected worker failures as soon as a task finishes."""
+        self.active_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error(
+                "Unhandled queue worker task exception",
+                exc_info=(type(error), error, error.__traceback__),
+            )
+            if settings.SENTRY.ENABLED:
+                sentry_sdk.capture_exception(error)
 
     def track_worker_work_unit(
         self, worker_id: str, work_unit_key: str, aqs_id: str
@@ -645,10 +659,19 @@ class QueueManager:
     async def process_work_unit(self, work_unit_key: str, worker_id: str) -> None:
         """Process all queue items for a specific work unit by routing to the correct handler."""
         logger.debug(f"Starting to process work unit {work_unit_key}")
-        work_unit = parse_work_unit_key(work_unit_key)
-        async with self.semaphore:
-            queue_item_count = 0
-            try:
+        work_unit: ParsedWorkUnit | None = None
+        queue_item_count = 0
+        try:
+            async with self.semaphore:
+                try:
+                    work_unit = parse_work_unit_key(work_unit_key)
+                except ValueError as error:
+                    logger.exception("Invalid work unit key %s", work_unit_key)
+                    if settings.SENTRY.ENABLED:
+                        sentry_sdk.capture_exception(error)
+                    await self._mark_invalid_work_unit_as_errored(work_unit_key, error)
+                    return
+
                 while not self.shutdown_event.is_set():
                     # Get worker ownership info for verification
                     ownership = self.worker_ownership.get(worker_id)
@@ -767,42 +790,46 @@ class QueueManager:
                         )
                         break
 
-            finally:
-                # Remove work unit from active_queue_sessions when done
-                ownership: WorkerOwnership | None = self.worker_ownership.get(worker_id)
+        finally:
+            # Also release ownership on parse failure or cancellation while
+            # waiting for the semaphore. A failed DB cleanup must not leak the
+            # in-memory slot; its claim can be recovered by stale-claim cleanup.
+            try:
+                ownership = self.worker_ownership.get(worker_id)
                 if ownership and ownership.work_unit_key == work_unit_key:
                     removed = await self._cleanup_work_unit(
                         ownership.aqs_id, work_unit_key
                     )
                 else:
                     removed = False
-
+            finally:
                 self.untrack_worker_work_unit(worker_id, work_unit_key)
-                if removed and queue_item_count > 0:
-                    # Only publish webhook if we actually removed an active session
-                    try:
-                        if (
-                            work_unit.task_type in ["representation", "summary"]
-                            and work_unit.workspace_name is not None
-                        ):
-                            logger.debug(
-                                f"Publishing queue.empty event for {work_unit_key} in workspace {work_unit.workspace_name}"
+
+            if removed and queue_item_count > 0 and work_unit is not None:
+                # Only publish webhook if we actually removed an active session
+                try:
+                    if (
+                        work_unit.task_type in ["representation", "summary"]
+                        and work_unit.workspace_name is not None
+                    ):
+                        logger.debug(
+                            f"Publishing queue.empty event for {work_unit_key} in workspace {work_unit.workspace_name}"
+                        )
+                        await publish_webhook_event(
+                            QueueEmptyEvent(
+                                workspace_id=work_unit.workspace_name,
+                                queue_type=work_unit.task_type,
+                                session_id=work_unit.session_name,
+                                observer=work_unit.observer,
+                                observed=work_unit.observed,
                             )
-                            await publish_webhook_event(
-                                QueueEmptyEvent(
-                                    workspace_id=work_unit.workspace_name,
-                                    queue_type=work_unit.task_type,
-                                    session_id=work_unit.session_name,
-                                    observer=work_unit.observer,
-                                    observed=work_unit.observed,
-                                )
-                            )
-                    except Exception:
-                        logger.exception("Error triggering queue_empty webhook")
-                else:
-                    logger.debug(
-                        f"Work unit {work_unit_key} already cleaned up by another worker, skipping webhook"
-                    )
+                        )
+                except Exception:
+                    logger.exception("Error triggering queue_empty webhook")
+            else:
+                logger.debug(
+                    f"Work unit {work_unit_key} already cleaned up by another worker, skipping webhook"
+                )
 
     @sentry_sdk.trace
     async def get_next_queue_item(
@@ -1180,6 +1207,26 @@ class QueueManager:
                         literal(RETRY_ATTEMPTS_PAYLOAD_KEY, Text)
                     )
                 )
+            )
+            await db.commit()
+
+    async def _mark_invalid_work_unit_as_errored(
+        self, work_unit_key: str, error: ValueError
+    ) -> None:
+        """Quarantine pending rows sharing a key that cannot be parsed.
+
+        Unlike a processing failure, an invalid key makes every item in the
+        work unit unprocessable. Match the raw key without parsing it again.
+        """
+        error_msg = escape_unstorable(f"{error.__class__.__name__}: {error}")[:65535]
+        async with tracked_db("mark_invalid_work_unit_as_errored") as db:
+            await db.execute(
+                update(models.QueueItem)
+                .where(
+                    models.QueueItem.work_unit_key == work_unit_key,
+                    models.QueueItem.processed.is_(False),
+                )
+                .values(processed=True, error=error_msg)
             )
             await db.commit()
 
