@@ -84,6 +84,7 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/llm/",
     # Settings validation only; no database or provider calls.
     "tests/test_config.py",
+    "tests/test_pytest_configuration.py",
     # LLM transport tests mock providers directly and don't need database/runtime setup.
     "tests/utils/test_length_finish_reason.py",
     "tests/utils/test_clients.py",
@@ -97,6 +98,21 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/test_generate_jwt_script.py",
     # The mock provider is a standalone ASGI app with no database or LLM of its
     # own; the runtime mocks would patch the very seams it exists to replace.
+    "tests/mock_provider/",
+)
+
+_DB_FREE_TEST_PREFIXES = (
+    "tests/llm/",
+    "tests/live_llm/",
+    "tests/test_config.py",
+    "tests/test_pytest_configuration.py",
+    "tests/utils/test_length_finish_reason.py",
+    "tests/utils/test_clients.py",
+    "tests/crud/test_session_scope_clauses.py",
+    "tests/deriver/test_prompts.py",
+    "tests/utils/test_custom_instructions_prompts.py",
+    "tests/test_security.py",
+    "tests/test_generate_jwt_script.py",
     "tests/mock_provider/",
 )
 
@@ -194,7 +210,13 @@ def pytest_configure(config: pytest.Config) -> None:
 
     # Workers inherit the controller's env and would each redo this.
     if os.environ.get("PYTEST_XDIST_WORKER") is None:
-        if not _only_db_free_tests_selected(config):
+        if not (
+            config.option.collectonly
+            or config.option.help
+            or config.option.showfixtures
+            or config.option.markers
+            or _only_db_free_tests_selected(config)
+        ):
             _check_test_database_reachable()
         _sweep_stale_test_databases()
 
@@ -210,7 +232,7 @@ def _only_db_free_tests_selected(config: pytest.Config) -> bool:
         relative = relative.replace(os.sep, "/")
         if os.path.isdir(path):
             relative += "/"
-        if not relative.startswith(_RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES):
+        if not relative.startswith(_DB_FREE_TEST_PREFIXES):
             return False
     return True
 
