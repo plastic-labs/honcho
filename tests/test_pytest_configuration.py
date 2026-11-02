@@ -1,8 +1,10 @@
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+import tiktoken
 
 from tests import conftest as test_configuration
 
@@ -97,6 +99,23 @@ def test_database_required_paths_run_database_preflight(
     test_configuration.pytest_configure(config)
 
     preflight.assert_called_once()
+
+
+def test_conftest_preloads_every_tiktoken_encoding_src_uses() -> None:
+    # A new encoding missing from TIKTOKEN_ENCODINGS is downloaded mid-test, which
+    # pytest-socket blocks; it passes locally on a warm cache and fails in CI.
+    src_dir = Path(__file__).resolve().parents[1] / "src"
+    used = {
+        name
+        for path in src_dir.rglob("*.py")
+        for name in re.findall(
+            r"""get_encoding\(\s*["']([^"']+)["']""", path.read_text()
+        )
+    }
+    used.add(tiktoken.encoding_name_for_model("text-embedding-3-small"))
+
+    assert used
+    assert used <= set(test_configuration.TIKTOKEN_ENCODINGS)
 
 
 def test_xdist_workers_do_not_repeat_database_preflight(

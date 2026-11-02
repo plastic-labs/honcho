@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import jwt
 import pytest
 import pytest_asyncio
+import tiktoken
 from cashews.picklers import PicklerType
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -44,6 +45,13 @@ from src.security import JWTParams, create_admin_jwt, create_jwt
 settings.LANGFUSE_PUBLIC_KEY = None
 
 from src.main import app  # noqa: E402
+
+# Every tiktoken encoding src/ loads. tiktoken downloads an encoding on first use,
+# and conftest runs before pytest-socket blocks non-loopback sockets, so loading
+# them here keeps tests that load one lazily from failing on a cold cache (CI).
+TIKTOKEN_ENCODINGS = ("cl100k_base", "o200k_base")
+for _encoding_name in TIKTOKEN_ENCODINGS:
+    tiktoken.get_encoding(_encoding_name)
 
 
 # Create a custom handler that doesn't get closed prematurely
