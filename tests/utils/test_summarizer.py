@@ -756,6 +756,21 @@ def _provider_response(content: str, finish_reason: str) -> HonchoLLMCallRespons
     )
 
 
+def _inner(*responses: HonchoLLMCallResponse[str]) -> AsyncMock:
+    """Stand in for `honcho_llm_call_inner`: answer with `responses` in turn
+    (repeating the last), running the caller's `validate_response` hook on each
+    as the executor does."""
+    queue = list(responses)
+
+    def answer(*_args: Any, **kwargs: Any) -> HonchoLLMCallResponse[str]:
+        response = queue.pop(0) if len(queue) > 1 else queue[0]
+        if (validate := kwargs.get("validate_response")) is not None:
+            validate(response)
+        return response
+
+    return AsyncMock(side_effect=answer)
+
+
 async def _run_summary_call(summary_type: SummaryType) -> HonchoLLMCallResponse[str]:
     if summary_type is SummaryType.SHORT:
         return await create_short_summary(_FORMATTED_MESSAGES, _INPUT_TOKENS)
@@ -770,11 +785,9 @@ async def test_degraded_nul_only_summary_is_retried(
 ):
     """The real retried call refuses truncated/filtered NUL-only output and
     returns the next attempt's summary."""
-    inner = AsyncMock(
-        side_effect=[
-            _provider_response("\x00\x00", finish_reason),
-            _provider_response("A real summary.", "stop"),
-        ]
+    inner = _inner(
+        _provider_response("\x00\x00", finish_reason),
+        _provider_response("A real summary.", "stop"),
     )
     with (
         patch("src.llm.api.honcho_llm_call_inner", new=inner),
@@ -792,7 +805,7 @@ async def test_degraded_nul_only_summary_exhausts_to_refusal(
     summary_type: SummaryType,
 ):
     """If every attempt is truncated NUL-only output, the refusal propagates."""
-    inner = AsyncMock(return_value=_provider_response("\x00", "length"))
+    inner = _inner(_provider_response("\x00", "length"))
     with (
         patch("src.llm.api.honcho_llm_call_inner", new=inner),
         patch("asyncio.sleep", new=AsyncMock()),
@@ -808,8 +821,8 @@ async def test_degraded_nul_only_summary_exhausts_to_refusal(
 async def test_clean_nul_only_summary_is_not_retried(finish_reasons: list[str]):
     """A clean (or unreported) stop with NUL-only output passes the hook on the
     first attempt and lands on the unsaved fallback."""
-    inner = AsyncMock(
-        return_value=HonchoLLMCallResponse(
+    inner = _inner(
+        HonchoLLMCallResponse(
             content="\x00", output_tokens=1, finish_reasons=finish_reasons
         )
     )

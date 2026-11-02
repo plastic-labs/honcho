@@ -677,7 +677,7 @@ def telemetry_headers() -> dict[str, str]:
     """Client-identity headers for telemetry attribution, e.g.::
 
         X-Honcho-Host: hermes/0.18.2 (darwin)
-        X-Honcho-Plugin: hermes-plugin-honcho/1.0.0
+        X-Honcho-Plugin: hermes-plugin-honcho/1.1.0
 
     The version is omitted from the host when it can't be resolved. Values are recorded verbatim
     by the API's telemetry middleware; nothing else reads them, so they must never raise.

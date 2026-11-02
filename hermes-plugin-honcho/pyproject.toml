@@ -1,6 +1,6 @@
 [project]
 name = "hermes-plugin-honcho"
-version = "1.0.0"
+version = "1.1.0"
 description = "Hermes Agent memory provider plugin: honcho"
 requires-python = ">=3.11"
 license = { text = "MIT" }
