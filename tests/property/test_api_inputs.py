@@ -10,9 +10,12 @@ import json
 import os
 from typing import Any
 
+import tiktoken
 from fastapi.testclient import TestClient
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
+
+from tests.tokenizer_strategies import special_token_content
 
 MAX_EXAMPLES = int(os.environ.get("HONCHO_FUZZ_EXAMPLES", "25"))
 
@@ -33,6 +36,57 @@ WS = "/v3/workspaces/fuzz-ws"
 
 def _no_5xx(response: Any, what: str) -> None:
     assert response.status_code < 500, f"{response.status_code} {what}\n{response.text}"
+
+
+@FUZZ
+@given(
+    content=st.one_of(
+        special_token_content("o200k_base"), special_token_content("cl100k_base")
+    )
+)
+def test_special_token_content_round_trips_messages_and_conclusions(
+    fuzz_client: TestClient, seeded_ids: dict[str, str], content: str
+) -> None:
+    messages_url = f"{WS}/sessions/{seeded_ids['session_id']}/messages"
+    response = fuzz_client.post(
+        messages_url,
+        json={"messages": [{"content": content, "peer_id": seeded_ids["peer_id"]}]},
+    )
+    assert response.status_code == 201, response.text
+    message = response.json()[0]
+    assert message["content"] == content
+    assert message["token_count"] == len(
+        tiktoken.get_encoding("o200k_base").encode_ordinary(content)
+    )
+    message_url = f"{messages_url}/{message['id']}"
+    response = fuzz_client.get(message_url)
+    assert response.status_code == 200, response.text
+    assert response.json()["content"] == content
+    assert response.json()["token_count"] == message["token_count"]
+
+    response = fuzz_client.post(
+        f"{WS}/conclusions",
+        json={
+            "conclusions": [
+                {
+                    "content": content,
+                    "observer_id": "fuzz-bob",
+                    "observed_id": seeded_ids["peer_id"],
+                    "session_id": seeded_ids["session_id"],
+                }
+            ]
+        },
+    )
+    assert response.status_code == 201, response.text
+    conclusion = response.json()[0]
+    assert conclusion["content"] == content
+    conclusion_url = f"{WS}/conclusions/{conclusion['id']}"
+    response = fuzz_client.get(conclusion_url)
+    assert response.status_code == 200, response.text
+    assert response.json()["content"] == content
+
+    response = fuzz_client.delete(conclusion_url)
+    assert response.status_code == 204, response.text
 
 
 # --------------------------------------------------------------------------
