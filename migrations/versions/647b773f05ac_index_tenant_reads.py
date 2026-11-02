@@ -31,7 +31,7 @@ minutes per partition. To build them ahead of a release, run the same steps by
 hand under the same names; this revision then finds them done.
 
 Revision ID: 647b773f05ac
-Revises: c075274557cd
+Revises: 43d77d0c5846
 Create Date: 2026-10-21
 
 """
@@ -42,7 +42,7 @@ from migrations.utils import create_index_online, drop_index_online
 
 # revision identifiers, used by Alembic.
 revision: str = "647b773f05ac"
-down_revision: str | None = "c075274557cd"
+down_revision: str | None = "43d77d0c5846"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

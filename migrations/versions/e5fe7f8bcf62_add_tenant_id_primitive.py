@@ -1,7 +1,7 @@
 """add tenant id primitive
 
 Revision ID: e5fe7f8bcf62
-Revises: a7c3e9f1b2d4
+Revises: d8c4f6a2b901
 Create Date: 2026-09-03
 
 Adds ``tenant_id`` as a first-class primitive to the data model: a new
@@ -25,7 +25,7 @@ from migrations.utils import (
 
 # revision identifiers, used by Alembic.
 revision: str = "e5fe7f8bcf62"
-down_revision: str | None = "a7c3e9f1b2d4"
+down_revision: str | None = "d8c4f6a2b901"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
