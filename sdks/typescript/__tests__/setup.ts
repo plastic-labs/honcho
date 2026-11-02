@@ -4,17 +4,14 @@
  * Provides utilities for running integration tests against a live Honcho server.
  *
  * ============================================================================
- * 🚨 DO NOT RUN `bun test` DIRECTLY - IT WILL FAIL 🚨
+ * Run with `bun run test` (from sdks/typescript), not bare `bun test`.
  *
- * These tests require a running server with database and Redis.
- * The test infrastructure is orchestrated via pytest from the monorepo root.
- *
- * To run these tests:
- *   cd /path/to/honcho  # monorepo root, NOT sdks/typescript
- *   uv run pytest tests/ -k typescript
+ * `bun run test` runs scripts/run_ts_sdk_tests.py, which starts a throwaway
+ * Honcho server (fresh database, API, mock LLM provider) and runs `bun test`
+ * against it.
  * ============================================================================
  *
- * Environment variables (set automatically by pytest):
+ * Environment variables (set automatically by `bun run test`):
  *   - HONCHO_TEST_URL: Base URL of the test server
  *   - HONCHO_TEST_API_KEY: API key for authentication
  */
@@ -116,21 +113,15 @@ export async function waitForServer(
  */
 export async function requireServer(): Promise<void> {
   // Wait up to 15 seconds (30 attempts × 500ms) for the server to be ready
-  // This accounts for server startup time in pytest fixtures
   const ready = await waitForServer(30, 500)
   if (!ready) {
     throw new Error(
       '\n\n' +
         '╔══════════════════════════════════════════════════════════════════╗\n' +
-        '║  ERROR: Cannot run tests - no server available                   ║\n' +
+        `║  ERROR: No Honcho server answering at ${TEST_CONFIG.baseURL}\n` +
         '║                                                                  ║\n' +
-        '║  You probably ran `bun test` directly. DON\'T DO THAT.           ║\n' +
-        '║                                                                  ║\n' +
-        '║  These tests MUST be run via pytest from the monorepo root:     ║\n' +
-        '║                                                                  ║\n' +
-        '║    cd /path/to/honcho                                           ║\n' +
-        '║    uv run pytest tests/ -k typescript                           ║\n' +
-        '║                                                                  ║\n' +
+        '║  Run the suite with `bun run test` from sdks/typescript, which  ║\n' +
+        '║  starts a throwaway server for it.                              ║\n' +
         '╚══════════════════════════════════════════════════════════════════╝\n'
     )
   }

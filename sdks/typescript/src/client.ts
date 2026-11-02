@@ -381,26 +381,48 @@ export class Honcho {
     )
   }
 
+  /**
+   * Fetch one page of the workspace's scopes.
+   *
+   * @param workspaceId - Workspace to list
+   * @param params - Filters, pagination, and whether to include each scope's
+   *                 `session_count`
+   * @returns The raw page response
+   */
   private async _listScopes(
     workspaceId: string,
     params?: {
+      filters?: Record<string, unknown>
       page?: number
       size?: number
       reverse?: boolean
+      includeSessionCount?: boolean
     }
   ): Promise<PageResponse<ScopeResponse>> {
     return this._http.post<PageResponse<ScopeResponse>>(
       `/${API_VERSION}/workspaces/${workspaceId}/scopes/list`,
       {
+        body: { filters: params?.filters },
         query: {
           page: params?.page,
           size: params?.size,
           reverse: params?.reverse ? 'true' : undefined,
+          include_session_count: params?.includeSessionCount
+            ? 'true'
+            : undefined,
         },
       }
     )
   }
 
+  /**
+   * Fetch one page of the workspace's sessions.
+   *
+   * @param workspaceId - Workspace to list
+   * @param params - Filters, pagination, the `scope` / `inNoScope` membership
+   *                 filters, and whether to include each session's `scopes`
+   * @returns The raw page response
+   */
   private async _listSessions(
     workspaceId: string,
     params?: {
@@ -408,16 +430,24 @@ export class Honcho {
       page?: number
       size?: number
       reverse?: boolean
+      scope?: string
+      inNoScope?: boolean
+      includeScopes?: boolean
     }
   ): Promise<PageResponse<SessionResponse>> {
     return this._http.post<PageResponse<SessionResponse>>(
       `/${API_VERSION}/workspaces/${workspaceId}/sessions/list`,
       {
-        body: { filters: params?.filters },
+        body: {
+          filters: params?.filters,
+          scope: params?.scope,
+          in_no_scope: params?.inNoScope ? true : undefined,
+        },
         query: {
           page: params?.page,
           size: params?.size,
           reverse: params?.reverse ? 'true' : undefined,
+          include_scopes: params?.includeScopes ? 'true' : undefined,
         },
       }
     )
@@ -748,28 +778,39 @@ export class Honcho {
   /**
    * Get all scopes in the current workspace.
    *
-   * @param options - Pagination options: `page`, `size`, and `reverse`
+   * @param options - `filters` (`id` matches the scope name, e.g.
+   *                  `{ id: { icontains: 'sup' } }`), `includeSessionCount` to set
+   *                  each scope's `sessionCount`, and pagination: `page`, `size`,
+   *                  and `reverse`
    * @returns Promise resolving to a Page of Scope objects. Returns an empty page if
    *          no scopes exist
    */
   async scopes(options?: {
+    filters?: Filters
     page?: number
     size?: number
     reverse?: boolean
+    includeSessionCount?: boolean
   }): Promise<Page<Scope, ScopeResponse>> {
     await this._ensureWorkspace()
-    const reverse = options?.reverse
+    const listOptions = {
+      filters: options?.filters
+        ? FilterSchema.parse(options.filters)
+        : undefined,
+      reverse: options?.reverse,
+      includeSessionCount: options?.includeSessionCount,
+    }
     const scopesPage = await this._listScopes(this.workspaceId, {
+      ...listOptions,
       page: options?.page,
       size: options?.size,
-      reverse,
     })
 
     const fetchNextPage = async (
       page: number,
       size: number
     ): Promise<PageResponse<ScopeResponse>> => {
-      return this._listScopes(this.workspaceId, { page, size, reverse })
+      return this._listScopes(this.workspaceId, { ...listOptions, page, size })
     }
 
     return new Page(
@@ -781,7 +822,8 @@ export class Honcho {
           this._http,
           scope.metadata ?? undefined,
           () => this._ensureWorkspace(),
-          scope.created_at
+          scope.created_at,
+          scope.session_count
         ),
       fetchNextPage
     )
@@ -794,8 +836,13 @@ export class Honcho {
    * the current workspace.
    *
    * @param options - Either a legacy raw filter object or an options object with
-   *                  `filters`, `page`, `size`, and `reverse`. See
+   *                  `filters`, `page`, `size`, `reverse`, `scope`, `inNoScope`
+   *                  and `includeScopes`. See
    *                  [search filters documentation](https://honcho.dev/docs/v3/documentation/core-concepts/features/using-filters).
+   *                  `scope` lists only that scope's sessions (the server
+   *                  returns 404 if it does not exist); `inNoScope` lists only
+   *                  sessions in no scope; `includeScopes` sets each returned
+   *                  session's `scopes`.
    * @returns Promise resolving to a Page of Session objects representing all sessions
    *          in the workspace. Returns an empty page if no sessions exist
    */
@@ -807,6 +854,9 @@ export class Honcho {
           page?: number
           size?: number
           reverse?: boolean
+          scope?: string
+          inNoScope?: boolean
+          includeScopes?: boolean
         }
   ): Promise<Page<Session, SessionResponse>> {
     await this._ensureWorkspace()
@@ -815,16 +865,24 @@ export class Honcho {
       'page',
       'size',
       'reverse',
+      'scope',
+      'inNoScope',
+      'includeScopes',
     ])
     const validatedFilter = normalizedOptions.filters
       ? FilterSchema.parse(normalizedOptions.filters)
       : undefined
-    const reverse = normalizedOptions.reverse
-    const sessionsPage = await this._listSessions(this.workspaceId, {
+    const listOptions = {
       filters: validatedFilter,
+      reverse: normalizedOptions.reverse,
+      scope: normalizedOptions.scope,
+      inNoScope: normalizedOptions.inNoScope,
+      includeScopes: normalizedOptions.includeScopes,
+    }
+    const sessionsPage = await this._listSessions(this.workspaceId, {
+      ...listOptions,
       page: normalizedOptions.page,
       size: normalizedOptions.size,
-      reverse,
     })
 
     const fetchNextPage = async (
@@ -832,10 +890,9 @@ export class Honcho {
       size: number
     ): Promise<PageResponse<SessionResponse>> => {
       return this._listSessions(this.workspaceId, {
-        filters: validatedFilter,
+        ...listOptions,
         page,
         size,
-        reverse,
       })
     }
 
@@ -851,7 +908,8 @@ export class Honcho {
           () => this._ensureWorkspace(),
           session.created_at,
           session.is_active,
-          session.uid
+          session.uid,
+          session.scopes
         ),
       fetchNextPage
     )
@@ -916,6 +974,7 @@ export class Honcho {
    *
    * Makes an API call to update the configuration associated with the current workspace.
    * This will overwrite any existing configuration with the provided values.
+   * Pass an empty object to clear explicit workspace settings and use system defaults.
    * This method also updates the cached configuration property.
    *
    * @param configuration - Configuration to associate with the workspace.

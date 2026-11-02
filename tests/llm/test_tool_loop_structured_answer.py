@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from tenacity import wait_none
 
 from src.llm import tool_loop
+from src.llm.errors import llm_retry_condition
 from src.llm.runtime import AttemptPlan, current_attempt
 from src.llm.structured_output import StructuredOutputError
 from src.llm.tool_loop import execute_tool_loop
@@ -91,6 +92,10 @@ async def _run_loop(
     max_tool_iterations: int = 5,
     stream_final: bool = False,
 ) -> HonchoLLMCallResponse[Any] | StreamingResponseWithMetadata:
+    """Run the tool loop with `model` standing in for the provider, retrying with no
+    backoff.
+    """
+
     def before_retry(retry_state: Any) -> None:
         current_attempt.set(retry_state.attempt_number + 1)
 
@@ -116,6 +121,9 @@ async def _run_loop(
             max_input_tokens=None,
             get_attempt_plan=lambda: _plan_for_current_attempt(retry_attempts),
             before_retry_callback=before_retry,
+            retry_condition=llm_retry_condition(
+                can_fall_back=True, retry_attempts=retry_attempts, model="test/model"
+            ),
             stream_final=stream_final,
             telemetry=None,
         )
@@ -199,10 +207,14 @@ async def test_synthesis_refusal_is_retried_on_the_fallback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_final_answer_is_not_checked() -> None:
-    model = _ScriptedModel([{"*": _response(_REFUSAL)}])
+async def test_stream_final_answer_is_checked_like_a_plain_one() -> None:
+    """The streamed answer is the one in hand, so it is held to the same check."""
+    model = _ScriptedModel(
+        [{_PRIMARY: _response(_REFUSAL), _FALLBACK: _response(_Answer(answer="ok"))}]
+    )
 
     result = await _run_loop(model, retry_attempts=3, stream_final=True)
 
     assert isinstance(result, StreamingResponseWithMetadata)
-    assert model.models == [_PRIMARY]
+    assert [chunk.content async for chunk in result] == ['{"answer":"ok"}']
+    assert model.models == [_PRIMARY, _PRIMARY, _FALLBACK]

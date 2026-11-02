@@ -157,6 +157,7 @@ deriver_tokens_processed_counter = NamespacedCounter(
 )
 
 SUMMARY_REJECTION_DEGENERATE = "degenerate_repetition"
+SUMMARY_REJECTION_CONTENT_FILTERED = "content_filtered"
 
 summary_rejections_counter = NamespacedCounter(
     "summary_rejections",
@@ -652,11 +653,15 @@ class PrometheusMetrics:
                     )
             # summary rejections: summary_type x reason.
             for summary_type in ("short", "long"):
-                self._touch(
-                    summary_rejections_counter,
-                    summary_type=summary_type,
-                    reason=SUMMARY_REJECTION_DEGENERATE,
-                )
+                for reason in (
+                    SUMMARY_REJECTION_DEGENERATE,
+                    SUMMARY_REJECTION_CONTENT_FILTERED,
+                ):
+                    self._touch(
+                        summary_rejections_counter,
+                        summary_type=summary_type,
+                        reason=reason,
+                    )
             # ai: init at 0 so the gauge is visible before its first per-replica refresh
             self.set_message_embeddings_pending(count=0)
             if settings.DERIVER.SCHEDULER == "deriver":

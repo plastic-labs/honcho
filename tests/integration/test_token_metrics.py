@@ -10,13 +10,17 @@ The approach uses delta-based verification by directly accessing Prometheus coun
 3. Verify deltas match expected values
 """
 
+import asyncio
 from collections.abc import Iterator
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
 from prometheus_client import Counter
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src import crud, models, schemas
 from src.llm import HonchoLLMCallResponse
@@ -35,9 +39,13 @@ from src.telemetry.prometheus.metrics import (
 )
 from src.utils.representation import ExplicitObservationBase, PromptRepresentation
 from src.utils.summarizer import (
+    SUMMARIES_KEY,
+    Summary,
     SummaryType,
     _create_and_save_summary,
+    _save_summary,
     estimate_short_summary_prompt_tokens,
+    summarize_if_needed,
 )
 
 # =============================================================================
@@ -454,6 +462,320 @@ class TestSummaryDegenerationGuard:
             1,
             "Summary rejection counter",
         )
+
+
+# =============================================================================
+# NUL in summaries (DEV-2535): jsonb rejects it
+# =============================================================================
+
+
+def _stored_summary(
+    content: str, message: models.Message, summary_type: SummaryType
+) -> Summary:
+    return Summary(
+        content=content,
+        message_id=message.id,
+        summary_type=summary_type.value,
+        created_at="2026-01-01T00:00:00+00:00",
+        token_count=3,
+        message_public_id=message.public_id,
+    )
+
+
+async def _stored_summaries(
+    db_session: AsyncSession, workspace_name: str, session_name: str
+) -> dict[str, Summary]:
+    # Select the column so the committed row is read, not the identity map.
+    metadata = await db_session.scalar(
+        select(models.Session.internal_metadata).where(
+            models.Session.workspace_name == workspace_name,
+            models.Session.name == session_name,
+        )
+    )
+    assert metadata is not None
+    return metadata.get(SUMMARIES_KEY, {})
+
+
+@pytest.mark.asyncio
+class TestSummaryNulPersistence:
+    """Persistence-boundary tests: NUL never reaches the jsonb write."""
+
+    async def _run_short_summary(
+        self,
+        workspace: Workspace,
+        session: models.Session,
+        last_message: models.Message,
+        content: str,
+    ) -> None:
+        mock_response = HonchoLLMCallResponse(
+            content=content,
+            input_tokens=100,
+            output_tokens=7,
+            finish_reasons=["stop"],
+        )
+        with patch(
+            "src.utils.summarizer.create_short_summary",
+            new=AsyncMock(return_value=mock_response),
+        ):
+            await _create_and_save_summary(
+                workspace_name=workspace.name,
+                session_name=session.name,
+                message_id=last_message.id,
+                message_seq_in_session=last_message.seq_in_session,
+                summary_type=SummaryType.SHORT,
+                message_public_id=last_message.public_id,
+                configuration=create_test_configuration(),
+            )
+
+    async def test_nul_only_summary_keeps_previous(
+        self, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    ):
+        """A clean-stop NUL-only summary is not saved; the previous one stays."""
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=5
+        )
+        previous = _stored_summary("Earlier summary.", messages[0], SummaryType.SHORT)
+        await _save_summary(db_session, previous, workspace.name, session.name)
+
+        await self._run_short_summary(workspace, session, messages[-1], "\x00 \x00")
+
+        stored = await _stored_summaries(db_session, workspace.name, session.name)
+        assert stored[SummaryType.SHORT.value] == previous
+
+    async def test_summary_with_nul_is_saved_stripped(
+        self, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    ):
+        """Mixed content is saved without NUL; the provider token count is kept."""
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=5
+        )
+
+        await self._run_short_summary(
+            workspace, session, messages[-1], "Alice\x00 asked about Bob."
+        )
+
+        stored = await _stored_summaries(db_session, workspace.name, session.name)
+        short = stored[SummaryType.SHORT.value]
+        assert short["content"] == "Alice asked about Bob."
+        assert short["token_count"] == 7
+        assert short["message_id"] == messages[-1].id
+
+    async def test_save_summary_strips_nul_and_keeps_sibling(
+        self, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    ):
+        """The `_save_summary` backstop strips NUL on direct calls too, and the
+        merge leaves the other summary type intact."""
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=2
+        )
+        long_summary = _stored_summary("Long summary.", messages[0], SummaryType.LONG)
+        await _save_summary(db_session, long_summary, workspace.name, session.name)
+
+        raw = _stored_summary(
+            "Short\x00 summary. Literal \\u0000 stays.", messages[1], SummaryType.SHORT
+        )
+        await _save_summary(db_session, raw, workspace.name, session.name)
+
+        stored = await _stored_summaries(db_session, workspace.name, session.name)
+        assert stored[SummaryType.SHORT.value]["content"] == (
+            "Short summary. Literal \\u0000 stays."
+        )
+        assert stored[SummaryType.LONG.value] == long_summary
+        assert raw["content"] == "Short\x00 summary. Literal \\u0000 stays."
+
+
+# =============================================================================
+# Sibling summaries at a combined short/long boundary (DEV-3159, DEV-3160)
+# =============================================================================
+
+
+async def _set_internal_metadata(
+    db_session: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    metadata: dict[str, object],
+) -> None:
+    await db_session.execute(
+        update(models.Session)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.name == session_name)
+        .values(internal_metadata=metadata)
+    )
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+class TestConcurrentSummarySaves:
+    """Short and long saves at one boundary run concurrently (DEV-3160).
+
+    Each used to read the summaries map (possibly from cache) and write the
+    whole map back, so whichever committed second dropped or reverted the
+    other's entry.
+    """
+
+    @pytest.mark.parametrize("previous", [False, True], ids=["first", "replacing"])
+    async def test_both_saves_survive_when_reads_precede_writes(
+        self,
+        db_session: AsyncSession,
+        db_engine: AsyncEngine,
+        sample_data: tuple[Workspace, Peer],
+        previous: bool,
+    ):
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=2
+        )
+        metadata: dict[str, object] = {"unrelated": "kept"}
+        if previous:
+            metadata[SUMMARIES_KEY] = {
+                summary_type.value: _stored_summary("Old.", messages[0], summary_type)
+                for summary_type in SummaryType
+            }
+        await _set_internal_metadata(db_session, workspace.name, session.name, metadata)
+        new = {
+            summary_type: _stored_summary("New.", messages[-1], summary_type)
+            for summary_type in SummaryType
+        }
+
+        # Hold each save after its session read until both have read, so both
+        # start from the same stored map. Writes aren't held: the second UPDATE
+        # just waits for the first to commit.
+        both_read = asyncio.Barrier(2)
+        real_get_session = crud.get_session
+
+        async def get_session_then_wait(*args: Any, **kwargs: Any) -> Any:
+            session_row = await real_get_session(*args, **kwargs)
+            await both_read.wait()
+            return session_row
+
+        session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
+
+        async def save(summary: Summary) -> None:
+            async with session_factory() as db:
+                await _save_summary(db, summary, workspace.name, session.name)
+
+        with patch.object(crud, "get_session", side_effect=get_session_then_wait):
+            await asyncio.wait_for(
+                asyncio.gather(*(save(summary) for summary in new.values())),
+                timeout=10,
+            )
+
+        stored = await _stored_summaries(db_session, workspace.name, session.name)
+        assert stored == {
+            summary_type.value: summary for summary_type, summary in new.items()
+        }
+        refreshed = await db_session.scalar(
+            select(models.Session.internal_metadata).where(
+                models.Session.workspace_name == workspace.name,
+                models.Session.name == session.name,
+            )
+        )
+        assert refreshed is not None
+        assert refreshed["unrelated"] == "kept"
+
+    async def test_non_object_summaries_value_is_replaced(
+        self, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    ):
+        """A stored non-object (e.g. JSON null) can't be merged into; it is
+        replaced by a map holding the new entry."""
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=1
+        )
+        await _set_internal_metadata(
+            db_session, workspace.name, session.name, {SUMMARIES_KEY: None}
+        )
+        summary = _stored_summary("New.", messages[0], SummaryType.SHORT)
+
+        await _save_summary(db_session, summary, workspace.name, session.name)
+
+        stored = await _stored_summaries(db_session, workspace.name, session.name)
+        assert stored == {SummaryType.SHORT.value: summary}
+
+
+@pytest.mark.asyncio
+class TestCombinedBoundaryRetry:
+    """A failed sibling now fails the queue item instead of vanishing
+    (DEV-3159); the retry must finish the job without redoing the other."""
+
+    async def test_retry_after_partial_success_saves_the_missing_summary(
+        self, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    ):
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=60
+        )
+        boundary = messages[-1]
+
+        def response(content: str) -> HonchoLLMCallResponse[str]:
+            return HonchoLLMCallResponse(
+                content=content,
+                input_tokens=100,
+                output_tokens=5,
+                finish_reasons=["stop"],
+            )
+
+        class FakePGError(Exception):
+            sqlstate: str = "40P01"
+
+        real_save = _save_summary
+        long_save_failures = 1
+
+        async def save_failing_long_once(
+            db: AsyncSession, summary: Summary, *args: Any, **kwargs: Any
+        ) -> None:
+            nonlocal long_save_failures
+            if summary["summary_type"] == SummaryType.LONG.value and long_save_failures:
+                long_save_failures -= 1
+                raise OperationalError("UPDATE sessions", {}, FakePGError())
+            await real_save(db, summary, *args, **kwargs)
+
+        async def run_boundary() -> None:
+            await summarize_if_needed(
+                workspace.name,
+                session.name,
+                message_id=boundary.id,
+                message_seq_in_session=boundary.seq_in_session,
+                message_public_id=boundary.public_id,
+                configuration=create_test_configuration(),
+            )
+
+        with (
+            patch(
+                "src.utils.summarizer.create_short_summary",
+                new=AsyncMock(return_value=response("Short.")),
+            ) as short_llm,
+            patch(
+                "src.utils.summarizer.create_long_summary",
+                new=AsyncMock(return_value=response("Long.")),
+            ) as long_llm,
+            patch(
+                "src.utils.summarizer._save_summary",
+                side_effect=save_failing_long_once,
+            ),
+        ):
+            with pytest.raises(OperationalError):
+                await run_boundary()
+            stored = await _stored_summaries(db_session, workspace.name, session.name)
+            assert set(stored) == {SummaryType.SHORT.value}
+
+            await run_boundary()
+
+        stored = await _stored_summaries(db_session, workspace.name, session.name)
+        assert stored[SummaryType.SHORT.value]["content"] == "Short."
+        assert stored[SummaryType.LONG.value]["content"] == "Long."
+        # The short summary was already saved, so the retry skipped it.
+        assert short_llm.await_count == 1
+        assert long_llm.await_count == 2
 
 
 # =============================================================================

@@ -1506,7 +1506,9 @@ async def _handle_update_peer_card(
         else [str(raw_peer_card_content)]
     )
     for item in items:
-        line = str(item).strip()
+        # Strip NUL first: jsonb rejects it, and the checks below (emptiness,
+        # body, length cap, dedupe) must judge the text that gets stored.
+        line = strip_nul(str(item)).strip()
         if not line:
             continue
 

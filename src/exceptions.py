@@ -52,6 +52,11 @@ class HonchoException(Exception):
         self.status_code = status_code or self.status_code
         super().__init__(self.detail)
 
+    def effective_sentry_policy(self) -> SentryPolicy | None:
+        """The policy for this occurrence. Override when the disposition
+        depends on the instance rather than only the class."""
+        return self.sentry_policy
+
 
 @final
 class ResourceNotFoundException(HonchoException):
@@ -250,6 +255,14 @@ class EmptySummaryError(DegradedLLMResponseError):
     sentry_policy: ClassVar[SentryPolicy | None] = SentryPolicy(
         level="error", fingerprint="honcho-summary-degraded-empty-summary"
     )
+
+    def effective_sentry_policy(self) -> SentryPolicy | None:
+        # A filtered summary is the provider refusing the session's content.
+        # That repeats at every boundary of the session and nothing on our side
+        # fixes it, so it is counted in summary_rejections instead of reported.
+        if self.parse_class == "content_filtered":
+            return None
+        return self.sentry_policy
 
 
 @final

@@ -72,6 +72,20 @@ def _json_object_instruction(
     return instruction
 
 
+def _unparseable_body(exc: ValidationError) -> str | None:
+    """Recover the model's output from a parse() validation error.
+
+    parse() discards the response when validation fails, so the error is all
+    that is left of it. Only invalid JSON carries the whole body; a schema
+    failure carries just the offending sub-value, which is not the output.
+    """
+    for error in exc.errors(include_url=False):
+        body = error.get("input")
+        if error["type"] == "json_invalid" and isinstance(body, str):
+            return body
+    return None
+
+
 def _uses_max_completion_tokens(model: str) -> bool:
     """OpenAI reasoning models (gpt-5+ family + o-series) require
     ``max_completion_tokens`` instead of the classic ``max_tokens`` parameter.
@@ -256,7 +270,8 @@ class OpenAIBackend:
                 raise StructuredOutputError(
                     "PromptRepresentation structured output failed "
                     + f"failure_class=ValidationError model={model} "
-                    + f"error_count={exc.error_count()}"
+                    + f"error_count={exc.error_count()}",
+                    raw_content=_unparseable_body(exc),
                 ) from None
             except BadRequestError:
                 # A 400 means the provider rejected the request shape — most
@@ -490,10 +505,13 @@ class OpenAIBackend:
         else:
             content = ""
 
+        # OpenAI-compatible gateways can return usage with only total_tokens.
+        # The SDK then sets the omitted counts to None; record that as 0 so a
+        # successful response is not rejected downstream.
         return CompletionResult(
             content=content,
-            input_tokens=usage.prompt_tokens if usage else 0,
-            output_tokens=usage.completion_tokens if usage else 0,
+            input_tokens=(usage.prompt_tokens or 0) if usage else 0,
+            output_tokens=(usage.completion_tokens or 0) if usage else 0,
             cache_creation_input_tokens=cache_creation,
             cache_read_input_tokens=cache_read,
             finish_reason=finish_reason or "stop",

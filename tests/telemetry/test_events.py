@@ -160,20 +160,66 @@ class TestBaseEvent:
 
 
 # =============================================================================
+# Tests for each event's identity: event_type() and category()
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    ("event_cls", "event_type", "category"),
+    [
+        (RepresentationCompletedEvent, "representation.completed", "representation"),
+        (LLMCallCompletedEvent, "llm.call.completed", "llm"),
+        (MessageCreatedEvent, "message.created", "api"),
+        (FileUploadedEvent, "file.uploaded", "api"),
+        (GetContextEvent, "context.retrieved", "api"),
+        (DreamRunEvent, "dream.run", "dream"),
+        (DreamSpecialistEvent, "dream.specialist", "dream"),
+        (DialecticCompletedEvent, "dialectic.completed", "dialectic"),
+        (AgentIterationEvent, "agent.iteration", "agent"),
+        (
+            AgentToolConclusionsCreatedEvent,
+            "agent.tool.conclusions.created",
+            "agent",
+        ),
+        (
+            AgentToolConclusionsDeletedEvent,
+            "agent.tool.conclusions.deleted",
+            "agent",
+        ),
+        (AgentToolPeerCardUpdatedEvent, "agent.tool.peer_card.updated", "agent"),
+        (AgentToolSummaryCreatedEvent, "agent.tool.summary.created", "agent"),
+        (DeletionCompletedEvent, "deletion.completed", "deletion"),
+        (
+            SyncVectorsCompletedEvent,
+            "reconciliation.sync_vectors.completed",
+            "reconciliation",
+        ),
+        (
+            BackfillCompletedEvent,
+            "reconciliation.backfill.completed",
+            "reconciliation",
+        ),
+        (
+            CleanupStaleItemsCompletedEvent,
+            "reconciliation.cleanup_stale_items.completed",
+            "reconciliation",
+        ),
+    ],
+    ids=lambda v: v.__name__ if isinstance(v, type) else None,
+)
+def test_event_identity(event_cls: type[BaseEvent], event_type: str, category: str):
+    """event_type() and category() are part of the wire contract; pin them."""
+    assert event_cls.event_type() == event_type
+    assert event_cls.category() == category
+
+
+# =============================================================================
 # Tests for RepresentationCompletedEvent
 # =============================================================================
 
 
 class TestRepresentationCompletedEvent:
     """Tests for RepresentationCompletedEvent."""
-
-    def test_event_type(self):
-        """event_type() returns correct value."""
-        assert RepresentationCompletedEvent.event_type() == "representation.completed"
-
-    def test_category(self):
-        """category() returns correct value."""
-        assert RepresentationCompletedEvent.category() == "representation"
 
     def test_get_resource_id(
         self, sample_representation_event: RepresentationCompletedEvent
@@ -213,12 +259,6 @@ class TestRepresentationCompletedEvent:
 
 class TestLLMCallCompletedEvent:
     """Tests for the LLMCallCompletedEvent."""
-
-    def test_event_type(self):
-        assert LLMCallCompletedEvent.event_type() == "llm.call.completed"
-
-    def test_category(self):
-        assert LLMCallCompletedEvent.category() == "llm"
 
     def test_volume_class(self):
         # event must be high_volume so the sampler picks it up.
@@ -292,14 +332,6 @@ class TestLLMCallCompletedEvent:
 class TestMessageCreatedEvent:
     """Tests for MessageCreatedEvent."""
 
-    def test_event_type(self):
-        """event_type() returns correct value."""
-        assert MessageCreatedEvent.event_type() == "message.created"
-
-    def test_category(self):
-        """category() returns correct value."""
-        assert MessageCreatedEvent.category() == "api"
-
     def test_get_resource_id(self, sample_message_created_event: MessageCreatedEvent):
         """get_resource_id() keys on workspace:session:source:last_message_id."""
         assert (
@@ -352,14 +384,6 @@ class TestMessageCreatedEvent:
 class TestFileUploadedEvent:
     """Tests for FileUploadedEvent."""
 
-    def test_event_type(self):
-        """event_type() returns correct value."""
-        assert FileUploadedEvent.event_type() == "file.uploaded"
-
-    def test_category(self):
-        """category() returns correct value."""
-        assert FileUploadedEvent.category() == "api"
-
     def test_get_resource_id(self, sample_file_uploaded_event: FileUploadedEvent):
         """get_resource_id() returns workspace:session:file format."""
         assert (
@@ -390,14 +414,6 @@ class TestFileUploadedEvent:
 
 class TestGetContextEvent:
     """Tests for GetContextEvent."""
-
-    def test_event_type(self):
-        """event_type() returns correct value."""
-        assert GetContextEvent.event_type() == "context.retrieved"
-
-    def test_category(self):
-        """category() returns correct value."""
-        assert GetContextEvent.category() == "api"
 
     def test_get_resource_id_session(self, sample_get_context_event: GetContextEvent):
         """session context resource ID includes workspace and session.
@@ -489,14 +505,6 @@ class TestGetContextEvent:
 class TestDreamRunEvent:
     """Tests for DreamRunEvent."""
 
-    def test_event_type(self):
-        """event_type() returns correct value."""
-        assert DreamRunEvent.event_type() == "dream.run"
-
-    def test_category(self):
-        """category() returns correct value."""
-        assert DreamRunEvent.category() == "dream"
-
     def test_get_resource_id(self, sample_dream_run_event: DreamRunEvent):
         """get_resource_id() returns run_id."""
         assert sample_dream_run_event.get_resource_id() == "abc12345"
@@ -521,14 +529,6 @@ class TestDreamRunEvent:
 class TestDreamSpecialistEvent:
     """Tests for DreamSpecialistEvent."""
 
-    def test_event_type(self):
-        """event_type() returns correct value."""
-        assert DreamSpecialistEvent.event_type() == "dream.specialist"
-
-    def test_category(self):
-        """category() returns correct value."""
-        assert DreamSpecialistEvent.category() == "dream"
-
     def test_get_resource_id(self, sample_dream_specialist_event: DreamSpecialistEvent):
         """get_resource_id() returns run_id:specialist_type format."""
         assert sample_dream_specialist_event.get_resource_id() == "abc12345:deduction"
@@ -549,14 +549,6 @@ class TestDreamSpecialistEvent:
 
 class TestDialecticCompletedEvent:
     """Tests for DialecticCompletedEvent."""
-
-    def test_event_type(self):
-        """event_type() returns correct value."""
-        assert DialecticCompletedEvent.event_type() == "dialectic.completed"
-
-    def test_category(self):
-        """category() returns correct value."""
-        assert DialecticCompletedEvent.category() == "dialectic"
 
     def test_get_resource_id(self, sample_dialectic_event: DialecticCompletedEvent):
         """get_resource_id() returns run_id."""
@@ -608,14 +600,6 @@ class TestDialecticCompletedEvent:
 class TestAgentIterationEvent:
     """Tests for AgentIterationEvent."""
 
-    def test_event_type(self):
-        """event_type() returns correct value."""
-        assert AgentIterationEvent.event_type() == "agent.iteration"
-
-    def test_category(self):
-        """category() returns correct value."""
-        assert AgentIterationEvent.category() == "agent"
-
     def test_get_resource_id(self, sample_agent_iteration_event: AgentIterationEvent):
         """get_resource_id() returns run_id:iteration format."""
         assert sample_agent_iteration_event.get_resource_id() == "abc12345:3"
@@ -657,17 +641,6 @@ class TestAgentIterationEvent:
 class TestAgentToolConclusionsCreatedEvent:
     """Tests for AgentToolConclusionsCreatedEvent."""
 
-    def test_event_type(self):
-        """event_type() returns correct value."""
-        assert (
-            AgentToolConclusionsCreatedEvent.event_type()
-            == "agent.tool.conclusions.created"
-        )
-
-    def test_category(self):
-        """category() returns correct value."""
-        assert AgentToolConclusionsCreatedEvent.category() == "agent"
-
     def test_get_resource_id(
         self, sample_conclusions_created_event: AgentToolConclusionsCreatedEvent
     ):
@@ -693,17 +666,6 @@ class TestAgentToolConclusionsCreatedEvent:
 class TestAgentToolConclusionsDeletedEvent:
     """Tests for AgentToolConclusionsDeletedEvent."""
 
-    def test_event_type(self):
-        """event_type() returns correct value."""
-        assert (
-            AgentToolConclusionsDeletedEvent.event_type()
-            == "agent.tool.conclusions.deleted"
-        )
-
-    def test_category(self):
-        """category() returns correct value."""
-        assert AgentToolConclusionsDeletedEvent.category() == "agent"
-
     def test_get_resource_id(
         self, sample_conclusions_deleted_event: AgentToolConclusionsDeletedEvent
     ):
@@ -722,16 +684,6 @@ class TestAgentToolConclusionsDeletedEvent:
 class TestAgentToolPeerCardUpdatedEvent:
     """Tests for AgentToolPeerCardUpdatedEvent."""
 
-    def test_event_type(self):
-        """event_type() returns correct value."""
-        assert (
-            AgentToolPeerCardUpdatedEvent.event_type() == "agent.tool.peer_card.updated"
-        )
-
-    def test_category(self):
-        """category() returns correct value."""
-        assert AgentToolPeerCardUpdatedEvent.category() == "agent"
-
     def test_get_resource_id(
         self, sample_peer_card_updated_event: AgentToolPeerCardUpdatedEvent
     ):
@@ -749,14 +701,6 @@ class TestAgentToolPeerCardUpdatedEvent:
 
 class TestAgentToolSummaryCreatedEvent:
     """Tests for AgentToolSummaryCreatedEvent."""
-
-    def test_event_type(self):
-        """event_type() returns correct value."""
-        assert AgentToolSummaryCreatedEvent.event_type() == "agent.tool.summary.created"
-
-    def test_category(self):
-        """category() returns correct value."""
-        assert AgentToolSummaryCreatedEvent.category() == "agent"
 
     def test_get_resource_id(
         self, sample_summary_created_event: AgentToolSummaryCreatedEvent
@@ -796,14 +740,6 @@ class TestAgentToolSummaryCreatedEvent:
 
 class TestDeletionCompletedEvent:
     """Tests for DeletionCompletedEvent."""
-
-    def test_event_type(self):
-        """event_type() returns correct value."""
-        assert DeletionCompletedEvent.event_type() == "deletion.completed"
-
-    def test_category(self):
-        """category() returns correct value."""
-        assert DeletionCompletedEvent.category() == "deletion"
 
     def test_get_resource_id(self, sample_deletion_event: DeletionCompletedEvent):
         """get_resource_id() returns workspace:type:resource format."""
@@ -859,17 +795,6 @@ class TestDeletionCompletedEvent:
 class TestSyncVectorsCompletedEvent:
     """Tests for SyncVectorsCompletedEvent."""
 
-    def test_event_type(self):
-        """event_type() returns correct value."""
-        assert (
-            SyncVectorsCompletedEvent.event_type()
-            == "reconciliation.sync_vectors.completed"
-        )
-
-    def test_category(self):
-        """category() returns correct value."""
-        assert SyncVectorsCompletedEvent.category() == "reconciliation"
-
     def test_get_resource_id(
         self, sample_sync_vectors_event: SyncVectorsCompletedEvent
     ):
@@ -896,12 +821,6 @@ class TestSyncVectorsCompletedEvent:
 class TestBackfillCompletedEvent:
     """Tests for BackfillCompletedEvent."""
 
-    def test_event_type(self):
-        """event_type() returns correct value."""
-        assert (
-            BackfillCompletedEvent.event_type() == "reconciliation.backfill.completed"
-        )
-
     def test_get_resource_id(self, fixed_timestamp: datetime):
         """get_resource_id() is keyed by backfill name."""
         event = BackfillCompletedEvent(
@@ -922,17 +841,6 @@ class TestBackfillCompletedEvent:
 
 class TestCleanupStaleItemsCompletedEvent:
     """Tests for CleanupStaleItemsCompletedEvent."""
-
-    def test_event_type(self):
-        """event_type() returns correct value."""
-        assert (
-            CleanupStaleItemsCompletedEvent.event_type()
-            == "reconciliation.cleanup_stale_items.completed"
-        )
-
-    def test_category(self):
-        """category() returns correct value."""
-        assert CleanupStaleItemsCompletedEvent.category() == "reconciliation"
 
     def test_get_resource_id(
         self, sample_cleanup_event: CleanupStaleItemsCompletedEvent

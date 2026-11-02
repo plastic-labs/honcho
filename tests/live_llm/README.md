@@ -17,6 +17,7 @@ Required API key env vars:
 Model-family env vars:
 
 - `LIVE_LLM_ANTHROPIC_45_PLUS_MODELS`
+- `LIVE_LLM_ANTHROPIC_55_MODELS` (Claude 5.5-era models: adaptive thinking, preserved thinking)
 - `LIVE_LLM_OPENAI_GPT4_MODELS`
 - `LIVE_LLM_OPENAI_GPT5_MODELS`
 - `LIVE_LLM_OPENAI_OPENROUTER_NON_REASONING_MODELS` (OpenAI-transport → OpenRouter-served non-reasoning models)
@@ -62,7 +63,7 @@ export OPENROUTER_API_KEY="sk-or-v1-..."
 
 Coverage by provider:
 
-- Anthropic: structured output path, prompt caching metrics, thinking blocks, multi-turn tool replay
+- Anthropic: structured output path, prompt caching metrics, thinking blocks, multi-turn tool replay. On models with preserved thinking (`test_live_anthropic_preserved_thinking.py`, collected only for those models): forced `tool_choice` per capability, and tool loops with `response_model`, truncation and synthesis under `prefix_mismatch_behavior: "error"`
 - OpenAI GPT-4 class: structured outputs, prompt caching, multi-turn tool replay (null `content` preserved)
 - OpenAI GPT-5 class (incl. gpt-5.x point-releases): structured outputs, prompt caching, `reasoning_effort`, `max_completion_tokens` routing, multi-turn tool replay (null `content` preserved)
 - OpenAI transport → OpenRouter non-reasoning models (e.g. `inception/mercury-2`): non-chat / diffusion architectures must stay on `max_tokens`, no `reasoning_effort`, tool-calling parameter-schema compatibility is the canary for exotic OR-served providers

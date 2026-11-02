@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
-## [0.2.2] - 2026-10-20
-
 ### Added
 
 - Workspace, peer, and session output includes `uid`, the immutable identifier Honcho 3.4.0 assigns next to the client-chosen `id`. List, inspect, create, session peers, and scope session listings all carry it. `null` when the server does not return one (#1394)
@@ -17,11 +15,30 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
-- Requires `honcho-ai` 2.7.0 (was 2.5.0), which carries `uid` on workspace, peer, and session responses
 - `honcho workspace chat --scope` help states that workspace chat always treats a scope as a session allowlist, including a single name (explicit conclusions only). A single name on `honcho peer chat` is still that scope's full view
 - `honcho workspace queue-status` help notes that the `sessions` map is keyed by session uid
 - `--evidence` conclusions include `observer_id` and `observed_id`
-- Reported CLI version matches the package version
+
+## [0.4.0] - 2026-10-29
+
+### Added
+
+- `source_message_ids` on conclusion output: the messages an explicit conclusion cites as evidence (Honcho v3.5.0+; a count in table mode, the full list in JSON). `conclusion list --cites <message_id>` narrows to the conclusions that cite a message. Null in JSON on servers or SDKs that predate the field (#935)
+
+### Changed
+
+- Requires `honcho-ai` 2.8.0 or newer, the first Python SDK that carries `source_message_ids`
+
+## [0.3.0] - 2026-10-23
+
+### Added
+
+- `honcho install` finds the AI agents on this machine, shows which already have Honcho, and offers a checkbox picker. Claude Code, Hermes Agent, OpenClaw and Pi get their Honcho plugin and Codex the Honcho MCP server and skill, each through the agent's own commands and the API key in `~/.honcho/config.json`. If that file has no `peerName` yet, it asks what agents should call you (default: your OS username) and saves it there for every agent to share. Other agents it finds link to their setup guide, and `honcho install grok-bot` copies a setup prompt for Grok Bot. Run from inside Claude Code or Codex, it sets up that agent without prompting. `honcho install all` or `honcho install <id>...` skips the picker; `--list` and `--json` only report
+
+### Security
+
+- Requires `certifi` 2026.10.19 or newer, the first CA bundle without the emSign root behind the compromised eMudhra intermediates. Upgrading the CLI now upgrades the bundle it verifies TLS with, including under `pip install -U`, which otherwise leaves dependencies alone
+- A local stack keeps the Honcho image it pinned on first `honcho start`, so a stack set up before this release can still be running an image with the old bundle. Move to the patched image with `honcho stop`, then `honcho start --image ghcr.io/plastic-labs/honcho:v3.4.1`; data is kept
 
 ## [0.2.1] - 2026-10-20
 

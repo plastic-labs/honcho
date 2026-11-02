@@ -2189,6 +2189,81 @@ class TestQueueRetry:
         assert "ValueError" in items[0].error
         assert await self._retry_attempts_on_items(db_session, work_unit_key) is None
 
+    async def test_error_text_postgres_rejects_still_marks_item_errored(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+    ) -> None:
+        """An exception message echoing NUL or a lone surrogate still reaches
+        the terminal error state (DEV-3163). Unescaped, Postgres rejects the
+        UPDATE and the item is never marked, so it is processed again."""
+        qm, work_unit_key, worker_id, _ = await self._seed_work_unit(
+            db_session, sample_session_with_peers, create_queue_payload
+        )
+
+        with (
+            patch(
+                "src.deriver.queue_manager.process_representation_batch",
+                side_effect=ValueError("bad value 'a\x00b' and '\ud83d'"),
+            ),
+            # The error is logged verbatim, and pytest-xdist can't ship a
+            # captured log holding a lone surrogate back from its worker.
+            patch("src.deriver.queue_manager.logger"),
+        ):
+            await asyncio.wait_for(
+                qm.process_work_unit(work_unit_key, worker_id), timeout=10
+            )
+
+        items = await self._fetch_items(db_session, work_unit_key)
+        assert len(items) == 1
+        assert items[0].processed
+        assert items[0].error == "ValueError: bad value 'a\\x00b' and '\\ud83d'"
+
+    async def test_failed_error_mark_releases_work_unit(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When the terminal mark itself fails, the item is still unprocessed
+        and next in line, so the work unit is released (one batch fetch)
+        rather than re-running the same item in a tight loop."""
+        monkeypatch.setattr("src.deriver.queue_manager.RETRY_BACKOFF_SECONDS", 0.0)
+        qm, work_unit_key, worker_id, _ = await self._seed_work_unit(
+            db_session, sample_session_with_peers, create_queue_payload
+        )
+
+        batch_fetches = 0
+        original_get_batch = qm.get_queue_item_batch
+
+        async def counting_get_batch(*args: Any, **kwargs: Any) -> Any:
+            nonlocal batch_fetches
+            batch_fetches += 1
+            return await original_get_batch(*args, **kwargs)
+
+        with (
+            patch.object(qm, "get_queue_item_batch", side_effect=counting_get_batch),
+            patch.object(
+                qm,
+                "mark_queue_item_as_errored",
+                side_effect=OperationalError("UPDATE queue", {}, Exception()),
+            ),
+            patch(
+                "src.deriver.queue_manager.process_representation_batch",
+                side_effect=ValueError("bad batch"),
+            ),
+        ):
+            await asyncio.wait_for(
+                qm.process_work_unit(work_unit_key, worker_id), timeout=10
+            )
+
+        assert batch_fetches == 1
+        items = await self._fetch_items(db_session, work_unit_key)
+        assert all(not item.processed for item in items)
+        assert await self._aqs_rows(db_session, work_unit_key) == 0
+
     async def test_counter_cleared_after_success(
         self,
         db_session: AsyncSession,

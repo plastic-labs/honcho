@@ -21,7 +21,7 @@ from logging import getLogger
 from typing import Any, Literal
 from typing import cast as py_cast
 
-from sqlalchemy import Select, Text, cast, select, update
+from sqlalchemy import ColumnElement, Select, Text, and_, cast, select, update
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, array
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
@@ -30,15 +30,20 @@ from sqlalchemy.sql.functions import func
 
 from src import models, schemas
 from src.cache.client import safe_cache_delete
+from src.crud.lifecycle import live_peer_row, live_session_peer_row, live_session_row
 from src.exceptions import (
     ConflictException,
     ResourceNotFoundException,
     ValidationException,
 )
 from src.telemetry.events import ScopeCreatedEvent, emit
+from src.utils.filter import apply_filter
+from src.utils.path_params import schema_from_path
 from src.utils.scopes import (
     SCOPE_KIND,
+    SCOPE_PEER_PREFIX,
     is_scope_peer,
+    scope_name_from_peer,
     scope_peer_name,
 )
 from src.utils.types import GetOrCreateResult
@@ -128,7 +133,7 @@ async def get_or_create_scopes(
             scope peers
     """
     ws_result = await get_or_create_workspace(
-        db, schemas.WorkspaceCreate(name=workspace_name)
+        db, schema_from_path(schemas.WorkspaceCreate, "workspace_id", workspace_name)
     )
 
     peer_names = {scope_peer_name(s.name): s for s in scopes}
@@ -136,6 +141,7 @@ async def get_or_create_scopes(
         select(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.Peer.name.in_(peer_names.keys()))
+        .where(live_peer_row())
     )
     result = await db.execute(stmt)
     existing_peers: list[models.Peer] = list(result.scalars().all())
@@ -212,20 +218,44 @@ async def get_or_create_scopes(
     )
 
 
+def _scope_name_column() -> ColumnElement[str]:
+    """The unprefixed scope name of a scope peer, as a SQL expression.
+
+    Filtering on this rather than ``Peer.name`` keeps a name filter about the
+    name the client knows: ``{"icontains": "sco"}`` must not match every scope
+    through the reserved ``scope.`` prefix.
+    """
+    return func.substr(models.Peer.name, len(SCOPE_PEER_PREFIX) + 1, type_=Text)
+
+
 async def get_scopes(
     workspace_name: str,
     reverse: bool = False,
+    filters: dict[str, Any] | None = None,
 ) -> Select[tuple[models.Peer]]:
     """Build a scope list query, ordered by creation time.
 
     Requires both halves via ``scope_peer_clause`` (reserved name prefix AND the
     internal kind flag), so a peer carrying a forged ``configuration`` cannot
     inject itself into the scope list.
+
+    Args:
+        workspace_name: Name of the workspace
+        reverse: Whether to return the newest scopes first
+        filters: Optional filters. ``id`` matches the unprefixed scope name;
+            ``created_at`` and ``metadata`` work as on other lists.
+
+    Returns:
+        Select for the workspace's scope peers
     """
     stmt = (
         select(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
         .where(scope_peer_clause())
+        .where(live_peer_row())
+    )
+    stmt = apply_filter(
+        stmt, models.Peer, filters, column_overrides={"id": _scope_name_column()}
     )
     if reverse:
         return stmt.order_by(models.Peer.created_at.desc(), models.Peer.id.desc())
@@ -256,6 +286,7 @@ async def get_scope_or_raise(
         select(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.Peer.name == scope_peer_name(scope_name))
+        .where(live_peer_row())
     )
     if peer is None or not is_scope_peer(peer.name, peer.internal_metadata):
         raise ResourceNotFoundException(
@@ -305,6 +336,7 @@ async def resolve_scope_peers(
         select(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.Peer.name.in_(peer_names))
+        .where(live_peer_row())
     )
     peers_by_name = {peer.name: peer for peer in result.scalars().all()}
 
@@ -347,6 +379,73 @@ async def resolve_scope_session_union(
     return union
 
 
+def _active_scope_membership() -> ColumnElement[bool]:
+    """Join condition: a ``SessionPeer`` row is an active membership of a scope.
+
+    The one definition every scope membership read builds on: the member list,
+    the per-scope count, and the session list's ``scope`` filter,
+    ``in_no_scope`` and ``include_scopes``. It also joins the row to its
+    ``Session``, so it serves as a join's ON clause or as the WHERE of a
+    subquery correlated to an outer ``Session``.
+
+    A membership counts when the row has no ``left_at``; the session is active,
+    so an archived session is in no scope's list or count; the session, peer
+    and workspace are live; and the peer is a real scope (reserved name AND
+    kind flag), so a peer squatting on the ``scope.`` prefix never counts.
+    """
+    return and_(
+        models.SessionPeer.workspace_name == models.Session.workspace_name,
+        models.SessionPeer.session_name == models.Session.name,
+        models.SessionPeer.left_at.is_(None),
+        models.Session.is_active == True,  # noqa: E712
+        live_session_row(),
+        live_session_peer_row(),
+        select(models.Peer.id)
+        .where(models.Peer.workspace_name == models.SessionPeer.workspace_name)
+        .where(models.Peer.name == models.SessionPeer.peer_name)
+        .where(scope_peer_clause())
+        # Always this membership's own peer, never one from an enclosing query
+        .correlate_except(models.Peer)
+        .exists(),
+    )
+
+
+async def count_scope_sessions(
+    db: AsyncSession,
+    workspace_name: str,
+    scope_names: Sequence[str],
+) -> dict[str, int]:
+    """
+    Count each scope's member sessions, as ``get_scope_sessions`` lists them.
+
+    One query for the whole batch, so the scope list can attach counts to a
+    page without a query per scope.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        scope_names: Unprefixed names of existing scopes
+
+    Returns:
+        Each requested scope name mapped to its member session count
+    """
+    counts: dict[str, int] = dict.fromkeys(scope_names, 0)
+    if not counts:
+        return counts
+    result = await db.execute(
+        select(models.SessionPeer.peer_name, func.count())
+        .join(models.Session, _active_scope_membership())
+        .where(models.SessionPeer.workspace_name == workspace_name)
+        .where(
+            models.SessionPeer.peer_name.in_([scope_peer_name(name) for name in counts])
+        )
+        .group_by(models.SessionPeer.peer_name)
+    )
+    for peer_name, count in result.all():
+        counts[scope_name_from_peer(peer_name)] = count
+    return counts
+
+
 async def get_scope_sessions(
     workspace_name: str,
     scope_name: str,
@@ -374,21 +473,72 @@ async def get_scope_sessions(
     """
     stmt = (
         select(models.Session)
-        .join(
-            models.SessionPeer,
-            (models.Session.name == models.SessionPeer.session_name)
-            & (models.Session.workspace_name == models.SessionPeer.workspace_name),
-        )
+        .join(models.SessionPeer, _active_scope_membership())
         .where(models.SessionPeer.workspace_name == workspace_name)
         .where(models.SessionPeer.peer_name == scope_peer_name(scope_name))
-        .where(models.SessionPeer.left_at.is_(None))
-        .where(models.Session.is_active == True)  # noqa: E712
     )
     if reverse:
         return stmt.order_by(
             models.SessionPeer.joined_at.desc(), models.Session.id.desc()
         )
     return stmt.order_by(models.SessionPeer.joined_at.asc(), models.Session.id.asc())
+
+
+def session_in_scope_clause(scope_name: str | None) -> ColumnElement[bool]:
+    """Correlated EXISTS: the outer ``Session`` is an active member of a scope.
+
+    Membership as ``_active_scope_membership`` defines it, like every other
+    scope membership read.
+
+    Args:
+        scope_name: Unprefixed scope name, or None to match membership of any
+            scope. Callers check a named scope exists (``get_scope_or_raise``).
+
+    Returns:
+        A clause to put in the WHERE of a query over ``models.Session``
+    """
+    stmt = select(models.SessionPeer.peer_name).where(_active_scope_membership())
+    if scope_name is not None:
+        stmt = stmt.where(models.SessionPeer.peer_name == scope_peer_name(scope_name))
+    return stmt.exists()
+
+
+async def get_session_scopes(
+    db: AsyncSession,
+    workspace_name: str,
+    session_names: Sequence[str],
+) -> dict[str, list[str]]:
+    """
+    Get the scopes each of the given sessions is an active member of.
+
+    One query for the whole batch, so the session list can attach scopes to a
+    page without a query per session.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_names: Names of the sessions to look up
+
+    Returns:
+        Each requested session name mapped to its unprefixed scope names, sorted;
+        a session in no scope maps to an empty list
+    """
+    scopes: dict[str, list[str]] = {name: [] for name in session_names}
+    if not scopes:
+        return scopes
+    result = await db.execute(
+        select(models.SessionPeer.session_name, models.SessionPeer.peer_name)
+        .join(models.Session, _active_scope_membership())
+        .where(models.SessionPeer.workspace_name == workspace_name)
+        .where(models.SessionPeer.session_name.in_(scopes))
+    )
+    for session_name, peer_name in result.all():
+        scopes[session_name].append(scope_name_from_peer(peer_name))
+    # Sorted here rather than by ORDER BY, so the order doesn't depend on the
+    # database's collation.
+    for names in scopes.values():
+        names.sort()
+    return scopes
 
 
 async def add_sessions_to_scope(
@@ -428,6 +578,7 @@ async def add_sessions_to_scope(
         .where(models.Session.workspace_name == workspace_name)
         .where(models.Session.name.in_(requested))
         .where(models.Session.is_active == True)  # noqa: E712
+        .where(live_session_row())
     )
     found = {row[0] for row in result.all()}
     missing = sorted(requested - found)
@@ -509,6 +660,91 @@ async def remove_session_from_scope(
         scope_peer=scope_peer_name(scope_name),
         session_name=session_name,
     )
+
+
+async def remove_sessions_from_scope(
+    db: AsyncSession,
+    workspace_name: str,
+    scope_name: str,
+    session_names: Sequence[str],
+) -> list[str]:
+    """
+    Remove sessions from a scope, ending each membership in one transaction.
+
+    The batch is all-or-nothing: if any named session does not exist, nothing
+    is removed. Sessions that are not members of the scope are ignored, and get
+    no ``scope_removal`` task, since there is nothing of theirs to reconcile.
+    Each session whose membership ended gets one, inserted in the same
+    transaction: a retry finds those sessions already gone, so a task lost
+    after the commit could never be recovered.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        scope_name: Unprefixed scope name
+        session_names: Names of existing sessions to remove
+
+    Returns:
+        The sessions whose membership this call ended, sorted
+
+    Raises:
+        ResourceNotFoundException: If the scope or any named session does not
+            exist
+    """
+    # Lazy import for the same circular-import reason as add_sessions_to_scope.
+    from src.deriver.enqueue import insert_scope_task
+
+    await get_scope_or_raise(db, workspace_name, scope_name)
+
+    requested = set(session_names)
+    result = await db.execute(
+        select(models.Session.name)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.name.in_(requested))
+        .where(models.Session.is_active == True)  # noqa: E712
+        .where(live_session_row())
+    )
+    missing = sorted(requested - {row[0] for row in result.all()})
+    if missing:
+        raise ResourceNotFoundException(
+            f"Session(s) {missing} not found in workspace {workspace_name}"
+        )
+
+    scope_peer = scope_peer_name(scope_name)
+    # Lock the active memberships in session order before ending them. Bulk add
+    # upserts the same rows one at a time in Python's sorted() order, so an
+    # unordered UPDATE here could lock them in scan order and deadlock against
+    # it. COLLATE "C" makes Postgres order the names by code point, as sorted()
+    # does; the database collation (e.g. en_US) would order them differently.
+    active = (
+        select(models.SessionPeer.session_name)
+        .where(models.SessionPeer.workspace_name == workspace_name)
+        .where(models.SessionPeer.peer_name == scope_peer)
+        .where(models.SessionPeer.session_name.in_(requested))
+        .where(models.SessionPeer.left_at.is_(None))
+        .order_by(models.SessionPeer.session_name.collate("C"))
+        .with_for_update()
+    )
+    removed = [row[0] for row in (await db.execute(active)).all()]
+    if removed:
+        await db.execute(
+            update(models.SessionPeer)
+            .where(models.SessionPeer.workspace_name == workspace_name)
+            .where(models.SessionPeer.peer_name == scope_peer)
+            .where(models.SessionPeer.session_name.in_(removed))
+            .where(models.SessionPeer.left_at.is_(None))
+            .values(left_at=func.now())
+        )
+    for session_name in removed:
+        await insert_scope_task(
+            db,
+            workspace_name,
+            task_type="scope_removal",
+            scope_peer=scope_peer,
+            session_name=session_name,
+        )
+    await db.commit()
+    return removed
 
 
 async def update_scope_backfill_status(

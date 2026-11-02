@@ -98,7 +98,7 @@ def default_before_send(event: Event, hint: Hint | None) -> Event | None:
         return None
 
     if isinstance(exc_value, HonchoException):
-        return _apply_policy(event, type(exc_value).sentry_policy)
+        return _apply_policy(event, exc_value.effective_sentry_policy())
 
     if isinstance(exc_value, StructuredOutputError):
         return _apply_policy(event, _STRUCTURED_OUTPUT_POLICY)

@@ -35,6 +35,7 @@ from src.cache.client import (
     safe_cache_set,
 )
 from src.config import settings
+from src.crud.lifecycle import live_session_peer_row, live_session_row
 from src.exceptions import (
     AuthenticationException,
     ConflictException,
@@ -44,6 +45,7 @@ from src.exceptions import (
 )
 from src.telemetry.events import SessionCreatedEvent, emit
 from src.utils.filter import apply_filter
+from src.utils.path_params import schema_from_path
 from src.utils.scopes import is_scope_peer, scope_peer_name
 from src.utils.types import GetOrCreateResult
 from src.vector_store import get_external_vector_store
@@ -55,7 +57,11 @@ from .peer import (
     scope_peer_clause,
     scope_peer_names,
 )
-from .scope import SCOPE_MEMBERSHIP_CONFIG, get_or_create_scopes
+from .scope import (
+    SCOPE_MEMBERSHIP_CONFIG,
+    get_or_create_scopes,
+    session_in_scope_clause,
+)
 from .workspace import get_or_create_workspace
 
 logger = getLogger(__name__)
@@ -107,6 +113,7 @@ async def _fetch_session(
         select(models.Session)
         .where(models.Session.workspace_name == workspace_name)
         .where(models.Session.name == session_name)
+        .where(live_session_row())
     )
     if obj is None:
         return None
@@ -165,6 +172,8 @@ async def get_sessions(
     workspace_name: str,
     filters: dict[str, Any] | None = None,
     reverse: bool = False,
+    scope_name: str | None = None,
+    in_no_scope: bool = False,
 ) -> Select[tuple[models.Session]]:
     """
     Get all active sessions in a workspace.
@@ -173,6 +182,9 @@ async def get_sessions(
         workspace_name: Name of the workspace
         filters: Optional filters to apply to the query
         reverse: If True, order by created_at descending; if False, ascending
+        scope_name: Only sessions that are active members of this unprefixed
+            scope. Callers check the scope exists (``get_scope_or_raise``).
+        in_no_scope: Only sessions that are not an active member of any scope
 
     Returns:
         Select statement for Session objects
@@ -181,7 +193,13 @@ async def get_sessions(
         select(models.Session)
         .where(models.Session.workspace_name == workspace_name)
         .where(models.Session.is_active == True)  # noqa: E712
+        .where(live_session_row())
     )
+
+    if scope_name is not None:
+        stmt = stmt.where(session_in_scope_clause(scope_name))
+    elif in_no_scope:
+        stmt = stmt.where(~session_in_scope_clause(None))
 
     stmt = apply_filter(stmt, models.Session, filters)
 
@@ -270,7 +288,7 @@ async def get_or_create_session(
         # Get or create workspace to ensure it exists
         ws_result = await get_or_create_workspace(
             db,
-            schemas.WorkspaceCreate(name=workspace_name),
+            schema_from_path(schemas.WorkspaceCreate, "workspace_id", workspace_name),
         )
 
         # Create honcho session
@@ -535,7 +553,9 @@ async def update_session(
     """
     honcho_session: models.Session = (
         await get_or_create_session(
-            db, schemas.SessionCreate(name=session_name), workspace_name=workspace_name
+            db,
+            schema_from_path(schemas.SessionCreate, "session_id", session_name),
+            workspace_name=workspace_name,
         )
     ).resource
 
@@ -756,6 +776,18 @@ async def delete_session(
                         f"Failed to delete document vectors from {namespace}: {e}"
                     )
 
+        # Delete SessionPeer associations before the documents. A scope_removal
+        # task locks the scope's membership row and then updates this session's
+        # documents; taking the same rows in the opposite order here could
+        # deadlock against it. Nothing references session_peers, so this is
+        # safe ahead of the rows below, and all of it commits together.
+        await db.execute(
+            delete(models.SessionPeer).where(
+                models.SessionPeer.session_name == session_name,
+                models.SessionPeer.workspace_name == workspace_name,
+            )
+        )
+
         # Delete Document entries associated with this session in batches
         conclusions_deleted = await _batch_delete_matching(
             db,
@@ -776,14 +808,6 @@ async def delete_session(
                 models.Message.workspace_name == workspace_name,
             ],
             batch_size=5000,
-        )
-
-        # Delete SessionPeer associations
-        await db.execute(
-            delete(models.SessionPeer).where(
-                models.SessionPeer.session_name == session_name,
-                models.SessionPeer.workspace_name == workspace_name,
-            )
         )
 
         # Finally, delete the session itself
@@ -1036,6 +1060,7 @@ async def get_peers_from_session(
         .where(models.SessionPeer.session_name == session_name)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.SessionPeer.left_at.is_(None))  # Only active peers
+        .where(live_session_peer_row())
         # models.Peer is already in the FROM via the join above, so the clause
         # composes directly — no correlated exists() as in the SessionPeer-only
         # UPDATE statements elsewhere in this module.
@@ -1072,6 +1097,7 @@ async def is_peer_in_session(
         .where(models.SessionPeer.session_name == session_name)
         .where(models.SessionPeer.peer_name == peer_name)
         .where(models.SessionPeer.left_at.is_(None))
+        .where(live_session_peer_row())
         .limit(1)
     )
     return result is not None
@@ -1434,6 +1460,7 @@ async def get_peer_config(
         models.SessionPeer.workspace_name == workspace_name,
         models.SessionPeer.session_name == session_name,
         models.SessionPeer.peer_name == peer_id,
+        live_session_peer_row(),
     )
     result = await db.execute(stmt)
     session_peer = result.scalar_one_or_none()

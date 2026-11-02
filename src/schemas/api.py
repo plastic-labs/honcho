@@ -147,7 +147,13 @@ class WorkspaceGet(WorkspaceBase):
 
 class WorkspaceUpdate(WorkspaceBase):
     metadata: _SanitizedMetadata | None = None
-    configuration: WorkspaceConfiguration | None = None
+    configuration: WorkspaceConfiguration | None = Field(
+        default=None,
+        description=(
+            "Replaces the entire workspace configuration. Send {} to clear explicit "
+            "settings and use system defaults. Omit or send null to leave unchanged."
+        ),
+    )
 
 
 class Workspace(WorkspaceBase):
@@ -199,7 +205,7 @@ class PeerSpec(PeerBase):
 
     name: str
     metadata: _SanitizedMetadata | None = None
-    configuration: dict[str, Any] | None = None
+    configuration: Annotated[dict[str, Any], NulStripped] | None = None
 
 
 class PeerCreate(PeerSpec):
@@ -224,7 +230,7 @@ class PeerGet(PeerBase):
 
 class PeerUpdate(PeerBase):
     metadata: _SanitizedMetadata | None = None
-    configuration: dict[str, Any] | None = None
+    configuration: Annotated[dict[str, Any], NulStripped] | None = None
 
 
 class Peer(PeerBase):
@@ -452,6 +458,29 @@ class SessionGet(SessionBase):
     filters: dict[str, Any] | None = None
 
 
+class WorkspaceSessionGet(SessionGet):
+    """Options for the workspace session list, which can also filter by scope."""
+
+    scope: _ScopeName | None = Field(
+        default=None,
+        description=(
+            "Only return sessions that are active members of this (unprefixed) "
+            "scope. Returns 404 if the scope does not exist."
+        ),
+    )
+    in_no_scope: bool = Field(
+        default=False,
+        description="Only return sessions that are not an active member of any scope.",
+    )
+
+    @model_validator(mode="after")
+    def validate_scope_options(self) -> Self:
+        """Refuse `scope` together with `in_no_scope`; they select disjoint sets."""
+        if self.scope is not None and self.in_no_scope:
+            raise ValueError("`scope` and `in_no_scope` are mutually exclusive")
+        return self
+
+
 class SessionUpdate(SessionBase):
     metadata: _SanitizedMetadata | None = None
     configuration: SessionConfiguration | None = None
@@ -473,6 +502,15 @@ class Session(SessionBase):
     )
     configuration: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime.datetime
+    scopes: list[str] | None = Field(
+        default=None,
+        # Only present when the session list is asked for it (`include_scopes`).
+        exclude_if=lambda v: v is None,
+        description=(
+            "Names of the scopes this session is an active member of. Only "
+            "returned by the session list when `include_scopes` is true."
+        ),
+    )
 
     model_config = ConfigDict(  # pyright: ignore
         from_attributes=True, populate_by_name=True
@@ -576,6 +614,15 @@ class Scope(BaseModel):
         default_factory=dict, serialization_alias="metadata"
     )
     created_at: datetime.datetime
+    session_count: int | None = Field(
+        default=None,
+        # Only present when the scope list is asked for it (`include_session_count`).
+        exclude_if=lambda v: v is None,
+        description=(
+            "Number of sessions that are active members of this scope. Only "
+            "returned by the scope list when `include_session_count` is true."
+        ),
+    )
 
     @field_validator("name", mode="after")
     @classmethod
@@ -586,6 +633,33 @@ class Scope(BaseModel):
 
     model_config = ConfigDict(  # pyright: ignore
         from_attributes=True, populate_by_name=True
+    )
+
+
+class ScopeGet(BaseModel):
+    """Options for the scope list."""
+
+    filters: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Filters on the scope list. `id` matches the unprefixed scope name, "
+            'e.g. `{"id": {"icontains": "sup"}}`; `created_at` and `metadata` '
+            "work as on other lists."
+        ),
+    )
+
+
+class ScopeSessionsRemove(BaseModel):
+    """Schema for removing sessions from a scope."""
+
+    session_ids: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description=(
+            "IDs of existing sessions to remove from the scope. Sessions that "
+            "are not members are ignored."
+        ),
     )
 
 
@@ -652,6 +726,15 @@ class Conclusion(BaseModel):
             "'deductive', supporting sources for 'inductive', conflicting "
             "conclusions for 'contradiction'. Empty for 'explicit' conclusions, "
             "which derive from messages rather than from other conclusions."
+        ),
+    )
+    source_message_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "IDs of the messages the deriver cited as evidence for an 'explicit' "
+            "conclusion, in citation order. Evidence may include messages from "
+            "peers other than the observed one. None for derived levels and for "
+            "conclusions written before citations were recorded."
         ),
     )
     times_derived: int = Field(
@@ -823,10 +906,22 @@ class DialecticOptions(BaseModel):
     )
     query: Annotated[
         str,
-        Field(min_length=1, max_length=10000, description="Dialectic API Prompt"),
+        Field(
+            min_length=1,
+            max_length=settings.DIALECTIC.MAX_QUERY_LENGTH,
+            description="Dialectic API Prompt",
+        ),
         NulStripped,
     ]
-    stream: bool = False
+    stream: bool = Field(
+        default=False,
+        description=(
+            "Return the answer as a text/event-stream. The answer arrives when "
+            + "the agent finishes gathering context, usually as a single chunk; "
+            + "only an answer synthesized at the tool-call limit streams as it "
+            + "is generated."
+        ),
+    )
     reasoning_level: ReasoningLevel = Field(
         default="low",
         description="Level of reasoning to apply: minimal, low, medium, high, or max",
@@ -857,7 +952,15 @@ class WorkspaceChatOptions(BaseModel):
         Field(min_length=1, max_length=10000, description="Workspace chat prompt"),
         NulStripped,
     ]
-    stream: bool = False
+    stream: bool = Field(
+        default=False,
+        description=(
+            "Return the answer as a text/event-stream. The answer arrives when "
+            + "the agent finishes gathering context, usually as a single chunk; "
+            + "only an answer synthesized at the tool-call limit streams as it "
+            + "is generated."
+        ),
+    )
     reasoning_level: ReasoningLevel = Field(
         default="low",
         description="Level of reasoning to apply: minimal, low, medium, high, or max",

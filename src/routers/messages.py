@@ -11,7 +11,9 @@ from fastapi import (
     Query,
     UploadFile,
 )
+from fastapi.exceptions import RequestValidationError
 from fastapi_pagination.bases import AbstractParams
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -91,12 +93,20 @@ async def parse_upload_form(
             logger.warning(f"Failed to parse created_at: {created_at}")
             parsed_created_at = None
 
-    return schemas.MessageUploadCreate(
-        peer_id=peer_id,
-        metadata=parsed_metadata,
-        configuration=parsed_configuration,
-        created_at=parsed_created_at,
-    )
+    try:
+        return schemas.MessageUploadCreate(
+            peer_id=peer_id,
+            metadata=parsed_metadata,
+            configuration=parsed_configuration,
+            created_at=parsed_created_at,
+        )
+    except ValidationError as exc:
+        raise RequestValidationError(
+            [
+                {**error, "loc": ("body", *error["loc"])}
+                for error in exc.errors(include_url=False, include_input=False)
+            ]
+        ) from None
 
 
 @router.post(

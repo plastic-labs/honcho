@@ -170,7 +170,10 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         ),
     ) -> None:
         """
-        Set configuration on the server and update the cache.
+        Replace the entire workspace configuration and update the cache.
+
+        Pass an empty WorkspaceConfiguration (or {}) to clear explicit settings
+        and use system defaults. Settings omitted from the object are removed.
 
         Args:
             configuration: A WorkspaceConfiguration object with configuration settings.
@@ -180,6 +183,10 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             body={"configuration": configuration.model_dump(exclude_none=True)},
         )
         self._configuration = configuration  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    def refresh(self) -> None:
+        """Refresh metadata and typed configuration together from the server."""
+        self.get_configuration()
 
     @property
     def base_url(self) -> str:
@@ -543,6 +550,9 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         page: int = 1,
         size: int = 50,
         reverse: bool = False,
+        scope: str | None = None,
+        in_no_scope: bool = False,
+        include_scopes: bool = False,
     ) -> SyncPage[SessionResponse, Session]:
         """
         Get all sessions in the current workspace.
@@ -552,17 +562,32 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             page: Page number (1-indexed). Default: 1.
             size: Number of items per page. Default: 50.
             reverse: If True, reverses the default ordering. Default: False.
+            scope: Only list sessions in this scope. The server returns 404 if the
+                scope does not exist.
+            in_no_scope: Only list sessions that are in no scope. Mutually
+                exclusive with ``scope``.
+            include_scopes: Set each returned session's ``scopes`` to the names of
+                the scopes it is in. Default: False.
 
         Returns:
             A SyncPage of Session objects representing all sessions in the workspace.
         """
         self._ensure_workspace()
+        body: dict[str, Any] = {}
+        if filters:
+            body["filters"] = filters
+        if scope is not None:
+            body["scope"] = scope
+        if in_no_scope:
+            body["in_no_scope"] = True
         query: dict[str, Any] = {"page": page, "size": size}
         if reverse:
             query["reverse"] = "true"
+        if include_scopes:
+            query["include_scopes"] = "true"
         data = self._http.post(
             routes.sessions_list(self.workspace_id),
-            body={"filters": filters} if filters else None,
+            body=body or None,
             query=query,
         )
 
@@ -576,16 +601,15 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 created_at=session.created_at,
                 uid=session.uid,
                 is_active=session.is_active,
+                scopes=session.scopes,
             )
 
         def fetch_next(next_page: int) -> SyncPage[SessionResponse, Session]:
             """Fetch the next page while preserving filters and ordering."""
-            next_query: dict[str, Any] = {"page": next_page, "size": size}
-            if reverse:
-                next_query["reverse"] = "true"
+            next_query = {**query, "page": next_page}
             next_data = self._http.post(
                 routes.sessions_list(self.workspace_id),
-                body={"filters": filters} if filters else None,
+                body=body or None,
                 query=next_query,
             )
             return SyncPage(next_data, SessionResponse, transform, fetch_next)
@@ -679,18 +703,24 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
 
     def scopes(
         self,
+        filters: dict[str, object] | None = None,
         *,
         page: int = 1,
         size: int = 50,
         reverse: bool = False,
+        include_session_count: bool = False,
     ) -> SyncPage[ScopeResponse, Scope]:
         """
         Get all scopes in the current workspace.
 
         Args:
+            filters: Optional filter criteria. ``id`` matches the scope name, e.g.
+                ``{"id": {"icontains": "sup"}}``.
             page: Page number (1-indexed). Default: 1.
             size: Number of items per page. Default: 50.
             reverse: If True, reverses the default ordering. Default: False.
+            include_session_count: Set each returned scope's ``session_count``.
+                Default: False.
 
         Returns:
             A SyncPage of Scope objects representing all scopes in the workspace.
@@ -698,10 +728,17 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         self._ensure_workspace()
 
         def fetch(next_page: int) -> dict[str, Any]:
+            """Fetch one page of scopes with the caller's filters and options."""
             query: dict[str, Any] = {"page": next_page, "size": size}
             if reverse:
                 query["reverse"] = "true"
-            return self._http.post(routes.scopes_list(self.workspace_id), query=query)
+            if include_session_count:
+                query["include_session_count"] = "true"
+            return self._http.post(
+                routes.scopes_list(self.workspace_id),
+                body={"filters": filters} if filters else None,
+                query=query,
+            )
 
         def transform(scope: ScopeResponse) -> Scope:
             """Convert a scope API response into a Scope SDK object."""
@@ -710,6 +747,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 self,
                 metadata=scope.metadata,
                 created_at=scope.created_at,
+                session_count=scope.session_count,
             )
 
         def fetch_next(next_page: int) -> SyncPage[ScopeResponse, Scope]:

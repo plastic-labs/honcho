@@ -221,6 +221,11 @@ export interface SessionResponse {
   metadata: Record<string, unknown>
   configuration: SessionConfigApi
   created_at: string
+  /**
+   * Active scope names. Only returned by the session list with
+   * `include_scopes`.
+   */
+  scopes?: string[]
 }
 
 export interface SessionCreateParams {
@@ -235,6 +240,11 @@ export interface ScopeResponse {
   id: string
   metadata: Record<string, unknown>
   created_at: string
+  /**
+   * Active member sessions. Only returned by the scope list with
+   * `include_session_count`.
+   */
+  session_count?: number
 }
 
 /**
@@ -378,6 +388,7 @@ export interface ConclusionResponse {
   session_id: string | null
   level: ConclusionLevel
   source_ids?: string[] | null
+  source_message_ids?: string[] | null
   times_derived?: number
   created_at: string
 }

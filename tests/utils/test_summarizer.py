@@ -6,11 +6,14 @@ normal LLM responses, ensuring fallback logic prevents empty summaries
 from being persisted.
 """
 
+import asyncio
 import hashlib
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from src.config import settings
 from src.exceptions import EmptySummaryError
@@ -20,6 +23,7 @@ from src.utils.summarizer import (
     Summary,
     SummaryType,
     _create_summary,  # pyright: ignore[reportPrivateUsage]
+    _distinct_ngram_ratio,  # pyright: ignore[reportPrivateUsage]
     create_long_summary,
     create_short_summary,
     summarize_if_needed,
@@ -569,3 +573,307 @@ async def test_refused_summary_escapes_parallel_long_and_short():
         )
 
     assert mock_create.await_count == 2
+
+
+async def _run_combined_boundary(
+    failures: dict[SummaryType, BaseException],
+) -> Mock:
+    """Run a combined long/short boundary where each type raises its failure."""
+    configuration = Mock()
+    configuration.summary.enabled = True
+    configuration.summary.messages_per_long_summary = 60
+    configuration.summary.messages_per_short_summary = 20
+
+    async def create_and_save(*_args: Any, **kwargs: Any) -> None:
+        failure = failures.get(kwargs["summary_type"])
+        if failure is not None:
+            raise failure
+
+    with patch(
+        "src.utils.summarizer._create_and_save_summary",
+        side_effect=create_and_save,
+    ) as mock_create:
+        try:
+            await summarize_if_needed(
+                "workspace",
+                "session",
+                message_id=1,
+                message_seq_in_session=60,
+                message_public_id="msg_1",
+                configuration=configuration,
+            )
+        finally:
+            # Both summaries run to completion even when one fails.
+            assert mock_create.await_count == 2
+    return mock_create
+
+
+def _deadlock() -> OperationalError:
+    """A DB error the queue classifies as transient (and so retries)."""
+
+    class FakePGError(Exception):
+        sqlstate: str = "40P01"
+
+    return OperationalError("UPDATE sessions", {}, FakePGError())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing", [SummaryType.LONG, SummaryType.SHORT])
+async def test_combined_boundary_raises_any_failure(failing: SummaryType):
+    """A fetch or save failure used to be dropped at a combined boundary, so
+    the queue item completed and that summary was lost for good (DEV-3159)."""
+    with pytest.raises(ValueError, match="save failed"):
+        await _run_combined_boundary({failing: ValueError("save failed")})
+
+
+@pytest.mark.asyncio
+async def test_combined_boundary_prefers_transient_failure(
+    caplog: pytest.LogCaptureFixture,
+):
+    """When both fail, the transient error is raised so the queue retries,
+    and the terminal one is logged at error with its summary type."""
+    with (
+        caplog.at_level(logging.WARNING, logger="src.utils.summarizer"),
+        pytest.raises(OperationalError),
+    ):
+        await _run_combined_boundary(
+            {SummaryType.LONG: ValueError("bad"), SummaryType.SHORT: _deadlock()}
+        )
+
+    levels = {
+        record.getMessage().split()[0]: record.levelno
+        for record in caplog.records
+        if "summary failed" in record.getMessage()
+    }
+    assert levels == {"LONG": logging.ERROR, "SHORT": logging.WARNING}
+
+
+@pytest.mark.asyncio
+async def test_combined_boundary_prefers_refusal_over_other_terminal_failure():
+    """Between terminal failures the refusal still reaches the queue (DEV-2307)."""
+    with pytest.raises(EmptySummaryError):
+        await _run_combined_boundary(
+            {SummaryType.LONG: ValueError("bad"), SummaryType.SHORT: _refusal()}
+        )
+
+
+@pytest.mark.asyncio
+async def test_combined_boundary_propagates_cancellation():
+    with pytest.raises(asyncio.CancelledError):
+        await _run_combined_boundary({SummaryType.SHORT: asyncio.CancelledError()})
+
+
+# =============================================================================
+# NUL in model output (DEV-2535): jsonb rejects it, and every check must judge
+# the text that gets stored.
+# =============================================================================
+
+_SUMMARY_CREATORS = {
+    SummaryType.SHORT: "src.utils.summarizer.create_short_summary",
+    SummaryType.LONG: "src.utils.summarizer.create_long_summary",
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("summary_type", [SummaryType.SHORT, SummaryType.LONG])
+class TestCreateSummaryStripsNul:
+    async def test_nul_is_stripped_from_content(self, summary_type: SummaryType):
+        """NUL is removed; literal backslash text and provider token counts are kept."""
+        mock_response = HonchoLLMCallResponse(
+            content="User greeted\x00 the assistant. Literal \\u0000 stays.",
+            input_tokens=100,
+            output_tokens=15,
+            finish_reasons=["stop"],
+        )
+        with patch(
+            _SUMMARY_CREATORS[summary_type],
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            summary, is_fallback, in_tok, out_tok = await _call_create_summary(
+                summary_type
+            )
+
+        assert is_fallback is False
+        assert (
+            summary["content"] == "User greeted the assistant. Literal \\u0000 stays."
+        )
+        assert summary["token_count"] == 15
+        assert (in_tok, out_tok) == (100, 15)
+
+    async def test_nul_only_content_uses_fallback(self, summary_type: SummaryType):
+        """NUL-only output is empty, so it takes the never-saved fallback."""
+        mock_response = HonchoLLMCallResponse(
+            content="\x00 \x00\n",
+            input_tokens=100,
+            output_tokens=3,
+            finish_reasons=["stop"],
+        )
+        with patch(
+            _SUMMARY_CREATORS[summary_type],
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            summary, is_fallback, in_tok, out_tok = await _call_create_summary(
+                summary_type
+            )
+
+        assert is_fallback is True
+        assert "Conversation with 5 messages" in summary["content"]
+        assert (in_tok, out_tok) == (0, 0)
+
+    async def test_nul_cannot_disguise_degenerate_output(
+        self, summary_type: SummaryType
+    ):
+        """NUL placed differently in each repeat makes the raw n-grams distinct;
+        the degeneration check must still see the repetition."""
+        # 60 repeats of a 7-word loop (420 words); a NUL count with period 61
+        # never lines up with the loop, so every raw 4-gram is distinct.
+        words = ("Human. Forever. Human. Always. Human value. Always. " * 60).split()
+        masked = " ".join(word + "\x00" * (i % 61) for i, word in enumerate(words))
+        assert _distinct_ngram_ratio(masked) > 0.35  # would pass unstripped
+
+        mock_response = HonchoLLMCallResponse(
+            content=masked,
+            input_tokens=20000,
+            output_tokens=4000,
+            finish_reasons=["max_tokens"],
+        )
+        with patch(
+            _SUMMARY_CREATORS[summary_type],
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            summary, is_fallback, _, _ = await _call_create_summary(summary_type)
+
+        assert is_fallback is True
+        assert "Human" not in summary["content"]
+
+
+def _provider_response(content: str, finish_reason: str) -> HonchoLLMCallResponse[str]:
+    return HonchoLLMCallResponse(
+        content=content, output_tokens=1, finish_reasons=[finish_reason]
+    )
+
+
+def _inner(*responses: HonchoLLMCallResponse[str]) -> AsyncMock:
+    """Stand in for `honcho_llm_call_inner`: answer with `responses` in turn
+    (repeating the last), running the caller's `validate_response` hook on each
+    as the executor does."""
+    queue = list(responses)
+
+    def answer(*_args: Any, **kwargs: Any) -> HonchoLLMCallResponse[str]:
+        response = queue.pop(0) if len(queue) > 1 else queue[0]
+        if (validate := kwargs.get("validate_response")) is not None:
+            validate(response)
+        return response
+
+    return AsyncMock(side_effect=answer)
+
+
+async def _run_summary_call(summary_type: SummaryType) -> HonchoLLMCallResponse[str]:
+    if summary_type is SummaryType.SHORT:
+        return await create_short_summary(_FORMATTED_MESSAGES, _INPUT_TOKENS)
+    return await create_long_summary(_FORMATTED_MESSAGES)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("summary_type", [SummaryType.SHORT, SummaryType.LONG])
+@pytest.mark.parametrize("finish_reason", ["length", "max_tokens", "SAFETY"])
+async def test_degraded_nul_only_summary_is_retried(
+    summary_type: SummaryType, finish_reason: str
+):
+    """The real retried call refuses truncated/filtered NUL-only output and
+    returns the next attempt's summary."""
+    inner = _inner(
+        _provider_response("\x00\x00", finish_reason),
+        _provider_response("A real summary.", "stop"),
+    )
+    with (
+        patch("src.llm.api.honcho_llm_call_inner", new=inner),
+        patch("asyncio.sleep", new=AsyncMock()),
+    ):
+        result = await _run_summary_call(summary_type)
+
+    assert result.content == "A real summary."
+    assert inner.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("summary_type", [SummaryType.SHORT, SummaryType.LONG])
+async def test_degraded_nul_only_summary_exhausts_to_refusal(
+    summary_type: SummaryType,
+):
+    """If every attempt is truncated NUL-only output, the refusal propagates."""
+    inner = _inner(_provider_response("\x00", "length"))
+    with (
+        patch("src.llm.api.honcho_llm_call_inner", new=inner),
+        patch("asyncio.sleep", new=AsyncMock()),
+        pytest.raises(EmptySummaryError),
+    ):
+        await _run_summary_call(summary_type)
+
+    assert inner.await_count > 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finish_reasons", [["stop"], []])
+async def test_clean_nul_only_summary_is_not_retried(finish_reasons: list[str]):
+    """A clean (or unreported) stop with NUL-only output passes the hook on the
+    first attempt and lands on the unsaved fallback."""
+    inner = _inner(
+        HonchoLLMCallResponse(
+            content="\x00", output_tokens=1, finish_reasons=finish_reasons
+        )
+    )
+    with (
+        # conftest stubs the module-level creator; restore the real one so the
+        # hook and the provider call actually run.
+        patch("src.utils.summarizer.create_short_summary", new=create_short_summary),
+        patch("src.llm.api.honcho_llm_call_inner", new=inner),
+        patch("asyncio.sleep", new=AsyncMock()),
+    ):
+        summary, is_fallback, _, _ = await _call_create_summary(SummaryType.SHORT)
+
+    assert inner.await_count == 1
+    assert is_fallback is True
+    assert "\x00" not in summary["content"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("parse_class", "finish_reason", "recorded"),
+    [("content_filtered", "content_filter", True), ("truncated", "length", False)],
+)
+async def test_filtered_summary_is_counted_as_a_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+    parse_class: str,
+    finish_reason: str,
+    recorded: bool,
+):
+    """Sentry drops a filtered summary, so the rejection counter is where it
+    shows up. A truncated one stays a Sentry error and is not counted."""
+    monkeypatch.setattr(settings.METRICS, "ENABLED", True)
+    refusal = EmptySummaryError.for_prompt(
+        "prompt",
+        parse_class=parse_class,
+        finish_reasons=[finish_reason],
+        output_tokens=0,
+    )
+    with (
+        patch(
+            "src.utils.summarizer.create_short_summary",
+            new_callable=AsyncMock,
+            side_effect=refusal,
+        ),
+        patch("src.utils.summarizer.prometheus_metrics") as mock_metrics,
+        pytest.raises(EmptySummaryError),
+    ):
+        await _call_create_summary(SummaryType.SHORT)
+
+    if recorded:
+        mock_metrics.record_summary_rejection.assert_called_once_with(
+            summary_type="short", reason="content_filtered"
+        )
+    else:
+        mock_metrics.record_summary_rejection.assert_not_called()

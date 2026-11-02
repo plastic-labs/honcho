@@ -1,6 +1,6 @@
 [project]
 name = "honcho-ai"
-version = "2.7.0"
+version = "2.8.0"
 description = "Official DX Optimized Python SDK for Honcho"
 dynamic = ["readme"]
 license = "Apache-2.0"
@@ -11,6 +11,8 @@ dependencies = [
     "httpx>=0.28.0, <1",
     "pydantic>=2.0.0, <3",
     "typing-extensions>=4.12.0; python_version < \"3.12\"",
+    # First bundle without emSign ECC Root CA - G3 (eMudhra intermediate key compromise)
+    "certifi>=2026.10.19",
 ]
 requires-python = ">= 3.8"
 classifiers = [
