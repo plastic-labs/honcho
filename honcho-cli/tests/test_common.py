@@ -137,6 +137,8 @@ def test_refresh_does_not_persist_env_overrides(cfg_path, monkeypatch):
     assert on_disk["hosts"] == original["hosts"]
     assert on_disk["oauth"]["accessToken"] == "new-at"
     assert on_disk["oauth"]["refreshToken"] == "new-rt"
+    # bound to the override it was minted against, not left hostless for the saved URL
+    assert on_disk["oauth"]["host"] == "http://127.0.0.1:9000"
 
 
 def test_env_api_key_beats_live_oauth_grant(cfg_path, monkeypatch):

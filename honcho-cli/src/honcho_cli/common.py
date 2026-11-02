@@ -88,12 +88,15 @@ def maybe_refresh_token(config: CLIConfig) -> None:
             # it's reused; keep the old one if the server didn't rotate
             # (refresh_token is optional). Only the grant is written: config
             # carries env overrides that must not land in the shared file.
+            # Bind it to the host it was refreshed against, so a legacy
+            # hostless grant refreshed under HONCHO_BASE_URL isn't later sent
+            # to the saved environmentUrl.
             config.oauth = OAuthTokens.from_response(
                 refreshed,
                 client_id=tokens.client_id,
                 scope_fallback=tokens.scope,
                 refresh_fallback=tokens.refresh_token,
-                host=tokens.host,
+                host=config.base_url,
             )
             config.save(oauth_only=True)
             return
