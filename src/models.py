@@ -33,6 +33,7 @@ from sqlalchemy.orm import (
     with_loader_criteria,
 )
 from sqlalchemy.orm import Session as OrmSession
+from sqlalchemy.schema import conv
 from sqlalchemy.sql import ColumnElement, func
 
 from src.config import settings
@@ -175,16 +176,19 @@ session_peers_table = Table(
     ForeignKeyConstraint(
         ["workspace_name", "tenant_id"],
         ["workspaces.name", "workspaces.tenant_id"],
+        name="fk_session_peers_ws_tenant_workspaces",
     ),
     # Composite foreign key constraint for sessions
     ForeignKeyConstraint(
         ["session_name", "workspace_name", "tenant_id"],
         ["sessions.name", "sessions.workspace_name", "sessions.tenant_id"],
+        name="fk_session_peers_session_ws_tenant_sessions",
     ),
     # Composite foreign key constraint for peers
     ForeignKeyConstraint(
         ["peer_name", "workspace_name", "tenant_id"],
         ["peers.name", "peers.workspace_name", "peers.tenant_id"],
+        name="fk_session_peers_peer_ws_tenant_peers",
     ),
     # This index serves the sessions of one peer. tenant_id is first, so the scan
     # stays in one tenant (revision b3c890d417d1).
@@ -300,7 +304,7 @@ class Workspace(Base, TenantPartitioned):
         PrimaryKeyConstraint("tenant_id", "id"),
         UniqueConstraint("tenant_id", "name"),
         CheckConstraint("length(id) = 21", name="id_length"),
-        CheckConstraint("length(name) <= 512", name="name_length"),
+        CheckConstraint("length(name) <= 512", name=conv("ck_apps_name_length")),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
         {"postgresql_partition_by": "HASH (tenant_id)"},
     )
@@ -349,6 +353,7 @@ class Peer(Base, TenantPartitioned):
         ForeignKeyConstraint(
             ["workspace_name", "tenant_id"],
             ["workspaces.name", "workspaces.tenant_id"],
+            name="fk_peers_ws_tenant_workspaces",
         ),
         # This index serves the peer list of one workspace, in the order of the list.
         Index(
@@ -359,7 +364,7 @@ class Peer(Base, TenantPartitioned):
             "id",
         ),
         CheckConstraint("length(id) = 21", name="id_length"),
-        CheckConstraint("length(name) <= 512", name="name_length"),
+        CheckConstraint("length(name) <= 512", name=conv("ck_users_name_length")),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
         {"postgresql_partition_by": "HASH (tenant_id)"},
     )
@@ -413,6 +418,7 @@ class Session(Base, TenantPartitioned):
         ForeignKeyConstraint(
             ["workspace_name", "tenant_id"],
             ["workspaces.name", "workspaces.tenant_id"],
+            name="fk_sessions_ws_tenant_workspaces",
         ),
         # This index serves the session list of one workspace, in the order of the list.
         Index(
@@ -479,11 +485,13 @@ class Message(Base, TenantPartitioned):
         ForeignKeyConstraint(
             ["session_name", "workspace_name", "tenant_id"],
             ["sessions.name", "sessions.workspace_name", "sessions.tenant_id"],
+            name="fk_messages_session_ws_tenant_sessions",
         ),
         # Composite foreign key constraint for peers
         ForeignKeyConstraint(
             ["peer_name", "workspace_name", "tenant_id"],
             ["peers.name", "peers.workspace_name", "peers.tenant_id"],
+            name="fk_messages_peer_ws_tenant_peers",
         ),
         # This index holds the messages of one session in id order, with created_at
         # and token_count. Session context and the deriver batch get the token_count
@@ -509,6 +517,7 @@ class Message(Base, TenantPartitioned):
             "workspace_name",
             "session_name",
             "seq_in_session",
+            name="uq_messages_tenant_id_ws_session_seq",
         ),
         # region ai
         # GIN can't lead with a scalar column without btree_gin; the table is
@@ -643,6 +652,7 @@ class MessageEmbedding(Base, TenantPartitioned):
             ["tenant_id", "message_id"],
             ["messages.tenant_id", "messages.public_id"],
             ondelete="CASCADE",
+            name="fk_msg_emb_tenant_message_messages",
         ),
         # region ai
         # Composite FK to workspaces, for parity with the other tenant-scoped
@@ -651,14 +661,17 @@ class MessageEmbedding(Base, TenantPartitioned):
         ForeignKeyConstraint(
             ["workspace_name", "tenant_id"],
             ["workspaces.name", "workspaces.tenant_id"],
+            name="fk_msg_emb_ws_tenant_workspaces",
         ),
         ForeignKeyConstraint(
             ["session_name", "workspace_name", "tenant_id"],
             ["sessions.name", "sessions.workspace_name", "sessions.tenant_id"],
+            name="fk_msg_emb_session_ws_tenant_sessions",
         ),
         ForeignKeyConstraint(
             ["peer_name", "workspace_name", "tenant_id"],
             ["peers.name", "peers.workspace_name", "peers.tenant_id"],
+            name="fk_msg_emb_peer_ws_tenant_peers",
         ),
         # region ai
         # message_id-leading: the reconciler's lookups on message_id are
@@ -745,6 +758,7 @@ class Collection(Base, TenantPartitioned):
             "observer",
             "observed",
             "workspace_name",
+            name="uq_collections_tenant_id_observer_observed_ws",
         ),
         Index(
             "ix_collections_dream_due",
@@ -761,16 +775,19 @@ class Collection(Base, TenantPartitioned):
         ForeignKeyConstraint(
             ["workspace_name", "tenant_id"],
             ["workspaces.name", "workspaces.tenant_id"],
+            name="fk_collections_ws_tenant_workspaces",
         ),
         # Composite foreign key constraint for observer peer
         ForeignKeyConstraint(
             ["observer", "workspace_name", "tenant_id"],
             ["peers.name", "peers.workspace_name", "peers.tenant_id"],
+            name="fk_collections_observer_ws_tenant_peers",
         ),
         # Composite foreign key constraint for observed peer
         ForeignKeyConstraint(
             ["observed", "workspace_name", "tenant_id"],
             ["peers.name", "peers.workspace_name", "peers.tenant_id"],
+            name="fk_collections_observed_ws_tenant_peers",
         ),
         {"postgresql_partition_by": "HASH (tenant_id)"},
     )
@@ -913,6 +930,7 @@ class Document(Base, TenantPartitioned):
         ForeignKeyConstraint(
             ["workspace_name", "tenant_id"],
             ["workspaces.name", "workspaces.tenant_id"],
+            name="fk_documents_ws_tenant_workspaces",
         ),
         # Composite foreign key constraint for collections
         ForeignKeyConstraint(
@@ -923,21 +941,25 @@ class Document(Base, TenantPartitioned):
                 "collections.workspace_name",
                 "collections.tenant_id",
             ],
+            name="fk_documents_collection_tenant_collections",
         ),
         # Composite foreign key constraint for observer peer
         ForeignKeyConstraint(
             ["observer", "workspace_name", "tenant_id"],
             ["peers.name", "peers.workspace_name", "peers.tenant_id"],
+            name="fk_documents_observer_ws_tenant_peers",
         ),
         # Composite foreign key constraint for observed peer
         ForeignKeyConstraint(
             ["observed", "workspace_name", "tenant_id"],
             ["peers.name", "peers.workspace_name", "peers.tenant_id"],
+            name="fk_documents_observed_ws_tenant_peers",
         ),
         # Composite foreign key constraint for sessions
         ForeignKeyConstraint(
             ["session_name", "workspace_name", "tenant_id"],
             ["sessions.name", "sessions.workspace_name", "sessions.tenant_id"],
+            name="fk_documents_session_ws_tenant_sessions",
         ),
         # This index serves the reads of one collection in created_at order: the
         # collection list, the recent documents and the dreams. It replaces
@@ -1062,11 +1084,13 @@ class DocumentSource(Base, TenantPartitioned):
             ["derived_id", "tenant_id"],
             ["documents.id", "documents.tenant_id"],
             ondelete="CASCADE",
+            name="fk_document_sources_derived_tenant_documents",
         ),
         # Composite foreign key constraint for workspaces
         ForeignKeyConstraint(
             ["workspace_name", "tenant_id"],
             ["workspaces.name", "workspaces.tenant_id"],
+            name="fk_document_sources_ws_tenant_workspaces",
         ),
         # Reverse traversal ("who derived from me?") — replaces the old GIN index
         Index("ix_document_sources_source_id", "source_id", "workspace_name"),
@@ -1106,17 +1130,20 @@ class ConclusionSourceMessage(Base, TenantPartitioned):
             ["conclusion_id", "tenant_id"],
             ["documents.id", "documents.tenant_id"],
             ondelete="CASCADE",
+            name="fk_conclusion_source_messages_conclusion_tenant_documents",
         ),
         # Composite foreign key constraint for the cited message
         ForeignKeyConstraint(
             ["message_id", "tenant_id"],
             ["messages.public_id", "messages.tenant_id"],
             ondelete="CASCADE",
+            name="fk_conclusion_source_messages_message_tenant_messages",
         ),
         # Composite foreign key constraint for workspaces
         ForeignKeyConstraint(
             ["workspace_name", "tenant_id"],
             ["workspaces.name", "workspaces.tenant_id"],
+            name="fk_conclusion_source_messages_ws_tenant_workspaces",
         ),
         Index(
             "ix_conclusion_source_messages_message_id", "message_id", "workspace_name"
@@ -1342,9 +1369,13 @@ class WebhookEndpoint(Base, TenantPartitioned):
         ForeignKeyConstraint(
             ["workspace_name", "tenant_id"],
             ["workspaces.name", "workspaces.tenant_id"],
+            name="fk_webhook_ws_tenant_workspaces",
         ),
         Index("ix_webhook_endpoints_tenant_workspace", "tenant_id", "workspace_name"),
-        CheckConstraint("length(url) <= 2048", name="url_length"),
+        CheckConstraint(
+            "length(url) <= 2048",
+            name=conv("ck_webhook_endpoints_webhook_endpoint_url_length"),
+        ),
         {"postgresql_partition_by": "HASH (tenant_id)"},
     )
 

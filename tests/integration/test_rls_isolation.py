@@ -16,6 +16,7 @@ proving anything.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Generator
 from pathlib import Path
 
@@ -33,15 +34,21 @@ from sqlalchemy_utils import (
 
 from src.config import settings
 from src.models import MESSAGE_TEXT_MATCHES, MESSAGE_TEXT_MATCHES_ARGS
-from tests.conftest import CONNECTION_URI
+from tests.conftest import (
+    CONNECTION_URI,
+    _get_test_db_url,  # pyright: ignore[reportPrivateUsage]
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ALEMBIC_INI = _REPO_ROOT / "alembic.ini"
 _MIGRATIONS_DIR = _REPO_ROOT / "migrations"
 
-_RLS_TEST_DB_URL: URL = CONNECTION_URI.set(database="rls_isolation_tests")
+# Per xdist worker: the database and the two roles are cluster-global names, so
+# two workers running this module would otherwise create and drop each other's.
+_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "master")
+_RLS_TEST_DB_URL: URL = _get_test_db_url(_WORKER, tag="rls")
 
-# The ten tenant-scoped data tables that carry RLS in the cloud deploy.
+# The eleven tenant-scoped data tables that carry RLS in the cloud deploy.
 # The tenants registry and the queue/active_queue_sessions service tables are
 # excluded by design — service paths read them across tenants.
 _RLS_TABLES: tuple[str, ...] = (
@@ -53,17 +60,18 @@ _RLS_TABLES: tuple[str, ...] = (
     "collections",
     "documents",
     "document_sources",
+    "conclusion_source_messages",
     "session_peers",
     "webhook_endpoints",
 )
 
 # A non-owner, non-superuser role the assertions assume via SET ROLE: RLS is
 # bypassed by the owner/superuser, so the checks must run as an ordinary grantee.
-_RLS_ROLE = "honcho_rls_probe"
+_RLS_ROLE = f"honcho_rls_probe_{_WORKER}"
 
 # A role with USAGE on the schema and nothing else: it must not be able to call
 # the SECURITY DEFINER search function.
-_STRANGER_ROLE = "honcho_rls_stranger"
+_STRANGER_ROLE = f"honcho_rls_stranger_{_WORKER}"
 
 
 def _new_id() -> str:
@@ -170,6 +178,10 @@ def rls_engine() -> Generator[Engine]:
             settings.DB.CONNECTION_URI = previous_uri
 
         _apply_rls_and_role(engine)
+        # Seed here, not in the first test that needs it: under xdist the tests of
+        # this module land on different workers, each with its own database.
+        _seed_two_tenants(engine)
+        _seed_same_named_workspaces(engine)
         yield engine
     finally:
         engine.dispose()
@@ -202,7 +214,6 @@ def _bind_tenant(conn: Connection, tenant: str) -> None:
 
 
 def test_rls_enforces_tenant_isolation(rls_engine: Engine) -> None:
-    _seed_two_tenants(rls_engine)
 
     raw = rls_engine.connect()
     conn = raw.execution_options(isolation_level="AUTOCOMMIT")
@@ -377,7 +388,6 @@ def _ids(rows: list[tuple[int, object, float]]) -> list[int]:
 
 
 def test_search_function_reads_only_the_bound_tenant(rls_engine: Engine) -> None:
-    _seed_same_named_workspaces(rls_engine)
 
     raw = rls_engine.connect()
     conn = raw.execution_options(isolation_level="AUTOCOMMIT")

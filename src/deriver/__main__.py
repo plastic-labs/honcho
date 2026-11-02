@@ -90,7 +90,9 @@ async def run_deriver():
         # telemetry buffer is still flushed if validation raises.
         # ai: the service engine — its namespace sample reads every tenant's workspaces, which RLS hides from the request role with no tenant bound
         await validate_embedding_schema(service_engine)
-        await validate_tenant_isolation(engine, instance_type="deriver")
+        await validate_tenant_isolation(
+            engine, instance_type="deriver", service_engine=service_engine
+        )
         await validate_queue_item_batches(engine)
         await main()
     finally:

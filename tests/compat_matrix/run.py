@@ -19,8 +19,10 @@ import argparse
 import functools
 import logging
 import os
+import re
 import sys
 import time
+import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +40,42 @@ from tests.compat_matrix.stack import Stack
 logger = logging.getLogger("compat_matrix")
 
 SERVICES = ("api-old", "api-new", "deriver-old", "deriver-new")
+
+_COMPAT_FILE = Path(__file__).resolve().parents[2] / "migrations" / "compat.toml"
+_VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+
+Version = tuple[int, int, int]
+
+
+def image_version(image: str) -> Version | None:
+    """The release version in an image reference's tag, or None (sha, latest, rc)."""
+    tag = image.rsplit(":", 1)[1] if ":" in image.rsplit("/", 1)[-1] else ""
+    match = _VERSION_RE.match(tag)
+    if match is None:
+        return None
+    major, minor, patch = (int(part) for part in match.groups())
+    return major, minor, patch
+
+
+def compat_floor(path: Path = _COMPAT_FILE) -> Version | None:
+    """``compat_floor`` from migrations/compat.toml: the oldest image the schema serves."""
+    try:
+        raw = str(tomllib.loads(path.read_text()).get("compat_floor", ""))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    match = _VERSION_RE.match(raw.strip())
+    if match is None:
+        return None
+    major, minor, patch = (int(part) for part in match.groups())
+    return major, minor, patch
+
+
+def below_floor(old_image: str, floor: Version | None) -> bool:
+    """True when the previous image predates the floor and must not run on the
+    candidate's schema: only the new image's pairings are then meaningful, and
+    the run proves the upgrade of the old image's data rather than coexistence."""
+    old = image_version(old_image)
+    return old is not None and floor is not None and old < floor
 
 
 @dataclass(frozen=True)
@@ -119,21 +157,33 @@ def migrate(stack: Stack) -> str:
     return revision
 
 
-def run_round(ctx: Context, report: Report, label: str, carry_writer: str) -> None:
+def run_round(
+    ctx: Context,
+    report: Report,
+    label: str,
+    carry_writer: str,
+    *,
+    new_only: bool = False,
+) -> None:
     """Every writer/worker pairing, re-reading the full ledger after each.
 
     The first pairing's worker is the image that did not write the work left
     queued by the previous phase, so queued work always crosses the swap.
+    ``new_only`` (the old image is below the compat floor) keeps just the
+    new-writer/new-worker pairing.
     """
-    first_worker = "deriver-new" if carry_writer == "old" else "deriver-old"
-    pairings = [("old", [first_worker]), ("new", [first_worker])]
-    pairings += [
-        (writer, [worker])
-        for writer in ("old", "new")
-        for worker in ("deriver-old", "deriver-new")
-        if worker != first_worker
-    ]
-    pairings.append(("new", ["deriver-old", "deriver-new"]))
+    if new_only:
+        pairings: list[tuple[str, list[str]]] = [("new", ["deriver-new"])]
+    else:
+        first_worker = "deriver-new" if carry_writer == "old" else "deriver-old"
+        pairings = [("old", [first_worker]), ("new", [first_worker])]
+        pairings += [
+            (writer, [worker])
+            for writer in ("old", "new")
+            for worker in ("deriver-old", "deriver-new")
+            if worker != first_worker
+        ]
+        pairings.append(("new", ["deriver-old", "deriver-new"]))
     for n, (writer, workers) in enumerate(pairings):
         tag = f"{label}{n}{writer}"
         name = f"{label}: write {writer}, process {'+'.join(workers)}"
@@ -187,6 +237,17 @@ def main() -> int:
     )
     report = Report()
     status = 1
+    floor = compat_floor()
+    new_only = below_floor(args.old_image, floor)
+    if new_only:
+        logger.warning(
+            "previous image %s is below compat_floor %s: the old image does not run"
+            + " on the candidate schema; running the new image's pairings only",
+            args.old_image,
+            ".".join(str(part) for part in floor or ()),
+        )
+    live_apis = [ctx.apis["new"]] if new_only else list(ctx.apis.values())
+    live_api_services = ("api-new",) if new_only else ("api-old", "api-new")
     try:
         stack.down()
         report.phase("bootstrap with old image", lambda: bootstrap(stack))
@@ -213,9 +274,9 @@ def main() -> int:
         if not any(partial.values()):
             report.check("backfill", ["partial backfill left nothing pending"])
 
-        stack.up("api-old", "api-new")
-        report.check("after migrate", ctx.ledger.verify(list(ctx.apis.values())))
-        run_round(ctx, report, "ra", carry_writer="old")
+        stack.up(*live_api_services)
+        report.check("after migrate", ctx.ledger.verify(live_apis))
+        run_round(ctx, report, "ra", carry_writer="old", new_only=new_only)
         enqueue_unprocessed(ctx, "racarry", "new")
         stack.stop(*SERVICES)
 
@@ -229,9 +290,9 @@ def main() -> int:
             [f"{name} still has {n} pending" for name, n in drained.items() if n],
         )
 
-        stack.up("api-old", "api-new")
-        report.check("after drain", ctx.ledger.verify(list(ctx.apis.values())))
-        run_round(ctx, report, "rb", carry_writer="new")
+        stack.up(*live_api_services)
+        report.check("after drain", ctx.ledger.verify(live_apis))
+        run_round(ctx, report, "rb", carry_writer="new", new_only=new_only)
 
         report.check(
             "queue",
@@ -269,7 +330,13 @@ def _write_summary(report: Report, args: argparse.Namespace, lineage: Lineage) -
     lines = [
         f"### Compatibility matrix ({lineage.name}): {verdict}",
         "",
-        f"Old `{args.old_image}`, new `{args.new_image}`, DB_SCHEMA `{lineage.db_schema}`.",
+        f"Old `{args.old_image}`, new `{args.new_image}`, DB_SCHEMA `{lineage.db_schema}`."
+        + (
+            " The old image is below `compat_floor`; only the new image ran on the"
+            + " migrated schema."
+            if below_floor(args.old_image, compat_floor())
+            else ""
+        ),
         "",
         "| Phase | Time |",
         "| --- | --- |",

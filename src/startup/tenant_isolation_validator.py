@@ -107,6 +107,7 @@ async def validate_tenant_isolation(
     *,
     instance_type: Literal["api", "deriver"],
     app_settings: AppSettings | None = None,
+    service_engine: AsyncEngine | None = None,
 ) -> None:
     """Fail boot on a multi-tenant half-state, or on a TENANT_ID the data lacks.
 
@@ -115,7 +116,9 @@ async def validate_tenant_isolation(
     Run after the DB pool is initialized and before serving traffic / processing
     the queue — the same placement as ``validate_embedding_schema``. The caller
     passes its own ``instance_type`` (the API lifespan ``"api"``, the deriver
-    entrypoint ``"deriver"``), the same way both label their metrics.
+    entrypoint ``"deriver"``), the same way both label their metrics. With
+    ``service_engine`` (the one ``service_db`` binds), its connecting role is
+    checked too: the cross-tenant paths need a role that bypasses RLS.
     """
     s = app_settings if app_settings is not None else settings
     if not s.MULTI_TENANT:
@@ -138,6 +141,9 @@ async def validate_tenant_isolation(
     _assert_rls_enforced(rls, schema=s.DB.SCHEMA)
     rolname, rolsuper, rolbypassrls = await _introspect_tenant_role_with_retry(engine)
     _assert_tenant_role_cannot_bypass_rls(rolname, rolsuper, rolbypassrls)
+    if service_engine is not None:
+        service_role = await _introspect_service_role_with_retry(service_engine)
+        _assert_service_role_bypasses_rls(*service_role)
     search_function = await _introspect_search_function_with_retry(engine, s.DB.SCHEMA)
     _assert_search_function_bypasses_rls(search_function, schema=s.DB.SCHEMA)
 
@@ -336,7 +342,7 @@ async def _introspect_tenant_role_with_retry(
             reraise=False,
         ):
             with attempt:
-                return await _introspect_tenant_role_once(engine)
+                return await _introspect_connecting_role_once(engine)
     except RetryError as e:
         underlying = e.last_attempt.exception()
         raise StartupValidationError(
@@ -346,16 +352,16 @@ async def _introspect_tenant_role_with_retry(
     raise StartupValidationError("tenant engine role introspection did not run")
 
 
-async def _introspect_tenant_role_once(engine: AsyncEngine) -> tuple[str, bool, bool]:
-    """Read whether the role the TENANT engine connects as can bypass RLS.
+async def _introspect_connecting_role_once(
+    engine: AsyncEngine,
+) -> tuple[str, bool, bool]:
+    """Read whether the role an engine connects as can bypass RLS.
 
     ``current_user`` (not ``session_user``) so this reflects the role RLS is
     actually evaluated against; the app never issues ``SET ROLE``, so the two
-    coincide for every connection this engine hands out. Deliberately run on
-    ``engine`` (the TENANT engine — the one ``tracked_db``/request/deriver
-    sessions bind ``app.tenant`` on and RLS policies are meant to constrain),
-    never on ``service_engine``: the service role is REQUIRED to bypass RLS
-    (see ``_assert_service_role_configured``) and must not trip this check.
+    coincide for every connection this engine hands out. The TENANT engine (the
+    one ``tracked_db``/request/deriver sessions bind ``app.tenant`` on) must NOT
+    bypass RLS; the service engine MUST (``_assert_service_role_bypasses_rls``).
     """
     query = text(
         """
@@ -367,6 +373,48 @@ async def _introspect_tenant_role_once(engine: AsyncEngine) -> tuple[str, bool, 
     async with engine.connect() as conn:
         row = (await conn.execute(query)).one()
         return row.rolname, row.rolsuper, row.rolbypassrls
+
+
+async def _introspect_service_role_with_retry(
+    engine: AsyncEngine,
+) -> tuple[str, bool, bool]:
+    """Return (rolname, rolsuper, rolbypassrls) for the SERVICE engine's connecting role."""
+    try:
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(_RETRY_ATTEMPTS),
+            wait=wait_fixed(_RETRY_BACKOFF_SECONDS),
+            retry=retry_if_exception_type(SQLAlchemyError),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=False,
+        ):
+            with attempt:
+                return await _introspect_connecting_role_once(engine)
+    except RetryError as e:
+        underlying = e.last_attempt.exception()
+        raise StartupValidationError(
+            f"could not validate the service engine's connecting role: {underlying}"
+        ) from underlying
+    raise StartupValidationError("service engine role introspection did not run")
+
+
+def _assert_service_role_bypasses_rls(
+    rolname: str, rolsuper: bool, rolbypassrls: bool
+) -> None:
+    """The service role must bypass RLS, or every cross-tenant path reads nothing."""
+    # region ai
+    # service_db never binds app.tenant, and a policy with no tenant bound matches
+    # zero rows. A service connection that is itself subject to RLS therefore makes
+    # the deriver claim, the reconciler and the dreamer silently do no work — the
+    # same outage _assert_service_role_configured refuses when the URI is unset.
+    # endregion
+    if rolsuper or rolbypassrls:
+        return
+    raise StartupValidationError(
+        f"DB_SERVICE_CONNECTION_URI connects as {rolname!r}, which neither is a"
+        + " superuser nor has BYPASSRLS: the cross-tenant service paths would run"
+        + " under RLS with no tenant bound and read zero rows. Point it at a role"
+        + " that bypasses RLS."
+    )
 
 
 def _assert_tenant_role_cannot_bypass_rls(
