@@ -22,7 +22,7 @@
 /src/cache/                  @akattelu @eisene
 /src/crud/                   @akattelu @eisene
 /migrations/                 @akattelu @eisene
-/src/llm/                    @akattelu @eisene
+/src/llm/                    @akattelu @eisene @jessdecker
 
 # Client-facing surfaces and API shape.
 /sdks/                       @ajspig @akattelu
@@ -43,17 +43,19 @@
 /Dockerfile                  @eisene @Rajat-Ahuja1997
 /docker-compose.yml.example  @eisene @Rajat-Ahuja1997
 /src/vector_store/           @eisene @Rajat-Ahuja1997
-/src/llm/backends/           @eisene @Rajat-Ahuja1997
+/src/llm/backends/           @eisene @jessdecker
 
 # Harness integrations shipped from this repo.
 /hermes-plugin-honcho/       @akattelu @erosika @ajspig
 /harness-plugin-core/        @akattelu @erosika @ajspig
+/kilo-honcho/                @akattelu @ajspig @erosika
+/integrations/               @akattelu @ajspig
 
 # Documentation and contributor-facing policy.
 /docs/                       @ajspig @akattelu
 /README.md                   @ajspig @akattelu
 /CONTRIBUTING.md             @akattelu @ajspig
-/SECURITY.md                 @Rajat-Ahuja1997 @ajspig
+/SECURITY.md                 @Rajat-Ahuja1997 @ajspig @akattelu
 
 # Reviewers auto-requested on changes under .github/ (workflows, this file,
 # templates).
@@ -62,4 +64,4 @@
 # CI-trigger allowlist only: this path matches no real file, so these people
 # are never auto-requested for review, but the workflow gates still pick
 # them up.
-/ci-trigger-allowlist @ajspig @courtlandleer @erosika @lowyelling @vintrocode
+/ci-trigger-allowlist @ajspig @courtlandleer @erosika @lowyelling
