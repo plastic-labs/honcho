@@ -5,13 +5,15 @@ from __future__ import annotations
 import json
 import os
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import typer
 from honcho_cli import common
 from honcho_cli.config import CLIConfig, OAuthTokens
+from honcho_cli.main import app
 from honcho_cli.oauth import OAuthFlowError, TokenResponse
+from typer.testing import CliRunner
 
 
 @pytest.fixture
@@ -93,6 +95,47 @@ def test_expired_token_refreshes_and_persists(cfg_path):
     on_disk = json.loads(cfg_path.read_text())["oauth"]
     assert on_disk["accessToken"] == "new-at"
     assert on_disk["refreshToken"] == "new-rt"
+
+
+def test_refresh_does_not_persist_env_api_key(cfg_path, monkeypatch):
+    """A refresh writes the new grant only, never the HONCHO_API_KEY overlay.
+
+    Sibling tools read ``apiKey`` from the shared file, so a leaked env key
+    silently moves them to another org.
+    """
+    original = {
+        "apiKey": "file-key",
+        "environmentUrl": "http://localhost:8000",
+        "oauth": {
+            "accessToken": "old-at",
+            "refreshToken": "old-rt",
+            "accessExpiresAt": time.time() - 100,
+            "clientId": "honcho-cli",
+            "scope": "write",
+            "host": "http://localhost:8000",
+        },
+        "hosts": {"harness": {"workspace": "harness-honcho"}},
+    }
+    cfg_path.write_text(json.dumps(original))
+    monkeypatch.setenv("HONCHO_API_KEY", "other-org-key")
+    rotated = TokenResponse(
+        access_token="new-at", refresh_token="new-rt", expires_in=3600, scope="write"
+    )
+    client = MagicMock()
+    client.workspaces.return_value = ["ws-a"]
+    with (
+        patch("honcho_cli.oauth.refresh_access_token", return_value=rotated),
+        patch("honcho_cli.common.Honcho", return_value=client),
+    ):
+        result = CliRunner().invoke(app, ["workspace", "list"])
+    assert result.exit_code == 0, result.output
+
+    on_disk = json.loads(cfg_path.read_text())
+    assert on_disk["apiKey"] == "file-key"
+    assert on_disk["environmentUrl"] == "http://localhost:8000"
+    assert on_disk["hosts"] == original["hosts"]
+    assert on_disk["oauth"]["accessToken"] == "new-at"
+    assert on_disk["oauth"]["refreshToken"] == "new-rt"
 
 
 def test_refresh_failure_exits(cfg_path):

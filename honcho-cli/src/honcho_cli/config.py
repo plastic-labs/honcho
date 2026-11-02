@@ -217,13 +217,18 @@ class CLIConfig:
 
         return config
 
-    def save(self) -> None:
+    def save(self, *, oauth_only: bool = False) -> None:
         """Write ``environmentUrl`` + credentials to config.json.
 
         Preserves unrelated top-level keys (``hosts``, ``sessions``,
         ``saveMessages``, ``sessionStrategy``, …) that other tools write.
         ``apiKey`` is written when set but never removed — sibling tools read
         it. The ``oauth`` block is CLI-owned and dropped when empty.
+
+        ``oauth_only`` writes just the ``oauth`` block. A config from
+        ``load()`` carries env overrides (``HONCHO_API_KEY``,
+        ``HONCHO_BASE_URL``), and a token refresh must not copy them into the
+        shared file, where sibling tools would pick them up.
         """
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -237,9 +242,10 @@ class CLIConfig:
             except (json.JSONDecodeError, OSError):
                 data = {}
 
-        data["environmentUrl"] = self.base_url
-        if self.api_key:
-            data["apiKey"] = self.api_key
+        if not oauth_only:
+            data["environmentUrl"] = self.base_url
+            if self.api_key:
+                data["apiKey"] = self.api_key
 
         if self.oauth and self.oauth.access_token:
             data["oauth"] = {

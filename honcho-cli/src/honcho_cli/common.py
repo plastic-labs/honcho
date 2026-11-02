@@ -83,7 +83,8 @@ def maybe_refresh_token(config: CLIConfig) -> None:
         if refreshed is not None:
             # rotation-safe: persist the (possibly new) refresh token before
             # it's reused; keep the old one if the server didn't rotate
-            # (refresh_token is optional)
+            # (refresh_token is optional). Only the grant is written: config
+            # carries env overrides that must not land in the shared file.
             config.oauth = OAuthTokens.from_response(
                 refreshed,
                 client_id=tokens.client_id,
@@ -91,7 +92,7 @@ def maybe_refresh_token(config: CLIConfig) -> None:
                 refresh_fallback=tokens.refresh_token,
                 host=tokens.host,
             )
-            config.save()
+            config.save(oauth_only=True)
             return
 
     if config.api_key:
