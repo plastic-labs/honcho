@@ -42,8 +42,10 @@ def _openai_turn(**fields: Any) -> HonchoLLMCallResponse[Any]:
 
 def _rendered(messages: list[ChatMessage]) -> list[dict[str, Any]]:
     """The history as the OpenAI backend receives it for the plan's model."""
-    return OpenAICodec().render(
-        messages, RenderTarget("openai", "deepseek-v4-pro", None)
+    return (
+        OpenAICodec()
+        .render(messages, RenderTarget("openai", "deepseek-v4-pro", None))
+        .messages
     )
 
 

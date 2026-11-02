@@ -15,7 +15,7 @@ from src.llm.messages import (
     UserMessage,
 )
 
-from . import RenderTarget, can_replay, group_tool_results
+from . import RenderedHistory, RenderTarget, can_replay, group_tool_results
 
 
 class GeminiCodec:
@@ -26,7 +26,7 @@ class GeminiCodec:
 
     def render(
         self, messages: Sequence[ChatMessage], target: RenderTarget
-    ) -> list[dict[str, Any]]:
+    ) -> RenderedHistory:
         rendered: list[dict[str, Any]] = []
         for item in group_tool_results(messages):
             if isinstance(item, list):
@@ -48,7 +48,7 @@ class GeminiCodec:
                 rendered.append({"role": item.role, "content": item.content})
             elif isinstance(item, AIMessage):
                 rendered.append(self._render_ai(item, target))
-        return rendered
+        return RenderedHistory(rendered)
 
     @staticmethod
     def _render_ai(message: AIMessage, target: RenderTarget) -> dict[str, Any]:

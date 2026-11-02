@@ -69,8 +69,10 @@ def _round(result: CompletionResult, origin: ModelOrigin) -> list[ChatMessage]:
 
 
 def _render(messages: list[ChatMessage], origin: ModelOrigin) -> list[dict[str, Any]]:
-    return profile_for(origin.transport, origin.model).codec.render(
-        messages, _target(origin)
+    return (
+        profile_for(origin.transport, origin.model)
+        .codec.render(messages, _target(origin))
+        .messages
     )
 
 
@@ -301,6 +303,54 @@ def test_gemini_signature_dropped_for_other_transports() -> None:
         "tool_use",
         "tool_use",
     ]
+
+
+def test_one_unsigned_thinking_block_withholds_every_thinking_block() -> None:
+    """A proxy can serve a round from another model under a Claude model name;
+    its thinking block has no signature, which Anthropic rejects, and dropping
+    only that block would invalidate the later ones. So none are sent, and the
+    turns keep their text and tool calls."""
+    codec = profile_for("anthropic", ANTHROPIC.model).codec
+    signed = codec.parse(
+        CompletionResult(
+            content="Looking.",
+            tool_calls=CALLS[:1],
+            thinking_blocks=[THINKING, REDACTED],
+        ),
+        ANTHROPIC,
+    )
+    unsigned = codec.parse(
+        CompletionResult(
+            tool_calls=[ToolCallResult(id="call_c", name="search_memory", input={})],
+            thinking_blocks=[{"type": "thinking", "thinking": "x", "signature": None}],
+        ),
+        ANTHROPIC,
+    )
+    history: list[ChatMessage] = [
+        UserMessage(content="What does she drink?"),
+        signed,
+        ToolMessage(tool_call_id="call_a", name="search_memory", content="tea"),
+        unsigned,
+        ToolMessage(tool_call_id="call_c", name="search_memory", content="none"),
+    ]
+
+    rendered = codec.render(history, _target(ANTHROPIC))
+
+    assert rendered.thinking_withheld
+    assert [m["content"] for m in rendered.messages if m["role"] == "assistant"] == [
+        [
+            {"type": "text", "text": "Looking."},
+            {
+                "type": "tool_use",
+                "id": "call_a",
+                "name": "search_memory",
+                "input": {"query": "tea"},
+            },
+        ],
+        [{"type": "tool_use", "id": "call_c", "name": "search_memory", "input": {}}],
+    ]
+    # Without the unsigned turn, the same history replays its thinking.
+    assert not codec.render(history[:3], _target(ANTHROPIC)).thinking_withheld
 
 
 @pytest.mark.parametrize("origin", [ANTHROPIC, OPENAI, GEMINI])

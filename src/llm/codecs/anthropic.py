@@ -16,17 +16,38 @@ from src.llm.messages import (
     UserMessage,
 )
 
-from . import RenderTarget, group_tool_results, replayable_reasoning
+from . import (
+    RenderedHistory,
+    RenderTarget,
+    group_tool_results,
+    replayable_reasoning,
+)
+
+
+def _unsigned(part: ReasoningPart) -> bool:
+    return part.kind == "anthropic_thinking" and not part.payload.get("signature")
 
 
 class AnthropicCodec:
     """Thinking blocks, text and `tool_use` blocks in one assistant turn; each
     round's results as `tool_result` blocks in one user turn. System messages
-    stay `{"role": "system"}` dicts, which the backend lifts into `system`."""
+    stay `{"role": "system"}` dicts, which the backend lifts into `system`.
+    One unsigned thinking block withholds every thinking block."""
 
     def render(
         self, messages: Sequence[ChatMessage], target: RenderTarget
-    ) -> list[dict[str, Any]]:
+    ) -> RenderedHistory:
+        # A thinking block without a signature is a turn served by another
+        # model behind a proxy under a Claude model name, so its origin can't
+        # vouch for it. Anthropic rejects the request with that block in it,
+        # and leaving out just that block would invalidate the ones after it
+        # on a preserved-thinking model, so every thinking block is left out.
+        withhold = any(
+            _unsigned(part)
+            for message in messages
+            if isinstance(message, AIMessage)
+            for part in replayable_reasoning(message, target)
+        )
         rendered: list[dict[str, Any]] = []
         for item in group_tool_results(messages):
             if isinstance(item, list):
@@ -47,12 +68,14 @@ class AnthropicCodec:
             elif isinstance(item, SystemMessage | UserMessage):
                 rendered.append({"role": item.role, "content": item.content})
             elif isinstance(item, AIMessage):
-                rendered.append(self._render_ai(item, target))
-        return rendered
+                rendered.append(self._render_ai(item, target, withhold))
+        return RenderedHistory(rendered, thinking_withheld=withhold)
 
     @staticmethod
-    def _render_ai(message: AIMessage, target: RenderTarget) -> dict[str, Any]:
-        reasoning = replayable_reasoning(message, target)
+    def _render_ai(
+        message: AIMessage, target: RenderTarget, withhold_thinking: bool
+    ) -> dict[str, Any]:
+        reasoning = [] if withhold_thinking else replayable_reasoning(message, target)
         if not message.tool_calls and not reasoning:
             return {"role": "assistant", "content": message.text or ""}
         blocks: list[dict[str, Any]] = [part.payload for part in reasoning]

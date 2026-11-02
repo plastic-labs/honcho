@@ -1,15 +1,18 @@
-"""Tool loops whose history moves between transports, through the real executor.
+"""Tool loops whose history holds turns from other models, through the real
+executor.
 
 The tool loop keeps one typed history and each attempt renders it for its own
 model. When a fallback on another transport answers a round, the primary's
 next round must still receive its own wire shape: no `role: "tool"` messages
 for Anthropic, no Anthropic content blocks for OpenAI, and no reasoning that
-only the producing provider can read.
+only the producing provider can read. A round a proxy served from another
+model under a Claude name, and a model with strict role order after tool
+results, are handled the same way: at render time.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -118,6 +121,7 @@ async def _run(
     retry_attempts: int = 1,
     budget_line: BudgetLine | None = None,
     final_call_tools: list[dict[str, Any]] | None = None,
+    thinking_budget_tokens: int | None = None,
 ) -> tuple[HonchoLLMCallResponse[Any], list[str]]:
     executed: list[str] = []
 
@@ -150,6 +154,7 @@ async def _run(
             retry_attempts=retry_attempts,
             budget_line=budget_line,
             final_call_tools=final_call_tools,
+            thinking_budget_tokens=thinking_budget_tokens,
         )
     return response, executed
 
@@ -230,3 +235,45 @@ async def test_dreamer_shaped_loop_reaches_synthesis_with_final_call_tools(
     assert [tool["name"] for tool in final["tools"]] == ["save"]
     assert "2 of 2 rounds used." in repr(final["messages"])
     assert "maximum number of tool calls" in repr(final["messages"][-1])
+
+
+def _thinking_in(messages: list[dict[str, Any]]) -> int:
+    blocks: list[dict[str, Any]] = [
+        block
+        for message in messages
+        if isinstance(message["content"], list)
+        for block in cast(list[dict[str, Any]], message["content"])
+    ]
+    return sum(block["type"] in {"thinking", "redacted_thinking"} for block in blocks)
+
+
+@pytest.mark.asyncio
+async def test_unsigned_thinking_from_a_proxy_round_is_withheld() -> None:
+    """A proxy serves round two from another model under the Claude name; its
+    thinking has no signature. Round three gets no thinking at all, and the
+    backend is told so it can configure thinking for that turn."""
+    unsigned = {"type": "thinking", "thinking": "now", "signature": None}
+    claude_round = _tool_turn("anthropic")
+    proxy_round = CompletionResult(
+        content="",
+        tool_calls=[ToolCallResult(id="call_proxy", name="search", input={})],
+        thinking_blocks=[unsigned],
+    )
+    backend = FakeBackend(
+        [claude_round, proxy_round, CompletionResult(content="She drinks tea.")]
+    )
+
+    response, _ = await _run(
+        {"anthropic": backend},
+        ModelConfig(model="claude-haiku-4-5", transport="anthropic", api_key="k"),
+        max_tool_iterations=3,
+        thinking_budget_tokens=2048,
+    )
+
+    assert response.content == "She drinks tea."
+    second, third = backend.calls[1], backend.calls[2]
+    assert _thinking_in(second["messages"]) == 1
+    assert "thinking_withheld" not in second["extra_params"]
+    assert _thinking_in(third["messages"]) == 0
+    assert third["extra_params"]["thinking_withheld"] is True
+    _assert_valid_for("anthropic", third["messages"])

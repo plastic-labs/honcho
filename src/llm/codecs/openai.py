@@ -18,7 +18,7 @@ from src.llm.messages import (
     UserMessage,
 )
 
-from . import RenderTarget, replayable_reasoning
+from . import RenderedHistory, RenderTarget, replayable_reasoning
 
 
 class OpenAICodec:
@@ -28,7 +28,7 @@ class OpenAICodec:
 
     def render(
         self, messages: Sequence[ChatMessage], target: RenderTarget
-    ) -> list[dict[str, Any]]:
+    ) -> RenderedHistory:
         rendered: list[dict[str, Any]] = []
         for message in messages:
             if isinstance(message, SystemMessage | UserMessage):
@@ -43,7 +43,7 @@ class OpenAICodec:
                 )
             else:
                 rendered.append(self._render_ai(message, target))
-        return rendered
+        return RenderedHistory(rendered)
 
     @staticmethod
     def _render_ai(message: AIMessage, target: RenderTarget) -> dict[str, Any]:

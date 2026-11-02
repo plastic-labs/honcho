@@ -267,7 +267,7 @@ async def test_live_anthropic_backend_continues_a_tool_loop_after_unsigned_think
             ),
         ],
         RenderTarget("anthropic", model_spec.model),
-    )
+    ).messages
 
     answer = await execute_completion(
         backend,

@@ -407,12 +407,22 @@ async def honcho_llm_call_inner(
     # transport's own shape.
     target = RenderTarget(provider, model, effective_config.base_url)
     codec = profile_for(provider, model).codec
-    wire_messages = codec.render(history, target)
+    rendered = codec.render(history, target)
+    wire_messages = rendered.messages
 
     # json_mode + verbosity are per-call transport toggles, not ModelConfig
     # knobs — they pass through extra_params. execute_completion merges
     # build_config_extra_params(effective_config) on top for top_p/seed/etc.
     call_extras: dict[str, Any] = {"json_mode": json_mode, "verbosity": verbosity}
+    if rendered.thinking_withheld:
+        logger.warning(
+            "Left replayed thinking out of the request to %s/%s: "
+            + "at least one replayed block has no signature",
+            provider,
+            model,
+        )
+        # The backend configures thinking for a turn that lost its own.
+        call_extras["thinking_withheld"] = True
 
     if stream:
         # Stream path: setup must run inside the awaited coroutine so it

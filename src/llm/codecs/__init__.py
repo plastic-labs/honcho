@@ -33,10 +33,21 @@ class RenderTarget:
     base_url: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class RenderedHistory:
+    """A history rendered for one target."""
+
+    messages: list[dict[str, Any]]
+    """The message dicts the target's backend accepts."""
+    thinking_withheld: bool = False
+    """Every replayed thinking block was left out because one could not be
+    verified, so the turn being continued arrives without its thinking."""
+
+
 class ProviderCodec(Protocol):
     def render(
         self, messages: Sequence[ChatMessage], target: RenderTarget
-    ) -> list[dict[str, Any]]:
+    ) -> RenderedHistory:
         """Render `messages` as the message dicts the target's backend accepts."""
         ...
 
@@ -91,6 +102,7 @@ def group_tool_results(
 __all__ = [
     "ProviderCodec",
     "RenderTarget",
+    "RenderedHistory",
     "can_replay",
     "group_tool_results",
     "replayable_reasoning",

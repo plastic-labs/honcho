@@ -228,4 +228,4 @@ def replay_tool_round(
     ]
     return codec.render(
         history, RenderTarget(config.transport, config.model, config.base_url)
-    )
+    ).messages
