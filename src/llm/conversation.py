@@ -387,7 +387,49 @@ def truncate_messages_to_fit(
     return result
 
 
+_THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
+
+
+def strip_thinking_blocks(
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Remove Anthropic `thinking` / `redacted_thinking` blocks from a history.
+
+    A thinking block replayed to a model that checks it against the request
+    prefix (see `ModelCapabilities.preserved_thinking`) fails once anything
+    before it changes. Every turn's text and tool_use blocks stay, so the
+    history remains valid without the reasoning those blocks carried.
+
+    Returns:
+        The history with the blocks removed (messages without any are reused
+        as-is, messages holding nothing else are dropped) and how many blocks
+        were removed.
+    """
+    removed = 0
+    result: list[dict[str, Any]] = []
+    for msg in messages:
+        content = as_list(msg.get("content"))
+        if content is None:
+            result.append(msg)
+            continue
+        kept = [
+            block
+            for block in content
+            if (entry := as_dict(block)) is None
+            or entry.get("type") not in _THINKING_BLOCK_TYPES
+        ]
+        if len(kept) == len(content):
+            result.append(msg)
+            continue
+        removed += len(content) - len(kept)
+        if kept:
+            # A message left with no content would be rejected; drop it.
+            result.append({**msg, "content": kept})
+    return result, removed
+
+
 __all__ = [
     "count_message_tokens",
+    "strip_thinking_blocks",
     "truncate_messages_to_fit",
 ]

@@ -1,0 +1,72 @@
+{
+  "description": "Workspace configuration replaces rather than merges; an empty object clears explicit settings without model calls.",
+  "workspace_config": {
+    "reasoning": {
+      "enabled": false
+    },
+    "summary": {
+      "enabled": true
+    }
+  },
+  "steps": [
+    {
+      "step_type": "query",
+      "target": "get_workspace_config",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "configuration": {
+              "reasoning": {
+                "enabled": false
+              },
+              "summary": {
+                "enabled": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step_type": "set_workspace_config",
+      "config": {
+        "summary": {
+          "enabled": false
+        }
+      }
+    },
+    {
+      "step_type": "query",
+      "target": "get_workspace_config",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "configuration": {
+              "summary": {
+                "enabled": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step_type": "set_workspace_config",
+      "config": {}
+    },
+    {
+      "step_type": "query",
+      "target": "get_workspace_config",
+      "assertions": [
+        {
+          "assertion_type": "json_match",
+          "key_value_pairs": {
+            "configuration": {}
+          }
+        }
+      ]
+    }
+  ]
+}

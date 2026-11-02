@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.8.0] - 2026-10-29
+
+### Added
+
+- `honcho.sessions()` takes `scope`, `inNoScope` and `includeScopes`. `scope` lists only that scope's sessions, `inNoScope: true` only sessions in no scope, and `includeScopes: true` sets `Session.scopes` (and `SessionResponse.scopes`) to the names of the scopes each listed session is in. Requires Honcho v3.5.0+ (#1477)
+- `honcho.scopes()` takes `filters` (e.g. `{ id: { icontains: 'sup' } }`, matching the scope name) and `includeSessionCount`. With `includeSessionCount: true`, `Scope.sessionCount` (and `ScopeResponse.session_count`) holds each listed scope's member session count. Requires Honcho v3.5.0+ (#1478)
+- `scope.removeSessions()` removes up to 100 sessions from a scope in one request. All-or-nothing if any session doesn't exist; sessions that aren't members are ignored. Requires Honcho v3.5.0+ (#1480)
+- `Conclusion.sourceMessageIds`: the messages the deriver cited as evidence for an explicit conclusion (Honcho v3.5.0+). Null for derived levels, and for conclusions recorded before citations existed until a later derivation of the same conclusion merges citations into them. Filter with `{ source_message_ids: { contains: '<message id>' } }` to find the conclusions that cite a message as evidence (#935)
+
+### Changed
+
+- `setConfiguration()` on the client replaces the whole workspace configuration (Honcho v3.5.0+), so `setConfiguration({})` clears explicit settings and uses system defaults; settings left out are removed (#1458)
+
 ## [2.7.0] - 2026-10-20
 
 ### Added

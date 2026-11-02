@@ -87,6 +87,7 @@ _RLS_REQUIRED_TABLES: tuple[str, ...] = (
     "collections",
     "documents",
     "document_sources",
+    "conclusion_source_messages",
     "session_peers",
     "webhook_endpoints",
 )

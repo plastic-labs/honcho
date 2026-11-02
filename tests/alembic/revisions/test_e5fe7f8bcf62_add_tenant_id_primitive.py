@@ -24,6 +24,7 @@ _TENANT_SCOPED = (
     "collections",
     "documents",
     "document_sources",
+    "conclusion_source_messages",
     "webhook_endpoints",
     "session_peers",
 )
@@ -137,6 +138,27 @@ def verify_add_tenant_id_primitive(verifier: MigrationVerifier) -> None:
     verifier.assert_constraint_exists(
         "document_sources",
         "fk_document_sources_derived_tenant_documents",
+        "foreign_key",
+    )
+
+    # conclusion_source_messages arrives from c4d8e2f6a1b3 keyed on documents.id
+    # and messages.public_id alone, and leaves keyed through the tenant too.
+    pk = verifier.get_inspector().get_pk_constraint(
+        "conclusion_source_messages", schema=schema
+    )
+    assert pk["constrained_columns"] == [
+        "tenant_id",
+        "conclusion_id",
+        "message_id",
+    ], f"conclusion_source_messages PK is {pk['constrained_columns']}"
+    verifier.assert_constraint_exists(
+        "conclusion_source_messages",
+        "fk_conclusion_source_messages_conclusion_tenant_documents",
+        "foreign_key",
+    )
+    verifier.assert_constraint_exists(
+        "conclusion_source_messages",
+        "fk_conclusion_source_messages_message_tenant_messages",
         "foreign_key",
     )
 

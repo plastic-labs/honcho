@@ -263,6 +263,9 @@ class Workspace(Base, TenantPartitioned):
     )
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
     name: Mapped[str] = mapped_column(TEXT)
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
@@ -313,6 +316,9 @@ class Peer(Base, TenantPartitioned):
         default=_default_tenant_id,
     )
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     name: Mapped[str] = mapped_column(TEXT, nullable=False)
     h_metadata: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
@@ -372,6 +378,9 @@ class Session(Base, TenantPartitioned):
         default=_default_tenant_id,
     )
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     name: Mapped[str] = mapped_column(TEXT)
     is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
     h_metadata: Mapped[dict[str, Any]] = mapped_column(
@@ -426,6 +435,9 @@ class Session(Base, TenantPartitioned):
 @final
 class Message(Base, TenantPartitioned):
     __tablename__: str = "messages"
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     tenant_id: Mapped[str] = mapped_column(
         TEXT,
         ForeignKey("tenants.tenant_id"),
@@ -715,15 +727,15 @@ class Collection(Base, TenantPartitioned):
         "Document", back_populates="collection", cascade="all, delete, delete-orphan"
     )
     workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
-    # Generation counter for the deletion lifecycle barrier
-    deletion_generation: Mapped[int] = mapped_column(
-        Integer, default=0, server_default=text("0")
-    )
     explicit_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0")
     )
     newest_explicit_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    # Generation counter for the deletion lifecycle barrier
+    deletion_generation: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0")
     )
 
     __table_args__ = (
@@ -864,6 +876,32 @@ class Document(Base, TenantPartitioned):
                 source_id=sid, position=i, workspace_name=self.workspace_name
             )
             for i, sid in enumerate(dict.fromkeys(value or []))
+        ]
+
+    # Messages the deriver cited as evidence for an explicit conclusion.
+    source_message_links: Mapped[list["ConclusionSourceMessage"]] = relationship(
+        "ConclusionSourceMessage",
+        order_by="ConclusionSourceMessage.position",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="selectin",
+    )
+
+    @property
+    def source_message_ids(self) -> list[str] | None:
+        """Public ids of the cited messages in citation order; None when uncited."""
+        if self.source_message_links:
+            return [link.message_id for link in self.source_message_links]
+        return None
+
+    @source_message_ids.setter
+    def source_message_ids(self, value: list[str] | None) -> None:
+        # Same constructor ordering caveat as source_ids: workspace_name first.
+        self.source_message_links = [
+            ConclusionSourceMessage(
+                message_id=mid, position=i, workspace_name=self.workspace_name
+            )
+            for i, mid in enumerate(dict.fromkeys(value or []))
         ]
 
     __table_args__ = (
@@ -1034,6 +1072,57 @@ class DocumentSource(Base, TenantPartitioned):
         Index("ix_document_sources_source_id", "source_id", "workspace_name"),
         CheckConstraint("length(source_id) = 21", name="source_id_length"),
         CheckConstraint("source_id ~ '^[A-Za-z0-9_-]+$'", name="source_id_format"),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
+    )
+
+
+@final
+class ConclusionSourceMessage(Base, TenantPartitioned):
+    """One evidence edge: conclusion_id cites message_id as evidence."""
+
+    __tablename__: str = "conclusion_source_messages"
+
+    tenant_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
+    )
+    conclusion_id: Mapped[str] = mapped_column(TEXT, nullable=False)
+    message_id: Mapped[str] = mapped_column(TEXT, nullable=False)
+    position: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    # Note: Foreign key relationships established via composite ForeignKeyConstraint below
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+
+    __table_args__ = (
+        # ai: tenant_id leads the all-natural-key PK and is the HASH partition key.
+        PrimaryKeyConstraint("tenant_id", "conclusion_id", "message_id"),
+        # Composite foreign key constraint for the citing document. A partitioned
+        # parent cannot be referenced by `id` alone: every unique key on it must
+        # include the partition key.
+        ForeignKeyConstraint(
+            ["conclusion_id", "tenant_id"],
+            ["documents.id", "documents.tenant_id"],
+            ondelete="CASCADE",
+        ),
+        # Composite foreign key constraint for the cited message
+        ForeignKeyConstraint(
+            ["message_id", "tenant_id"],
+            ["messages.public_id", "messages.tenant_id"],
+            ondelete="CASCADE",
+        ),
+        # Composite foreign key constraint for workspaces
+        ForeignKeyConstraint(
+            ["workspace_name", "tenant_id"],
+            ["workspaces.name", "workspaces.tenant_id"],
+        ),
+        Index(
+            "ix_conclusion_source_messages_message_id", "message_id", "workspace_name"
+        ),
+        CheckConstraint("length(message_id) = 21", name="message_id_length"),
+        CheckConstraint("message_id ~ '^[A-Za-z0-9_-]+$'", name="message_id_format"),
         {"postgresql_partition_by": "HASH (tenant_id)"},
     )
 

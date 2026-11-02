@@ -230,6 +230,7 @@ class QueryAction(TestStep):
         "get_context",
         "get_peer_card",
         "get_representation",
+        "get_workspace_config",
         "workspace_chat",
     ]
 

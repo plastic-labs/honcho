@@ -545,7 +545,8 @@ export class Peer {
    * Makes an API call to the Honcho dialectic endpoint to query either the peer's
    * global representation (all content associated with this peer) or their local
    * representation of another peer (what this peer knows about the target peer).
-   * The response is streamed back as it is generated.
+   * The response is streamed back as text chunks: usually a single chunk once the
+   * agent finishes, or as generated when it reaches its tool-call limit.
    *
    * @param query - The natural language question to ask
    * @param options.target - Optional target peer for local representation query. If provided,

@@ -105,7 +105,7 @@ jobs:
 
       - name: Run Tests
         run: >-
-          uv run pytest -x
+          uv run pytest -x --fuzz
           --cov=src --cov-report=term:skip-covered --cov-report=markdown:coverage.md
         env:
           DB_CONNECTION_URI: postgresql+psycopg://postgres:postgres@localhost:5432/test_db

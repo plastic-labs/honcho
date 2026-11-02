@@ -185,8 +185,7 @@ body:
     attributes:
       label: Additional context
       description: >
-        Links, one per line, each with a few words on why it's relevant: related issues or PRs, a
-        branch with a proposed fix, workarounds. Don't open a PR until a maintainer adds
-        `maintainer-approved` to this issue.
+        Links, one per line, each with a few words on why it's relevant: related issues or PRs,
+        workarounds.
     validations:
       required: false

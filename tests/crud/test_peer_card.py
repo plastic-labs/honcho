@@ -104,6 +104,25 @@ async def test_peer_card_empty_list(
 
 
 @pytest.mark.asyncio
+async def test_peer_card_strips_nul(
+    db_session: AsyncSession, sample_data: tuple[models.Workspace, models.Peer]
+):
+    """NUL is stripped before the jsonb write; free-form lines are kept as-is."""
+    workspace, peer = sample_data
+
+    await set_peer_card(
+        db_session,
+        workspace.name,
+        ["Free-form\x00 line", "\x00", "Literal \\u0000 text"],
+        observer=peer.name,
+        observed=peer.name,
+    )
+    assert await get_peer_card(
+        db_session, workspace.name, observer=peer.name, observed=peer.name
+    ) == ["Free-form line", "", "Literal \\u0000 text"]
+
+
+@pytest.mark.asyncio
 async def test_peer_card_multiple_lines(
     db_session: AsyncSession, sample_data: tuple[models.Workspace, models.Peer]
 ):

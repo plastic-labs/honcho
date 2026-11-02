@@ -9,7 +9,8 @@ from inspect import cleandoc as c
 from typing import Any, TypedDict
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import update
+from sqlalchemy import case, func, literal, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import schemas
@@ -30,13 +31,16 @@ from src.telemetry.events import AgentToolSummaryCreatedEvent, emit
 from src.telemetry.events.llm import CallPurpose
 from src.telemetry.logging import accumulate_metric
 from src.telemetry.prometheus.metrics import (
+    SUMMARY_REJECTION_CONTENT_FILTERED,
     SUMMARY_REJECTION_DEGENERATE,
     DeriverComponents,
     DeriverTaskTypes,
     TokenTypes,
 )
 from src.utils.formatting import custom_instructions_section, utc_now_iso
-from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
+from src.utils.retryable_errors import is_retryable_error
+from src.utils.sanitization import strip_nul
+from src.utils.tokens import estimate_tokens, tokenizer, track_deriver_input_tokens
 
 from .. import crud, models
 
@@ -256,7 +260,8 @@ def _refuse_degraded_empty_summary(
     summary is never saved, so accepting it would consume the boundary."""
 
     def validate(response: HonchoLLMCallResponse[Any]) -> None:
-        if str(response.content).strip():
+        # NUL-only output is empty once `_create_summary` strips it.
+        if strip_nul(str(response.content)).strip():
             return
         parse_class = degraded_response_parse_class(response)
         if parse_class is not None:
@@ -427,16 +432,20 @@ async def summarize_if_needed(
                 "count",
             )
 
-        results = await asyncio.gather(
+        # Every long boundary is also a short one under the default cadence, so
+        # this is how every long summary runs. Both finish before any failure is
+        # raised, so one failing never cancels the other.
+        long_result, short_result = await asyncio.gather(
             create_long_summary_task(),
             create_short_summary_task(),
             return_exceptions=True,
         )
-        # Every long boundary is also a short one under the default cadence,
-        # so a refused summary must escape here or it is silently dropped.
-        for result in results:
-            if isinstance(result, EmptySummaryError):
-                raise result
+        _raise_summary_failures(
+            {SummaryType.LONG: long_result, SummaryType.SHORT: short_result},
+            workspace_name=workspace_name,
+            session_name=session_name,
+            message_id=message_id,
+        )
     else:
         # If only one summary needs to be created, run individually
         if should_create_long:
@@ -475,6 +484,66 @@ async def summarize_if_needed(
             )
 
 
+def _raise_summary_failures(
+    results: dict[SummaryType, BaseException | None],
+    *,
+    workspace_name: str,
+    session_name: str,
+    message_id: int,
+) -> None:
+    """Log every failed summary from a combined boundary, then raise one.
+
+    A failure here used to be dropped unless it was an ``EmptySummaryError``, so
+    the queue item completed and the summary for that window was lost for good
+    (DEV-3159). Now any failure reaches the queue. A cancellation is re-raised
+    first. Otherwise a transient error wins over a terminal one, because only
+    transient errors are retried; the retry reruns both summaries, and one that
+    was already saved skips itself. Between terminal errors, an
+    ``EmptySummaryError`` wins, as before.
+
+    The raised failure is logged at warning, since the queue reports it. Any
+    other is logged at error, because it is reported nowhere else.
+
+    Args:
+        results: Each summary type's ``gather`` result, None when it succeeded
+        workspace_name: Workspace name, for the log line
+        session_name: Session name, for the log line
+        message_id: The boundary message's ID, for the log line
+    """
+    failures = {
+        summary_type: result
+        for summary_type, result in results.items()
+        if isinstance(result, BaseException)
+    }
+    if not failures:
+        return
+    for failure in failures.values():
+        if not isinstance(failure, Exception):
+            raise failure
+    # Transient first, then a refusal (raised here before DEV-3159), then the rest.
+    raised = min(
+        failures.values(),
+        key=lambda failure: (
+            0
+            if is_retryable_error(failure)
+            else 1
+            if isinstance(failure, EmptySummaryError)
+            else 2
+        ),
+    )
+    for summary_type, failure in failures.items():
+        logger.log(
+            logging.WARNING if failure is raised else logging.ERROR,
+            "%s summary failed for message %s in session %s (workspace %s)",
+            summary_type.name,
+            message_id,
+            session_name,
+            workspace_name,
+            exc_info=failure,
+        )
+    raise raised
+
+
 async def _create_and_save_summary(
     workspace_name: str,
     session_name: str,
@@ -496,6 +565,18 @@ async def _create_and_save_summary(
 
     logger.debug("Creating new %s summary", summary_type.name)
     summary_start = time.perf_counter()
+
+    # Prompt scaffold tokens, without messages or previous summary. Cheap and
+    # cached; used for the input budget below and for the telemetry after the
+    # call. Custom instructions are counted exactly, since they are caller text.
+    if summary_type == SummaryType.SHORT:
+        prompt_tokens = estimate_short_summary_prompt_tokens()
+    else:
+        prompt_tokens = estimate_long_summary_prompt_tokens()
+    if configuration.summary.custom_instructions:
+        prompt_tokens += _count_prompt_tokens(
+            custom_instructions_section(configuration.summary.custom_instructions)
+        )
 
     async with tracked_db("summary.fetch_data") as db:
         try:
@@ -533,14 +614,52 @@ async def _create_and_save_summary(
             logger.warning("No messages to summarize for message %s", message_id)
             return
 
+        # The window is chosen by message count, so it can outgrow the model's
+        # context window. Fit it to the input budget, dropping the oldest
+        # messages first (DEV-3043).
+        window_size = len(messages)
+        message_budget = (
+            settings.SUMMARY.MAX_INPUT_TOKENS
+            - prompt_tokens
+            - _count_prompt_tokens(previous_summary_text or "")
+            - _PROMPT_SLACK_TOKENS
+        )
+        messages, formatted_messages, clipped = _fit_messages_to_budget(
+            messages, message_budget
+        )
+        if not messages:
+            logger.warning(
+                "No room for messages in the %s summary for message %s: the "
+                + "prompt and previous summary use the whole input budget of %s "
+                + "tokens",
+                summary_type.name,
+                message_id,
+                settings.SUMMARY.MAX_INPUT_TOKENS,
+            )
+            return
+        if len(messages) < window_size:
+            logger.warning(
+                "Dropped the oldest %s of %s messages from the %s summary for "
+                + "message %s to stay under the input budget of %s tokens",
+                window_size - len(messages),
+                window_size,
+                summary_type.name,
+                message_id,
+                settings.SUMMARY.MAX_INPUT_TOKENS,
+            )
+
         # Extract values before closing session
-        formatted_messages = _format_messages(messages)
         last_message_id = messages[-1].id
         last_message_content_preview = messages[-1].content[:30]
         message_count = len(messages)
         source_message_ids = [message.public_id for message in messages]
 
-        messages_tokens = sum([message.token_count for message in messages])
+        # A clipped message is sent shorter than its stored count says.
+        messages_tokens = (
+            _count_prompt_tokens(formatted_messages)
+            if clipped
+            else sum([message.token_count for message in messages])
+        )
         previous_summary_tokens = latest_summary["token_count"] if latest_summary else 0
         input_tokens = messages_tokens + previous_summary_tokens
 
@@ -567,18 +686,6 @@ async def _create_and_save_summary(
             custom_instructions=configuration.summary.custom_instructions,
         ),
     )
-
-    # Compute scaffold tokens up front (cheap + idempotent) so both the
-    # save-summary path and the telemetry emit below can use it
-    # without basedpyright tripping on a possibly-unbound name.
-    if summary_type == SummaryType.SHORT:
-        prompt_tokens = estimate_short_summary_prompt_tokens()
-    else:
-        prompt_tokens = estimate_long_summary_prompt_tokens()
-    if configuration.summary.custom_instructions:
-        prompt_tokens += estimate_tokens(
-            custom_instructions_section(configuration.summary.custom_instructions)
-        )
 
     # Step 3: Save to database with new transaction
     if not is_fallback:
@@ -715,7 +822,9 @@ async def _create_summary(
                 telemetry=telemetry,
             )
 
-        summary_text = response.content
+        # Strip NUL before the checks below so they judge the text that gets
+        # stored: jsonb rejects NUL, and NUL-only output must count as empty.
+        summary_text = strip_nul(response.content)
         summary_tokens = response.output_tokens
         llm_input_tokens = response.input_tokens
         llm_output_tokens = response.output_tokens
@@ -760,9 +869,14 @@ async def _create_summary(
                         summary_type=summary_type.name.lower(),
                         reason=SUMMARY_REJECTION_DEGENERATE,
                     )
-    except EmptySummaryError:
+    except EmptySummaryError as e:
         # Not a generation failure to paper over: the fallback below is never
         # saved, so it must reach the queue as an error.
+        if e.parse_class == "content_filtered" and settings.METRICS.ENABLED:
+            prometheus_metrics.record_summary_rejection(
+                summary_type=summary_type.name.lower(),
+                reason=SUMMARY_REJECTION_CONTENT_FILTERED,
+            )
         raise
     except Exception:
         logger.exception("Error generating summary!")
@@ -797,6 +911,9 @@ async def _save_summary(
     """
     Save a summary as metadata on a session.
 
+    NUL is stripped from the content because jsonb rejects it. Deciding whether
+    the content is worth saving (empty, fallback, degenerate) is the caller's job.
+
     Args:
         db: Database session
         summary: The summary to save
@@ -809,7 +926,7 @@ async def _save_summary(
     label_value = summary["summary_type"]
 
     try:
-        session = await crud.get_session(db, session_name, workspace_name)
+        await crud.get_session(db, session_name, workspace_name)
     except ResourceNotFoundException:
         # If session doesn't exist, we can't save the summary
         logger.warning(
@@ -817,19 +934,26 @@ async def _save_summary(
         )
         return
 
-    # Use SQLAlchemy update() with PostgreSQL's || operator to properly merge JSONB
-    # We need to merge the new summary into the existing summaries structure
-    update_data = {}
-    existing_summaries = session.internal_metadata.get(SUMMARIES_KEY, {})
-    existing_summaries[label_value] = summary
-    update_data[SUMMARIES_KEY] = existing_summaries
+    sanitized: Summary = {**summary, "content": strip_nul(summary["content"])}
 
+    # Merge this one entry into the summaries map on the server. Writing back a
+    # map read earlier (possibly from cache) would drop or revert a summary saved
+    # in between, such as the sibling at a combined short/long boundary (DEV-3160).
+    stored = models.Session.internal_metadata[SUMMARIES_KEY]
+    summaries = case(
+        (func.jsonb_typeof(stored) == "object", stored),
+        else_=literal({}, JSONB),
+    ).op("||", return_type=JSONB)(
+        func.jsonb_build_object(label_value, literal(sanitized, JSONB))
+    )
     stmt = (
         update(models.Session)
         .where(models.Session.workspace_name == workspace_name)
         .where(models.Session.name == session_name)
         .values(
-            internal_metadata=models.Session.internal_metadata.op("||")(update_data)
+            internal_metadata=models.Session.internal_metadata.op(
+                "||", return_type=JSONB
+            )(func.jsonb_build_object(SUMMARIES_KEY, summaries))
         )
     )
 
@@ -1112,3 +1236,94 @@ def _format_messages(messages: list[models.Message]) -> str:
     if len(messages) == 0:
         return ""
     return "\n".join([f"{msg.peer_name}: {msg.content}" for msg in messages])
+
+
+# Covers prompt text the scaffold estimate leaves out: the "no previous summary"
+# placeholder and the digits of the target length.
+_PROMPT_SLACK_TOKENS = 64
+
+_TRUNCATION_MARKER = " [truncated]"
+
+
+def _count_prompt_tokens(text: str) -> int:
+    """Count `text`'s tokens as they will appear in a summary prompt.
+
+    The prompt builders run `inspect.cleandoc`, which expands tabs, so tabs are
+    counted expanded. Text that looks like a tokenizer control token is counted
+    as ordinary text rather than falling back to an estimate from its length.
+    """
+    return len(tokenizer.encode(text.expandtabs(), disallowed_special=()))
+
+
+def _fit_messages_to_budget(
+    messages: list[models.Message], budget_tokens: int
+) -> tuple[list[models.Message], str, bool]:
+    """Keep the newest messages whose formatted lines fit in `budget_tokens`.
+
+    Messages are taken newest first and the older ones dropped. If even the
+    newest does not fit, its content is clipped to the budget and marked as
+    truncated. The messages themselves are never modified; clipping only
+    changes the formatted text.
+
+    Args:
+        messages: The summary window, oldest first.
+        budget_tokens: Tokens available for the formatted messages.
+
+    Returns:
+        The kept messages, oldest first; their text formatted as by
+        `_format_messages`; and whether the one kept message was clipped. The
+        messages and text are empty when nothing fits.
+    """
+    lines: list[str] = []
+    used_tokens = 0
+    for message in reversed(messages):
+        line = f"{message.peer_name}: {message.content}"
+        # One more token for the newline that joins this line to the next.
+        cost = _count_prompt_tokens(line) + 1
+        if used_tokens + cost > budget_tokens:
+            break
+        lines.append(line)
+        used_tokens += cost
+
+    clipped = False
+    if not lines and messages:
+        clipped_line = _clip_message_line(messages[-1], budget_tokens - 1)
+        if clipped_line is not None:
+            lines.append(clipped_line)
+            clipped = True
+
+    kept = messages[len(messages) - len(lines) :] if lines else []
+    return kept, "\n".join(reversed(lines)), clipped
+
+
+def _clip_message_line(message: models.Message, budget_tokens: int) -> str | None:
+    """Format `message` with its content clipped to fit in `budget_tokens`.
+
+    Keeps the longest prefix of the content that fits. The line is measured as
+    the prompt will see it (tabs expanded), which can be far longer than the raw
+    content's tokens, so the prefix is found by binary search over raw tokens
+    rather than by subtracting an overflow.
+
+    Returns None when no content fits beside the peer name and truncation
+    marker.
+    """
+    prefix = f"{message.peer_name}: "
+    content_tokens = tokenizer.encode(message.content, disallowed_special=())
+
+    def line_of(kept_tokens: int) -> str:
+        """The line keeping the first `kept_tokens` tokens of the content."""
+        return (
+            prefix + tokenizer.decode(content_tokens[:kept_tokens]) + _TRUNCATION_MARKER
+        )
+
+    best: str | None = None
+    low, high = 1, len(content_tokens)
+    while low <= high:
+        middle = (low + high) // 2
+        line = line_of(middle)
+        if _count_prompt_tokens(line) <= budget_tokens:
+            best = line
+            low = middle + 1
+        else:
+            high = middle - 1
+    return best

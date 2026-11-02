@@ -10,11 +10,13 @@ from sqlalchemy.orm import InstrumentedAttribute
 
 from src import models, schemas
 from src.config import settings
+from src.crud.lifecycle import live_session_peer_row
 from src.db import tenant_context
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
+from src.utils.path_params import schema_from_path
 from src.utils.scopes import is_scope_peer_name
 from src.utils.search import matching_messages, message_text_condition
 from src.utils.types import embedding_call_purpose
@@ -83,14 +85,15 @@ async def get_peer_session_names(
         Distinct session names the peer has a matching membership record in.
     """
     stmt = (
-        select(models.session_peers_table.c.session_name)
-        .where(models.session_peers_table.c.tenant_id == models.scoped_tenant_id())
-        .where(models.session_peers_table.c.workspace_name == workspace_name)
-        .where(models.session_peers_table.c.peer_name == peer_name)
+        select(models.SessionPeer.session_name)
+        .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
+        .where(models.SessionPeer.workspace_name == workspace_name)
+        .where(models.SessionPeer.peer_name == peer_name)
+        .where(live_session_peer_row())
         .distinct()
     )
     if active_only:
-        stmt = stmt.where(models.session_peers_table.c.left_at.is_(None))
+        stmt = stmt.where(models.SessionPeer.left_at.is_(None))
     result = await db.execute(stmt)
     return [row[0] for row in result.all()]
 
@@ -481,7 +484,9 @@ async def create_messages(
     peers = {message.peer_name: schemas.SessionPeerConfig() for message in messages}
     await get_or_create_session(
         db,
-        session=schemas.SessionCreate(name=session_name, peers=peers),
+        session=schema_from_path(
+            schemas.SessionCreate, "session_id", session_name, peers=peers
+        ),
         workspace_name=workspace_name,
     )
 

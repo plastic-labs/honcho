@@ -136,6 +136,11 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
 _LIVE_LLM_MARKER = "live_llm"
 _LIVE_LLM_SKIP_REASON = "live LLM tests are disabled; pass --live-llm to run them"
 
+# Property tests double the suite's wall time, so the pre-push hook skips them
+# and CI opts in. Their bugs stay covered by regression tests in tests/routes/.
+_FUZZ_TEST_PREFIX = "tests/property/"
+_FUZZ_SKIP_REASON = "property tests are disabled; pass --fuzz to run them"
+
 
 def _requires_runtime_mocks(nodeid: str) -> bool:
     return not any(
@@ -156,19 +161,27 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run opt-in live LLM integration tests that call provider APIs.",
     )
+    parser.addoption(
+        "--fuzz",
+        action="store_true",
+        default=False,
+        help="Run the property-based API fuzzers in tests/property/.",
+    )
 
 
 def pytest_collection_modifyitems(
     config: pytest.Config,
     items: list[pytest.Item],
 ) -> None:
-    if config.getoption("--live-llm"):
-        return
-
+    run_live = config.getoption("--live-llm")
+    run_fuzz = config.getoption("--fuzz")
     skip_live = pytest.mark.skip(reason=_LIVE_LLM_SKIP_REASON)
+    skip_fuzz = pytest.mark.skip(reason=_FUZZ_SKIP_REASON)
     for item in items:
-        if _LIVE_LLM_MARKER in item.keywords:
+        if not run_live and _LIVE_LLM_MARKER in item.keywords:
             item.add_marker(skip_live)
+        if not run_fuzz and item.nodeid.startswith(_FUZZ_TEST_PREFIX):
+            item.add_marker(skip_fuzz)
 
 
 _RUN_ID_ENV_VAR = "HONCHO_TEST_RUN_ID"
@@ -549,6 +562,13 @@ async def client(
 
     monkeypatch.setattr("src.main.validate_embedding_schema", _skip_validate)
     monkeypatch.setattr("src.main.validate_queue_item_batches", _skip_validate)
+
+    # fastapi_pagination's lifespan wrapper regenerates and re-patches the whole
+    # OpenAPI schema on every startup once `app.openapi_schema` is cached (~80ms).
+    # Production starts once; this fixture starts the app per test, so after any
+    # test fetches /openapi.json every later client would pay it. Drop the cache
+    # so startup stays cheap; a test that needs the schema regenerates it.
+    app.openapi_schema = None
 
     # fastapi_pagination's lifespan wrapper regenerates and re-patches the whole
     # OpenAPI schema on every startup once `app.openapi_schema` is cached (~80ms).

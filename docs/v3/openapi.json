@@ -13,7 +13,7 @@
       "name": "GNU Affero General Public License v3.0",
       "url": "https://github.com/plastic-labs/honcho/blob/main/LICENSE"
     },
-    "version": "3.4.0"
+    "version": "3.5.0"
   },
   "servers": [
     {
@@ -102,6 +102,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 2147483647,
               "minimum": 1,
               "description": "Page number (offset mode)",
               "default": 1,
@@ -198,7 +199,7 @@
           "workspaces"
         ],
         "summary": "Update Workspace",
-        "description": "Update Workspace metadata and/or configuration.",
+        "description": "Replace supplied Workspace metadata and/or configuration.\n\nAn empty configuration object clears explicit settings. Omitted or null fields\nremain unchanged.",
         "operationId": "update_workspace_v3_workspaces__workspace_id__put",
         "security": [
           {
@@ -640,6 +641,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 2147483647,
               "minimum": 1,
               "description": "Page number (offset mode)",
               "default": 1,
@@ -907,6 +909,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 2147483647,
               "minimum": 1,
               "description": "Page number (offset mode)",
               "default": 1,
@@ -1569,7 +1572,7 @@
           "sessions"
         ],
         "summary": "Get Sessions",
-        "description": "Get all Sessions for a Workspace, paginated with optional filters.",
+        "description": "Get all Sessions for a Workspace, paginated with optional filters.\n\nPass `scope` to list only a scope's member sessions (404 if the scope does\nnot exist), or `in_no_scope` to list only sessions that are in no scope.",
         "operationId": "get_sessions_v3_workspaces__workspace_id__sessions_list_post",
         "security": [
           {
@@ -1599,11 +1602,24 @@
             "description": "Whether to reverse the order of results"
           },
           {
+            "name": "include_scopes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Whether to include each session's active scope names as `scopes`",
+              "default": false,
+              "title": "Include Scopes"
+            },
+            "description": "Whether to include each session's active scope names as `scopes`"
+          },
+          {
             "name": "page",
             "in": "query",
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 2147483647,
               "minimum": 1,
               "description": "Page number (offset mode)",
               "default": 1,
@@ -1650,7 +1666,7 @@
               "schema": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/SessionGet"
+                    "$ref": "#/components/schemas/WorkspaceSessionGet"
                   },
                   {
                     "type": "null"
@@ -2197,6 +2213,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 2147483647,
               "minimum": 1,
               "description": "Page number (offset mode)",
               "default": 1,
@@ -2882,7 +2899,7 @@
           "scopes"
         ],
         "summary": "Get Scopes",
-        "description": "Get all Scopes for a Workspace. Results are paginated.",
+        "description": "Get all Scopes for a Workspace. Results are paginated.\n\nFilter by name with `{\"filters\": {\"id\": {\"icontains\": \"sup\"}}}`; `id` is\nthe unprefixed scope name.",
         "operationId": "get_scopes_v3_workspaces__workspace_id__scopes_list_post",
         "security": [
           {
@@ -2912,11 +2929,24 @@
             "description": "Whether to reverse the order of results"
           },
           {
+            "name": "include_session_count",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Whether to include each scope's member session count as `session_count`",
+              "default": false,
+              "title": "Include Session Count"
+            },
+            "description": "Whether to include each scope's member session count as `session_count`"
+          },
+          {
             "name": "page",
             "in": "query",
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 2147483647,
               "minimum": 1,
               "description": "Page number (offset mode)",
               "default": 1,
@@ -2957,6 +2987,24 @@
             "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`."
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ScopeGet"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Filtering options for the scopes list",
+                "title": "Options"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -3166,6 +3214,67 @@
         }
       }
     },
+    "/v3/workspaces/{workspace_id}/scopes/{scope_id}/sessions/remove": {
+      "post": {
+        "tags": [
+          "scopes"
+        ],
+        "summary": "Remove Sessions From Scope",
+        "description": "Remove up to 100 Sessions from a Scope in one request.\n\nThe batch is all-or-nothing: if any named session does not exist, the\nrequest returns 404 and no membership changes. Sessions that are not\nmembers of the scope are ignored. Each removed session is reconciled\nasynchronously, exactly as `DELETE /scopes/{scope_id}/sessions/{session_id}`\ndoes.",
+        "operationId": "remove_sessions_from_scope_v3_workspaces__workspace_id__scopes__scope_id__sessions_remove_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "scope_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Scope Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScopeSessionsRemove",
+                "description": "IDs of the sessions to remove from the scope"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v3/workspaces/{workspace_id}/scopes/{scope_id}/sessions/list": {
       "post": {
         "tags": [
@@ -3216,6 +3325,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 2147483647,
               "minimum": 1,
               "description": "Page number (offset mode)",
               "default": 1,
@@ -3554,6 +3664,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 2147483647,
               "minimum": 1,
               "description": "Page number (offset mode)",
               "default": 1,
@@ -3896,6 +4007,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 2147483647,
               "minimum": 1,
               "description": "Page number (offset mode)",
               "default": 1,
@@ -4370,6 +4482,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 2147483647,
               "minimum": 1,
               "description": "Page number (offset mode)",
               "default": 1,
@@ -4666,6 +4779,21 @@
             "type": "array",
             "title": "Source Ids",
             "description": "IDs of the conclusions this one was derived from: premises for 'deductive', supporting sources for 'inductive', conflicting conclusions for 'contradiction'. Empty for 'explicit' conclusions, which derive from messages rather than from other conclusions."
+          },
+          "source_message_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Message Ids",
+            "description": "IDs of the messages the deriver cited as evidence for an 'explicit' conclusion, in citation order. Evidence may include messages from peers other than the observed one. None for derived levels and for conclusions written before citations were recorded."
           },
           "times_derived": {
             "type": "integer",
@@ -5430,6 +5558,7 @@
           "stream": {
             "type": "boolean",
             "title": "Stream",
+            "description": "Return the answer as a text/event-stream. The answer arrives when the agent finishes gathering context, usually as a single chunk; only an answer synthesized at the tool-call limit streams as it is generated.",
             "default": false
           },
           "reasoning_level": {
@@ -6586,6 +6715,18 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "session_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Count",
+            "description": "Number of sessions that are active members of this scope. Only returned by the scope list when `include_session_count` is true."
           }
         },
         "type": "object",
@@ -6623,6 +6764,26 @@
         "title": "ScopeCreate",
         "description": "Schema for creating (or getting) a scope by its unprefixed name."
       },
+      "ScopeGet": {
+        "properties": {
+          "filters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filters",
+            "description": "Filters on the scope list. `id` matches the unprefixed scope name, e.g. `{\"id\": {\"icontains\": \"sup\"}}`; `created_at` and `metadata` work as on other lists."
+          }
+        },
+        "type": "object",
+        "title": "ScopeGet",
+        "description": "Options for the scope list."
+      },
       "ScopeSessionsAdd": {
         "properties": {
           "session_ids": {
@@ -6642,6 +6803,26 @@
         ],
         "title": "ScopeSessionsAdd",
         "description": "Schema for adding sessions to a scope."
+      },
+      "ScopeSessionsRemove": {
+        "properties": {
+          "session_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Session Ids",
+            "description": "IDs of existing sessions to remove from the scope. Sessions that are not members are ignored."
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_ids"
+        ],
+        "title": "ScopeSessionsRemove",
+        "description": "Schema for removing sessions from a scope."
       },
       "ScopeStatus": {
         "properties": {
@@ -6691,6 +6872,21 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "scopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scopes",
+            "description": "Names of the scopes this session is an active member of. Only returned by the session list when `include_scopes` is true."
           }
         },
         "type": "object",
@@ -7303,6 +7499,7 @@
           "stream": {
             "type": "boolean",
             "title": "Stream",
+            "description": "Return the answer as a text/event-stream. The answer arrives when the agent finishes gathering context, usually as a single chunk; only an answer synthesized at the tool-call limit streams as it is generated.",
             "default": false
           },
           "reasoning_level": {
@@ -7531,6 +7728,43 @@
         "title": "WorkspaceMessageSearchOptions",
         "description": "Workspace-level message search options, extended with `scope`."
       },
+      "WorkspaceSessionGet": {
+        "properties": {
+          "filters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filters"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope",
+            "description": "Only return sessions that are active members of this (unprefixed) scope. Returns 404 if the scope does not exist."
+          },
+          "in_no_scope": {
+            "type": "boolean",
+            "title": "In No Scope",
+            "description": "Only return sessions that are not an active member of any scope.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "WorkspaceSessionGet",
+        "description": "Options for the workspace session list, which can also filter by scope."
+      },
       "WorkspaceUpdate": {
         "properties": {
           "metadata": {
@@ -7553,7 +7787,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Replaces the entire workspace configuration. Send {} to clear explicit settings and use system defaults. Omit or send null to leave unchanged."
           }
         },
         "type": "object",

@@ -1,4 +1,4 @@
-"""Helpers for stripping bytes Postgres cannot store in text columns.
+"""Helpers for characters Postgres cannot store in text columns.
 
 Postgres rejects NUL (0x00) in ``text``/``varchar`` values and in ``jsonb``
 strings, so any string bound into a query or persisted to those columns has to
@@ -7,11 +7,17 @@ user-supplied input: an LLM can emit a ``\\u0000`` escape in its tool-call
 arguments, which the JSON parser decodes into a real NUL byte.
 """
 
+import re
 from typing import Any, cast, overload
 
 from pydantic import BeforeValidator
 
-__all__ = ["NulStripped", "strip_nul"]
+__all__ = ["NulStripped", "escape_unstorable", "strip_nul"]
+
+# NUL and UTF-16 surrogate code points: the only characters Postgres can't store
+# in text. A Python str can hold surrogates (a JSON "\\ud83d" escape decodes to
+# one), and they can't be UTF-8 encoded on the way to the driver.
+_UNSTORABLE = re.compile("[\x00\ud800-\udfff]")
 
 
 @overload
@@ -38,6 +44,20 @@ def strip_nul(value: Any) -> Any:
         lst = cast(list[Any], value)
         return [strip_nul(item) for item in lst]
     return value
+
+
+def escape_unstorable(text: str) -> str:
+    """Replace NUL and lone surrogates with their escape text, e.g. ``\\x00``.
+
+    For diagnostic text such as a stored error message, where the bad character
+    is evidence worth keeping. Use ``strip_nul`` for content instead. A literal
+    backslash escape already in ``text`` is left alone, so it reads the same as
+    an escaped character.
+    """
+    return _UNSTORABLE.sub(
+        lambda m: "\\x00" if m.group() == "\x00" else f"\\u{ord(m.group()):04x}",
+        text,
+    )
 
 
 # Reusable annotation for string fields; composes with a per-field Field(...).

@@ -1,6 +1,6 @@
 ---
 name: pre-pr
-description: Prepare a Honcho change for a pull request to plastic-labs/honcho. Invoke before opening a PR, when drafting a PR body, when asked if a branch is PR-ready, or when filling the pull request template. Checks the linked issue, required tests and docs, then writes Description / Proofs / Fixes.
+description: Prepare a Honcho change for a pull request to plastic-labs/honcho. Invoke before opening a PR, when drafting a PR body, when asked if a branch is PR-ready, or when filling the pull request template. Checks required tests and docs, then writes Description / Proofs / Fixes.
 ---
 
 # Pre-PR checklist
@@ -9,23 +9,7 @@ Do this after the change works, before anyone opens the GitHub PR. Output is a f
 
 The template lives at `.github/pull_request_template.md`. Do not add extra sections.
 
-## 1. Issue gate (hard stop)
-
-A PR without a maintainer-approved issue will be closed.
-
-```bash
-gh issue view <N> --repo plastic-labs/honcho --json number,title,labels,state
-```
-
-Stop if any of these fail:
-
-- no issue number, or the issue is not in `plastic-labs/honcho`
-- issue is closed (unless this PR is explicitly reopening it)
-- labels do not include `maintainer-approved`
-
-Say which check failed. Do not draft a PR body around it. If there is no issue yet, file one following [Filing an issue](../../CONTRIBUTING.md#filing-an-issue) and wait for `maintainer-approved`.
-
-## 2. Classify the diff
+## 1. Classify the diff
 
 ```bash
 git diff main...HEAD --stat
@@ -47,7 +31,7 @@ Invoke `/verify` when the runtime surface moved. Do not restate that skill here.
 
 Lint/type before claiming tests are green: `uv run ruff check src/` → `uv run basedpyright` → the pytest command for the layer.
 
-## 3. Proofs
+## 2. Proofs
 
 Collect evidence that belongs in the PR, not in the commit:
 
@@ -57,7 +41,7 @@ Collect evidence that belongs in the PR, not in the commit:
 
 If `/verify` ran, the proofs *are* that session's output. Do not invent green runs.
 
-## 4. Write the body
+## 3. Write the body
 
-Fill the description, proofs, checklist portion of the pull request description template.
-Make sure to link the related github issue, otherwise the PR will be auto-closed.
+Fill the description and proofs portion of the pull request description template.
+If there is a related GitHub issue, link it with `Fixes #<N>`.

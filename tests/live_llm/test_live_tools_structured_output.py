@@ -168,14 +168,21 @@ async def test_live_anthropic_tools_with_structured_output(
 
     assert len(create_calls) >= 2
     for call in create_calls:
-        messages = call["kwargs"]["messages"]
-        assert messages[-1] != {
+        kwargs = call["kwargs"]
+        assert kwargs["messages"][-1] != {
             "role": "assistant",
             "content": "{",
         }, "the '{' prefill would suppress tool_use blocks"
-        assert "If not responding with a tool call" in str(messages[-1]), (
+        # With tools, the instruction rides in the system prompt so the
+        # history replayed next round is unchanged.
+        assert "If not responding with a tool call" in kwargs["system"][-1]["text"], (
             "schema instruction should use the conditional wording with tools"
         )
+    first_messages = create_calls[0]["kwargs"]["messages"]
+    replay_messages = create_calls[1]["kwargs"]["messages"]
+    assert replay_messages[: len(first_messages)] == first_messages, (
+        "the replay turn must resend the first turn's messages unchanged"
+    )
 
 
 @pytest.mark.asyncio
