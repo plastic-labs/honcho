@@ -549,8 +549,10 @@ Four of the seven tree types — `kdtree` (the default), `balltree`, `graph` and
 extra rather than as a base dependency (it pulls in scipy, ~200MB installed on
 Linux, for a subsystem that is disabled by default). Install it with
 `uv sync --extra surprisal`. The default Docker image does **not** include it,
-so enabling surprisal in a container requires adding the extra to the
-`uv sync` line in the Dockerfile.
+so build from source with `docker build --build-arg INSTALL_SURPRISAL=true .`
+or `INSTALL_SURPRISAL=true docker compose up -d --build` when using the example
+Compose file. This installs the dependencies; also set
+`DREAM_SURPRISAL__ENABLED=true` to enable sampling.
 
 `rptree`, `covertree` and `lsh` need only numpy and work out of the box. With
 `DREAM_SURPRISAL__ENABLED=false` (the default) none of this applies.
