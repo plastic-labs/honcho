@@ -10,7 +10,7 @@ differences from here instead of matching model names inline.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from src.config import ModelTransport
@@ -38,6 +38,11 @@ class ModelCapabilities:
     """Whether a replayed thinking block is checked against everything sent
     before it (system, tools, earlier messages). Any edit to that prefix makes
     the block a 400 on enforced accounts, so edited history must drop it."""
+    user_after_tool: bool = True
+    """Whether a user message may directly follow a tool result. Mistral
+    models are trained only on tool results followed by an assistant turn or
+    another result, and their servers reject a request that has a user turn
+    there or that ends on an assistant turn."""
 
 
 # Claude 3 and other models this table doesn't recognize.
@@ -115,14 +120,27 @@ def anthropic_capabilities(model: str) -> ModelCapabilities:
     return _CLAUDE_NEWEST
 
 
+# Mistral's model families, as served directly or behind an OpenAI-compatible
+# gateway ("mistralai/mistral-small-3.2-24b-instruct",
+# "mistral-small-3.2-24b-instruct-2506").
+_MISTRAL_MODEL = re.compile(
+    r"(?:^|[/._-])(?:mistral|magistral|ministral|devstral|codestral|pixtral)",
+    re.IGNORECASE,
+)
+_STRICT_TOOL_ROLE_ORDER = replace(_LEGACY, user_after_tool=False)
+
+
 def capabilities_for(transport: ModelTransport, model: str) -> ModelCapabilities:
     """Capabilities of `model` on `transport`.
 
-    Only the Anthropic transport has model-dependent rows so far; the other
-    transports get the legacy row, which none of their backends consult.
+    The Anthropic transport has a row per Claude generation. Other transports
+    get the legacy row, except Mistral models, which need strict role order
+    after tool results.
     """
     if transport == "anthropic":
         return anthropic_capabilities(model)
+    if _MISTRAL_MODEL.search(model):
+        return _STRICT_TOOL_ROLE_ORDER
     return _LEGACY
 
 

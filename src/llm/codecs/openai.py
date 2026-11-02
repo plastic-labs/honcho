@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from src.llm.backend import CompletionResult
+from src.llm.capabilities import capabilities_for
 from src.llm.messages import (
     AIMessage,
     ChatMessage,
@@ -24,14 +25,29 @@ from . import RenderedHistory, RenderTarget, replayable_reasoning
 class OpenAICodec:
     """`tool_calls` on the assistant turn with JSON-string arguments; one
     `role: "tool"` message per result. Reasoning goes back as
-    `reasoning_details` (OpenRouter) or else `reasoning_content`."""
+    `reasoning_details` (OpenRouter) or else `reasoning_content`. For a model
+    that takes no user turn after a tool result, a user message there is
+    appended to that result instead."""
 
     def render(
         self, messages: Sequence[ChatMessage], target: RenderTarget
     ) -> RenderedHistory:
         rendered: list[dict[str, Any]] = []
+        user_after_tool = capabilities_for(
+            target.transport, target.model
+        ).user_after_tool
         for message in messages:
-            if isinstance(message, SystemMessage | UserMessage):
+            previous = rendered[-1] if rendered else None
+            if (
+                isinstance(message, UserMessage)
+                and not user_after_tool
+                and previous is not None
+                and previous["role"] == "tool"
+            ):
+                # The loop's notes after a round (a budget line, the synthesis
+                # prompt, the empty-answer nudge) ride on the last result.
+                previous["content"] = f"{previous['content']}\n\n{message.content}"
+            elif isinstance(message, SystemMessage | UserMessage):
                 rendered.append({"role": message.role, "content": message.content})
             elif isinstance(message, ToolMessage):
                 rendered.append(

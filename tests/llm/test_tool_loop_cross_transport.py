@@ -12,6 +12,7 @@ results, are handled the same way: at render time.
 
 from __future__ import annotations
 
+from itertools import pairwise
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
@@ -277,3 +278,66 @@ async def test_unsigned_thinking_from_a_proxy_round_is_withheld() -> None:
     assert _thinking_in(third["messages"]) == 0
     assert third["extra_params"]["thinking_withheld"] is True
     _assert_valid_for("anthropic", third["messages"])
+
+
+def _assert_mistral_order(messages: list[dict[str, Any]]) -> None:
+    """mistral-common's serving checks: only an assistant turn or another
+    result follows a tool result, and the request ends on a user turn or a
+    tool result."""
+    for previous, current in pairwise(messages):
+        if previous["role"] == "tool":
+            assert current["role"] in {"assistant", "tool"}, messages
+    assert messages[-1]["role"] in {"user", "tool"}, messages
+
+
+MISTRAL = ModelConfig(
+    model="mistral-small-3.2-24b-instruct-2506", transport="openai", api_key="k"
+)
+
+
+@pytest.mark.asyncio
+async def test_mistral_synthesis_keeps_strict_role_order() -> None:
+    """Budget lines and the synthesis prompt follow tool results, which Mistral
+    rejects as user turns; every request stays valid through synthesis."""
+    backend = FakeBackend(
+        [
+            _tool_turn("openai"),
+            _tool_turn("openai"),
+            CompletionResult(content="She drinks tea."),
+        ]
+    )
+
+    response, _ = await _run(
+        {"openai": backend},
+        MISTRAL,
+        max_tool_iterations=2,
+        budget_line=_budget_line,
+    )
+
+    assert response.hit_iteration_limit
+    for call in backend.calls:
+        _assert_mistral_order(call["messages"])
+    final = backend.calls[-1]["messages"][-1]
+    assert final["role"] == "tool"
+    assert "2 of 2 rounds used." in final["content"]
+    assert "maximum number of tool calls" in final["content"]
+
+
+@pytest.mark.asyncio
+async def test_mistral_empty_answer_nudge_keeps_strict_role_order() -> None:
+    backend = FakeBackend(
+        [
+            _tool_turn("openai"),
+            CompletionResult(content=""),
+            CompletionResult(content="She drinks tea."),
+        ]
+    )
+
+    response, _ = await _run({"openai": backend}, MISTRAL, max_tool_iterations=3)
+
+    assert response.content == "She drinks tea."
+    for call in backend.calls:
+        _assert_mistral_order(call["messages"])
+    assert (
+        "Your last response was empty" in backend.calls[-1]["messages"][-1]["content"]
+    )

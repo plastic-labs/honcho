@@ -353,6 +353,31 @@ def test_one_unsigned_thinking_block_withholds_every_thinking_block() -> None:
     assert not codec.render(history[:3], _target(ANTHROPIC)).thinking_withheld
 
 
+MISTRAL = ModelOrigin(transport="openai", model="mistralai/mistral-small-3.2-24b")
+
+
+def test_mistral_gets_the_round_note_on_its_last_tool_result() -> None:
+    """Mistral takes only an assistant turn or another result after a tool
+    result, so the loop's note after a round rides on the last result."""
+    result = CompletionResult(content=None, tool_calls=CALLS)
+    rendered = _render(_round(result, MISTRAL), MISTRAL)
+
+    assert [m["role"] for m in rendered] == [
+        "system",
+        "user",
+        "assistant",
+        "tool",
+        "tool",
+    ]
+    assert rendered[-1] == {
+        "role": "tool",
+        "tool_call_id": "call_b",
+        "content": "Error: timeout\n\n1 of 3 rounds used.",
+    }
+    # Other OpenAI-compatible models keep the note as its own user turn.
+    assert _render(_round(result, OPENAI), OPENAI)[-1] == BUDGET
+
+
 @pytest.mark.parametrize("origin", [ANTHROPIC, OPENAI, GEMINI])
 def test_caller_assistant_turn_stays_a_string(origin: ModelOrigin) -> None:
     history = coerce_messages(
