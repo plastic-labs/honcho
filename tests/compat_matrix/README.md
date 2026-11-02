@@ -41,15 +41,6 @@ if the schema revision moves during the run.
 The reconciler is held off with a day-long interval, so backfills move only when
 the driver moves them.
 
-## The compatibility floor
-
-`migrations/compat.toml` names `compat_floor`, the oldest released version whose
-image can still run against the current schema. When the previous image's tag is
-below that floor, the old image cannot be a rollback target, so the matrix keeps
-only the new-writer/new-worker pairings: the old image still bootstraps and seeds,
-the new image migrates that data, and both rounds run on the new image alone.
-The summary says so when it happens.
-
 ## Running it locally
 
 ```bash
