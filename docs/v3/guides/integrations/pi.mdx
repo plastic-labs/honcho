@@ -1,0 +1,150 @@
+---
+title: "Pi agent memory"
+icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/pi.svg"
+description: "Add AI-native memory to the pi coding agent"
+sidebarTitle: 'Pi'
+---
+
+[pi](https://pi.dev) starts every session from scratch. The pi-honcho extension gives it memory that carries over: who you are, how you like to work, and what you decided in this project last time.
+
+## Quick Start
+
+### Step 1: Install the Extension
+
+<Note>
+Requires pi 1.0 or later.
+</Note>
+
+<Note>
+pi-honcho builds on [pi-honcho-memory](https://github.com/agneym/pi-honcho-memory), the community extension Agney Menon created, and we're grateful for it. To use pi-honcho, uninstall pi-honcho-memory first:
+
+```bash
+pi remove npm:@agney/pi-honcho-memory
+```
+</Note>
+
+```bash
+pi install npm:@honcho-ai/pi-honcho
+```
+
+### Step 2: Sign In
+
+Run `/honcho login` inside pi and pick a method:
+
+- **Browser** — approve in your browser and pi receives the callback on `127.0.0.1`. Over SSH or inside a container, press `p` and paste the URL the browser was redirected to.
+- **Device code** — for SSH and headless machines. Enter the code on any device.
+- **API key** — paste a key from [app.honcho.dev](https://app.honcho.dev). It is checked before it is saved.
+
+Browser and device sign-in are available on Honcho's managed service. Self-hosted Honcho uses API keys.
+
+`HONCHO_API_KEY` in your environment also works, and takes precedence over any saved login.
+
+### Step 3: Verify
+
+Run `/honcho`. It shows the connection, account, workspace, peers, session, memory counts, and queue. The footer shows the connection state the rest of the time.
+
+## What You Get
+
+- **Memory at session start** — your peer card and the session summary are added to the system prompt
+- **Recall on every turn** — before pi answers, Honcho is asked about your message (`chat`, the default) or returns the most relevant conclusions (`context`). It waits at most 30 seconds, then the turn continues without it
+- **Automatic capture** — your messages and pi's replies are saved to Honcho after every run
+- **Agent tools** — `honcho_chat` and `honcho_search` for when pi needs to look something up
+- **Visible context** — everything Honcho adds appears as a collapsible `◆ honcho` entry. Press `ctrl+o` to expand or collapse them
+- **Shared configuration** — the same `~/.honcho/config.json` the other Honcho integrations read
+
+## Commands
+
+| Command | Description |
+| --- | --- |
+| `/honcho` | Status: connection, account, workspace, peers, session, memory counts, queue, injection settings |
+| `/honcho login [browser\|device\|key]` | Sign in |
+| `/honcho logout` | Sign out. Revoking a browser or device sign-in asks first, because it also signs out the honcho CLI |
+| `/honcho config` | Settings. Every change is saved immediately |
+| `/honcho on`, `/honcho off` | Turn Honcho on or off for pi. While off, nothing is injected or saved |
+
+## Agent Tools
+
+| Tool | Description |
+| --- | --- |
+| `honcho_chat` | Ask Honcho 1–5 questions in parallel, each with its own reasoning level |
+| `honcho_search` | Search past messages and saved conclusions |
+
+## Configuration
+
+`/honcho config` edits `~/.honcho/config.json`. Root keys are shared with every Honcho integration; keys under `hosts.pi` apply to pi only.
+
+| Setting | Key | Default |
+| --- | --- | --- |
+| Honcho on/off | `hosts.pi.enabled` | `true` |
+| Endpoint | `environmentUrl`, `endpoint.baseUrl` | `https://api.honcho.dev` |
+| Workspace | `hosts.pi.workspace` | `pi` |
+| Your peer | `peerName` | `$USER` |
+| Agent peer | `hosts.pi.aiPeer` | `pi` |
+| Session mapping | `hosts.pi.sessionStrategy` | `per-directory` |
+| Session start | `hosts.pi.injection.sessionStart` | `["summary", "peerCard"]` |
+| Each turn | `hosts.pi.injection.perTurn` | `["dialectic"]` |
+| Reasoning (chat) | `hosts.pi.injection.dialecticReasoning` | `medium` |
+| Chat prompt | `hosts.pi.injection.dialecticTemplate` | built-in template |
+| Max conclusions (context) | `hosts.pi.injection.maxConclusions` | `15` |
+| Show in chat | `hosts.pi.injection.showInChat` | `["sessionStart", "perTurn"]` |
+| Tools | `hosts.pi.tools.honcho_chat`, `hosts.pi.tools.honcho_search` | `true` |
+| Save messages | `hosts.pi.saveMessages` | `true` |
+
+`perTurn` uses the same names as the Claude Code plugin: `["dialectic"]` is chat, `["userContext"]` is context, and `[]` turns per-turn recall off.
+
+### Session Mapping
+
+| Strategy | Session name | Notes |
+| --- | --- | --- |
+| `per-directory` (default) | `<peer>-<folder>` | Matches the Claude Code plugin, so a repo maps to the same session in both. Linked git worktrees share the main checkout's session |
+| `git-branch` | `<peer>-<folder>-<branch>` | One session per branch |
+| `chat-instance` | — | One session per pi session |
+
+To pin a directory to a session name of your choosing, add it to the root `sessions` map: `{"/abs/path": "name"}`.
+
+### Sign-in Storage
+
+| Login | Saved as | Shared with |
+| --- | --- | --- |
+| Browser or device | root `oauth` | the honcho CLI |
+| API key | `hosts.pi.apiKey` | pi only |
+
+When nothing pi-specific is saved, pi uses a root `apiKey` written by another Honcho tool. `/honcho logout` never removes a root `apiKey`.
+
+### Sharing Memory With Other Integrations
+
+pi defaults to its own `pi` workspace, and a workspace is the isolation boundary, so it does not see memory from other integrations. To share memory with the Claude Code plugin, point both at the same workspace:
+
+```jsonc
+"hosts": {
+  "pi":          { "workspace": "shared" },
+  "claude_code": { "workspace": "shared" }
+}
+```
+
+### Environment Variables
+
+Environment variables win over the config file. `/honcho config` names the variable when one is shadowing a saved value.
+
+| Variable | Overrides |
+| --- | --- |
+| `HONCHO_API_KEY` | the saved login |
+| `HONCHO_BASE_URL`, `HONCHO_URL`, `HONCHO_ENDPOINT` | endpoint |
+| `HONCHO_WORKSPACE`, `HONCHO_WORKSPACE_ID` | workspace |
+| `HONCHO_PEER_NAME` | your peer |
+| `HONCHO_AI_PEER` | agent peer |
+| `HONCHO_SESSION_STRATEGY` | session mapping |
+| `HONCHO_ENABLED=false` | turns Honcho off |
+| `HONCHO_CONFIG_PATH` | config file location |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="GitHub Repository" icon="github" href="https://github.com/plastic-labs/pi-honcho">
+    Source code, issues, and README.
+  </Card>
+
+  <Card title="Honcho Architecture" icon="sitemap" href="../../documentation/core-concepts/architecture">
+    Learn about peers, sessions, and dialectic reasoning.
+  </Card>
+</CardGroup>

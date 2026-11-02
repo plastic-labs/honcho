@@ -27,7 +27,42 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v3.3.0 (Current)">
+        <Update label="v3.4.1 (Current)">
+        ### Security
+
+        - The Docker image ships certifi 2026.10.19, up from 2026.4.22, so outbound TLS from the API and the deriver (LLM providers, embeddings, webhooks) verifies against the current CA bundle. The build's uv moves from 0.9.24 to 0.13.5. Self-hosted deployments that install from `uv.lock` need uv 0.13.5 or newer: older uv ignores the lockfile's per-package `exclude-newer` override for certifi and resolves an older bundle (#1439)
+
+        ### Fixed
+
+        - In filters, a `"*"` wildcard or an empty `{}` now counts as TRUE inside `AND`, `OR` and `NOT` instead of being dropped. `{"OR": [{"id": "*"}, {"id": "bob"}]}` used to narrow to bob and now matches every row, and `{"NOT": [{"id": "*"}]}` or `{"NOT": [{}]}` used to match every row and now matches none. A wildcard or `{}` at the top level still selects every row. `source_ids: ["a", "*"]` now matches conclusions linked to `a` instead of every conclusion. Queries never widen past their workspace (#1433)
+        - LLM calls no longer retry a request the provider rejected outright when no fallback model is configured. A 4xx other than 408, 409, 425 or 429 (for example a 400 for a prompt over the context window, or a 401) now fails on the first attempt instead of being sent three times with about 8s of backoff. Transient failures (408, 409, 425, 429, 5xx, connection errors) and the response checks that consume attempts (refused or empty summaries and representations, structured answers that miss their schema) are retried as before. With a fallback configured nothing changes: the rejected request is still retried and the final attempt goes to the fallback. Applies to the deriver, summarizer, dialectic and dreamer, which all call through `honcho_llm_call` (#1435)
+        </Update>
+
+        <Update label="v3.4.0">
+        ### Added
+
+        - Workspace, peer and session responses carry `uid`, the immutable identifier Honcho assigns (the row's internal id). `id` is unchanged and stays the client-chosen name, so clients can start storing `uid` as a reference that won't move if names become renameable. Every route that returns these objects includes it: get-or-create, list, update, clone, session peers, peer sessions and scope sessions. Additive, no migration (#1394)
+        - Named-scope API keys: a key bound to one named scope, for recall and for message ingestion (including creating new member sessions). Recall automatically uses the key's projection, session access requires active scope membership, and a restricted key cannot enroll unrelated sessions or use global resource routes. New keys carry a dedicated JWT audience, so an older server rejects them instead of ignoring the scope claim and granting workspace access. On self-hosted instances with authentication enabled, mint one with `scripts/generate_jwt.py`; the scopes documentation lists the supported routes and limits. Managed (Groudon) keys need separate support, and the high-level Python SDK and CLI helpers still attempt workspace provisioning, so restricted callers use REST or the SDKs' HTTP transports (#1341)
+        - Dreamer working memory, all opt-in and off by default so today's behaviour is unchanged: the dreamer and the dialectic show the agent its remaining tool budget (`DREAM_BUDGET_ENABLED` / `DIALECTIC_BUDGET_ENABLED`) and a brief describing how memory is laid out, with conclusion counts by level and, for the dreamer, the conclusions created since the last dream (`DREAM_BRIEF_ENABLED` / `DIALECTIC_BRIEF_ENABLED`). The dreamer also reserves a write window at the end of each pass so planned writes are not lost when the iteration limit hits, and keeps capped working notes per representation from one dream to the next (`DREAM_NOTES_MODE`: `off`, `shadow` or `on`). Deduction and induction get their own iteration limits (`DREAM_DEDUCTION_MAX_TOOL_ITERATIONS` / `DREAM_INDUCTION_MAX_TOOL_ITERATIONS`); `DREAM_MAX_TOOL_ITERATIONS` now applies to card refresh only. Telemetry gains `hit_iteration_limit`, `write_window_used` and the `notes_*` / `new_conclusions_*` fields (#1378)
+        - Telemetry emits `workspace.created`, `peer.created`, `session.created` and `scope.created` CloudEvents, once per row actually inserted, including resources created implicitly (posting messages into a new workspace, a workspace created through `POST /peers`). Repeat requests emit nothing. Still gated by `TELEMETRY_ENABLED` (default `false`), so self-hosted deployments without telemetry are unaffected (#1360)
+
+        ### Changed
+
+        - This release includes a migration. It adds a `deletion_generation` counter (`INTEGER NOT NULL DEFAULT 0`, a catalog-only change) to workspaces, sessions and collections, and five partial indexes over unprocessed queue rows so pending work can be found by the peer, session or scope peer it touches. Nothing reads the counter or the indexes yet; they prepare the deletion lifecycle work, and the previous release's code runs fine against the new schema. The indexes are built `CONCURRENTLY`, so writes continue, but a build waits for open transactions that touched `queue` and for any older snapshot in the database, and after 60 minutes the migration fails and leaves an invalid index, which the next run drops and rebuilds. One index (`ix_queue_pending_observers`) needs the `btree_gin` extension; where it cannot be created, the migration skips that index and logs the statement to create it later. On large or busy databases, build the indexes ahead of the upgrade with the statements in the troubleshooting guide, and the migration then has nothing to do (#1409)
+        - Startup warns when an LLM API key is set for a transport no workload uses — across primary models, fallbacks, every dialectic level and embeddings — as provider migrations can leave populated credentials behind silently. The warning names only the setting, never the value, and does not block startup (#1344)
+
+        ### Fixed
+
+        - `provider_params.thinking_tool_choice_conflict` now applies on the OpenAI transport, where Anthropic models behind an OpenAI-compatible proxy used to ignore it. With thinking requested, it covers structured-output requests (the proxy turns the schema into a forced tool call) and forced tool choices. `override_thinking` drops thinking for the call; `override_tool` relaxes the tool choice to `auto` and requests the schema as `json_object`; `throw` raises. Unset leaves requests unchanged, but a config that already sets the key on the OpenAI transport now has it applied, including against OpenAI's own reasoning models, so set it only where the model is Anthropic. An unknown value now fails config load instead of failing requests with a 422 at runtime. Previously a proxy could leave the schema tool optional when thinking was on, so chats with a `response_format` could come back as prose and fail with a 500 (#1402)
+        - The deriver accepts `PromptRepresentation.explicit` as a bare string or a list of strings from OpenAI-compatible structured-output backends, coercing each non-blank string into an observation instead of failing validation and dropping the whole batch to the empty fallback. Blank strings are dropped; genuinely malformed shapes still raise (#538)
+        - The deriver fails loudly on malformed or degraded structured output instead of silently discarding the batch as an honest empty: bad payloads raise inside the retried LLM call, so they are retried, reach the fallback model, and error the queue item if every attempt fails. A clean-stop `{"explicit": []}` is still accepted. The summarizer gets the same treatment for blank responses cut off or filtered. Failure telemetry carries only the failure class, model and a payload digest, never the payload (#1373)
+        - A chat request whose `response_format` answer still fails its schema after retries returns 422 (`The model's answer did not match the requested response_format`) instead of an opaque 500 that the SDKs retry and Sentry drops (#1379)
+        - Tool-loop answers that miss their `response_model` — a plain-string refusal, or `json_object` mode's empty answer — are checked inside the retried call and raise, so they use the configured retries and fallback model before the request fails, instead of returning as a success and only then failing validation (#1393)
+        - Dialectic chat no longer overflows the prompt on oversized tool output: message tools scope sessions in SQL instead of binding every session name as a parameter (which past 65,535 sessions hit the PostgreSQL parameter cap), tool error text is capped at `LLM.MAX_TOOL_OUTPUT_CHARS` instead of returning the expanded SQL statement to the model, and prompt truncation caps a single tool result at half the budget and drops middle units before the opening query (#1390)
+        - Request bodies containing a lone surrogate escape (the half of a split emoji, or text decoded with the wrong codec) return the usual 422 validation body instead of a 500, so clients lose the single bad field's error rather than the whole batch (#1387)
+        </Update>
+
+        <Update label="v3.3.0">
         ### Added
 
         - ChromaDB vector store backend: set `VECTOR_STORE_TYPE=chromadb` and pick a client with `VECTOR_STORE_CHROMA_CLIENT_MODE`: `http` (self-hosted Chroma server, the default) or `cloud` (Chroma Cloud, needs `VECTOR_STORE_CHROMA_API_KEY`). Embedded `persistent` mode is rejected at startup, since it isn't safe across Honcho's API and deriver processes. Each Honcho namespace gets its own Chroma collection and index. Ships as an optional extra (`uv sync --extra chromadb`), so default installs and the Docker image don't include it (#868)
@@ -918,7 +953,16 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
-        <Update label="v2.6.0 (Current)">
+        <Update label="v2.7.0 (Current)">
+            ### Added
+
+            - `uid` on `Peer`, `Session` and the `Honcho` client (the workspace), plus on `PeerResponse`, `SessionResponse` and `WorkspaceResponse`: the immutable identifier the server assigns, next to the client-chosen `id`. Set from any API response that returns the object, and `None` before the first fetch or against servers that don't return it (#1394)
+
+            ### Fixed
+
+            - The async client (`.aio`) builds a new `httpx.AsyncClient` when the running event loop changes, instead of reusing the first loop's client on every later loop. A `Honcho` kept across `asyncio.run()` calls (a module-level client in a Lambda handler, a sync view or a CLI) no longer fails its first request on a new loop with `ConnectionError: Event loop is closed` when the previous loop left a pooled connection, sometimes after the write had been stored. A client set directly on `_async_http` is still used as is, and each thread running its own loop should use its own `Honcho` (#1357)
+        </Update>
+        <Update label="v2.6.0">
             ### Added
 
             - `custom_instructions` on `WorkspaceConfiguration` and `SessionConfiguration` (the shared fallback) and on `SummaryConfiguration`, `DreamConfiguration`, and `PeerCardConfiguration`, plus a new `DialecticConfiguration` type under the `dialectic` key. Requires Honcho v3.3.0+ (#1303)
@@ -1120,7 +1164,12 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
-        <Update label="v2.6.0 (Current)">
+        <Update label="v2.7.0 (Current)">
+            ### Added
+
+            - `uid` on `Peer`, `Session` and the `Honcho` client (the workspace), plus on `PeerResponse`, `SessionResponse` and `WorkspaceResponse`: the immutable identifier the server assigns, next to the client-chosen `id`. Set from any API response that returns the object, and `undefined` before the first fetch or against servers that don't return it (#1394)
+        </Update>
+        <Update label="v2.6.0">
             ### Added
 
             - `customInstructions` on workspace and session configuration (the shared fallback) and on the `summary`, `dream`, and `peerCard` sections, plus a new `dialectic` section (`DialecticConfig`) with its own `customInstructions`. Requires Honcho v3.3.0+ (#1303)
@@ -1348,7 +1397,24 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
     </Tab>
     <Tab title="Honcho CLI">
         [Honcho CLI](https://pypi.org/project/honcho-cli/)
-        <Update label="v0.2.0 (Current)">
+        <Update label="v0.3.0 (Current)">
+        ### Added
+
+        - `honcho install` finds the AI agents on this machine, shows which already have Honcho, and offers a checkbox picker. Claude Code, Hermes Agent, OpenClaw and Pi get their Honcho plugin and Codex the Honcho MCP server and skill, each through the agent's own commands and the API key in `~/.honcho/config.json`. If that file has no `peerName` yet, it asks what agents should call you (default: your OS username) and saves it there for every agent to share. Other agents it finds link to their setup guide, and `honcho install grok-bot` copies a setup prompt for Grok Bot. Run from inside Claude Code or Codex, it sets up that agent without prompting. `honcho install all` or `honcho install <id>...` skips the picker; `--list` and `--json` only report
+
+        ### Security
+
+        - Requires `certifi` 2026.10.19 or newer, the first CA bundle without the emSign root behind the compromised eMudhra intermediates. Upgrading the CLI now upgrades the bundle it verifies TLS with, including under `pip install -U`, which otherwise leaves dependencies alone
+        - A local stack keeps the Honcho image it pinned on first `honcho start`, so a stack set up before this release can still be running an image with the old bundle. Move to the patched image with `honcho stop`, then `honcho start --image ghcr.io/plastic-labs/honcho:v3.4.1`; data is kept
+        </Update>
+
+        <Update label="v0.2.1">
+        ### Fixed
+
+        - `honcho session summaries`, `honcho session inspect`, `honcho session context` and `honcho workspace queue-status` emit nested SDK objects (summaries, context messages, per-session queue status) as JSON objects instead of Python repr strings like `"content='...' message_id='...'"` (#1324)
+        </Update>
+
+        <Update label="v0.2.0">
         ### Added
 
         - CLI requests carry `X-Honcho-Host: honcho-cli/<version> (<platform>)` so telemetry counts them as CLI traffic rather than direct SDK use (#1181)

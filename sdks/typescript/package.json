@@ -1,6 +1,6 @@
 {
   "name": "@honcho-ai/sdk",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "description": "Official DX Optimized TypeScript SDK for Honcho",
   "author": "Plastic Labs <hello@plasticlabs.ai>",
   "license": "Apache-2.0",
@@ -15,7 +15,7 @@
     "lint:fix": "biome check src/ --write",
     "format": "biome format src/ --write",
     "typecheck": "tsc --noEmit",
-    "test": "echo 'Error: Tests must be run from the monorepo root via pytest. See tests/README.md' && exit 1"
+    "test": "cd ../.. && uv run python scripts/run_ts_sdk_tests.py"
   },
   "dependencies": {
     "zod": "4.0.0"

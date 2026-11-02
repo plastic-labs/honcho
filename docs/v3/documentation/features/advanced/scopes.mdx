@@ -77,7 +77,7 @@ uv run python scripts/generate_jwt.py --workspace company --scope support --expi
 ```
 
 These are core Honcho JWTs. Honcho Cloud's managed `hch-` keys require separate
-Groudon gateway support for named-scope grants; do not assume a core JWT can be
+gateway support for named-scope grants; do not assume a core JWT can be
 used at `api.honcho.dev` or that the managed key endpoint preserves `scope_id`.
 Use an instance running this core implementation directly until managed support
 is available. Upgrade **every** API replica before issuing scope keys. Older

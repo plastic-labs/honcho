@@ -49,7 +49,9 @@ Tests are defined in JSON files. A test definition consists of a name, optional 
 4. **Querying & Assertions**:
     * `query`: Perform an action and assert on the result.
         * `target`: "chat", "get_context", "get_peer_card", "get_representation",
-          "workspace_chat"
+          "workspace_chat", "get_workspace_config"
+        * `get_workspace_config` returns `{"configuration": {...}}` containing
+          explicit workspace settings; it makes no model calls.
         * `scope`: confine the read to a scope (or, for chat/representation/
           workspace_chat, to the union of several). Valid for "chat",
           "get_representation", "get_context", and "workspace_chat"; get_context

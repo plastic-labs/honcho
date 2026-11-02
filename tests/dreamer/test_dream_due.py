@@ -513,3 +513,71 @@ class TestMultiTenantDueDreams:
         assert due_dream.observer == peer_name
         assert due_dream.observed == peer_name
         assert all(d.tenant_id != "tenant-a" for d in due)
+
+
+@pytest.mark.asyncio
+class TestWorkListBacklog:
+    """A pair whose work list is still behind is due without new conclusions."""
+
+    @staticmethod
+    async def _dreamed(
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        *,
+        backlog: int,
+        dreamed_hours_ago: float = 9,
+    ) -> models.Collection:
+        last_dream_at = _now() - datetime.timedelta(hours=dreamed_hours_ago)
+        collection = await _make_collection(
+            db_session,
+            sample_data,
+            {
+                "dream": {
+                    "last_dream_at": last_dream_at.isoformat(),
+                    # Below the threshold: only the backlog can make it due.
+                    "last_dream_document_count": 55,
+                    "work_list_backlog": backlog,
+                }
+            },
+        )
+        minutes_ago = int(dreamed_hours_ago * 60)
+        await _insert_docs(
+            db_session, collection, "explicit", 60, age_minutes=minutes_ago + 30
+        )
+        await _insert_dream_item(
+            db_session, collection, age_minutes=minutes_ago + 5, processed=True
+        )
+        return collection
+
+    async def test_backlog_is_due_once_the_gate_passes(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        await self._dreamed(db_session, sample_data, backlog=5)
+        assert await count_due_dreams(db_session) == 1
+
+    async def test_no_backlog_waits_for_new_conclusions(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        await self._dreamed(db_session, sample_data, backlog=0)
+        assert await count_due_dreams(db_session) == 0
+
+    async def test_backlog_respects_the_min_hours_gate(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        await self._dreamed(db_session, sample_data, backlog=5, dreamed_hours_ago=2)
+        assert await count_due_dreams(db_session) == 0
+
+    async def test_backlog_dream_already_queued_is_not_due_again(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        collection = await self._dreamed(db_session, sample_data, backlog=5)
+        await _insert_dream_item(db_session, collection, age_minutes=1, processed=False)
+        assert await count_due_dreams(db_session) == 0

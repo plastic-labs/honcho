@@ -1,0 +1,19 @@
+{
+  "name": "cursor-honcho",
+  "private": true,
+  "description": "Cursor lifecycle hooks for the Honcho plugin. Built into dist/hook.js, which is committed; run `bun run build` after editing src/.",
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/hook.ts --target=bun --outfile dist/hook.js",
+    "check": "tsc --noEmit",
+    "test": "bun run build && bun test"
+  },
+  "dependencies": {
+    "@honcho-ai/harness-plugin-core": "^0.1.1",
+    "@honcho-ai/sdk": "^2.6.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -3,7 +3,7 @@ import json
 import pytest
 
 from src.exceptions import ValidationException
-from src.utils.files import JSONProcessor
+from src.utils.files import JSONProcessor, PDFProcessor
 
 
 @pytest.mark.asyncio
@@ -37,3 +37,25 @@ async def test_json_processor_rejects_invalid_json_content():
 
     with pytest.raises(ValidationException, match="invalid"):
         await processor.extract_text(b'{"name": }')
+
+
+@pytest.mark.asyncio
+async def test_pdf_processor_rejects_builtin_error_raised_by_pypdf():
+    # pypdf raises a bare AttributeError on this truncated object table
+    malformed = b"%PDF-1.4\n1 0 obj\n00 n \ntrailer\n<</Size 6 /Root 1 0 R>>\nstartxref\n394\n%%EOF"
+
+    with pytest.raises(ValidationException, match="Uploaded PDF could not be read"):
+        await PDFProcessor().extract_text(malformed)
+
+
+@pytest.mark.asyncio
+async def test_pdf_processor_does_not_mask_builtin_errors_from_other_code(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def broken_reader(_stream: object) -> None:
+        raise TypeError("bug outside pypdf")
+
+    monkeypatch.setattr("pypdf.PdfReader", broken_reader)
+
+    with pytest.raises(TypeError, match="bug outside pypdf"):
+        await PDFProcessor().extract_text(b"%PDF-1.4\n")

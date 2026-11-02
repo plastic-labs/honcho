@@ -1,0 +1,79 @@
+---
+title: "Grok Bot"
+icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/grok.svg"
+description: "Give your Grok Bots a shared memory of you"
+sidebarTitle: 'Grok Bot'
+---
+
+Grok Bots are always-on AI teammates with their own cloud computer. Each new task can start on a fresh machine with a blank context. The Honcho plugin gives every Bot on your account a shared, growing memory of you: your preferences, your decisions, and what each Bot was doing, carried across tasks, conversations, and Bots.
+
+This is the same plugin as the [Cursor integration](/v3/guides/integrations/cursor). A Bot uses two parts of it: the hosted Honcho MCP server and the skills. The plugin is designed to work from those two alone.
+
+## Quick Start
+
+<Steps>
+  <Step title="Add the plugin">
+    The plugin is not in the Cursor Marketplace yet, so it does not appear under **Connect apps**. Until it does, give any Bot the plugin's link and ask it to set Honcho up:
+
+    ```text
+    Set up Honcho memory using the plugin at https://github.com/plastic-labs/honcho/tree/main/integrations/cursor: connect its MCP server (https://mcp.honcho.dev, sign in with OAuth), install its skills, then run honcho-setup.
+    ```
+
+    The Bot adds the Honcho MCP server and saves the plugin's skills. The setup is account-wide: every Bot can use it.
+  </Step>
+  <Step title="Sign in">
+    The Bot shows a connect card; complete the sign-in in your browser. If you do not have a Honcho account yet, create one at [app.honcho.dev](https://app.honcho.dev) first. No API key is pasted anywhere.
+  </Step>
+  <Step title="Answer two questions">
+    The Bot runs the `honcho-setup` skill and asks whether Honcho's memory of you should be shared with another tool (for example Claude Code or Cursor) and what Honcho should call you. It stores the answers in Honcho's workspace metadata. Every other Bot on the account reads them on its first conversation and asks you nothing.
+  </Step>
+</Steps>
+
+To check it worked, start a new conversation with any Bot and ask what Honcho knows about you.
+
+<iframe
+  className="w-full aspect-video rounded-xl"
+  src="https://www.youtube.com/embed/SpFLfYKMs1Q"
+  title="Setting up Honcho in Grok Bot"
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+  allowFullScreen
+></iframe>
+
+## How Bots Use It
+
+- **Recall first.** At the start of a conversation the Bot reads what Honcho knows about you and acts on it. When a specific question would help, it asks Honcho and gets a reasoned answer.
+- **Record every turn.** Grok Bot runs no lifecycle hooks, so the `honcho-grok-bot` skill tells the Bot to append your message and its reply at the end of each turn. Secrets are replaced with `[redacted]`; raw tool output is never recorded.
+- **Durable facts right away.** When you state a preference, the Bot stores it as a conclusion so it is available before background reasoning catches up.
+
+## How Memory Is Organized
+
+| Honcho concept | Value for Grok Bots |
+| --- | --- |
+| Workspace | `cursor`, or the shared workspace you picked during setup |
+| User peer | one handle for you, shared by every Bot |
+| Agent peer | one per Bot, the Bot's name in kebab-case |
+| Session | `<bot>-conv-<id>` when a conversation id is available, otherwise `<bot>-chat-<date>` |
+| Group chat | `group-<name>-<date>`, with you and every participating Bot as peers |
+| Routine run | `<bot>-routine-<name>-<date>` |
+
+You are one peer everywhere, so what one Bot learns about you is available to all of them. Each Bot is its own peer, so Honcho can also tell you what a particular Bot has been doing.
+
+<Note>
+The plugin's skills and the MCP server are the only parts that run in Grok Bot. The always-on rule, the `/recall` command and the lifecycle hooks in the same plugin are for the Cursor IDE and are ignored by Bots.
+</Note>
+
+## Connecting Without the Plugin
+
+A Bot can also add Honcho as a custom MCP connector at `https://mcp.honcho.dev` with an `Authorization: Bearer <api-key>` header. That gives it the tools without the skills, so you will need to tell it how to name peers and sessions. If the Bot wires the connector through `mcp-remote` on its own computer, ask it to also send a `User-Agent` header naming the Bot, so usage is attributed to it rather than to a generic client.
+
+## Troubleshooting
+
+**The Bot reports an authentication error.** Say "Sign in to Honcho again." Tokens refresh on their own after the first sign-in; a revoked grant needs a new one.
+
+**Two Bots describe you differently.** They resolved different workspaces or handles. Ask each to run Honcho setup and give the same answers. The shared values live in the `cursor` workspace's metadata.
+
+**A Bot stopped recording.** Ask it to check the current session with Honcho's `search`. Recording is skill-driven, so a Bot that was interrupted mid-turn may have skipped it; the next turn records normally.
+
+## Source
+
+The plugin lives in the Honcho monorepo under [`integrations/cursor/`](https://github.com/plastic-labs/honcho/tree/main/integrations/cursor). Issues and pull requests go to [plastic-labs/honcho](https://github.com/plastic-labs/honcho).

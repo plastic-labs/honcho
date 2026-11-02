@@ -33,6 +33,7 @@ from hermes_cli.profiles import _get_default_hermes_home
 from hermes_constants import get_hermes_home
 from hermes_state_common import TITLE_SOURCE_DERIVED, TITLE_SOURCE_LLM
 
+from .attribution import HONCHO_APP_URL, attribution_url
 from .client_cache import (
     _DEFAULT_HTTP_TIMEOUT, _client_cache_key, _client_slots, _client_slots_lock,
     _honcho_json_timeout_memo, _refresh_oauth, _slot_for,
@@ -622,7 +623,7 @@ def get_honcho_client(config: HonchoClientConfig | None = None) -> Honcho:
     _refresh_oauth(config)
 
     if not config.api_key and not config.base_url:
-        raise ValueError("Honcho API key not found. Get your API key at https://app.honcho.dev, "
+        raise ValueError(f"Honcho API key not found. Get your API key at {attribution_url(HONCHO_APP_URL, 'missing-key-error')}, "
                          "then run 'hermes honcho setup' or set HONCHO_API_KEY. "
                          "For local instances, set HONCHO_BASE_URL instead.")
 

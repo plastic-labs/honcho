@@ -37,6 +37,7 @@ from src.cache.client import (
 )
 from src.config import settings
 from src.crud.deriver import active_queue_session_match, queue_item_tenant_match
+from src.crud.lifecycle import live_session_peer_row, live_session_row
 from src.exceptions import (
     AuthenticationException,
     ConflictException,
@@ -46,6 +47,7 @@ from src.exceptions import (
 )
 from src.telemetry.events import SessionCreatedEvent, emit
 from src.utils.filter import apply_filter
+from src.utils.path_params import schema_from_path
 from src.utils.scopes import is_scope_peer, scope_peer_name
 from src.utils.types import GetOrCreateResult
 from src.vector_store import get_external_vector_store
@@ -109,6 +111,7 @@ async def _fetch_session(
         select(models.Session)
         .where(models.Session.workspace_name == workspace_name)
         .where(models.Session.name == session_name)
+        .where(live_session_row())
     )
     if obj is None:
         return None
@@ -189,6 +192,7 @@ async def get_sessions(
         .where(models.Session.tenant_id == models.scoped_tenant_id())
         .where(models.Session.workspace_name == workspace_name)
         .where(models.Session.is_active == True)  # noqa: E712
+        .where(live_session_row())
     )
 
     stmt = apply_filter(stmt, models.Session, filters)
@@ -278,7 +282,7 @@ async def get_or_create_session(
         # Get or create workspace to ensure it exists
         ws_result = await get_or_create_workspace(
             db,
-            schemas.WorkspaceCreate(name=workspace_name),
+            schema_from_path(schemas.WorkspaceCreate, "workspace_id", workspace_name),
         )
 
         # Create honcho session
@@ -544,7 +548,9 @@ async def update_session(
     """
     honcho_session: models.Session = (
         await get_or_create_session(
-            db, schemas.SessionCreate(name=session_name), workspace_name=workspace_name
+            db,
+            schema_from_path(schemas.SessionCreate, "session_id", session_name),
+            workspace_name=workspace_name,
         )
     ).resource
 
@@ -1050,6 +1056,7 @@ async def get_peers_from_session(
         .where(models.SessionPeer.session_name == session_name)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.SessionPeer.left_at.is_(None))  # Only active peers
+        .where(live_session_peer_row())
         # models.Peer is already in the FROM via the join above, so the clause
         # composes directly — no correlated exists() as in the SessionPeer-only
         # UPDATE statements elsewhere in this module.
@@ -1086,6 +1093,7 @@ async def is_peer_in_session(
         .where(models.SessionPeer.session_name == session_name)
         .where(models.SessionPeer.peer_name == peer_name)
         .where(models.SessionPeer.left_at.is_(None))
+        .where(live_session_peer_row())
         .limit(1)
     )
     return result is not None
@@ -1452,6 +1460,7 @@ async def get_peer_config(
         models.SessionPeer.workspace_name == workspace_name,
         models.SessionPeer.session_name == session_name,
         models.SessionPeer.peer_name == peer_id,
+        live_session_peer_row(),
     )
     result = await db.execute(stmt)
     session_peer = result.scalar_one_or_none()

@@ -77,6 +77,20 @@ class DialecticCompletedEvent(BaseEvent, CustomInstructionsFields):
         ),
     )
 
+    # Tool-loop budget (shared with dialectic.completed)
+    hit_iteration_limit: bool = Field(
+        default=False,
+        description="True when the tool loop ran out of iterations and made its final call without a natural stop.",
+    )
+    iteration_limit: int | None = Field(
+        default=None,
+        description="Tool-iteration limit this run was given.",
+    )
+    budget_line_enabled: bool = Field(
+        default=False,
+        description="True when the model was shown how many tool calls it had left.",
+    )
+
     def get_resource_id(self) -> str:
         """Resource ID is the run_id for uniqueness."""
         return self.run_id

@@ -3,11 +3,11 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../types.js";
 import {
   textResult,
-  errorResult,
   formatMessage,
   formatMessages,
   formatSessionSummaries,
   workspaceIdSchema,
+  failedResult,
 } from "../types.js";
 
 export function register(server: McpServer, ctx: ToolContext) {
@@ -46,9 +46,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           .session(session_id, scopes ? { scopes } : undefined);
         return textResult({ session_id: session.id });
       } catch (e) {
-        return errorResult(
-          `Failed to create session: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to create session`, e);
       }
     },
   );
@@ -85,9 +83,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           pages: page.pages,
         });
       } catch (e) {
-        return errorResult(
-          `Failed to list sessions: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to list sessions`, e);
       }
     },
   );
@@ -116,9 +112,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         await session.delete();
         return textResult("Session deleted successfully");
       } catch (e) {
-        return errorResult(
-          `Failed to delete session: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to delete session`, e);
       }
     },
   );
@@ -154,9 +148,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         const cloned = await session.clone(message_id);
         return textResult({ session_id: cloned.id });
       } catch (e) {
-        return errorResult(
-          `Failed to clone session: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to clone session`, e);
       }
     },
   );
@@ -215,9 +207,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         await session.addPeers(additions);
         return textResult("Peers added to session successfully");
       } catch (e) {
-        return errorResult(
-          `Failed to add peers: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to add peers`, e);
       }
     },
   );
@@ -250,9 +240,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         await session.removePeers(peer_ids);
         return textResult("Peers removed from session successfully");
       } catch (e) {
-        return errorResult(
-          `Failed to remove peers: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to remove peers`, e);
       }
     },
   );
@@ -281,9 +269,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         const peers = await session.peers();
         return textResult(peers.map((p) => p.id));
       } catch (e) {
-        return errorResult(
-          `Failed to get session peers: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to get session peers`, e);
       }
     },
   );
@@ -322,9 +308,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           summaries: formatSessionSummaries(summaries),
         });
       } catch (e) {
-        return errorResult(
-          `Failed to inspect session: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to inspect session`, e);
       }
     },
   );
@@ -380,9 +364,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         await session.addMessages(sessionMessages);
         return textResult("Messages added to session successfully");
       } catch (e) {
-        return errorResult(
-          `Failed to add messages: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to add messages`, e);
       }
     },
   );
@@ -423,9 +405,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           pages: page.pages,
         });
       } catch (e) {
-        return errorResult(
-          `Failed to get messages: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to get messages`, e);
       }
     },
   );
@@ -455,9 +435,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         const message = await session.getMessage(message_id);
         return textResult(formatMessage(message));
       } catch (e) {
-        return errorResult(
-          `Failed to get message: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to get message`, e);
       }
     },
   );
@@ -546,9 +524,7 @@ export function register(server: McpServer, ctx: ToolContext) {
             : {}),
         });
       } catch (e) {
-        return errorResult(
-          `Failed to get context: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to get context`, e);
       }
     },
   );

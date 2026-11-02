@@ -48,9 +48,9 @@ bun run typecheck
 
 ### Testing
 
-Tests for the SDK live in `tests/` at the monorepo root and are run via pytest, which orchestrates a test server. Do not run `bun test` directly.
+The tests in `__tests__/` run against a real Honcho server. `bun run test` starts a throwaway one (a fresh database on the Postgres named by `DB_CONNECTION_URI`, the API, and the mock LLM provider), runs `bun test` against it, and tears it down. Bare `bun test` has no server to talk to.
 
 ```bash
-# From the monorepo root
-uv run pytest tests/ -k typescript
+bun run test              # whole suite
+bun run test peer.test    # bun test args pass through
 ```

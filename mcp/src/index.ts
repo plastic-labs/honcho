@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/cloudflare";
 import { createMcpHandler } from "agents/mcp";
 import {
+  HEADER_PLUGIN,
   honchoClients,
   identityHeaders,
   parseConfig,
@@ -8,11 +9,12 @@ import {
   type Env,
 } from "./config.js";
 import { createServer } from "./server.js";
+import { invalidTokenResponse } from "./types.js";
 
 const CORS_ORIGIN = "*";
 const CORS_METHODS = "GET, POST, DELETE, OPTIONS";
 const CORS_ALLOWED_HEADERS =
-  "Content-Type, Authorization, X-Honcho-Workspace-ID";
+  "Content-Type, Authorization, X-Honcho-Workspace-ID, X-Honcho-Plugin";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": CORS_ORIGIN,
@@ -23,6 +25,7 @@ const CORS_HEADERS = {
 
 const PROTECTED_RESOURCE_PATH = "/.well-known/oauth-protected-resource";
 const HEALTHCHECK_TIMEOUT_MS = 15_000;
+
 
 function resourceUrl(request: Request): string {
   return new URL(request.url).origin;
@@ -110,22 +113,42 @@ export default Sentry.withSentry(sentryOptions, {
     }
 
     try {
+      let rejected = false;
       const server = createServer({
         config,
         ...honchoClients(
           config,
-          identityHeaders(request.headers.get("User-Agent")),
+          identityHeaders(
+            request.headers.get("User-Agent"),
+            request.headers.get(HEADER_PLUGIN),
+          ),
         ),
+        onUnauthorized: () => {
+          rejected = true;
+        },
       });
       const handler = createMcpHandler(server, {
         route: "/",
+        // Tool results come back as one JSON body, so the status line is
+        // decided after the tool ran and a rejected token can be a real 401.
+        enableJsonResponse: true,
         corsOptions: {
           origin: CORS_ORIGIN,
           methods: CORS_METHODS,
           headers: CORS_ALLOWED_HEADERS,
         },
       });
-      return await handler(request, env, executionCtx);
+      const response = await handler(request, env, executionCtx);
+      if (rejected) {
+        // The Honcho API refused this request's OAuth access token. Answer
+        // 401 so the MCP client refreshes the token and retries; a tool
+        // error inside a 200 would leave it believing it is signed in.
+        return invalidTokenResponse(
+          `${resourceUrl(request)}${PROTECTED_RESOURCE_PATH}`,
+          CORS_HEADERS,
+        );
+      }
+      return response;
     } catch (e) {
       Sentry.captureException(e);
       const message =

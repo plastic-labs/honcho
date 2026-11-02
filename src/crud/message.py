@@ -10,12 +10,14 @@ from sqlalchemy.orm import InstrumentedAttribute
 
 from src import models, schemas
 from src.config import settings
+from src.crud.lifecycle import live_session_peer_row
 from src.db import tenant_context
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
 from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
+from src.utils.path_params import schema_from_path
 from src.utils.scopes import is_scope_peer_name
 from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
@@ -83,13 +85,14 @@ async def get_peer_session_names(
         Distinct session names the peer has a matching membership record in.
     """
     stmt = (
-        select(models.session_peers_table.c.session_name)
-        .where(models.session_peers_table.c.workspace_name == workspace_name)
-        .where(models.session_peers_table.c.peer_name == peer_name)
+        select(models.SessionPeer.session_name)
+        .where(models.SessionPeer.workspace_name == workspace_name)
+        .where(models.SessionPeer.peer_name == peer_name)
+        .where(live_session_peer_row())
         .distinct()
     )
     if active_only:
-        stmt = stmt.where(models.session_peers_table.c.left_at.is_(None))
+        stmt = stmt.where(models.SessionPeer.left_at.is_(None))
     result = await db.execute(stmt)
     return [row[0] for row in result.all()]
 
@@ -477,7 +480,9 @@ async def create_messages(
     peers = {message.peer_name: schemas.SessionPeerConfig() for message in messages}
     await get_or_create_session(
         db,
-        session=schemas.SessionCreate(name=session_name, peers=peers),
+        session=schema_from_path(
+            schemas.SessionCreate, "session_id", session_name, peers=peers
+        ),
         workspace_name=workspace_name,
     )
 
@@ -878,7 +883,7 @@ async def _search_messages_pgvector(
     session_name: str | None,
     *,
     query_embedding: list[float],
-    allowed_session_names: list[str] | None = None,
+    scope_clauses: Sequence[ColumnElement[bool]] = (),
     after_date: datetime | None = None,
     before_date: datetime | None = None,
     limit: int = 10,
@@ -907,10 +912,7 @@ async def _search_messages_pgvector(
         match_stmt = match_stmt.where(
             models.MessageEmbedding.session_name == session_name
         )
-    elif allowed_session_names is not None:
-        match_stmt = match_stmt.where(
-            models.MessageEmbedding.session_name.in_(allowed_session_names)
-        )
+    match_stmt = match_stmt.where(*scope_clauses)
 
     if after_date:
         match_stmt = match_stmt.where(models.Message.created_at >= after_date)
@@ -946,21 +948,23 @@ async def _semantic_search_messages(
     intersected with the allowlist (fail-closed: empty result on empty
     intersection).
     """
-    # db=None: the helper opens its own short-lived session only if it needs
-    # an observer lookup, so the external-store path below stays the first
-    # thing that happens when no observer scoping applies.
-    allowed_session_names, deny = await resolve_session_scope(
-        None,
-        workspace_name,
-        session_name,
-        session_allowlist,
-        observer,
-        operation_name=operation_name,
-    )
-    if deny:
-        return []
-
     if settings.VECTOR_STORE.TYPE != "pgvector" and settings.VECTOR_STORE.MIGRATED:
+        # External stores filter on attributes, not SQL, so they need the
+        # observer's sessions as a materialized name list. db=None: the helper
+        # opens its own short-lived session only if it needs an observer
+        # lookup, so the vector query stays the first thing that happens when
+        # no observer scoping applies.
+        allowed_session_names, deny = await resolve_session_scope(
+            None,
+            workspace_name,
+            session_name,
+            session_allowlist,
+            observer,
+            operation_name=operation_name,
+        )
+        if deny:
+            return []
+
         message_ids = await _search_messages_external(
             workspace_name,
             query_embedding,
@@ -989,13 +993,23 @@ async def _semantic_search_messages(
             _expunge_snippets(db, snippets)
             return snippets
 
+    scope_clauses, deny = resolve_session_scope_clauses(
+        workspace_name,
+        session_name,
+        session_allowlist,
+        observer,
+        models.MessageEmbedding.session_name,
+    )
+    if deny:
+        return []
+
     async with tracked_db(operation_name, read_only=True) as db:
         snippets = await _search_messages_pgvector(
             db,
             workspace_name,
             session_name,
             query_embedding=query_embedding,
-            allowed_session_names=allowed_session_names,
+            scope_clauses=scope_clauses,
             after_date=after_date,
             before_date=before_date,
             limit=limit,
@@ -1073,7 +1087,7 @@ async def _grep_messages_internal(
     text: str,
     limit: int = 10,
     context_window: int = 2,
-    allowed_session_names: list[str] | None = None,
+    scope_clauses: Sequence[ColumnElement[bool]] = (),
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """Internal implementation of exact-text message search."""
     # Build the base query with ILIKE for case-insensitive text search
@@ -1090,10 +1104,7 @@ async def _grep_messages_internal(
 
     if session_name:
         match_stmt = match_stmt.where(models.Message.session_name == session_name)
-    elif allowed_session_names is not None:
-        match_stmt = match_stmt.where(
-            models.Message.session_name.in_(allowed_session_names)
-        )
+    match_stmt = match_stmt.where(*scope_clauses)
 
     result = await db.execute(match_stmt)
     matched_messages = list(result.scalars().all())
@@ -1138,13 +1149,17 @@ async def grep_messages(
         List of tuples: (matched_messages, context_messages)
         Each snippet may contain multiple matches if they were close together.
     """
-    async with tracked_db("message.grep_messages", read_only=True) as db:
-        allowed_session_names, deny = await resolve_session_scope(
-            db, workspace_name, session_name, session_allowlist, observer
-        )
-        if deny:
-            return []
+    scope_clauses, deny = resolve_session_scope_clauses(
+        workspace_name,
+        session_name,
+        session_allowlist,
+        observer,
+        models.Message.session_name,
+    )
+    if deny:
+        return []
 
+    async with tracked_db("message.grep_messages", read_only=True) as db:
         snippets = await _grep_messages_internal(
             db,
             workspace_name,
@@ -1152,7 +1167,7 @@ async def grep_messages(
             text,
             limit,
             context_window,
-            allowed_session_names=allowed_session_names,
+            scope_clauses=scope_clauses,
         )
         _expunge_snippets(db, snippets)
         return snippets
@@ -1193,8 +1208,12 @@ async def get_messages_by_date_range(
     Returns:
         List of messages within the date range
     """
-    allowed_session_names, deny = await resolve_session_scope(
-        db, workspace_name, session_name, session_allowlist, observer
+    scope_clauses, deny = resolve_session_scope_clauses(
+        workspace_name,
+        session_name,
+        session_allowlist,
+        observer,
+        models.Message.session_name,
     )
     if deny:
         return []
@@ -1203,8 +1222,7 @@ async def get_messages_by_date_range(
 
     if session_name:
         stmt = stmt.where(models.Message.session_name == session_name)
-    elif allowed_session_names is not None:
-        stmt = stmt.where(models.Message.session_name.in_(allowed_session_names))
+    stmt = stmt.where(*scope_clauses)
     if after_date:
         stmt = stmt.where(models.Message.created_at >= after_date)
     if before_date:

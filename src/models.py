@@ -230,6 +230,9 @@ class Workspace(Base):
     )
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
     name: Mapped[str] = mapped_column(TEXT)
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
@@ -241,6 +244,10 @@ class Workspace(Base):
     )
     configuration: Mapped[dict[str, Any]] = mapped_column(
         JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+    # Generation counter for the deletion lifecycle barrier
+    deletion_generation: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0")
     )
 
     sessions = relationship(
@@ -276,6 +283,9 @@ class Peer(Base):
         default=_default_tenant_id,
     )
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     name: Mapped[str] = mapped_column(TEXT, nullable=False)
     h_metadata: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
@@ -335,6 +345,9 @@ class Session(Base):
         default=_default_tenant_id,
     )
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     name: Mapped[str] = mapped_column(TEXT)
     is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
     h_metadata: Mapped[dict[str, Any]] = mapped_column(
@@ -349,6 +362,10 @@ class Session(Base):
     workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
     configuration: Mapped[dict[str, Any]] = mapped_column(
         JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+    # Generation counter for the deletion lifecycle barrier
+    deletion_generation: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0")
     )
 
     workspace = relationship("Workspace", back_populates="sessions")
@@ -385,6 +402,9 @@ class Session(Base):
 @final
 class Message(Base):
     __tablename__: str = "messages"
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     tenant_id: Mapped[str] = mapped_column(
         TEXT,
         ForeignKey("tenants.tenant_id"),
@@ -601,6 +621,10 @@ class Collection(Base):
         "Document", back_populates="collection", cascade="all, delete, delete-orphan"
     )
     workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    # Generation counter for the deletion lifecycle barrier
+    deletion_generation: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0")
+    )
 
     __table_args__ = (
         PrimaryKeyConstraint("tenant_id", "id"),
@@ -972,6 +996,28 @@ class QueueItem(Base):
             "work_unit_key",
             unique=True,
             postgresql_where=text("task_type = 'dream' AND processed = false"),
+        ),
+        # Pending-work lookups by the peer or session a payload references.
+        # The observers index needs btree_gin for its workspace_name column.
+        Index(
+            "ix_queue_pending_observers",
+            "workspace_name",
+            text("(payload -> 'observers')"),
+            postgresql_using="gin",
+            postgresql_where=text(
+                "processed = false AND (payload -> 'observers') IS NOT NULL"
+            ),
+        ),
+        *(
+            Index(
+                f"ix_queue_pending_{key}",
+                "workspace_name",
+                text(f"(payload ->> '{key}')"),
+                postgresql_where=text(
+                    f"processed = false AND (payload ->> '{key}') IS NOT NULL"
+                ),
+            )
+            for key in ("observed", "observer", "scope_peer", "session_name")
         ),
     )
 

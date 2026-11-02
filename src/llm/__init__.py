@@ -26,6 +26,7 @@ from .registry import (
     history_adapter_for_provider,
 )
 from .types import (
+    BudgetLine,
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
     IterationCallback,
@@ -41,6 +42,7 @@ __all__ = [
     "CompletionResult",
     "HonchoLLMCallResponse",
     "HonchoLLMCallStreamChunk",
+    "BudgetLine",
     "IterationCallback",
     "IterationData",
     "ProviderBackend",

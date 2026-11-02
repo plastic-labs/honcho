@@ -309,6 +309,67 @@ def test_source_ids_null_is_rejected():
         apply_filter(select(Document), Document, {"source_ids": None})
 
 
+def test_source_ids_wildcard_entry_keeps_the_other_entries():
+    """A bare list requires ALL entries, so ["abc", "*"] is "linked to abc".
+    The wildcard used to short-circuit the whole list to no condition."""
+    where = _where(Document, {"source_ids": ["abc", "*"]})
+    assert "document_sources" in where
+
+
+# --- Filters that constrain nothing ------------------------------------------
+#
+# `{}` and a wildcard both constrain nothing, which is TRUE. Dropping such an
+# operand is exact only inside an AND: under OR it narrowed the result to the
+# other operands, and under NOT it turned "exclude everything" into "exclude
+# nothing".
+
+
+_CONSTRAINS_NOTHING: list[tuple[Any, dict[str, Any]]] = [
+    (Message, {"peer_id": "*"}),
+    (Message, {}),
+    (Message, {"OR": [{"peer_id": "*"}, {"peer_id": "bob"}]}),
+    (Message, {"OR": [{}, {"peer_id": "bob"}]}),
+    (Message, {"OR": [{"metadata": {"role": {"in": ["*"]}}}, {"peer_id": "bob"}]}),
+    (Document, {"source_ids": ["*"]}),
+]
+
+
+@pytest.mark.parametrize(("model", "filters"), _CONSTRAINS_NOTHING)
+def test_filter_that_constrains_nothing_matches_everything(
+    model: Any, filters: dict[str, Any]
+):
+    """Renders an explicit TRUE, not a dropped condition, so an OR containing
+    it matches every row instead of narrowing to the other operands."""
+    assert _where(model, filters).strip() == "true"
+
+
+_NEGATES_NOTHING: list[tuple[Any, dict[str, Any]]] = [
+    (Message, {"NOT": [{"peer_id": "*"}]}),
+    (Message, {"NOT": [{"peer_id": {"in": ["bob", "*"]}}]}),
+    (Message, {"NOT": [{}]}),
+    (Message, {"NOT": [{"metadata": {"role": "*"}}]}),
+    (Message, {"NOT": [{"created_at": {"gte": "*"}}]}),
+    (Document, {"NOT": [{"source_ids": "*"}]}),
+]
+
+
+@pytest.mark.parametrize(("model", "filters"), _NEGATES_NOTHING)
+def test_negating_a_filter_that_constrains_nothing_matches_nothing(
+    model: Any, filters: dict[str, Any]
+):
+    """NOT of "everything" is "nothing". The dropped operand used to leave the
+    NOT with no condition, which failed open to every row."""
+    assert _where(model, filters).strip() == "true IS NOT true"
+
+
+def test_wildcard_inside_and_leaves_the_other_operands():
+    """TRUE is AND's identity, so the wildcard must vanish from the rendered SQL
+    and leave the other operand's condition exactly as it was."""
+    where = _where(Message, {"AND": [{"peer_id": "*"}, {"peer_id": "bob"}]})
+    assert "peer_name =" in where
+    assert "true" not in where
+
+
 @pytest.mark.parametrize(
     ("filters", "expected"),
     [

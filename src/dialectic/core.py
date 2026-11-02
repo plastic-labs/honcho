@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any, cast
 
 from nanoid import generate as generate_nanoid
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from src import crud, models
 from src.config import (
@@ -22,14 +22,17 @@ from src.config import (
 )
 from src.dependencies import tracked_db
 from src.dialectic import prompts
+from src.dreamer.working_memory import load_map_entries
 from src.embedding_client import embedding_client
+from src.exceptions import StructuredResponseError
 from src.llm import (
     HonchoLLMCallResponse,
     StreamingResponseWithMetadata,
     honcho_llm_call,
 )
 from src.llm.runtime import CapturedAgentSpan, start_captured_span
-from src.llm.types import LLMTelemetryContext
+from src.llm.structured_output import StructuredOutputError
+from src.llm.types import BudgetLine, LLMTelemetryContext
 from src.schemas import ResolvedDialecticConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import DialecticCompletedEvent, EmbeddingCallPurpose, emit
@@ -47,10 +50,26 @@ from src.utils.agent_tools import (
 )
 from src.utils.evidence import EvidenceAccumulator
 from src.utils.formatting import format_new_turn_with_timestamp
+from src.utils.memory_brief import load_memory_counts, memory_layout_section
 from src.utils.tokens import estimate_tokens
 from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
+
+
+# Below this many tool iterations a budget line is noise.
+MIN_ITERATIONS_FOR_BUDGET_LINE = 3
+
+
+def dialectic_budget_line(used: int, limit: int) -> str | None:
+    """Budget line for the dialectic: how many calls are used, and when to answer."""
+    if used >= limit:
+        # The loop is about to make its no-tools final call, which says so.
+        return None
+    line = f"Tool calls used: {used} of {limit}."
+    if limit - used == 1:
+        line += " On the next call, answer from what you have."
+    return line
 
 
 def _get_dialectic_level_model_config(
@@ -141,6 +160,15 @@ class DialecticAgent:
         self._prefetched_conclusion_count: int = 0
         self.evidence: EvidenceAccumulator | None = evidence
         self._run_id: str = generate_nanoid()  # Always generate for event correlation
+        if self._layout_enabled():
+            self.messages[0]["content"] += "\n\n" + memory_layout_section(
+                available_tools=(
+                    name
+                    for tool in self._select_tools()
+                    if isinstance((name := tool.get("name")), str)
+                ),
+                cite_ids=False,
+            )
 
     def _select_tools(self) -> list[dict[str, Any]]:
         """Pick the toolset for this query.
@@ -177,6 +205,53 @@ class DialecticAgent:
     def _force_tools_until(self) -> frozenset[str] | None:
         """Tools that satisfy a forced tool_choice; None means any tool does."""
         return None
+
+    def _layout_enabled(self) -> bool:
+        """Whether the memory-layout section goes in the system prompt.
+
+        Pair-scoped only: the workspace agent replaces the system prompt.
+        """
+        return settings.DIALECTIC.BRIEF_ENABLED
+
+    def _pair_brief_enabled(self) -> bool:
+        """Whether counts and the dreamer's map notes go in the first message.
+
+        Both are drawn from every session of the pair, so a session allowlist
+        rules them out: they would reach past the allowed sessions.
+        """
+        return settings.DIALECTIC.BRIEF_ENABLED and self.session_allowlist is None
+
+    async def _pair_brief(self) -> str | None:
+        """Counts and the dreamer's map notes for the first message, if enabled."""
+        if not self._pair_brief_enabled():
+            return None
+        parts: list[str] = []
+        try:
+            parts.append(
+                await load_memory_counts(
+                    self.workspace_name, observer=self.observer, observed=self.observed
+                )
+            )
+            if settings.DREAM.NOTES_MODE == "on":
+                entries = await load_map_entries(
+                    self.workspace_name, observer=self.observer, observed=self.observed
+                )
+                if entries:
+                    parts.append(
+                        "## HOW THIS MEMORY IS ORGANIZED (dreamer's notes)\n"
+                        + "\n".join(f"- {entry.text}" for entry in entries)
+                    )
+        except Exception:
+            logger.warning("Failed to load the memory brief", exc_info=True)
+        return "\n\n".join(parts) or None
+
+    def _budget_line(self, level_settings: DialecticLevelSettings) -> BudgetLine | None:
+        """Budget line for this query, or None when off or the level is too small."""
+        if not settings.DIALECTIC.BUDGET_ENABLED:
+            return None
+        if self._max_tool_iterations(level_settings) < MIN_ITERATIONS_FOR_BUDGET_LINE:
+            return None
+        return dialectic_budget_line
 
     def _max_tool_iterations(self, level_settings: DialecticLevelSettings) -> int:
         """Tool rounds this query gets; defaults to the reasoning level's limit."""
@@ -399,6 +474,10 @@ class DialecticAgent:
         else:
             user_content = f"Query: {query}"
 
+        brief = await self._pair_brief()
+        if brief:
+            user_content = f"{user_content}\n\n{brief}"
+
         self.messages.append({"role": "user", "content": user_content})
 
         return await self._create_tool_executor()
@@ -469,6 +548,9 @@ class DialecticAgent:
         thinking_content: str | None,
         iterations: int,
         hit_input_token_cap: bool = False,
+        hit_iteration_limit: bool = False,
+        iteration_limit: int | None = None,
+        budget_line_enabled: bool = False,
     ) -> None:
         """
         Log metrics common to both streaming and non-streaming responses.
@@ -485,6 +567,10 @@ class DialecticAgent:
             tool_calls_count: Number of tool calls made
             thinking_content: Thinking trace content (if any)
             iterations: Number of iterations in the tool execution loop
+            hit_input_token_cap: Whether an iteration's input exceeded the cap
+            hit_iteration_limit: Whether the tool loop ran out of iterations
+            iteration_limit: Tool-iteration limit this query was given
+            budget_line_enabled: Whether the model was shown its remaining budget
         """
         accumulate_metric(task_name, "tool_calls", tool_calls_count, "count")
 
@@ -538,6 +624,9 @@ class DialecticAgent:
                 cache_read_tokens=cache_read_input_tokens or 0,
                 cache_creation_tokens=cache_creation_input_tokens or 0,
                 hit_input_token_cap=hit_input_token_cap,
+                hit_iteration_limit=hit_iteration_limit,
+                iteration_limit=iteration_limit,
+                budget_line_enabled=budget_line_enabled,
                 custom_instructions_tokens=estimate_tokens(
                     self.instructions.custom_instructions
                 ),
@@ -597,6 +686,7 @@ class DialecticAgent:
                     force_tools_until=self._force_tools_until(),
                     tool_executor=tool_executor,
                     max_tool_iterations=self._max_tool_iterations(level_settings),
+                    budget_line=self._budget_line(level_settings),
                     messages=self.messages,
                     max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                     trace_name="dialectic_chat",
@@ -605,9 +695,13 @@ class DialecticAgent:
                     run=run,
                 ),
             )
-        except BaseException:
+        except BaseException as exc:
             if run is not None:
                 run.end(is_error=True)
+            if response_model is not None and isinstance(
+                exc, ValidationError | StructuredOutputError
+            ):
+                raise StructuredResponseError() from exc
             raise
 
         # With response_model, the backend parses content into a model
@@ -615,6 +709,14 @@ class DialecticAgent:
         content = response.content
         if isinstance(content, BaseModel):
             content = content.model_dump_json(by_alias=True)
+        elif response_model is not None:
+            # A backend that degrades instead of raising (json_object mode's
+            # empty answer or a refusal) hands back a plain string. The tool
+            # loop already retries those; this backstops any path that skips
+            # its check.
+            if run is not None:
+                run.end(is_error=True)
+            raise StructuredResponseError()
         if run is not None:
             run.end(output=content)
 
@@ -634,6 +736,9 @@ class DialecticAgent:
             thinking_content=response.thinking_content,
             iterations=response.iterations,
             hit_input_token_cap=response.hit_input_token_cap,
+            hit_iteration_limit=response.hit_iteration_limit,
+            iteration_limit=self._max_tool_iterations(level_settings),
+            budget_line_enabled=self._budget_line(level_settings) is not None,
         )
 
         return content
@@ -692,6 +797,7 @@ class DialecticAgent:
                     force_tools_until=self._force_tools_until(),
                     tool_executor=tool_executor,
                     max_tool_iterations=self._max_tool_iterations(level_settings),
+                    budget_line=self._budget_line(level_settings),
                     messages=self.messages,
                     max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                     trace_name="dialectic_chat",
@@ -728,4 +834,7 @@ class DialecticAgent:
             thinking_content=response.thinking_content,
             iterations=response.iterations,
             hit_input_token_cap=response.hit_input_token_cap,
+            hit_iteration_limit=response.hit_iteration_limit,
+            iteration_limit=self._max_tool_iterations(level_settings),
+            budget_line_enabled=self._budget_line(level_settings) is not None,
         )

@@ -1,11 +1,15 @@
+import json
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.models import Peer, Workspace
+from src.schemas.configuration import MessageConfiguration
 
 
 def test_workspace_validations_api(client: TestClient):
@@ -33,6 +37,19 @@ def test_workspace_validations_api(client: TestClient):
     error = response.json()["detail"][0]
     assert error["loc"] == ["body", "metadata"]
     assert error["type"] == "dict_type"
+
+
+def test_lone_surrogate_input_returns_422(client: TestClient):
+    # Valid JSON, invalid Unicode: the echoed `input` must not break rendering
+    response = client.post(
+        "/v3/workspaces",
+        content=b'{"name": "emoji \\ud83d cut", "metadata": {}}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 422
+    error = response.json()["detail"][0]
+    assert error["loc"] == ["body", "name"]
+    assert error["type"] == "string_unicode"
 
 
 def test_peer_validations_api(client: TestClient, sample_data: tuple[Workspace, Peer]):
@@ -243,3 +260,124 @@ def test_filter_validations_api(
     error = response.json()["detail"][0]
     assert error["loc"] == ["body", "filters"]
     assert error["type"] == "dict_type"
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body", "path_param"),
+    [
+        ("PUT", "/v3/workspaces/bad:id", {}, "workspace_id"),
+        ("POST", "/v3/workspaces/bad:id/peers", {"id": "p"}, "workspace_id"),
+        ("POST", "/v3/workspaces/bad:id/sessions", {"id": "s"}, "workspace_id"),
+        ("POST", "/v3/workspaces/bad:id/scopes", {"id": "sc"}, "workspace_id"),
+        ("PUT", "/v3/workspaces/{ws}/sessions/bad:id", {}, "session_id"),
+        (
+            "POST",
+            "/v3/workspaces/{ws}/sessions/bad:id/messages",
+            {"messages": [{"content": "hi", "peer_id": "{peer}"}]},
+            "session_id",
+        ),
+    ],
+)
+def test_get_or_create_path_id_failing_schema_returns_422(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    method: str,
+    path: str,
+    body: dict[str, Any],
+    path_param: str,
+):
+    # The handler builds a create schema from the path ID, so the pattern
+    # violation is raised inside it, not by request parsing
+    test_workspace, test_peer = sample_data
+    body = json.loads(json.dumps(body).replace("{peer}", test_peer.name))
+    response = client.request(method, path.format(ws=test_workspace.name), json=body)
+    assert response.status_code == 422, response.text
+    error = response.json()["detail"][0]
+    assert error["type"] == "string_pattern_mismatch"
+    assert error["loc"] == ["path", path_param]
+    assert "input" not in error
+
+
+def test_nul_in_configuration_is_stripped(client: TestClient):
+    # Configuration allows extra keys, stored as JSONB, which rejects NUL
+    response = client.post(
+        "/v3/workspaces",
+        json={"name": "nul-config", "configuration": {"k\u0000": "a\u0000b"}},
+    )
+    assert response.status_code in (200, 201)
+    assert response.json()["configuration"]["k"] == "ab"
+
+
+@pytest.mark.parametrize("depth", [970, 1200])
+@pytest.mark.parametrize("nested_in_reasoning", [False, True])
+def test_deep_unknown_message_configuration_is_ignored(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    depth: int,
+    nested_in_reasoning: bool,
+):
+    workspace, peer = sample_data
+    session_id = str(generate_nanoid())
+    base = f"/v3/workspaces/{workspace.name}/sessions/{session_id}"
+    assert (
+        client.post(
+            f"/v3/workspaces/{workspace.name}/sessions",
+            json={"id": session_id, "peers": {peer.name: {}}},
+        ).status_code
+        == 201
+    )
+
+    # Build raw JSON: json.dumps can itself hit Python's recursion limit.
+    unknown = '"x":' + "[" * depth + "0" + "]" * depth
+    reasoning = '"enabled":true,"custom_instructions":"a\\u0000b"'
+    configuration = (
+        '{"reasoning":{' + reasoning + "," + unknown + "}}"
+        if nested_in_reasoning
+        else "{" + unknown + ',"reasoning":{' + reasoning + "}}"
+    )
+    body = (
+        '{"messages":[{"content":"hi","peer_id":'
+        + json.dumps(peer.name)
+        + ',"configuration":'
+        + configuration
+        + "}]}"
+    )
+    response = client.post(
+        f"{base}/messages",
+        content=body,
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 201, response.text
+    assert MessageConfiguration.model_validate(json.loads(configuration)).model_dump(
+        exclude_none=True
+    ) == {"reasoning": {"enabled": True, "custom_instructions": "ab"}}
+    listed = client.post(f"{base}/messages/list", json={})
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["items"][0]["id"] == response.json()[0]["id"]
+
+
+def test_nul_in_id_filter_returns_422(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    test_workspace, _ = sample_data
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/queue/status",
+        params={"observer_id": "\u0000"},
+    )
+    assert response.status_code == 422
+
+
+def test_page_beyond_bigint_offset_returns_422(client: TestClient):
+    response = client.post("/v3/workspaces/list", params={"page": 2**62}, json={})
+    assert response.status_code == 422
+
+
+def test_lone_surrogate_in_free_form_json_returns_422(client: TestClient):
+    # Pydantic accepts the surrogate inside an Any-typed dict; Postgres JSONB
+    # then rejects it, which must surface as a 422 rather than a 500.
+    response = client.post(
+        "/v3/workspaces",
+        content=b'{"id": "surrogate-ws", "metadata": {"k": "\\ud800"}}',
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 422

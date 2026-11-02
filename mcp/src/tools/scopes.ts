@@ -3,7 +3,7 @@ import { Scope } from "@honcho-ai/sdk";
 import type { Honcho } from "@honcho-ai/sdk";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../types.js";
-import { textResult, errorResult, workspaceIdSchema } from "../types.js";
+import { textResult, workspaceIdSchema, failedResult } from "../types.js";
 
 // Match the SDK's scope ID rules; the constructor bypasses honcho.scope() validation.
 const scopeIdSchema = z
@@ -64,9 +64,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           pages: page.pages,
         });
       } catch (e) {
-        return errorResult(
-          `Failed to list scopes: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to list scopes`, e);
       }
     },
   );
@@ -107,9 +105,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           created_at: scope.createdAt,
         });
       } catch (e) {
-        return errorResult(
-          `Failed to create scope: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to create scope`, e);
       }
     },
   );
@@ -144,9 +140,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         await scope.addSessions(session_ids);
         return textResult({ scope_id, added: session_ids.length });
       } catch (e) {
-        return errorResult(
-          `Failed to add sessions to scope: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to add sessions to scope`, e);
       }
     },
   );
@@ -176,9 +170,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         await scope.removeSession(session_id);
         return textResult({ scope_id, removed: session_id });
       } catch (e) {
-        return errorResult(
-          `Failed to remove session from scope: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to remove session from scope`, e);
       }
     },
   );
@@ -217,9 +209,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         }
         return textResult({ scope_id, ...counts, sessions });
       } catch (e) {
-        return errorResult(
-          `Failed to get scope status: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to get scope status`, e);
       }
     },
   );
@@ -256,9 +246,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           pages: page.pages,
         });
       } catch (e) {
-        return errorResult(
-          `Failed to list scope sessions: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to list scope sessions`, e);
       }
     },
   );

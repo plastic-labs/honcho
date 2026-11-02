@@ -14,6 +14,10 @@
     {
       "source": "/v3/documentation/features/advanced/representation-scopes",
       "destination": "/v3/documentation/features/advanced/directional-representations"
+    },
+    {
+      "source": "/v3/guides/community/pi-honcho-memory",
+      "destination": "/v3/guides/integrations/pi"
     }
   ],
   "colors": {
@@ -28,7 +32,7 @@
   "navigation": {
     "versions": [
       {
-        "version": "v3.3.0",
+        "version": "v3.4.1",
         "api": {
           "openapi": ["v3/openapi.json"]
         },
@@ -105,17 +109,19 @@
                 "group": "General Agents",
                 "pages": [
                   "v3/guides/integrations/hermes",
-                  "v3/guides/integrations/openclaw"
+                  "v3/guides/integrations/openclaw",
+                  "v3/guides/integrations/grok-bot"
                 ]
               },
               {
                 "group": "Coding Agents",
                 "pages": [
                   "v3/guides/integrations/claude-code",
-                  "v3/guides/community/pi-honcho-memory",
+                  "v3/guides/integrations/pi",
                   "v3/guides/integrations/codex",
                   "v3/guides/integrations/opencode",
                   "v3/guides/integrations/kilo",
+                  "v3/guides/integrations/cursor",
                   "v3/guides/integrations/deepseek-harness"
                 ]
               },

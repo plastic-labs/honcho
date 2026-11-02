@@ -15,17 +15,26 @@ const HOST_VALUE = `honcho-mcp/${
   typeof pkg.version === "string" && pkg.version ? pkg.version : "unknown"
 }`;
 
+function clean(value: string | null | undefined): string | undefined {
+  const v = value?.replace(/\s+/g, " ").trim();
+  return v ? v.slice(0, MAX_PLUGIN_LEN) : undefined;
+}
+
 /**
  * Identity headers for every Honcho API request made on behalf of one MCP
- * request. Host names this server; Plugin is the caller's `User-Agent`,
- * verbatim, so the API sees whatever the harness calls itself.
+ * request. Host names this server. Plugin is the caller's `X-Honcho-Plugin`
+ * with its `User-Agent` in parentheses (`cursor-honcho/0.2.0 (Cursor/1.0.0)`),
+ * or the `User-Agent` alone when the caller set no plugin, as before.
  */
 export function identityHeaders(
   userAgent?: string | null,
+  plugin?: string | null,
 ): Record<string, string> {
   const headers: Record<string, string> = { [HEADER_HOST]: HOST_VALUE };
-  const plugin = userAgent?.replace(/\s+/g, " ").trim().slice(0, MAX_PLUGIN_LEN);
-  if (plugin) headers[HEADER_PLUGIN] = plugin;
+  const ua = clean(userAgent);
+  const name = clean(plugin);
+  const value = name ? (ua ? `${name} (${ua})` : name) : ua;
+  if (value) headers[HEADER_PLUGIN] = value.slice(0, MAX_PLUGIN_LEN);
   return headers;
 }
 

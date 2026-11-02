@@ -1,0 +1,9 @@
+# Compatibility floor for the current alembic head, sent with each release
+# (scripts/release_manifest.py). Update both fields whenever a release carries a new
+# migration; raise compat_floor in a code-only release when older images stop being
+# safe to roll back to.
+
+# Alembic head this floor was declared against.
+alembic_revision = "a5f8da8f6d23"
+# Oldest released Honcho version whose image can still run against alembic_revision.
+compat_floor = "3.2.2"

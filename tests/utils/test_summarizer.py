@@ -20,6 +20,7 @@ from src.utils.summarizer import (
     Summary,
     SummaryType,
     _create_summary,  # pyright: ignore[reportPrivateUsage]
+    _distinct_ngram_ratio,  # pyright: ignore[reportPrivateUsage]
     create_long_summary,
     create_short_summary,
     summarize_if_needed,
@@ -569,3 +570,167 @@ async def test_refused_summary_escapes_parallel_long_and_short():
         )
 
     assert mock_create.await_count == 2
+
+
+# =============================================================================
+# NUL in model output (DEV-2535): jsonb rejects it, and every check must judge
+# the text that gets stored.
+# =============================================================================
+
+_SUMMARY_CREATORS = {
+    SummaryType.SHORT: "src.utils.summarizer.create_short_summary",
+    SummaryType.LONG: "src.utils.summarizer.create_long_summary",
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("summary_type", [SummaryType.SHORT, SummaryType.LONG])
+class TestCreateSummaryStripsNul:
+    async def test_nul_is_stripped_from_content(self, summary_type: SummaryType):
+        """NUL is removed; literal backslash text and provider token counts are kept."""
+        mock_response = HonchoLLMCallResponse(
+            content="User greeted\x00 the assistant. Literal \\u0000 stays.",
+            input_tokens=100,
+            output_tokens=15,
+            finish_reasons=["stop"],
+        )
+        with patch(
+            _SUMMARY_CREATORS[summary_type],
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            summary, is_fallback, in_tok, out_tok = await _call_create_summary(
+                summary_type
+            )
+
+        assert is_fallback is False
+        assert (
+            summary["content"] == "User greeted the assistant. Literal \\u0000 stays."
+        )
+        assert summary["token_count"] == 15
+        assert (in_tok, out_tok) == (100, 15)
+
+    async def test_nul_only_content_uses_fallback(self, summary_type: SummaryType):
+        """NUL-only output is empty, so it takes the never-saved fallback."""
+        mock_response = HonchoLLMCallResponse(
+            content="\x00 \x00\n",
+            input_tokens=100,
+            output_tokens=3,
+            finish_reasons=["stop"],
+        )
+        with patch(
+            _SUMMARY_CREATORS[summary_type],
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            summary, is_fallback, in_tok, out_tok = await _call_create_summary(
+                summary_type
+            )
+
+        assert is_fallback is True
+        assert "Conversation with 5 messages" in summary["content"]
+        assert (in_tok, out_tok) == (0, 0)
+
+    async def test_nul_cannot_disguise_degenerate_output(
+        self, summary_type: SummaryType
+    ):
+        """NUL placed differently in each repeat makes the raw n-grams distinct;
+        the degeneration check must still see the repetition."""
+        # 60 repeats of a 7-word loop (420 words); a NUL count with period 61
+        # never lines up with the loop, so every raw 4-gram is distinct.
+        words = ("Human. Forever. Human. Always. Human value. Always. " * 60).split()
+        masked = " ".join(word + "\x00" * (i % 61) for i, word in enumerate(words))
+        assert _distinct_ngram_ratio(masked) > 0.35  # would pass unstripped
+
+        mock_response = HonchoLLMCallResponse(
+            content=masked,
+            input_tokens=20000,
+            output_tokens=4000,
+            finish_reasons=["max_tokens"],
+        )
+        with patch(
+            _SUMMARY_CREATORS[summary_type],
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            summary, is_fallback, _, _ = await _call_create_summary(summary_type)
+
+        assert is_fallback is True
+        assert "Human" not in summary["content"]
+
+
+def _provider_response(content: str, finish_reason: str) -> HonchoLLMCallResponse[str]:
+    return HonchoLLMCallResponse(
+        content=content, output_tokens=1, finish_reasons=[finish_reason]
+    )
+
+
+async def _run_summary_call(summary_type: SummaryType) -> HonchoLLMCallResponse[str]:
+    if summary_type is SummaryType.SHORT:
+        return await create_short_summary(_FORMATTED_MESSAGES, _INPUT_TOKENS)
+    return await create_long_summary(_FORMATTED_MESSAGES)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("summary_type", [SummaryType.SHORT, SummaryType.LONG])
+@pytest.mark.parametrize("finish_reason", ["length", "max_tokens", "SAFETY"])
+async def test_degraded_nul_only_summary_is_retried(
+    summary_type: SummaryType, finish_reason: str
+):
+    """The real retried call refuses truncated/filtered NUL-only output and
+    returns the next attempt's summary."""
+    inner = AsyncMock(
+        side_effect=[
+            _provider_response("\x00\x00", finish_reason),
+            _provider_response("A real summary.", "stop"),
+        ]
+    )
+    with (
+        patch("src.llm.api.honcho_llm_call_inner", new=inner),
+        patch("asyncio.sleep", new=AsyncMock()),
+    ):
+        result = await _run_summary_call(summary_type)
+
+    assert result.content == "A real summary."
+    assert inner.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("summary_type", [SummaryType.SHORT, SummaryType.LONG])
+async def test_degraded_nul_only_summary_exhausts_to_refusal(
+    summary_type: SummaryType,
+):
+    """If every attempt is truncated NUL-only output, the refusal propagates."""
+    inner = AsyncMock(return_value=_provider_response("\x00", "length"))
+    with (
+        patch("src.llm.api.honcho_llm_call_inner", new=inner),
+        patch("asyncio.sleep", new=AsyncMock()),
+        pytest.raises(EmptySummaryError),
+    ):
+        await _run_summary_call(summary_type)
+
+    assert inner.await_count > 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finish_reasons", [["stop"], []])
+async def test_clean_nul_only_summary_is_not_retried(finish_reasons: list[str]):
+    """A clean (or unreported) stop with NUL-only output passes the hook on the
+    first attempt and lands on the unsaved fallback."""
+    inner = AsyncMock(
+        return_value=HonchoLLMCallResponse(
+            content="\x00", output_tokens=1, finish_reasons=finish_reasons
+        )
+    )
+    with (
+        # conftest stubs the module-level creator; restore the real one so the
+        # hook and the provider call actually run.
+        patch("src.utils.summarizer.create_short_summary", new=create_short_summary),
+        patch("src.llm.api.honcho_llm_call_inner", new=inner),
+        patch("asyncio.sleep", new=AsyncMock()),
+    ):
+        summary, is_fallback, _, _ = await _call_create_summary(SummaryType.SHORT)
+
+    assert inner.await_count == 1
+    assert is_fallback is True
+    assert "\x00" not in summary["content"]

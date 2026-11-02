@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 import time
@@ -5,14 +6,18 @@ import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 
+import psycopg
 import sentry_sdk
 from fastapi import FastAPI, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
+from sqlalchemy.exc import DataError
 
 from src._version import HONCHO_VERSION
 from src.backlog import DeriverMetricsPoller
@@ -258,6 +263,71 @@ async def honcho_exception_handler(_request: Request, exc: HonchoException):
         status_code=exc.status_code,
         content={"detail": exc.detail},
     )
+
+
+class _AsciiJSONResponse(JSONResponse):
+    """JSONResponse that escapes non-ASCII, so lone surrogates encode cleanly."""
+
+    def render(self, content: object) -> bytes:
+        return json.dumps(
+            content, ensure_ascii=True, allow_nan=False, separators=(",", ":")
+        ).encode("ascii")
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(_request: Request, exc: RequestValidationError):
+    """Same body as FastAPI's default handler, but safe to encode.
+
+    Validation errors echo the rejected `input`. When that input contains a lone
+    surrogate (e.g. an emoji split mid-pair by a client), the default UTF-8
+    render raises and the 422 turns into a 500.
+    """
+    return _AsciiJSONResponse(
+        status_code=422,
+        content={"detail": jsonable_encoder(exc.errors())},
+    )
+
+
+# SQLSTATEs for input Postgres cannot store: a value out of range for its
+# column type, and a `\u0000` escape in JSONB.
+_INPUT_DATA_SQLSTATES = {"22003", "22P05"}
+
+# A lone surrogate escape inside a JSONB value (free-form metadata or
+# configuration) is 22P02, a SQLSTATE that also covers server-side bugs such as
+# a bad cast, so only the surrogate message is treated as caller input.
+_JSON_SURROGATE_SQLSTATE = "22P02"
+
+
+def _is_input_data_error(exc: DataError) -> bool:
+    orig = exc.orig
+    sqlstate = getattr(orig, "sqlstate", None)
+    if sqlstate in _INPUT_DATA_SQLSTATES:
+        return True
+    if sqlstate == _JSON_SURROGATE_SQLSTATE and "surrogate" in str(orig):
+        return True
+    # psycopg rejects NUL in text parameters client-side, without a SQLSTATE
+    return isinstance(orig, psycopg.DataError) and "NUL (0x00)" in str(orig)
+
+
+@app.exception_handler(DataError)
+async def data_exception_handler(request: Request, exc: DataError):
+    """422 for request values Postgres cannot store; anything else is a 500."""
+    if _is_input_data_error(exc):
+        sqlstate = getattr(exc.orig, "sqlstate", None) or "unknown"
+        route = get_route_template(request)
+        # Driver messages can echo SQL, parameters, or user data. Log only the
+        # classification and static route template, never the exception/input.
+        logger.warning(
+            "Rejected unstorable input: sqlstate=%s route=%s",
+            sqlstate,
+            route,
+            extra={"sqlstate": sqlstate, "route": route},
+        )
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "Request contains a value that cannot be stored"},
+        )
+    return await global_exception_handler(request, exc)
 
 
 @app.exception_handler(Exception)

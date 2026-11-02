@@ -12,7 +12,7 @@ from src.config import ModelConfig
 from src.exceptions import UpstreamLLMError
 from src.llm import tool_loop as tool_loop_module
 from src.llm.backend import CompletionResult
-from src.llm.errors import as_upstream_error
+from src.llm.errors import as_upstream_error, llm_retry_condition
 from src.llm.request_builder import execute_completion
 from src.llm.runtime import AttemptPlan
 from src.llm.tool_loop import execute_tool_loop
@@ -171,6 +171,9 @@ async def test_exhausted_retries_surface_the_provider_error_not_retry_error() ->
             max_input_tokens=None,
             get_attempt_plan=lambda: plan,
             before_retry_callback=lambda _r: None,
+            retry_condition=llm_retry_condition(
+                can_fall_back=False, retry_attempts=1, model="test/model"
+            ),
             stream_final=False,
             telemetry=None,
         )
@@ -212,6 +215,46 @@ async def test_toolless_path_also_surfaces_the_provider_error() -> None:
     assert caught.value.status_code == 503
 
 
+def _tenacity_retry_calls() -> list[tuple[str, Any]]:
+    """Every call to tenacity's `retry` in `src/llm`, however it is imported."""
+    import ast
+    from pathlib import Path
+
+    calls: list[tuple[str, Any]] = []
+    for path in sorted(Path("src/llm").rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        # `from tenacity import retry as r` binds `r`; `import tenacity as t`
+        # binds `t` for `t.retry(...)`.
+        names: set[str] = set()
+        modules: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "tenacity":
+                names.update(
+                    a.asname or a.name for a in node.names if a.name == "retry"
+                )
+            elif isinstance(node, ast.Import):
+                modules.update(
+                    a.asname or a.name for a in node.names if a.name == "tenacity"
+                )
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if (isinstance(func, ast.Name) and func.id in names) or (
+                isinstance(func, ast.Attribute)
+                and func.attr == "retry"
+                and isinstance(func.value, ast.Name)
+                and func.value.id in modules
+            ):
+                calls.append((f"{path}:{node.lineno}", node))
+    return calls
+
+
+def test_the_retry_site_scan_finds_the_known_sites() -> None:
+    """Keeps the guards below honest: a scan that finds nothing passes them."""
+    assert len(_tenacity_retry_calls()) >= 5
+
+
 def test_every_llm_retry_site_sets_reraise() -> None:
     """Structural guard for the gap 3WyMAJ exposed.
 
@@ -220,21 +263,34 @@ def test_every_llm_retry_site_sets_reraise() -> None:
     bare `RetryError`. Any new site has to opt in too.
     """
     import ast
-    from pathlib import Path
 
-    offenders: list[str] = []
-    for path in sorted(Path("src/llm").rglob("*.py")):
-        tree = ast.parse(path.read_text())
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            if not (isinstance(func, ast.Name) and func.id == "retry"):
-                continue
-            if not any(kw.arg == "reraise" for kw in node.keywords):
-                offenders.append(f"{path}:{node.lineno}")
+    offenders = [
+        site
+        for site, call in _tenacity_retry_calls()
+        if not any(
+            kw.arg == "reraise"
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value is True
+            for kw in call.keywords
+        )
+    ]
 
     assert offenders == [], (
         f"tenacity retry() without reraise=True: {offenders}. "
         "Without it an exhausted budget raises RetryError, erasing the cause."
+    )
+
+
+def test_every_llm_retry_site_sets_a_retry_condition() -> None:
+    """Without `retry=`, tenacity retries every exception, including a provider
+    rejection that the same model will return again (DEV-3108)."""
+    offenders = [
+        site
+        for site, call in _tenacity_retry_calls()
+        if not any(kw.arg == "retry" for kw in call.keywords)
+    ]
+
+    assert offenders == [], (
+        f"tenacity retry() without retry=: {offenders}. "
+        "Pass a condition built by llm_retry_condition."
     )

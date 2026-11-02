@@ -3,9 +3,9 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../types.js";
 import {
   textResult,
-  errorResult,
   workspaceIdSchema,
   formatConclusions,
+  failedResult,
 } from "../types.js";
 
 /** Shared wording: what the attribution fields on a conclusion mean. */
@@ -89,9 +89,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           pages: page.pages,
         });
       } catch (e) {
-        return errorResult(
-          `Failed to list conclusions: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to list conclusions`, e);
       }
     },
   );
@@ -139,9 +137,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         const conclusions = await scope.query(query, top_k, undefined, filters);
         return textResult(formatConclusions(conclusions));
       } catch (e) {
-        return errorResult(
-          `Query failed: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Query failed`, e);
       }
     },
   );
@@ -180,9 +176,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           missing: conclusion_ids.filter((id) => !found.has(id)),
         });
       } catch (e) {
-        return errorResult(
-          `Failed to get conclusions: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to get conclusions`, e);
       }
     },
   );
@@ -228,9 +222,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           pages: page.pages,
         });
       } catch (e) {
-        return errorResult(
-          `Failed to get derived conclusions: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to get derived conclusions`, e);
       }
     },
   );
@@ -285,9 +277,7 @@ export function register(server: McpServer, ctx: ToolContext) {
           `Created ${conclusions.length} conclusion${conclusions.length === 1 ? "" : "s"} successfully`,
         );
       } catch (e) {
-        return errorResult(
-          `Failed to create conclusions: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to create conclusions`, e);
       }
     },
   );
@@ -322,9 +312,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         await scope.delete(conclusion_id);
         return textResult("Conclusion deleted successfully");
       } catch (e) {
-        return errorResult(
-          `Failed to delete conclusion: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        return failedResult(ctx, `Failed to delete conclusion`, e);
       }
     },
   );

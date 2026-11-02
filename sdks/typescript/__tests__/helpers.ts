@@ -30,6 +30,8 @@ export function assertWorkspaceShape(workspace: WorkspaceResponse): void {
   expect(workspace).toBeDefined()
   expect(typeof workspace.id).toBe('string')
   expect(workspace.id.length).toBeGreaterThan(0)
+  expect(typeof workspace.uid).toBe('string')
+  expect(workspace.uid).not.toBe(workspace.id)
   expect(typeof workspace.metadata).toBe('object')
   expect(typeof workspace.configuration).toBe('object')
   expect(typeof workspace.created_at).toBe('string')
@@ -43,6 +45,8 @@ export function assertPeerShape(peer: PeerResponse): void {
   expect(peer).toBeDefined()
   expect(typeof peer.id).toBe('string')
   expect(peer.id.length).toBeGreaterThan(0)
+  expect(typeof peer.uid).toBe('string')
+  expect(peer.uid).not.toBe(peer.id)
   expect(typeof peer.workspace_id).toBe('string')
   expect(typeof peer.metadata).toBe('object')
   expect(typeof peer.configuration).toBe('object')
@@ -57,6 +61,8 @@ export function assertSessionShape(session: SessionResponse): void {
   expect(session).toBeDefined()
   expect(typeof session.id).toBe('string')
   expect(session.id.length).toBeGreaterThan(0)
+  expect(typeof session.uid).toBe('string')
+  expect(session.uid).not.toBe(session.id)
   expect(typeof session.workspace_id).toBe('string')
   expect(typeof session.is_active).toBe('boolean')
   expect(typeof session.metadata).toBe('object')
@@ -138,7 +144,9 @@ export function testMessage(index?: number): string {
 /**
  * Generate test metadata.
  */
-export function testMetadata(extra?: Record<string, unknown>): Record<string, unknown> {
+export function testMetadata(
+  extra?: Record<string, unknown>
+): Record<string, unknown> {
   return {
     test: true,
     timestamp: Date.now(),
