@@ -65,7 +65,7 @@ class Page(_Page[T], Generic[T]):
     total: GreaterEqualZero = Field(
         description=(
             "Number of matching rows, exact up to the server's "
-            "PAGINATION_COUNT_LIMIT (default 10000) and reported as that limit "
+            "PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit "
             "plus one when there are more. While a next page exists it is at "
             "least one more than this page's last row, so `pages` always "
             "reaches the end of the list."
@@ -262,7 +262,7 @@ async def _paginate_offset(
     await asyncio.gather(*writes)
 
     items = list(cursor_page.items)
-    seen = (params.page - 1) * params.size + len(items)
+    seen = (params.page - 1) * params.size + len(items) if items else 0
     total = max(total or 0, seen + 1 if cursor_page.next_page else seen)
     return Page[Any].create(items, params=params, total=total)
 

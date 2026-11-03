@@ -404,5 +404,25 @@ def test_a_capped_total_does_not_end_a_walk_early(
     ids = _walk_offset(client, endpoint, url, {})
     assert seeded <= set(ids)
     assert len(ids) == len(set(ids))
-    last = _get(client, endpoint, url, {"page": len(ids) // SIZE + 1, "size": SIZE})
+    last = _get(client, endpoint, url, {"page": -(-len(ids) // SIZE), "size": SIZE})
     assert last["total"] == len(ids)
+
+
+@pytest.mark.parametrize("shim", [True, False], ids=["shim", "plain"])
+def test_a_page_past_the_end_reports_the_real_total(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+    shim: bool,
+):
+    workspace, peer = sample_data
+    url, _ = _seed_sessions(client, workspace.name, peer.name)
+    endpoint = ENDPOINTS[1]
+    monkeypatch.setattr(settings.CACHE, "PAGINATION_OFFSET_SHIM", shim)
+    expected = _get(client, endpoint, url, {"page": 1, "size": SIZE})["total"]
+
+    far = _get(client, endpoint, url, {"page": 1000, "size": SIZE})
+
+    assert far["items"] == []
+    assert far["total"] == expected
+    assert far["pages"] == -(-expected // SIZE)

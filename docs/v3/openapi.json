@@ -5891,7 +5891,7 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Total",
-            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 10000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
           },
           "page": {
             "type": "integer",
@@ -5932,7 +5932,7 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Total",
-            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 10000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
           },
           "page": {
             "type": "integer",
@@ -5973,7 +5973,7 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Total",
-            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 10000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
           },
           "page": {
             "type": "integer",
@@ -6014,7 +6014,7 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Total",
-            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 10000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
           },
           "page": {
             "type": "integer",
@@ -6055,7 +6055,7 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Total",
-            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 10000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
           },
           "page": {
             "type": "integer",
@@ -6096,7 +6096,7 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Total",
-            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 10000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
           },
           "page": {
             "type": "integer",
@@ -6137,7 +6137,7 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Total",
-            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 10000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
           },
           "page": {
             "type": "integer",
