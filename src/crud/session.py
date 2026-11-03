@@ -35,6 +35,7 @@ from src.cache.client import (
     safe_cache_set,
 )
 from src.config import settings
+from src.crud.dream_history import delete_session_history
 from src.crud.lifecycle import live_session_peer_row, live_session_row
 from src.exceptions import (
     AuthenticationException,
@@ -642,6 +643,7 @@ async def delete_session(
     - Queue items
     - Message embeddings (batched)
     - Documents (theory-of-mind data, batched)
+    - Representation History copies of the session's removed conclusions
     - Messages (batched)
     - Session peer associations
     - The session itself
@@ -798,6 +800,12 @@ async def delete_session(
             ],
             batch_size=5000,
         )
+
+        # Representation History copies of conclusions this session produced
+        # go with the conclusions themselves. After the documents: a dream that
+        # was removing one of them holds its row until it commits the copy, so
+        # the document delete above waits for that commit and this one sees it.
+        await delete_session_history(db, workspace_name, session_name)
 
         # Delete Message entries in batches
         messages_deleted = await _batch_delete_matching(

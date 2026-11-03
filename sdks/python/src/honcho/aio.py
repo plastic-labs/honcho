@@ -32,6 +32,8 @@ from pydantic import BaseModel, ConfigDict, Field, validate_call
 
 from .api_types import (
     ConclusionResponse,
+    DreamRunDetailResponse,
+    DreamRunResponse,
     MessageCreateParams,
     MessageResponse,
     PeerCardResponse,
@@ -725,6 +727,45 @@ class HonchoAio(AsyncMetadataConfigMixin):
             query=query if query else None,
         )
         return QueueStatusResponse.model_validate(data)
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def dreams(
+        self,
+        observed: str | PeerBase | None = None,
+        observer: str | PeerBase | None = None,
+        *,
+        page: int = 1,
+        size: int = 50,
+    ) -> AsyncPage[DreamRunResponse, DreamRunResponse]:
+        """List dream runs in the workspace, newest first, asynchronously."""
+        await self._honcho._ensure_workspace_async()
+        body: dict[str, Any] = {}
+        if observed is not None:
+            body["observed_id"] = resolve_id(observed)
+        if observer is not None:
+            body["observer_id"] = resolve_id(observer)
+
+        async def fetch(next_page: int) -> dict[str, Any]:
+            return await self._honcho._async_http_client.post(
+                routes.dreams_list(self._honcho.workspace_id),
+                body=body or None,
+                query={"page": next_page, "size": size},
+            )
+
+        async def fetch_next(
+            next_page: int,
+        ) -> AsyncPage[DreamRunResponse, DreamRunResponse]:
+            return AsyncPage(await fetch(next_page), DreamRunResponse, None, fetch_next)
+
+        return AsyncPage(await fetch(page), DreamRunResponse, None, fetch_next)
+
+    async def get_dream(self, run_id: str) -> DreamRunDetailResponse:
+        """Get one dream run with every change it committed, asynchronously."""
+        await self._honcho._ensure_workspace_async()
+        data = await self._honcho._async_http_client.get(
+            routes.dream(self._honcho.workspace_id, run_id)
+        )
+        return DreamRunDetailResponse.model_validate(data)
 
     @property
     def conclusions(self) -> "WorkspaceConclusionsAio":
