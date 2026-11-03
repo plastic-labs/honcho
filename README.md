@@ -181,7 +181,7 @@ gives them one shared memory.
 One command finds the agents on your machine and adds Honcho to the ones you pick:
 
 ```bash
-uv tool install honcho-cli && honcho install
+uvx honcho-cli install
 ```
 
 It installs the plugin for Claude Code, Hermes, OpenClaw and Pi, and the MCP server and skill for Codex, using each agent's own CLI. It asks for your API key if `~/.honcho/config.json` doesn't have one yet. For any other agent it finds, it links to that agent's setup guide. To install one agent by hand, use the table below.

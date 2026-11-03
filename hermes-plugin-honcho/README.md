@@ -17,7 +17,7 @@ hermes memory setup honcho   # configure Honcho directly (works on a fresh insta
 hermes memory setup          # generic picker, choose Honcho from the list
 ```
 
-Already set up Honcho for another agent? `uv tool install honcho-cli && honcho install hermes`
+Already set up Honcho for another agent? `uvx honcho-cli install hermes`
 installs and enables this plugin and uses the API key in `~/.honcho/config.json`, so
 Hermes shares memory with your other agents. Run `hermes memory setup honcho` afterwards
 for the options below.
