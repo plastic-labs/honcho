@@ -333,3 +333,22 @@ async def test_a_key_set_by_patch_resolves_without_resetting_the_cache(
     await db_session.commit()
 
     assert await prefix_for_tenant(tenant_id) == "hchrepairedkey"
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_tenant_recreated_with_another_key_resolves_the_new_one(
+    monkeypatch: pytest.MonkeyPatch, db_session: AsyncSession
+) -> None:
+    """delete_tenant evicts the cached key, so a recreated id never routes to the
+    old key's namespaces (which another tenant may hold by then)."""
+    from src.crud.tenant import delete_tenant
+
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    tenant_id = await _create_tenant(db_session, vector_correlation_id="old-key")
+    assert await prefix_for_tenant(tenant_id, db_session) == "old-key"
+
+    await delete_tenant(db_session, tenant_id)
+    db_session.add(models.Tenant(tenant_id=tenant_id, vector_correlation_id="new-key"))
+    await db_session.commit()
+
+    assert await prefix_for_tenant(tenant_id, db_session) == "new-key"

@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.types import GetOrCreateResult
+from src.vector_store.tenant_namespace import evict_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -203,4 +204,6 @@ async def delete_tenant(db: AsyncSession, tenant_id: str) -> None:
             f"Tenant {tenant_id} is not empty; only tenants without data can "
             + "be deleted here"
         ) from exc
+    # ai: the id may be registered again with another key; see tenant_namespace.
+    evict_prefix(tenant_id)
     logger.info("Deleted tenant %s", tenant_id)
