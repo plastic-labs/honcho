@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
-- `honcho.dreams()` and `honcho.getDream()` read Representation History: the dream runs over a workspace's representations, newest first and filterable by `observed` and `observer`, and one run's created conclusions with their sources, removed conclusions, and peer-card change. New types `DreamRun` and `DreamRunDetail`. Requires a Honcho server with Representation History (DEV-3249)
+- `honcho.dreams()` and `honcho.getDream()` read Representation History: the dream runs over a workspace's representations, newest first and filterable by `observed` and `observer`, and one run's created conclusions with their sources, removed conclusions, and peer-card change. New types `DreamRun` and `DreamRunDetail`. Requires a Honcho server with Representation History (DEV-3249, #1531)
 
 ## [2.8.0] - 2026-10-29
 
