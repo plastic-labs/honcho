@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- `uvx honcho-cli <command>` runs the CLI. The package now also installs a `honcho-cli` executable alongside `honcho`; before, uvx stopped with "An executable named `honcho-cli` is not provided", so the documented `uvx honcho-cli` and a one-line `uvx honcho-cli install` both failed
+
 ## [0.4.0] - 2026-10-29
 
 ### Added
