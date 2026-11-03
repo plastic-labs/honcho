@@ -84,3 +84,30 @@ async def test_a_previous_release_entry_reads_and_updates(
     assert updated.h_metadata == {"k": "v"}
     # The write cleared the key the previous release reads.
     assert await cache.get(session_cache_key(workspace.name, session.name)) is None
+
+
+@pytest.mark.asyncio
+async def test_no_create_path_caches_tenant_id(db_session: AsyncSession) -> None:
+    """The create paths write the cache directly, not through the _fetch_* readers."""
+    workspace = await crud.get_or_create_workspace(
+        db_session, schemas.WorkspaceCreate(name=str(generate_nanoid()))
+    )
+    await workspace.post_commit()
+    session = await crud.get_or_create_session(
+        db_session,
+        schemas.SessionCreate(name=str(generate_nanoid())),
+        workspace.resource.name,
+    )
+    await session.post_commit()
+    peer_name = str(generate_nanoid())
+    db_session.add(models.Peer(name=peer_name, workspace_name=workspace.resource.name))
+    await db_session.commit()
+    collection = await crud.get_or_create_collection(
+        db_session, workspace.resource.name, observer=peer_name, observed=peer_name
+    )
+    assert collection is not None
+
+    entries = [await cache.get(key) async for key in cache.scan("*")]
+    rows = [entry for entry in entries if isinstance(entry, dict) and "id" in entry]
+    assert len(rows) >= 2  # workspace and session; collection only on some paths
+    assert not [row for row in rows if "tenant_id" in row]

@@ -161,7 +161,6 @@ async def get_or_create_collection(
             await safe_cache_set(
                 key,
                 {
-                    "tenant_id": honcho_collection.tenant_id,
                     "id": honcho_collection.id,
                     "observer": honcho_collection.observer,
                     "observed": honcho_collection.observed,

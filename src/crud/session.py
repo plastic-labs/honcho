@@ -466,7 +466,6 @@ async def get_or_create_session(
         await safe_cache_set(
             cache_key,
             {
-                "tenant_id": honcho_session.tenant_id,
                 "id": honcho_session.id,
                 "name": honcho_session.name,
                 "workspace_name": honcho_session.workspace_name,

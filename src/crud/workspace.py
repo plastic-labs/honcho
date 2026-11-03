@@ -161,7 +161,6 @@ async def get_or_create_workspace(
         # Capture cache data eagerly so the closure holds a plain dict, not the ORM object
         _cache_key = workspace_cache_key(workspace.name)
         _cache_data = {
-            "tenant_id": honcho_workspace.tenant_id,
             "id": honcho_workspace.id,
             "name": honcho_workspace.name,
             "h_metadata": honcho_workspace.h_metadata,
