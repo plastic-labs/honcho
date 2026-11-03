@@ -12,6 +12,8 @@ import { Scope } from './scope'
 import { Session } from './session'
 import type {
   ChatResponse,
+  DreamRun,
+  DreamRunDetail,
   MessageResponse,
   PageResponse,
   PeerResponse,
@@ -1328,6 +1330,62 @@ export class Honcho {
           dream_type: 'omni',
         },
       }
+    )
+  }
+
+  /**
+   * List dream runs in the workspace, newest first (Representation History).
+   *
+   * Each run records what one dream changed in a representation. Runs are kept
+   * for the server's retention window (30 days by default).
+   *
+   * @param options.observed - Only runs about this peer (ID string or Peer object)
+   * @param options.observer - Only runs from this observer's perspective. Combine
+   *                           with `observed` for a single representation
+   * @param options.page - Page number (1-indexed)
+   * @param options.size - Number of items per page
+   * @returns Promise resolving to a Page of dream runs
+   */
+  async dreams(options?: {
+    observed?: string | Peer
+    observer?: string | Peer
+    page?: number
+    size?: number
+  }): Promise<Page<DreamRun, DreamRun>> {
+    await this._ensureWorkspace()
+    const body: Record<string, string> = {}
+    if (options?.observed) body.observed_id = resolveId(options.observed)
+    if (options?.observer) body.observer_id = resolveId(options.observer)
+
+    const fetchPage = (
+      page?: number,
+      size?: number
+    ): Promise<PageResponse<DreamRun>> =>
+      this._http.post<PageResponse<DreamRun>>(
+        `/${API_VERSION}/workspaces/${this.workspaceId}/dreams/list`,
+        { body, query: { page, size } }
+      )
+
+    return new Page(
+      await fetchPage(options?.page, options?.size),
+      undefined,
+      fetchPage
+    )
+  }
+
+  /**
+   * Get one dream run with every change it committed.
+   *
+   * The response lists the conclusions the dream created with the conclusions
+   * each was derived from, the conclusions it removed as they read when
+   * removed, and the peer card before and after.
+   *
+   * @param runId - The dream's run ID, from `dreams()`
+   */
+  async getDream(runId: string): Promise<DreamRunDetail> {
+    await this._ensureWorkspace()
+    return this._http.get<DreamRunDetail>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/dreams/${runId}`
     )
   }
 

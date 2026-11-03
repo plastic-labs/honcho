@@ -16,6 +16,13 @@ from sqlalchemy.sql.functions import func
 from src import models, schemas
 from src.config import settings
 from src.crud.collection import get_or_create_collection
+from src.crud.dream_history import (
+    CreatedConclusion,
+    DreamHistoryTarget,
+    RemovedConclusion,
+    record_created,
+    record_removed,
+)
 from src.crud.peer import get_peer, reject_scope_observed
 from src.crud.session import get_session
 from src.dependencies import tracked_db
@@ -672,6 +679,7 @@ async def create_documents(
     observer: str,
     observed: str,
     deduplicate: bool = False,
+    history: DreamHistoryTarget | None = None,
 ) -> CreateDocumentsResult:
     """
     Create multiple documents with optional duplicate detection.
@@ -687,6 +695,9 @@ async def create_documents(
         observer: Name of the observing peer
         observed: Name of the observed peer
         deduplicate: Enable semantic duplicate detection
+        history: When set, record the created conclusions, and the existing
+            ones that semantic dedup replaced, to this dream run in the same
+            transaction
 
     Returns:
         List of DocumentCreate schemas that were actually inserted (excludes
@@ -973,6 +984,7 @@ async def create_documents(
                 replacement_doc.source_message_ids, workspace_name
             )
 
+    replaced_rows: list[models.Document] = []
     try:
         fallback_docs = await _apply_document_row_updates(
             db,
@@ -980,6 +992,7 @@ async def create_documents(
             workspace_name=workspace_name,
             observer=observer,
             observed=observed,
+            replaced_out=replaced_rows,
         )
         for fallback_doc in fallback_docs:
             new_doc = _document_model_from_create(
@@ -993,6 +1006,18 @@ async def create_documents(
             if fallback_doc.embedding:
                 docs_with_embeddings.append((new_doc, fallback_doc.embedding))
         db.add_all(honcho_documents)
+        if history is not None:
+            await _record_created_history(
+                db,
+                history,
+                workspace_name,
+                created=honcho_documents,
+                replaced=replaced_rows,
+                replaced_by={
+                    old_id: pending_by_key.get(key)
+                    for old_id, (_, key) in replaced_by.items()
+                },
+            )
         # NOTE
         # If the process crashes after this commit but before vector upsert completes,
         # documents will be left in sync_state='pending' with NULL embeddings.
@@ -1159,6 +1184,7 @@ async def delete_documents(
     observer: str,
     observed: str,
     session_name: str | None = None,
+    history: DreamHistoryTarget | None = None,
 ) -> list[tuple[str, str]]:
     """
     Soft-delete multiple documents in a single UPDATE ... RETURNING statement.
@@ -1167,6 +1193,9 @@ async def delete_documents(
     that matched the workspace/observer/observed filter and were not already
     soft-deleted. IDs that didn't match are silently skipped; callers can diff
     the returned ids against the input to detect misses.
+
+    With ``history``, the deleted rows' content is recorded to that dream run
+    in the same transaction.
     """
     if not document_ids:
         return []
@@ -1185,10 +1214,30 @@ async def delete_documents(
         update(models.Document)
         .where(*conditions)
         .values(deleted_at=func.now())
-        .returning(models.Document.id, models.Document.level)
+        .returning(
+            models.Document.id,
+            models.Document.level,
+            models.Document.content,
+            models.Document.session_name,
+        )
     )
     result = await db.execute(stmt)
     rows = result.all()
+    if history is not None:
+        await record_removed(
+            db,
+            history,
+            workspace_name,
+            [
+                RemovedConclusion(
+                    id=row.id,
+                    level=row.level,
+                    content=row.content,
+                    session_name=row.session_name,
+                )
+                for row in rows
+            ],
+        )
     await db.commit()
     return [(row.id, row.level) for row in rows]
 
@@ -1523,8 +1572,12 @@ async def _apply_document_row_updates(
     workspace_name: str,
     observer: str,
     observed: str,
+    replaced_out: list[models.Document] | None = None,
 ) -> list[schemas.DocumentCreate]:
-    """Lock target rows by id, apply ops, return fallbacks for vanished targets."""
+    """Lock target rows by id, apply ops, return fallbacks for vanished targets.
+
+    Rows a `replace` op soft-deletes are appended to ``replaced_out``.
+    """
     if not ops:
         return []
     # Deadlock fix: lock in id order (IN-clause order is ignored).
@@ -1582,6 +1635,8 @@ async def _apply_document_row_updates(
         if op.kind == "replace":
             if row is not None and row.deleted_at is None:
                 row.deleted_at = now
+                if replaced_out is not None:
+                    replaced_out.append(row)
             continue
         # reinforce
         if op.document_id in stale_at_lock:
@@ -1601,6 +1656,55 @@ async def _apply_document_row_updates(
             )
     await db.flush()
     return fallbacks
+
+
+async def _record_created_history(
+    db: AsyncSession,
+    history: DreamHistoryTarget,
+    workspace_name: str,
+    *,
+    created: list[models.Document],
+    replaced: list[models.Document],
+    replaced_by: dict[str, models.Document | None],
+) -> None:
+    """Record a dream's created and dedup-replaced conclusions before commit."""
+    # New rows get their ids at flush.
+    await db.flush()
+    await record_created(
+        db,
+        history,
+        workspace_name,
+        [
+            CreatedConclusion(
+                id=doc.id,
+                level=doc.level,
+                source_ids=[
+                    link.source_id
+                    for link in sorted(doc.source_links, key=lambda link: link.position)
+                ],
+            )
+            for doc in created
+        ],
+    )
+    await record_removed(
+        db,
+        history,
+        workspace_name,
+        [
+            RemovedConclusion(
+                id=row.id,
+                level=row.level,
+                content=row.content,
+                session_name=row.session_name,
+                replaced_by=(
+                    replacement.id
+                    if (replacement := replaced_by.get(row.id)) is not None
+                    else None
+                ),
+            )
+            for row in replaced
+        ],
+    )
 
 
 def _append_citations(

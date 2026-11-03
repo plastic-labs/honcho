@@ -1031,6 +1031,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.utils.agent_tools.tracked_db",
         "src.utils.search.tracked_db",
         "src.crud.document.tracked_db",
+        "src.crud.dream_history.tracked_db",
         "src.crud.message.tracked_db",
         "src.reconciler.sync_vectors.tracked_db",
         "src.reconciler.backfill.tracked_db",

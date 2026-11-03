@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Representation History: each dream is recorded as a run, readable through `POST /dreams/list` (newest first, filtered by `observed_id` and optionally `observer_id`) and `GET /dreams/{run_id}`. A run lists the conclusions the dream created, each with the conclusions it was derived from; the conclusions it removed, as they read when removed, including ones a near-duplicate from the same dream replaced (`replaced_by`); and the peer card before and after. Each change is recorded in the transaction that makes it, so failed and interrupted runs show what they committed. Created conclusions and their sources are resolved when the run is read: `current`, `removed` (with the text it had and `removed_in_run`), or `unavailable` once deleted. Only removed conclusions' text is copied, and deleting their session deletes the copies; deleting a workspace deletes its history. Runs are pruned after `DREAM_HISTORY_RETENTION_DAYS` (default 30) and recording can be turned off with `DREAM_HISTORY_ENABLED=false`. Workspace and admin keys only. DDL-only migration `a7e3c1d9f2b4` adds `dream_runs` and `dream_run_changes` (DEV-3249)
+
 ### Fixed
 
 - A tool loop on the Anthropic transport no longer fails with a 400 (`thinking.signature: Input should be a valid string`) after a proxy serves one of its rounds from a non-Anthropic fallback. That round's thinking block has no signature, and Anthropic rejects any request that replays one. When a request holds an unsigned thinking block, the Anthropic backend removes every thinking block from it and keeps the text and tool calls; budget-thinking models (Claude 4.5 and earlier) run that call with thinking off, and adaptive models keep their thinking settings. Requests whose thinking blocks are all signed are unchanged (DEV-2880, #1213)

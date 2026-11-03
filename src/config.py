@@ -1473,6 +1473,11 @@ class DreamSettings(HonchoSettings):
     WRITE_WINDOW_ITERATIONS: Annotated[int | None, Field(default=None, ge=1, le=50)] = (
         None
     )
+    # Representation History: each dream's created and removed conclusions and
+    # peer-card changes, readable through the dreams API. Runs older than the
+    # retention window are pruned by the reconciler.
+    HISTORY_ENABLED: bool = True
+    HISTORY_RETENTION_DAYS: Annotated[int, Field(default=30, ge=1, le=3650)] = 30
 
     @staticmethod
     def _DEDUCTION_MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:

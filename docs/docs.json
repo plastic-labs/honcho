@@ -448,6 +448,13 @@
             ]
           },
           {
+            "group": "dreams",
+            "pages": [
+              "v3/api-reference/endpoint/dreams/list-dreams",
+              "v3/api-reference/endpoint/dreams/get-dream"
+            ]
+          },
+          {
             "group": "peers",
             "pages": [
               "v3/api-reference/endpoint/peers/get-peers",

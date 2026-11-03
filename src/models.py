@@ -783,3 +783,116 @@ class SessionPeer(Base):
     internal_metadata: Mapped[dict[str, Any]]
     joined_at: Mapped[datetime.datetime]
     left_at: Mapped[datetime.datetime | None]
+
+
+@final
+class DreamRun(Base):
+    """One dream over an (observer, observed) pair, recorded for Representation History.
+
+    The id is the dream's run id, the same value its telemetry events carry.
+    The change counts are kept current by the writes that add change rows.
+    """
+
+    __tablename__: str = "dream_runs"
+
+    id: Mapped[str] = mapped_column(TEXT, primary_key=True)
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), nullable=False
+    )
+    observer: Mapped[str] = mapped_column(TEXT, nullable=False)
+    observed: Mapped[str] = mapped_column(TEXT, nullable=False)
+    dream_type: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    trigger_reason: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    status: Mapped[str] = mapped_column(
+        TEXT, nullable=False, server_default=text("'running'")
+    )
+    created_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    removed_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    peer_card_updated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    started_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    finished_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        # Listing a peer's history, newest first.
+        Index(
+            "ix_dream_runs_workspace_observed_started",
+            "workspace_name",
+            "observed",
+            "started_at",
+            "id",
+        ),
+        # Retention pruning.
+        Index("ix_dream_runs_started_at", "started_at"),
+        CheckConstraint(
+            "status IN ('running', 'completed', 'failed', 'interrupted')",
+            name="status_valid",
+        ),
+    )
+
+
+@final
+class DreamRunChange(Base):
+    """One committed change a dream made, written in the change's own transaction.
+
+    Content is copied only for removed conclusions, whose rows are hard-deleted
+    shortly after. Created conclusions and their sources are stored as ids and
+    resolved at read time, so deleting a conclusion also removes it from history.
+    `session_name` is the removed conclusion's session, so deleting that session
+    deletes the copy along with everything else the session produced.
+    """
+
+    __tablename__: str = "dream_run_changes"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger, Identity(), primary_key=True, autoincrement=True
+    )
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("dream_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(TEXT, nullable=False)
+    specialist: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    conclusion_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    level: Mapped[DocumentLevel | None] = mapped_column(TEXT, nullable=True)
+    content: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    session_name: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    source_ids: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    replaced_by: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    peer_card_before: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    peer_card_after: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_dream_run_changes_run_id_id", "run_id", "id"),
+        # Resolving a source that a later dream removed.
+        Index(
+            "ix_dream_run_changes_removed_conclusion",
+            "workspace_name",
+            "conclusion_id",
+            postgresql_where=text("kind = 'removed'"),
+        ),
+        # Session deletion removes the copies that session produced.
+        Index(
+            "ix_dream_run_changes_session",
+            "workspace_name",
+            "session_name",
+            postgresql_where=text("session_name IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "kind IN ('created', 'removed', 'peer_card')", name="kind_valid"
+        ),
+    )

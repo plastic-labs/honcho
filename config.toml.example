@@ -242,6 +242,8 @@ BUDGET_ENABLED = false
 NOTES_MODE = "off"  # off | shadow | on
 NOTES_MAX_TOKENS = 3000
 # WRITE_WINDOW_ITERATIONS = 2  # default: 15% of each specialist's limit
+HISTORY_ENABLED = true
+HISTORY_RETENTION_DAYS = 30
 
 [dream.deduction_model_config]
 transport = "openai"

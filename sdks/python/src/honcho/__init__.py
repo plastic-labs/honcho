@@ -46,6 +46,12 @@ from .aio import (
     WorkspaceConclusionsAio,
 )
 from .api_types import (
+    DreamConclusionRef,
+    DreamCreatedConclusion,
+    DreamPeerCardChange,
+    DreamRemovedConclusion,
+    DreamRunDetailResponse,
+    DreamRunResponse,
     Evidence,
     EvidenceMessageRef,
     EvidenceObservation,
@@ -119,6 +125,12 @@ __all__ = [
     "ScopeBase",
     "SessionBase",
     # Response types
+    "DreamConclusionRef",
+    "DreamCreatedConclusion",
+    "DreamPeerCardChange",
+    "DreamRemovedConclusion",
+    "DreamRunDetailResponse",
+    "DreamRunResponse",
     "ScopeBackfillJob",
     "ScopeResponse",
     "ScopeStatusResponse",

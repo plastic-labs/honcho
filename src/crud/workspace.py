@@ -21,6 +21,7 @@ from src.cache.client import (
     safe_cache_set,
 )
 from src.config import settings
+from src.crud.dream_history import delete_workspace_history
 from src.crud.lifecycle import (
     live_message_row,
     live_peer_row,
@@ -413,6 +414,7 @@ async def delete_workspace(
     # then messages
 
     # then webhook endpoints
+    # then dream history
     # then session_peers
     # then sessions
     # then peers
@@ -488,6 +490,7 @@ async def delete_workspace(
                 models.WebhookEndpoint.workspace_name == workspace_name
             )
         )
+        await delete_workspace_history(db, workspace_name)
         await db.execute(
             delete(models.Session).where(
                 models.Session.workspace_name == workspace_name
