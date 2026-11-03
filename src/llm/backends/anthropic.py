@@ -17,7 +17,6 @@ from pydantic import BaseModel, ValidationError
 from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.capabilities import anthropic_capabilities
-from src.llm.conversation import strip_thinking_blocks
 from src.llm.request_builder import (
     apply_sdk_passthroughs,
     request_timeout_from_extra_params,
@@ -43,6 +42,41 @@ def _anthropic_effort(thinking_effort: str | None) -> str | None:
     if thinking_effort == "minimal":
         return "low"
     return thinking_effort if thinking_effort in _ANTHROPIC_EFFORTS else None
+
+
+_THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
+
+
+def _strip_wire_thinking(
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Remove thinking and redacted_thinking blocks from rendered messages.
+
+    Text and tool_use blocks stay; a message left with no content is dropped,
+    since the API rejects an empty one. The input list is not modified.
+
+    Returns:
+        The messages without the blocks, and how many blocks were removed.
+    """
+    removed = 0
+    result: list[dict[str, Any]] = []
+    for message in messages:
+        content = as_list(message.get("content"))
+        if content is None:
+            result.append(message)
+            continue
+        kept = [
+            block
+            for block in content
+            if (entry := as_dict(block)) is None
+            or entry.get("type") not in _THINKING_BLOCK_TYPES
+        ]
+        removed += len(content) - len(kept)
+        if len(kept) == len(content):
+            result.append(message)
+        elif kept:
+            result.append({**message, "content": kept})
+    return result, removed
 
 
 class AnthropicBackend:
@@ -103,7 +137,9 @@ class AnthropicBackend:
         self._apply_thinking(
             params,
             model,
-            self._drop_unsigned_thinking(params, model, thinking_budget_tokens),
+            self._drop_unsigned_thinking(
+                params, model, thinking_budget_tokens, extra_params
+            ),
             thinking_effort,
             extra_params,
         )
@@ -197,7 +233,9 @@ class AnthropicBackend:
         self._apply_thinking(
             params,
             model,
-            self._drop_unsigned_thinking(params, model, thinking_budget_tokens),
+            self._drop_unsigned_thinking(
+                params, model, thinking_budget_tokens, extra_params
+            ),
             thinking_effort,
             extra_params,
         )
@@ -334,9 +372,16 @@ class AnthropicBackend:
 
     @staticmethod
     def _drop_unsigned_thinking(
-        params: dict[str, Any], model: str, thinking_budget_tokens: int | None
+        params: dict[str, Any],
+        model: str,
+        thinking_budget_tokens: int | None,
+        extra_params: dict[str, Any] | None,
     ) -> int | None:
         """Remove every thinking block from the request if one has no signature.
+
+        The Anthropic codec already leaves them out of a rendered history and
+        says so with `extra_params["thinking_withheld"]`; the check on the
+        request itself covers messages passed to the backend directly.
 
         Anthropic checks the signature of each replayed thinking block and
         rejects the whole request when one is missing. A turn served by a
@@ -365,16 +410,18 @@ class AnthropicBackend:
             for block in as_list(message.get("content")) or []
             if (entry := as_dict(block)) is not None
         )
-        if not unsigned:
+        withheld = bool(extra_params and extra_params.get("thinking_withheld"))
+        if not (unsigned or withheld):
             return thinking_budget_tokens
 
-        params["messages"], removed = strip_thinking_blocks(messages)
-        logger.warning(
-            "Removed %d thinking block(s) from the request to %s: %s",
-            removed,
-            model,
-            "at least one replayed block has no signature",
-        )
+        if unsigned:
+            params["messages"], removed = _strip_wire_thinking(messages)
+            logger.warning(
+                "Removed %d thinking block(s) from the request to %s: %s",
+                removed,
+                model,
+                "at least one replayed block has no signature",
+            )
         if anthropic_capabilities(model).thinking == "adaptive":
             return thinking_budget_tokens
 

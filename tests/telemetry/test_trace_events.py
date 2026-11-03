@@ -145,6 +145,7 @@ def trace_on(monkeypatch: pytest.MonkeyPatch) -> Iterator[_FakeTraceEmitter]:
 def _captured(
     messages: list[dict[str, Any]], *, content: str = "answer", run: str = "r1"
 ) -> CapturedLLMCall:
+    from src.llm.messages import coerce_messages
     from src.llm.types import LLMTelemetryContext
 
     return build_captured_call(
@@ -161,7 +162,7 @@ def _captured(
         transport="anthropic",
         provider_label=None,
         model="claude-x",
-        messages=messages,
+        messages=coerce_messages(messages),
         tools=None,
         tool_choice=None,
         result=CompletionResult(content=content, finish_reason="stop"),

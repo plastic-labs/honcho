@@ -1,115 +1,66 @@
 """Conversation-shaping helpers: token counting + tool-aware truncation.
 
-Moved out of src/utils/clients.py as part of the migration into src/llm/.
-These are pure helpers with no orchestration dependencies.
+Pure helpers over typed `ChatMessage` history, with no orchestration
+dependencies.
 """
 
 from __future__ import annotations
 
-import copy
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
 
-from src.utils.json_coerce import as_dict, as_list
 from src.utils.tokens import estimate_tokens
+
+from .messages import AIMessage, ChatMessage, SystemMessage, ToolMessage, UserMessage
 
 logger = logging.getLogger(__name__)
 
 
-def count_message_tokens(messages: list[dict[str, Any]]) -> int:
-    """Count tokens in a list of messages using tiktoken."""
-    total = 0
-    for msg in messages:
-        content = msg.get("content", "")
-        if isinstance(content, str):
-            total += estimate_tokens(content)
-        elif isinstance(content, list):
-            # Anthropic-style content blocks
-            total += estimate_tokens(json.dumps(content))
-        if "parts" in msg:
-            try:
-                total += estimate_tokens(json.dumps(msg["parts"]))
-            except TypeError:
-                # Non-JSON-serializable content (e.g. bytes) — estimate from repr.
-                total += estimate_tokens(str(msg["parts"]))
+def _message_tokens(message: ChatMessage) -> int:
+    if isinstance(message, SystemMessage | UserMessage | ToolMessage):
+        return estimate_tokens(message.content)
+    total = estimate_tokens(message.text or "")
+    if message.tool_calls:
+        total += estimate_tokens(
+            json.dumps(
+                [
+                    {"id": call.id, "name": call.name, "input": call.input}
+                    for call in message.tool_calls
+                ],
+                default=str,
+            )
+        )
+    for part in message.reasoning:
+        total += estimate_tokens(json.dumps(part.payload, default=str))
     return total
 
 
-def _has_content_block(msg: dict[str, Any], block_type: str) -> bool:
-    """Whether an Anthropic-style ``content`` list carries a block of this type."""
-    for block in as_list(msg.get("content")) or ():
-        entry = as_dict(block)
-        if entry is not None and entry.get("type") == block_type:
-            return True
-    return False
+def count_message_tokens(messages: Sequence[ChatMessage]) -> int:
+    """Estimate the tokens `messages` take, across text, tool calls, results
+    and reasoning."""
+    return sum(_message_tokens(message) for message in messages)
 
 
-def _has_part_key(msg: dict[str, Any], key: str) -> bool:
-    """Whether a Gemini-style ``parts`` list carries an entry with this key."""
-    for part in as_list(msg.get("parts")) or ():
-        entry = as_dict(part)
-        if entry is not None and key in entry:
-            return True
-    return False
+def _is_tool_use_message(message: ChatMessage) -> bool:
+    return isinstance(message, AIMessage) and bool(message.tool_calls)
 
 
-def _is_tool_use_message(msg: dict[str, Any]) -> bool:
-    """Check if a message contains tool calls (any format).
-
-    Recognizes:
-    - Anthropic: ``content`` is a list containing a ``{"type": "tool_use"}`` block.
-    - Gemini: ``parts`` is a list containing a ``{"function_call": …}`` entry.
-    - OpenAI: assistant message with a non-empty ``tool_calls`` field.
-    """
-    return (
-        _has_content_block(msg, "tool_use")
-        or _has_part_key(msg, "function_call")
-        or bool(msg.get("tool_calls"))
-    )
-
-
-def _is_tool_result_message(msg: dict[str, Any]) -> bool:
-    """Check if a message contains tool results (any format).
-
-    Recognizes:
-    - Anthropic: ``content`` is a list containing a ``{"type": "tool_result"}`` block.
-    - Gemini: ``parts`` is a list containing a ``{"function_response": …}`` entry.
-    - OpenAI: message with ``role == "tool"``.
-    """
-    return (
-        _has_content_block(msg, "tool_result")
-        or _has_part_key(msg, "function_response")
-        or msg.get("role") == "tool"
-    )
-
-
-def _is_plain_user_message(msg: dict[str, Any]) -> bool:
-    """A user turn that carries neither tool calls nor tool results."""
-    return (
-        msg.get("role") == "user"
-        and not _is_tool_use_message(msg)
-        and not _is_tool_result_message(msg)
-    )
-
-
-def _group_into_units(
-    messages: list[dict[str, Any]],
-) -> list[list[dict[str, Any]]]:
+def _group_into_units(messages: list[ChatMessage]) -> list[list[ChatMessage]]:
     """Group messages into logical conversation units.
 
     A unit is either:
-    - A tool_use message + ALL consecutive tool_result messages that follow,
-      plus a plain user message right after them (a budget line or synthesis
-      prompt the tool loop appends to the round)
-    - A single non-tool message
+    - An assistant turn with tool calls + ALL consecutive tool results that
+      follow, plus a user message right after them (a budget line or
+      synthesis prompt the tool loop appends to the round)
+    - A single other message
 
-    Keeps tool_use / tool_result pairs together so truncation never breaks
+    Keeps tool calls and their results together so truncation never breaks
     them apart, and keeps a note on the round with it: as a unit of its own it
     would be the last one kept, and every tool result would be dropped.
     """
-    units: list[list[dict[str, Any]]] = []
+    units: list[list[ChatMessage]] = []
     i = 0
 
     while i < len(messages):
@@ -117,20 +68,20 @@ def _group_into_units(
 
         if _is_tool_use_message(msg):
             j = i + 1
-            while j < len(messages) and _is_tool_result_message(messages[j]):
+            while j < len(messages) and isinstance(messages[j], ToolMessage):
                 j += 1
-            if j > i + 1 and j < len(messages) and _is_plain_user_message(messages[j]):
+            if j > i + 1 and j < len(messages) and isinstance(messages[j], UserMessage):
                 j += 1
             unit = messages[i:j]
             if len(unit) > 1:
                 units.append(unit)
                 i = j
             else:
-                # Orphaned tool_use with no results — skip it.
+                # Orphaned tool calls with no results — skip them.
                 logger.debug(f"Skipping orphaned tool_use at index {i}")
                 i += 1
-        elif _is_tool_result_message(msg):
-            # Orphaned tool_result — skip it.
+        elif isinstance(msg, ToolMessage):
+            # Orphaned tool result — skip it.
             logger.debug(f"Skipping orphaned tool_result at index {i}")
             i += 1
         else:
@@ -148,16 +99,14 @@ _CLIP_MARKER = "\n\n[TRUNCATED to fit the input budget: {removed:,} of {total:,}
 
 @dataclass
 class _PayloadSlot:
-    """One tool-result payload string and where it lives in its message.
+    """One tool result's payload, by its position in a message list.
 
-    `encoded` marks payloads nested in a content-block / parts list, which
-    `count_message_tokens` measures as JSON -- so their cost is estimated the
-    same way, or escaping (e.g. non-ASCII as \\uXXXX) would skew the cut.
+    Messages are immutable, so a cut stores a copy of the `ToolMessage` back at
+    `index`.
     """
 
-    container: dict[str, Any]
-    key: str
-    encoded: bool
+    messages: list[ChatMessage]
+    index: int
     original: str
     kept_chars: int | None = None
 
@@ -170,8 +119,24 @@ class _PayloadSlot:
             else self.original[: self.kept_chars]
         )
 
-    def tokens(self, text: str) -> int:
-        return estimate_tokens(json.dumps(text) if self.encoded else text)
+    @staticmethod
+    def tokens(text: str) -> int:
+        return estimate_tokens(text)
+
+    def keep(self, kept_chars: int) -> None:
+        """Keep the first `kept_chars` characters, and write them back with a
+        marker of what was cut."""
+        self.kept_chars = kept_chars
+        message = self.messages[self.index]
+        self.messages[self.index] = message.model_copy(
+            update={
+                "content": self.kept
+                + _CLIP_MARKER.format(
+                    removed=len(self.original) - kept_chars,
+                    total=len(self.original),
+                )
+            }
+        )
 
     def cut_by(self, excess_tokens: int) -> bool:
         """Shrink the payload by about `excess_tokens`; False once at the floor."""
@@ -181,58 +146,34 @@ class _PayloadSlot:
         kept_tokens = max(self.tokens(kept), 1)
         keep_ratio = max(kept_tokens - excess_tokens, 0) / kept_tokens
         # 10% headroom: tokens per char is not uniform across the string.
-        self.kept_chars = max(int(len(kept) * keep_ratio * 0.9), _MIN_CLIPPED_CHARS)
-        self.container[self.key] = self.original[
-            : self.kept_chars
-        ] + _CLIP_MARKER.format(
-            removed=len(self.original) - self.kept_chars, total=len(self.original)
-        )
+        self.keep(max(int(len(kept) * keep_ratio * 0.9), _MIN_CLIPPED_CHARS))
         return True
 
 
-def _payload_slots(msg: dict[str, Any]) -> list[_PayloadSlot]:
-    """The tool-result payload strings in `msg`, one per result, per provider shape.
-
-    Matches the shapes `history_adapters` builds: OpenAI ``{"role": "tool",
-    "content": str}``, Anthropic ``tool_result`` blocks with string
-    ``content``, and Gemini ``function_response.response.result``. Ids, names
-    and any non-text payload are never touched.
-    """
-    content = msg.get("content")
-    if msg.get("role") == "tool" and isinstance(content, str):
-        return [_PayloadSlot(msg, "content", encoded=False, original=content)]
-    slots: list[_PayloadSlot] = []
-    for block in as_list(content) or ():
-        entry = as_dict(block)
-        if (
-            entry is not None
-            and entry.get("type") == "tool_result"
-            and isinstance(entry.get("content"), str)
-        ):
-            slots.append(_PayloadSlot(entry, "content", True, entry["content"]))
-    for part in as_list(msg.get("parts")) or ():
-        response = as_dict((as_dict(part) or {}).get("function_response"))
-        result = as_dict((response or {}).get("response"))
-        if result is not None and isinstance(result.get("result"), str):
-            slots.append(_PayloadSlot(result, "result", True, result["result"]))
-    return slots
+def _payload_slots(messages: list[ChatMessage]) -> list[_PayloadSlot]:
+    """One slot per tool result in `messages`; ids and names are never touched."""
+    return [
+        _PayloadSlot(messages, index, message.content)
+        for index, message in enumerate(messages)
+        if isinstance(message, ToolMessage)
+    ]
 
 
 def _clip_tool_results(
-    messages: list[dict[str, Any]], max_tokens: int
-) -> list[dict[str, Any]]:
+    messages: list[ChatMessage], max_tokens: int
+) -> list[ChatMessage]:
     """Shorten the largest tool-result payloads until `messages` fits.
 
     Only tool results are clipped: they are retrieval output, whereas other
     content (the system prompt, a single-prompt caller's user message) is
     passed through as-is. Returns `messages` itself when it has no tool
-    results, otherwise a clipped copy; the caller's messages are never mutated.
+    results, otherwise a clipped copy; the caller's list is never mutated.
     May still exceed `max_tokens` when non-tool content alone is too large.
     """
-    if not any(_is_tool_result_message(msg) for msg in messages):
+    if not any(isinstance(msg, ToolMessage) for msg in messages):
         return messages
-    clipped = copy.deepcopy(messages)
-    slots = [slot for msg in clipped for slot in _payload_slots(msg)]
+    clipped = list(messages)
+    slots = _payload_slots(clipped)
 
     # Each pass either fits or cuts one payload to the floor, so the loop is
     # bounded by the payload count; the extra passes absorb estimate error.
@@ -253,8 +194,8 @@ _MAX_CHARS_PER_TOKEN = 8
 
 
 def _cap_each_tool_result(
-    messages: list[dict[str, Any]], max_tokens: int
-) -> list[dict[str, Any]]:
+    messages: list[ChatMessage], max_tokens: int
+) -> list[ChatMessage]:
     """Clip any single tool-result payload larger than `max_tokens`.
 
     One runaway result (e.g. an error that embeds a whole SQL statement) should
@@ -265,33 +206,30 @@ def _cap_each_tool_result(
     if not any(
         slot.tokens(slot.original[:char_cap]) > max_tokens
         or len(slot.original) > char_cap
-        for msg in messages
-        for slot in _payload_slots(msg)
+        for slot in _payload_slots(messages)
     ):
         return messages
-    capped = copy.deepcopy(messages)
-    for slot in (slot for msg in capped for slot in _payload_slots(msg)):
+    capped = list(messages)
+    for slot in _payload_slots(capped):
         if len(slot.original) > char_cap:
             slot.kept_chars = char_cap
         excess = slot.tokens(slot.kept) - max_tokens
         if excess > 0:
             slot.cut_by(excess)
         elif slot.kept_chars is not None:
-            slot.container[slot.key] = slot.kept + _CLIP_MARKER.format(
-                removed=len(slot.original) - slot.kept_chars, total=len(slot.original)
-            )
+            slot.keep(slot.kept_chars)
     return capped
 
 
 def truncate_messages_to_fit(
-    messages: list[dict[str, Any]],
+    messages: list[ChatMessage],
     max_tokens: int,
     preserve_system: bool = True,
-) -> list[dict[str, Any]]:
+) -> list[ChatMessage]:
     """Truncate messages to fit within a token limit while maintaining valid structure.
 
     Strategy:
-    1. Group messages into units (tool_use + results together, or single messages)
+    1. Group messages into units (tool calls + results together, or single messages)
     2. Cap each tool-result payload at half the budget, so one runaway result
        cannot displace everything else
     3. Drop the oldest units first, but hold back the opening unit (it states
@@ -299,7 +237,7 @@ def truncate_messages_to_fit(
        next turn is about to use)
     4. If the held-back units still don't fit, clip their tool-result payloads
     5. Only then drop the opening unit, and clip again
-    Units stay intact so tool_use/tool_result pairs are never broken. Content
+    Units stay intact so tool calls and their results are never split. Content
     other than tool results is never clipped, so an oversized prompt with no
     tool results is returned over budget.
     """
@@ -309,11 +247,11 @@ def truncate_messages_to_fit(
 
     logger.info(f"Truncating: {current_tokens} tokens exceeds {max_tokens} limit")
 
-    system_messages: list[dict[str, Any]] = []
-    conversation: list[dict[str, Any]] = []
+    system_messages: list[ChatMessage] = []
+    conversation: list[ChatMessage] = []
 
     for msg in messages:
-        if msg.get("role") == "system" and preserve_system:
+        if isinstance(msg, SystemMessage) and preserve_system:
             system_messages.append(msg)
         else:
             conversation.append(msg)
@@ -335,7 +273,7 @@ def truncate_messages_to_fit(
         logger.warning("No valid conversation units")
         return system_messages
 
-    def fits(candidate: list[list[dict[str, Any]]]) -> bool:
+    def fits(candidate: list[list[ChatMessage]]) -> bool:
         return (
             count_message_tokens([m for u in candidate for m in u]) <= available_tokens
         )
@@ -346,7 +284,7 @@ def truncate_messages_to_fit(
         (
             i
             for i in range(len(units) - 1, -1, -1)
-            if any(_is_tool_result_message(m) for m in units[i])
+            if any(isinstance(m, ToolMessage) for m in units[i])
         ),
         len(units) - 1,
     )
@@ -387,44 +325,35 @@ def truncate_messages_to_fit(
     return result
 
 
-_THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
-
-
 def strip_thinking_blocks(
-    messages: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], int]:
-    """Remove Anthropic `thinking` / `redacted_thinking` blocks from a history.
+    messages: Sequence[ChatMessage],
+) -> tuple[list[ChatMessage], int]:
+    """Remove Anthropic thinking (and redacted thinking) from a history.
 
     A thinking block replayed to a model that checks it against the request
     prefix (see `ModelCapabilities.preserved_thinking`) fails once anything
-    before it changes. Every turn's text and tool_use blocks stay, so the
-    history remains valid without the reasoning those blocks carried.
+    before it changes. Every turn's text and tool calls stay, so the history
+    remains valid without the reasoning those blocks carried.
 
     Returns:
         The history with the blocks removed (messages without any are reused
-        as-is, messages holding nothing else are dropped) and how many blocks
-        were removed.
+        as-is, assistant turns holding nothing else are dropped) and how many
+        blocks were removed.
     """
     removed = 0
-    result: list[dict[str, Any]] = []
+    result: list[ChatMessage] = []
     for msg in messages:
-        content = as_list(msg.get("content"))
-        if content is None:
+        if not isinstance(msg, AIMessage):
             result.append(msg)
             continue
-        kept = [
-            block
-            for block in content
-            if (entry := as_dict(block)) is None
-            or entry.get("type") not in _THINKING_BLOCK_TYPES
-        ]
-        if len(kept) == len(content):
+        kept = [part for part in msg.reasoning if not part.kind.startswith("anthropic")]
+        if len(kept) == len(msg.reasoning):
             result.append(msg)
             continue
-        removed += len(content) - len(kept)
-        if kept:
-            # A message left with no content would be rejected; drop it.
-            result.append({**msg, "content": kept})
+        removed += len(msg.reasoning) - len(kept)
+        if kept or msg.text or msg.tool_calls:
+            # A turn left with no content would be rejected; drop it.
+            result.append(msg.model_copy(update={"reasoning": kept}))
     return result, removed
 
 

@@ -195,7 +195,7 @@ The Dreamer is an orchestrated multi-specialist system that runs during schedule
 #### Shared Agent Infrastructure
 
 - **Tool definitions** (`src/utils/agent_tools.py`): unified `TOOLS` dict; per-agent lists (`DIALECTIC_TOOLS`, `DIALECTIC_TOOLS_MINIMAL`, `DREAMER_TOOLS`, `DEDUCTION_SPECIALIST_TOOLS`, `INDUCTION_SPECIALIST_TOOLS`).
-- **LLM subsystem** (`src/llm/`): provider-agnostic `honcho_llm_call()`. Backends in `src/llm/backends/` (`anthropic.py`, `gemini.py`, `openai.py`). Includes prompt caching (`caching.py`), structured output (`structured_output.py`), tool loop (`tool_loop.py`), history adapters for cross-provider message formats, and a model registry. Per-retry provider selection is pinned via an `AttemptPlan` so stream-final retries don't bounce back to primary after the tool loop has settled on fallback.
+- **LLM subsystem** (`src/llm/`): provider-agnostic `honcho_llm_call()`. Backends in `src/llm/backends/` (`anthropic.py`, `gemini.py`, `openai.py`). Includes prompt caching (`caching.py`), structured output (`structured_output.py`), tool loop (`tool_loop.py`), and a model registry. History is typed (`messages.py`: `SystemMessage`, `UserMessage`, `AIMessage`, `ToolMessage`); callers pass plain role/content dicts, and each attempt's codec (`codecs/`, resolved through `profiles.py`) renders the history for that attempt's provider. Per-retry provider selection is pinned via an `AttemptPlan` so stream-final retries don't bounce back to primary after the tool loop has settled on fallback.
 - **Per-agent model config**: each agent has its own `MODEL_CONFIG` in `src/config.py` with fallback chains (see `ConfiguredModelSettings`, `FallbackModelSettings`).
 - **Telemetry**: cloudevents in `src/telemetry/events/` cover API routes, dialectic, dream, deletion, reconciliation, representation, and per-call LLM accounting (`llm.py` — `LLMCallCompletedEvent` fires once per provider hit with full cost-attribution context). High-volume events are sampled deterministically per `run_id` via `TelemetrySettings.HIGH_VOLUME_SAMPLE_RATE`.
 - **Prometheus metrics** (`src/telemetry/prometheus/`): every metric carries a `namespace` label and every recorder is fail-soft (a metrics error never propagates into a request or a worker loop). Counter children with a *bounded* label domain are zero-initialized per process at startup — `initialize_bounded_metrics(instance_type=...)`, called from the `src/main.py` lifespan (`api`) and `src/deriver/__main__.py` (`deriver`) — so an absent series means a broken scrape rather than "nothing happened". Two consequences worth knowing before touching telemetry:
@@ -251,7 +251,8 @@ src/
 ├── llm/                 # Provider-agnostic LLM client subsystem
 │   ├── api.py, backend.py, executor.py, runtime.py, registry.py
 │   ├── caching.py, structured_output.py, tool_loop.py, conversation.py
-│   ├── history_adapters.py, request_builder.py, credentials.py, types.py
+│   ├── messages.py, profiles.py, request_builder.py, credentials.py, types.py
+│   ├── codecs/           # anthropic.py, gemini.py, openai.py (typed history ↔ wire)
 │   └── backends/         # anthropic.py, gemini.py, openai.py
 ├── cache/               # Redis cache abstraction (cashews-backed)
 │   └── client.py
