@@ -77,7 +77,7 @@ class SessionDeletionResult:
     conclusions_deleted: int
 
 
-SESSION_CACHE_KEY_TEMPLATE = "v3:workspace:{workspace_name}:session:{session_name}"
+SESSION_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}:session:{session_name}"
 SESSION_LOCK_PREFIX = f"{cache_prefix_namespace()}:lock:v2"
 
 
@@ -120,11 +120,6 @@ async def _fetch_session(
     if obj is None:
         return None
     return {
-        # region ai
-        # tenant_id leads the composite PK; without it the reconstructed object
-        # has an incomplete identity and merge/update can't locate its row.
-        # endregion
-        "tenant_id": obj.tenant_id,
         "id": obj.id,
         "name": obj.name,
         "workspace_name": obj.workspace_name,
@@ -269,7 +264,7 @@ async def get_or_create_session(
     # Reconstruct and merge cached dict into session if it exists
     honcho_session: models.Session | None = None
     if session_data is not None:
-        obj = models.Session(**session_data)
+        obj = models.Session(**models.with_cached_tenant(session_data))
         make_transient_to_detached(obj)
         honcho_session = await db.merge(obj, load=False)
 
@@ -528,7 +523,7 @@ async def get_session(
         )
 
     # Reconstruct ORM object from cached dict and merge into session
-    obj = models.Session(**data)
+    obj = models.Session(**models.with_cached_tenant(data))
     make_transient_to_detached(obj)
     session = await db.merge(obj, load=False)
 

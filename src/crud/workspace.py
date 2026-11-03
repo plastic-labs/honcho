@@ -50,12 +50,14 @@ class WorkspaceDeletionResult:
 
 
 # region ai
-# v3 (also on the session/peer/collection templates, which share this prefix so
-# delete_workspace's delete_match still sweeps them): v2 payloads predate
-# tenant_id in the cached dict, and merge(load=False) on one builds an incomplete
-# composite-PK identity that fails the next update. The bump turns them into misses.
+# Keep v2 (and the same on the session/peer/collection templates, which share
+# this prefix so delete_workspace's delete_match still sweeps them): the cached
+# dicts deliberately match the previous release's, without tenant_id, which
+# models.with_cached_tenant restores on read. A version bump would split the
+# cache between releases during a rolling deploy, so neither would clear the
+# other's entries on write.
 # endregion
-WORKSPACE_CACHE_KEY_TEMPLATE = "v3:workspace:{workspace_name}"
+WORKSPACE_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}"
 WORKSPACE_LOCK_PREFIX = f"{cache_prefix_namespace()}:lock:v2"
 
 
@@ -99,11 +101,6 @@ async def _select_workspace(
     if obj is None:
         return None
     return {
-        # region ai
-        # tenant_id leads the composite PK; without it the reconstructed object
-        # has an incomplete identity and merge/update can't locate its row.
-        # endregion
-        "tenant_id": obj.tenant_id,
         "id": obj.id,
         "name": obj.name,
         "h_metadata": obj.h_metadata,
@@ -117,7 +114,7 @@ async def _existing_workspace_result(
     db: AsyncSession, data: dict[str, Any]
 ) -> GetOrCreateResult[models.Workspace]:
     """Reconstruct a workspace from its fetched dict and merge it into the session."""
-    obj = models.Workspace(**data)
+    obj = models.Workspace(**models.with_cached_tenant(data))
     make_transient_to_detached(obj)
     existing_workspace = await db.merge(obj, load=False)
     return GetOrCreateResult(existing_workspace, created=False)
@@ -244,7 +241,7 @@ async def get_workspace(
         raise ResourceNotFoundException(f"Workspace {workspace_name} not found")
 
     # Reconstruct ORM object from cached dict and merge into session
-    obj = models.Workspace(**data)
+    obj = models.Workspace(**models.with_cached_tenant(data))
     make_transient_to_detached(obj)
     existing_workspace = await db.merge(obj, load=False)
 
