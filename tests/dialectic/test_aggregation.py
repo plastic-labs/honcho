@@ -15,6 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models
 from src.config import settings
 from src.dialectic import prompts
+from src.dialectic.chat import (
+    _member_peer_cards,  # pyright: ignore[reportPrivateUsage]
+)
 from src.dialectic.core import DialecticAgent
 from src.llm import HonchoLLMCallResponse
 from src.utils.evidence import EvidenceAccumulator
@@ -198,6 +201,34 @@ class TestPrompt:
         assert prompts.agent_system_prompt(
             "alice", "alice", ["card"], None
         ) == prompts.agent_system_prompt("alice", "alice", ["card"], None, members=())
+
+
+class TestMemberCards:
+    @pytest.mark.parametrize(
+        ("session_allowlist", "expected"),
+        [(None, {"alice": ["Alice leads the rewrite"]}), (["s1"], None)],
+    )
+    async def test_a_session_allowlist_drops_member_cards(
+        self,
+        db_session: AsyncSession,
+        team_set: Any,
+        session_allowlist: list[str] | None,
+        expected: dict[str, list[str]] | None,
+    ):
+        ws, observed_set, _ = team_set
+        await crud.set_peer_card(
+            db_session,
+            ws,
+            ["Alice leads the rewrite"],
+            observer="alice",
+            observed="alice",
+        )
+        await db_session.commit()
+
+        assert (
+            await _member_peer_cards(db_session, ws, observed_set, session_allowlist)
+            == expected
+        )
 
 
 class TestChatRoute:

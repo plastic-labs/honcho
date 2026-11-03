@@ -1030,7 +1030,9 @@ class PeerSettings(HonchoSettings):
     AGGREGATION_MAX_DEPTH: Annotated[int, Field(ge=0)] = 3
     # Largest expanded set of observed peers per read, the target included.
     AGGREGATION_MAX_FANOUT: Annotated[int, Field(ge=1)] = 50
-    MAX_MEMBERS: Annotated[int, Field(ge=1)] = 100
+    # Below the fan-out cap, so a parent at the limit, plus itself, stays readable
+    # at depth 1.
+    MAX_MEMBERS: Annotated[int, Field(ge=1)] = 49
 
     @model_validator(mode="after")
     def _default_depth_within_max(self) -> "PeerSettings":
@@ -1038,6 +1040,15 @@ class PeerSettings(HonchoSettings):
             raise ValueError(
                 "PEER_AGGREGATION_DEFAULT_DEPTH must not exceed "
                 + "PEER_AGGREGATION_MAX_DEPTH"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _members_readable_within_fanout(self) -> "PeerSettings":
+        if self.MAX_MEMBERS >= self.AGGREGATION_MAX_FANOUT:
+            raise ValueError(
+                "PEER_MAX_MEMBERS must be less than PEER_AGGREGATION_MAX_FANOUT, "
+                + "which counts the parent itself"
             )
         return self
 

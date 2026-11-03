@@ -49,10 +49,19 @@ def _reject_scope_observed(peer: models.Peer) -> None:
 
 
 async def _member_peer_cards(
-    db: AsyncSession, workspace_name: str, observed_set: crud.ObservedSet | None
+    db: AsyncSession,
+    workspace_name: str,
+    observed_set: crud.ObservedSet | None,
+    session_allowlist: list[str] | None,
 ) -> dict[str, list[str]] | None:
-    """Cards for the observed peer's members, keyed by member; None if there are none."""
+    """Cards for the observed peer's members, keyed by member; None if there are none.
+
+    A card records no sessions, so it cannot be held to a session allowlist (or
+    a list of scopes, which arrives as one). Such a read gets no member cards.
+    """
     if observed_set is None or not observed_set.aggregated:
+        return None
+    if session_allowlist is not None:
         return None
     cards: dict[str, list[str]] = {}
     for observer, observed in observed_set.pairs[1:]:
@@ -132,7 +141,9 @@ async def agentic_chat(
                     db, workspace_name, observer=observer, observed=observed
                 )
         member_peer_cards = (
-            await _member_peer_cards(db, workspace_name, observed_set)
+            await _member_peer_cards(
+                db, workspace_name, observed_set, session_allowlist
+            )
             if configuration.peer_card.use
             else None
         )
@@ -227,7 +238,9 @@ async def agentic_chat_stream(
                     db, workspace_name, observer=observer, observed=observed
                 )
         member_peer_cards = (
-            await _member_peer_cards(db, workspace_name, observed_set)
+            await _member_peer_cards(
+                db, workspace_name, observed_set, session_allowlist
+            )
             if configuration.peer_card.use
             else None
         )

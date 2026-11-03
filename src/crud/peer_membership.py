@@ -388,7 +388,7 @@ class ObservedSet:
     one. A read about a peer's own global representation (observer and target
     the same peer) reads each member's own global representation too; a
     directional or scoped read keeps its observer and reads that observer's
-    view of each member.
+    view of each member, leaving out the observer itself when it is a member.
     """
 
     peers: list[str]
@@ -420,5 +420,8 @@ async def resolve_observed_set(
     if observer == observed:
         pairs = [(peer, peer) for peer in peers]
     else:
+        # A member reading its parent asks about the others; its own (X, X)
+        # pair is its global self-representation, not its view of the parent.
+        peers = [peer for peer in peers if peer != observer]
         pairs = [(observer, peer) for peer in peers]
     return ObservedSet(peers=peers, pairs=pairs)

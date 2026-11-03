@@ -258,6 +258,18 @@ class TestDepthAndBounds:
         # Querying a member directly still works.
         assert _representation(client, team, "alice")[0] == 200
 
+    async def test_a_parent_at_the_member_limit_is_readable(
+        self, client: TestClient, team: str, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(settings.PEER, "MAX_MEMBERS", 3)
+        monkeypatch.setattr(settings.PEER, "AGGREGATION_MAX_FANOUT", 4)
+        for name in ("alice", "bob", "charlie"):
+            _member(client, team, "engineering-team", name)
+
+        status, text = _representation(client, team, "engineering-team")
+        assert status == 200
+        assert _headings(text) == ["engineering-team", "alice", "bob", "charlie"]
+
 
 class TestObserverPairs:
     async def test_a_directional_read_keeps_its_observer_for_every_member(
@@ -278,6 +290,25 @@ class TestObserverPairs:
         assert "Alice is overloaded" in text
         assert "Alice leads the rewrite" not in text  # alice's own memory
         assert "ships on Fridays" not in text  # the team's own memory
+
+    async def test_a_member_reading_its_parent_leaves_out_its_own_pair(
+        self, client: TestClient, db_session: AsyncSession, team: str
+    ):
+        await _seed(
+            db_session,
+            team,
+            observer="alice",
+            observed="bob",
+            contents=["Alice thinks Bob is thorough"],
+        )
+        for name in ("alice", "bob"):
+            _member(client, team, "engineering-team", name)
+
+        status, text = _representation(client, team, "alice", target="engineering-team")
+        assert status == 200
+        assert _headings(text) == ["bob"]
+        assert "Bob is thorough" in text
+        assert "Alice leads the rewrite" not in text  # (alice, alice)
 
     async def test_a_self_read_uses_each_members_own_memory_not_the_parents_view(
         self, client: TestClient, db_session: AsyncSession, team: str

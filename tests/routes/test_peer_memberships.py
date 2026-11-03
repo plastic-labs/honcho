@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from src import crud, models, schemas
-from src.config import settings
+from src.config import PeerSettings, settings
 from src.exceptions import ConflictException
 from src.models import Peer, Workspace
 from src.security import JWTParams, create_jwt
@@ -139,6 +139,12 @@ def test_member_cap(
     assert "maximum of 2 members" in over.json()["detail"]
     # Re-adding an existing member is not a new member.
     assert _add(client, ws, "team", "m1").status_code == 200
+
+
+@pytest.mark.parametrize("max_members", [50, 51])
+def test_member_cap_must_stay_below_the_fanout_cap(max_members: int):
+    with pytest.raises(ValueError, match="PEER_MAX_MEMBERS"):
+        PeerSettings(AGGREGATION_MAX_FANOUT=50, MAX_MEMBERS=max_members)
 
 
 @pytest.mark.asyncio
