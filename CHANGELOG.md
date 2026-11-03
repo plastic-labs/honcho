@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- A tool loop on the Anthropic transport no longer fails with a 400 (`thinking.signature: Input should be a valid string`) after a proxy serves one of its rounds from a non-Anthropic fallback. That round's thinking block has no signature, and Anthropic rejects any request that replays one. When a request holds an unsigned thinking block, the Anthropic backend removes every thinking block from it and keeps the text and tool calls; budget-thinking models (Claude 4.5 and earlier) run that call with thinking off, and adaptive models keep their thinking settings. Requests whose thinking blocks are all signed are unchanged (DEV-2880, #1213)
+
 ## [3.5.0] - 2026-10-29
 
 ### Added

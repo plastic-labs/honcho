@@ -11,6 +11,13 @@ from .api import honcho_llm_call
 from .backend import CompletionResult, ProviderBackend, StreamChunk, ToolCallResult
 from .credentials import default_transport_api_key, resolve_credentials
 from .executor import honcho_llm_call_inner
+from .messages import (
+    AIMessage,
+    ChatMessage,
+    SystemMessage,
+    ToolMessage,
+    UserMessage,
+)
 from .registry import (
     CLIENTS,
     backend_for_provider,
@@ -23,7 +30,6 @@ from .registry import (
     get_gemini_override_client,
     get_openai_client,
     get_openai_override_client,
-    history_adapter_for_provider,
 )
 from .types import (
     BudgetLine,
@@ -38,7 +44,9 @@ from .types import (
 )
 
 __all__ = [
+    "AIMessage",
     "CLIENTS",
+    "ChatMessage",
     "CompletionResult",
     "HonchoLLMCallResponse",
     "HonchoLLMCallStreamChunk",
@@ -50,7 +58,10 @@ __all__ = [
     "ReasoningEffortType",
     "StreamChunk",
     "StreamingResponseWithMetadata",
+    "SystemMessage",
     "ToolCallResult",
+    "ToolMessage",
+    "UserMessage",
     "VerbosityType",
     "backend_for_provider",
     "client_for_model_config",
@@ -63,7 +74,6 @@ __all__ = [
     "get_gemini_override_client",
     "get_openai_client",
     "get_openai_override_client",
-    "history_adapter_for_provider",
     "honcho_llm_call",
     "honcho_llm_call_inner",
     "resolve_credentials",

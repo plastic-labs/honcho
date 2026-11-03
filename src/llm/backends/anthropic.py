@@ -28,6 +28,7 @@ from src.llm.structured_output import (
     schema_instruction,
     validate_structured_output,
 )
+from src.utils.json_coerce import as_dict, as_list
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,41 @@ def _anthropic_effort(thinking_effort: str | None) -> str | None:
     if thinking_effort == "minimal":
         return "low"
     return thinking_effort if thinking_effort in _ANTHROPIC_EFFORTS else None
+
+
+_THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
+
+
+def _strip_wire_thinking(
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Remove thinking and redacted_thinking blocks from rendered messages.
+
+    Text and tool_use blocks stay; a message left with no content is dropped,
+    since the API rejects an empty one. The input list is not modified.
+
+    Returns:
+        The messages without the blocks, and how many blocks were removed.
+    """
+    removed = 0
+    result: list[dict[str, Any]] = []
+    for message in messages:
+        content = as_list(message.get("content"))
+        if content is None:
+            result.append(message)
+            continue
+        kept = [
+            block
+            for block in content
+            if (entry := as_dict(block)) is None
+            or entry.get("type") not in _THINKING_BLOCK_TYPES
+        ]
+        removed += len(content) - len(kept)
+        if len(kept) == len(content):
+            result.append(message)
+        elif kept:
+            result.append({**message, "content": kept})
+    return result, removed
 
 
 class AnthropicBackend:
@@ -99,7 +135,13 @@ class AnthropicBackend:
             # from ModelConfig.provider_params. Shallow merge with operator-wins.
             apply_sdk_passthroughs(params, extra_params)
         self._apply_thinking(
-            params, model, thinking_budget_tokens, thinking_effort, extra_params
+            params,
+            model,
+            self._drop_unsigned_thinking(
+                params, model, thinking_budget_tokens, extra_params
+            ),
+            thinking_effort,
+            extra_params,
         )
 
         timeout = request_timeout_from_extra_params(extra_params)
@@ -188,6 +230,15 @@ class AnthropicBackend:
             # Operator escape hatch: forward Anthropic SDK passthrough kwargs
             # from ModelConfig.provider_params. Shallow merge with operator-wins.
             apply_sdk_passthroughs(params, extra_params)
+        self._apply_thinking(
+            params,
+            model,
+            self._drop_unsigned_thinking(
+                params, model, thinking_budget_tokens, extra_params
+            ),
+            thinking_effort,
+            extra_params,
+        )
 
         timeout = request_timeout_from_extra_params(extra_params)
         if timeout is not None:
@@ -214,9 +265,6 @@ class AnthropicBackend:
             self._add_schema_instruction(
                 params, schema_instruction(response_format, tools_present=bool(tools))
             )
-        self._apply_thinking(
-            params, model, thinking_budget_tokens, thinking_effort, extra_params
-        )
 
         async with self._client.messages.stream(**params) as stream:
             async for chunk in stream:
@@ -321,6 +369,75 @@ class AnthropicBackend:
             thinking_blocks=thinking_full_blocks,
             raw_response=response,
         )
+
+    @staticmethod
+    def _drop_unsigned_thinking(
+        params: dict[str, Any],
+        model: str,
+        thinking_budget_tokens: int | None,
+        extra_params: dict[str, Any] | None,
+    ) -> int | None:
+        """Remove every thinking block from the request if one has no signature.
+
+        The Anthropic codec already leaves them out of a rendered history and
+        says so with `extra_params["thinking_withheld"]`; the check on the
+        request itself covers messages passed to the backend directly.
+
+        Anthropic checks the signature of each replayed thinking block and
+        rejects the whole request when one is missing. A turn served by a
+        non-Anthropic fallback behind a proxy carries a `thinking` block with
+        `signature: null`, and Honcho can't tell that turn apart from Claude's.
+        Removing only that block would invalidate the blocks after it on a
+        `preserved_thinking` model, so all of them go; text and tool_use blocks
+        stay. A `redacted_thinking` block has no signature field and doesn't
+        trigger this. The caller's history is unchanged, so each call that
+        replays the unsigned block removes them again.
+
+        On a budget model, Anthropic documents that with thinking on, the
+        tool-use turn being continued must start with that turn's thinking,
+        which is gone now. The API doesn't enforce that on every model, but
+        thinking stays off for the call rather than depend on it: the returned
+        budget is None and an `extra_body` thinking that turns it on is
+        removed. An adaptive model keeps its thinking configuration.
+
+        Returns:
+            The thinking budget to configure the call with.
+        """
+        messages: list[dict[str, Any]] = params["messages"]
+        unsigned = any(
+            entry.get("type") == "thinking" and not entry.get("signature")
+            for message in messages
+            for block in as_list(message.get("content")) or []
+            if (entry := as_dict(block)) is not None
+        )
+        withheld = bool(extra_params and extra_params.get("thinking_withheld"))
+        if not (unsigned or withheld):
+            return thinking_budget_tokens
+
+        if unsigned:
+            params["messages"], removed = _strip_wire_thinking(messages)
+            logger.warning(
+                "Removed %d thinking block(s) from the request to %s: %s",
+                removed,
+                model,
+                "at least one replayed block has no signature",
+            )
+        if anthropic_capabilities(model).thinking == "adaptive":
+            return thinking_budget_tokens
+
+        extra_body = as_dict(params.get("extra_body"))
+        operator_thinking = as_dict(extra_body.get("thinking")) if extra_body else None
+        if (
+            extra_body is not None
+            and operator_thinking is not None
+            and operator_thinking.get("type") != "disabled"
+        ):
+            remaining = {k: v for k, v in extra_body.items() if k != "thinking"}
+            if remaining:
+                params["extra_body"] = remaining
+            else:
+                params.pop("extra_body")
+        return None
 
     @staticmethod
     def _apply_thinking(

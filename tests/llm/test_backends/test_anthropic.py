@@ -1,3 +1,4 @@
+import copy
 import logging
 from types import SimpleNamespace
 from typing import Any
@@ -1048,3 +1049,338 @@ async def test_anthropic_backend_skips_conflict_guard_when_operator_disables_thi
     assert call["tool_choice"] == {"type": "any"}
     assert "thinking" not in call
     assert "output_config" not in call
+
+
+class _EmptyStream:
+    async def __aenter__(self) -> "_EmptyStream":
+        return self
+
+    async def __aexit__(self, *_: object) -> bool:
+        return False
+
+    def __aiter__(self) -> "_EmptyStream":
+        return self
+
+    async def __anext__(self) -> object:
+        raise StopAsyncIteration
+
+    async def get_final_message(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            usage=SimpleNamespace(output_tokens=5), stop_reason="end_turn"
+        )
+
+
+async def _send(
+    method: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    response_text: str = "ok",
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Run complete() or stream() and return the kwargs sent to the SDK."""
+    client = _make_client([TextBlock(type="text", text=response_text)])
+    client.messages.stream = Mock(return_value=_EmptyStream())
+    backend = AnthropicBackend(client)
+    if method == "complete":
+        await backend.complete(
+            model=model, messages=messages, max_tokens=4096, **kwargs
+        )
+        return dict(client.messages.create.await_args.kwargs)
+    _ = [
+        chunk
+        async for chunk in backend.stream(
+            model=model, messages=messages, max_tokens=4096, **kwargs
+        )
+    ]
+    return dict(client.messages.stream.call_args.kwargs)
+
+
+_TOOL_USE_1: dict[str, Any] = {
+    "type": "tool_use",
+    "id": "t1",
+    "name": "search",
+    "input": {},
+}
+_TOOL_USE_2: dict[str, Any] = {
+    "type": "tool_use",
+    "id": "t2",
+    "name": "search",
+    "input": {"q": "x"},
+}
+_SIGNED: dict[str, Any] = {
+    "type": "thinking",
+    "thinking": "plan",
+    "signature": "sig_123",
+}
+_REDACTED: dict[str, Any] = {"type": "redacted_thinking", "data": "opaque"}
+
+
+def _tool_result(tool_use_id: str) -> dict[str, Any]:
+    return {
+        "role": "user",
+        "content": [
+            {"type": "tool_result", "tool_use_id": tool_use_id, "content": "13"}
+        ],
+    }
+
+
+def _fallback_history(unsigned: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Two tool rounds: round 1 from Claude, round 2 from a proxy fallback.
+
+    The fallback's thinking block carries no signature (the 2026-09-21 shape).
+    """
+    if unsigned is None:
+        unsigned = {"type": "thinking", "thinking": "now t2", "signature": None}
+    return [
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": [_SIGNED, _REDACTED, _TOOL_USE_1]},
+        _tool_result("t1"),
+        {"role": "assistant", "content": [unsigned, _TOOL_USE_2]},
+        _tool_result("t2"),
+    ]
+
+
+_STRIPPED_HISTORY: list[dict[str, Any]] = [
+    {"role": "user", "content": "Hello"},
+    {"role": "assistant", "content": [_TOOL_USE_1]},
+    _tool_result("t1"),
+    {"role": "assistant", "content": [_TOOL_USE_2]},
+    _tool_result("t2"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["complete", "stream"])
+@pytest.mark.parametrize(
+    "unsigned",
+    [
+        {"type": "thinking", "thinking": "now t2", "signature": None},
+        {"type": "thinking", "thinking": "now t2", "signature": ""},
+        {"type": "thinking", "thinking": "now t2"},
+    ],
+    ids=["null", "empty", "missing"],
+)
+async def test_anthropic_backend_drops_all_thinking_when_a_block_is_unsigned(
+    method: str, unsigned: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Anthropic rejects the whole request over one unsigned block, so every
+    thinking block goes, signed and redacted ones included. A budget model
+    then runs without thinking: the turn it continues no longer starts with
+    its thinking."""
+    caplog.set_level(logging.WARNING, logger="src.llm.backends.anthropic")
+
+    call = await _send(
+        method,
+        "claude-haiku-4-5",
+        _fallback_history(unsigned),
+        tools=[SEARCH_TOOL],
+        thinking_budget_tokens=2048,
+    )
+
+    assert call["messages"] == _STRIPPED_HISTORY
+    assert "thinking" not in call
+    assert "Removed 3 thinking block(s) from the request to claude-haiku-4-5" in (
+        caplog.text
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["complete", "stream"])
+async def test_anthropic_backend_drops_unsigned_thinking_with_thinking_off(
+    method: str,
+) -> None:
+    call = await _send(
+        method, "claude-haiku-4-5", _fallback_history(), tools=[SEARCH_TOOL]
+    )
+
+    assert call["messages"] == _STRIPPED_HISTORY
+    assert "thinking" not in call
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["complete", "stream"])
+@pytest.mark.parametrize(
+    ("model", "expected_thinking"),
+    [("claude-haiku-4-5", None), ("claude-sonnet-5-5", {"type": "adaptive"})],
+)
+async def test_anthropic_backend_configures_thinking_the_codec_withheld(
+    method: str, model: str, expected_thinking: dict[str, Any] | None
+) -> None:
+    """The codec already left the thinking out of the rendered history and
+    flags it; a budget model then runs without thinking, as when the backend
+    strips the blocks itself, and an adaptive model keeps its configuration."""
+    call = await _send(
+        method,
+        model,
+        _STRIPPED_HISTORY,
+        tools=[SEARCH_TOOL],
+        thinking_budget_tokens=2048,
+        extra_params={"thinking_withheld": True},
+    )
+
+    assert call["messages"] == _STRIPPED_HISTORY
+    assert call.get("thinking") == expected_thinking
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["complete", "stream"])
+async def test_anthropic_backend_replays_signed_and_redacted_thinking_untouched(
+    method: str,
+) -> None:
+    history: list[dict[str, Any]] = [
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": [_SIGNED, _REDACTED, _TOOL_USE_1]},
+        _tool_result("t1"),
+    ]
+
+    call = await _send(
+        method,
+        "claude-haiku-4-5",
+        history,
+        tools=[SEARCH_TOOL],
+        thinking_budget_tokens=2048,
+    )
+
+    assert call["messages"] == history
+    assert call["thinking"] == {"type": "enabled", "budget_tokens": 2048}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["complete", "stream"])
+async def test_anthropic_backend_strip_leaves_the_callers_inputs_alone(
+    method: str,
+) -> None:
+    history = _fallback_history()
+    extra_params: dict[str, Any] = {
+        "extra_body": {
+            "thinking": {"type": "enabled", "budget_tokens": 2048},
+            "metadata": {"user_id": "u"},
+        }
+    }
+    history_before = copy.deepcopy(history)
+    extra_params_before = copy.deepcopy(extra_params)
+
+    await _send(
+        method,
+        "claude-haiku-4-5",
+        history,
+        tools=[SEARCH_TOOL],
+        extra_params=extra_params,
+    )
+
+    assert history == history_before
+    assert extra_params == extra_params_before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["complete", "stream"])
+async def test_anthropic_backend_strip_removes_operator_thinking_on_budget_models(
+    method: str,
+) -> None:
+    call = await _send(
+        method,
+        "claude-haiku-4-5",
+        _fallback_history(),
+        tools=[SEARCH_TOOL],
+        extra_params={
+            "extra_body": {
+                "thinking": {"type": "enabled", "budget_tokens": 2048},
+                "metadata": {"user_id": "u"},
+            }
+        },
+    )
+
+    assert call["messages"] == _STRIPPED_HISTORY
+    assert "thinking" not in call
+    assert call["extra_body"] == {"metadata": {"user_id": "u"}}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_strip_keeps_operator_thinking_disabled() -> None:
+    call = await _send(
+        "complete",
+        "claude-haiku-4-5",
+        _fallback_history(),
+        tools=[SEARCH_TOOL],
+        thinking_budget_tokens=2048,
+        extra_params={"extra_body": {"thinking": {"type": "disabled"}}},
+    )
+
+    assert call["messages"] == _STRIPPED_HISTORY
+    assert "thinking" not in call
+    assert call["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_strip_lets_budget_model_keep_forced_tool_choice() -> (
+    None
+):
+    """With thinking off for the call there is no conflict to resolve, so the
+    default "throw" mode doesn't fire."""
+    call = await _send(
+        "complete",
+        "claude-haiku-4-5",
+        _fallback_history(),
+        tools=[SEARCH_TOOL],
+        tool_choice="required",
+        thinking_budget_tokens=2048,
+    )
+
+    assert call["tool_choice"] == {"type": "any"}
+    assert "thinking" not in call
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["complete", "stream"])
+@pytest.mark.parametrize(
+    ("model", "tool_choice"),
+    [("claude-haiku-5-5", {"type": "any"}), ("claude-sonnet-5-5", {"type": "auto"})],
+)
+async def test_anthropic_backend_strip_keeps_adaptive_thinking_and_tool_choice_rules(
+    method: str, model: str, tool_choice: dict[str, Any]
+) -> None:
+    """Adaptive models keep their thinking and effort, and a forced
+    tool_choice is still relaxed on models that reject it."""
+    call = await _send(
+        method,
+        model,
+        _fallback_history(),
+        tools=[SEARCH_TOOL],
+        tool_choice="required",
+        thinking_effort="low",
+    )
+
+    assert call["messages"] == _STRIPPED_HISTORY
+    assert call["thinking"] == {"type": "adaptive"}
+    assert call["output_config"] == {"effort": "low"}
+    assert call["tool_choice"] == tool_choice
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["complete", "stream"])
+async def test_anthropic_backend_strips_before_adding_the_schema_instruction(
+    method: str,
+) -> None:
+    """An assistant turn holding only the unsigned block is dropped first, so
+    the schema instruction lands on the user turn, not a trailing assistant
+    message these models reject."""
+    history: list[dict[str, Any]] = [
+        {"role": "user", "content": "Hello"},
+        {
+            "role": "assistant",
+            "content": [{"type": "thinking", "thinking": "hm", "signature": None}],
+        },
+    ]
+
+    call = await _send(
+        method,
+        "claude-sonnet-5-5",
+        history,
+        response_text='{"answer": "ok"}',
+        response_format=StructuredResponse,
+    )
+
+    assert len(call["messages"]) == 1
+    assert call["messages"][0]["role"] == "user"
+    assert call["messages"][0]["content"].startswith("Hello")
+    assert "Respond with valid JSON" in call["messages"][0]["content"]

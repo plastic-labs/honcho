@@ -27,12 +27,6 @@ from pydantic import BaseModel, ValidationError
 
 from src.exceptions import LLMError
 from src.llm.backend import CompletionResult
-from src.llm.history_adapters import (
-    AnthropicHistoryAdapter,
-    GeminiHistoryAdapter,
-    HistoryAdapter,
-    OpenAIHistoryAdapter,
-)
 from src.llm.request_builder import execute_completion
 from src.llm.structured_output import StructuredOutputError
 
@@ -40,6 +34,7 @@ from .conftest import (
     execute_local_tool,
     favorite_prime_tools,
     make_backend,
+    replay_tool_round,
     require_provider_key,
     wrap_async_method,
 )
@@ -72,7 +67,6 @@ _INITIAL_PROMPT = (
 async def run_tool_then_structured_flow(
     backend: Any,
     config: Any,
-    adapter: HistoryAdapter,
 ) -> tuple[CompletionResult, CompletionResult]:
     """First turn must tool-call (parsing skipped); replay turn must return
     a schema-conforming answer with tools still attached."""
@@ -96,18 +90,7 @@ async def run_tool_then_structured_flow(
 
     tool_call = first.tool_calls[0]
     tool_result = execute_local_tool(tool_call.name, tool_call.input)
-    replay_messages = initial_messages + [
-        adapter.format_assistant_tool_message(first),
-        *adapter.format_tool_results(
-            [
-                {
-                    "tool_id": tool_call.id,
-                    "tool_name": tool_call.name,
-                    "result": tool_result,
-                }
-            ]
-        ),
-    ]
+    replay_messages = replay_tool_round(config, initial_messages, first, tool_result)
 
     # tool_choice stays "auto" on the replay turn — the production tool loop
     # (dialectic) never forces "none", and gemini-2.5-flash is prone to
@@ -164,7 +147,7 @@ async def test_live_anthropic_tools_with_structured_output(
     backend, config = make_backend(model_spec)
     create_calls = wrap_async_method(monkeypatch, backend._client.messages, "create")
 
-    await run_tool_then_structured_flow(backend, config, AnthropicHistoryAdapter())
+    await run_tool_then_structured_flow(backend, config)
 
     assert len(create_calls) >= 2
     for call in create_calls:
@@ -204,7 +187,7 @@ async def test_live_openai_tools_with_structured_output(
         monkeypatch, backend._client.chat.completions, "create"
     )
 
-    await run_tool_then_structured_flow(backend, config, OpenAIHistoryAdapter())
+    await run_tool_then_structured_flow(backend, config)
 
     # favorite_prime_tools() is deliberately non-strict, the exact shape
     # parse() refuses with a 500.
@@ -238,7 +221,7 @@ async def test_live_gemini_tools_with_structured_output(
         "generate_content",
     )
 
-    await run_tool_then_structured_flow(backend, config, GeminiHistoryAdapter())
+    await run_tool_then_structured_flow(backend, config)
 
     assert len(generate_calls) >= 2
     for call in generate_calls:

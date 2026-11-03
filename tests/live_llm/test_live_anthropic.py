@@ -4,7 +4,6 @@ import pytest
 
 from src.llm.backend import CompletionResult
 from src.llm.capabilities import anthropic_capabilities
-from src.llm.history_adapters import AnthropicHistoryAdapter
 from src.llm.request_builder import execute_completion
 
 from .conftest import (
@@ -14,6 +13,7 @@ from .conftest import (
     favorite_prime_tools,
     make_backend,
     make_large_system_prompt,
+    replay_tool_round,
     require_provider_key,
     wrap_async_method,
 )
@@ -96,7 +96,6 @@ async def test_live_anthropic_thinking_and_tool_replay(
     backend, config = make_backend(model_spec, thinking_budget_tokens=1024)
     create_calls = wrap_async_method(monkeypatch, backend._client.messages, "create")
     tools = favorite_prime_tools()
-    adapter = AnthropicHistoryAdapter()
     # A budget model gets the budget; an adaptive model rejects one, so the
     # budget only switches adaptive thinking on.
     expected_thinking = (
@@ -128,18 +127,7 @@ async def test_live_anthropic_thinking_and_tool_replay(
 
     tool_call = first.tool_calls[0]
     tool_result = execute_local_tool(tool_call.name, tool_call.input)
-    replay_messages = initial_messages + [
-        adapter.format_assistant_tool_message(first),
-        *adapter.format_tool_results(
-            [
-                {
-                    "tool_id": tool_call.id,
-                    "tool_name": tool_call.name,
-                    "result": tool_result,
-                }
-            ]
-        ),
-    ]
+    replay_messages = replay_tool_round(config, initial_messages, first, tool_result)
 
     second = await execute_completion(
         backend,
