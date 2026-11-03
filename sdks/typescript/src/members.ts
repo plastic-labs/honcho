@@ -122,8 +122,25 @@ export class PeerMembers {
    *
    * Both peers are created if they do not exist. Adding an existing member
    * again returns the existing membership, with its metadata replaced when
-   * `metadata` is given. Requires a workspace- or admin-level key: a member's
-   * knowledge becomes readable by anyone who can read this peer.
+   * `metadata` is given. Requires a workspace- or admin-level key: a membership
+   * is a grant, because a member's knowledge becomes readable by anyone who can
+   * read this peer.
+   *
+   * A membership answers one question: what is this whole made of? (A workspace
+   * answers who can ever see this, a session where and when it occurred, a peer
+   * who or what it is about, an observer who believes it, and a scope which
+   * evidence an answer can use.)
+   *
+   * 1. A member is a part of the parent. For a peer that only takes part in
+   *    something, such as a project, use sessions and scopes.
+   * 2. A parent is a small, named whole, such as a team or an account. Select a
+   *    cohort chosen by a property with metadata filters instead.
+   * 3. One identity is one peer. Two accounts of one person are not two
+   *    members, and the contexts of one person are scopes.
+   * 4. A parent stands where a peer can, and means its members. Today that is
+   *    the target side; a parent as the observer reads only its own view.
+   * 5. Membership metadata never changes a read. Honcho does not use it.
+   * 6. A scope is never a parent or a member.
    *
    * @param peer - The peer to add, as an ID string or a Peer object
    * @param options.metadata - Optional application-owned metadata for the

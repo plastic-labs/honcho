@@ -278,8 +278,40 @@ async def add_peer_member(
 
     Returns 409 if the membership would create a cycle, and 422 if either peer
     is a scope, the peer names itself, or this peer already has the maximum
-    number of members. Requires a workspace- or admin-level key: a member's
-    knowledge becomes readable by anyone who can read this peer.
+    number of members. Requires a workspace- or admin-level key: a membership
+    is a grant, because a member's knowledge becomes readable by anyone who can
+    read this peer.
+
+    ## When to use a membership
+
+    Each primitive answers one question. Use a membership only for the last
+    one:
+
+    | Primitive | The question it answers | Example |
+    | --- | --- | --- |
+    | Workspace | Who can ever see this? | One customer, one app |
+    | Session | Where and when did it occur? | A chat thread, a meeting |
+    | Peer | Who or what is it about? Who said it? | `alice`, `honcho-repo` |
+    | Observer | Who believes it? | (`bob`, `alice`): Bob's view of Alice |
+    | Scope | Which evidence can this answer use? | Alice's work sessions |
+    | Membership | What is this whole made of? | `team-eng` is Alice and Bob |
+
+    1. **A member is a part of the parent.** Ask whether the peer is a part of
+       the parent or only takes part in it. Alice is a part of `team-eng`; she
+       takes part in project X, which is a session or a scope, not a parent.
+    2. **A parent is a small, named whole**, such as a team, a household or an
+       account. A cohort chosen by a property, such as every customer on a
+       plan, is not a parent: select it with metadata filters.
+    3. **One identity is one peer.** Two accounts of one person are not two
+       members, and the contexts of one person (work, friends) are scopes.
+    4. **A parent stands where a peer can, and means its members.** Today that
+       is the target side: a read that targets the parent includes its
+       members. A parent as the observer reads only its own view.
+    5. **Membership metadata never changes a read.** Store a role or a reason
+       there; Honcho does not use it.
+    6. **A scope is never a parent or a member.** This keeps the asker (an
+       observer, narrowed by a scope) apart from the subject (a peer, widened
+       by its members).
     """
     # The scope guard runs on the resolved rows inside crud.add_member, so a
     # legacy peer that merely occupies the reserved namespace still works; a
