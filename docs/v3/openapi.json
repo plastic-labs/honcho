@@ -1110,6 +1110,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 2147483647,
               "minimum": 1,
               "description": "Page number (offset mode)",
               "default": 1,
@@ -1303,6 +1304,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "maximum": 2147483647,
               "minimum": 1,
               "description": "Page number (offset mode)",
               "default": 1,
