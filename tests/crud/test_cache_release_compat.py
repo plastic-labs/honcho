@@ -7,7 +7,7 @@ key templates keep their version and the cached dicts keep their fields: tenant_
 is left out and restored on read (models.with_cached_tenant).
 """
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -107,7 +107,11 @@ async def test_no_create_path_caches_tenant_id(db_session: AsyncSession) -> None
     )
     assert collection is not None
 
-    entries = [await cache.get(key) async for key in cache.scan("*")]
-    rows = [entry for entry in entries if isinstance(entry, dict) and "id" in entry]
+    entries: list[Any] = [await cache.get(key) async for key in cache.scan("*")]
+    rows: list[dict[str, Any]] = [
+        cast(dict[str, Any], entry)
+        for entry in entries
+        if isinstance(entry, dict) and "id" in entry
+    ]
     assert len(rows) >= 2  # workspace and session; collection only on some paths
     assert not [row for row in rows if "tenant_id" in row]
