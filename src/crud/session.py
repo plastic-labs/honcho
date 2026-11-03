@@ -1333,7 +1333,43 @@ async def _get_or_add_peers_to_session(
         ObserverException: If the resulting active peer set would exceed the
             observer limit
     """
-    # If no peers to add, skip the insert and just return existing active session peers
+    # On an add, read before writing and write only the peers that are new or
+    # rejoining: an active row would come out of the upsert unchanged, but
+    # ON CONFLICT DO UPDATE still locks and rewrites it, so clients re-adding the
+    # same peers to a session would queue on each other's row locks for nothing.
+    # Skipping an active row on a stale read orders this add before a concurrent
+    # removal; anything the read missed is still handled by the upsert below.
+    # A replace writes every row: two replaces that each skipped the rows they
+    # left unchanged could interleave into a state neither asked for.
+    existing = (
+        {
+            row.peer_name: row
+            for row in await db.execute(
+                select(
+                    models.SessionPeer.peer_name,
+                    models.SessionPeer.left_at,
+                    models.SessionPeer.configuration,
+                ).where(
+                    models.SessionPeer.session_name == session_name,
+                    models.SessionPeer.tenant_id == models.scoped_tenant_id(),
+                    models.SessionPeer.workspace_name == workspace_name,
+                    models.SessionPeer.peer_name.in_(peer_names),
+                )
+            )
+        }
+        if peer_names and not replace_config
+        else {}
+    )
+    # Sorted so concurrent upserts lock overlapping rows in the same order.
+    peer_names = {
+        peer_name: configuration
+        for peer_name, configuration in sorted(peer_names.items())
+        if replace_config
+        or (row := existing.get(peer_name)) is None
+        or row.left_at is not None
+    }
+
+    # Nothing to write: just return existing active session peers
     if not peer_names:
         if not fetch_after_upsert:
             return []
@@ -1412,10 +1448,10 @@ async def _get_or_add_peers_to_session(
     # from those branches. Raising here rolls the upsert back: ObserverException
     # is never caught, and both get_db and tracked_db roll back on exception.
     #
-    # Gated on the request actually asking for a non-scope observer so that a
+    # Gated on the request actually writing a non-scope observer so that a
     # session already over the limit keeps behaving as it does today: it can
-    # still take non-observers and scope attachments, and only a request that
-    # would make it worse is rejected.
+    # still take non-observers, scope attachments and no-op re-adds, and only a
+    # request that would make it worse is rejected.
     if any(
         config.observe_others
         for peer_name, config in peer_names.items()
