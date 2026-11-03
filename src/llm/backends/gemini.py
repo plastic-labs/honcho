@@ -573,14 +573,14 @@ class GeminiBackend:
                     else:
                         # Silently dropping non-"text" blocks would mask real
                         # input-shape bugs — e.g., an Anthropic-shaped
-                        # tool_use/tool_result payload accidentally routed to
-                        # the Gemini backend without going through the
-                        # history adapter. Fail fast so the caller knows.
+                        # tool_use/tool_result payload sent to the Gemini
+                        # backend without being rendered by its codec. Fail
+                        # fast so the caller knows.
                         raise ValidationException(
                             "Gemini backend cannot translate content block "
-                            + f"of type {block_type!r}; translate to "
-                            + "Gemini-native 'parts' via the history adapter "
-                            + "before passing to the backend"
+                            + f"of type {block_type!r}; render the history "
+                            + "with the Gemini codec (src/llm/codecs) before "
+                            + "passing it to the backend"
                         )
                 if parts:
                     contents.append({"role": role, "parts": parts})

@@ -9,7 +9,6 @@ models keep them: they require the current tool-use turn's thinking.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
-from copy import deepcopy
 from typing import Any, cast
 from unittest.mock import patch
 
@@ -19,6 +18,7 @@ from tenacity import wait_none
 from src.config import ModelConfig
 from src.llm import tool_loop
 from src.llm.errors import llm_retry_condition
+from src.llm.messages import AIMessage, ChatMessage
 from src.llm.runtime import AttemptPlan, current_attempt
 from src.llm.tool_loop import execute_tool_loop
 from src.llm.types import (
@@ -27,6 +27,7 @@ from src.llm.types import (
     ProviderClient,
     StreamingResponseWithMetadata,
 )
+from tests.llm.conftest import with_assistant_turn
 
 SEARCH_TOOL = {
     "name": "search",
@@ -54,12 +55,14 @@ def _plan_for(model: str) -> Callable[[], AttemptPlan]:
 
 
 def _tool_call_turn(call_id: str) -> HonchoLLMCallResponse[Any]:
-    return HonchoLLMCallResponse(
-        content="",
-        output_tokens=5,
-        finish_reasons=["tool_use"],
-        tool_calls_made=[{"id": call_id, "name": "search", "input": {"q": "x"}}],
-        thinking_blocks=[THINKING_BLOCK],
+    return with_assistant_turn(
+        HonchoLLMCallResponse(
+            content="",
+            output_tokens=5,
+            finish_reasons=["tool_use"],
+            tool_calls_made=[{"id": call_id, "name": "search", "input": {"q": "x"}}],
+            thinking_blocks=[THINKING_BLOCK],
+        )
     )
 
 
@@ -69,13 +72,13 @@ def _answer() -> HonchoLLMCallResponse[Any]:
     )
 
 
-def _thinking_blocks_in(messages: list[dict[str, Any]]) -> int:
+def _thinking_blocks_in(messages: list[ChatMessage]) -> int:
     return sum(
         1
         for message in messages
-        if isinstance(message.get("content"), list)
-        for block in message["content"]
-        if block.get("type") in {"thinking", "redacted_thinking"}
+        if isinstance(message, AIMessage)
+        for part in message.reasoning
+        if part.kind.startswith("anthropic")
     )
 
 
@@ -103,7 +106,7 @@ async def _run_loop(
         calls.append(
             {
                 "model": args[1],
-                "messages": deepcopy(kwargs["messages"]),
+                "messages": list(kwargs["messages"]),
                 "tools": kwargs.get("tools"),
             }
         )
@@ -168,9 +171,10 @@ async def test_synthesis_drops_thinking_for_preserved_thinking_model() -> None:
     synthesis = calls[-1]
     assert synthesis["tools"] is None
     assert _thinking_blocks_in(synthesis["messages"]) == 0
-    # The turn's tool_use block survives the strip.
+    # The turn's tool call survives the strip.
     assistant = synthesis["messages"][1]
-    assert [block["type"] for block in assistant["content"]] == ["tool_use"]
+    assert isinstance(assistant, AIMessage)
+    assert [call.id for call in assistant.tool_calls] == ["t1"]
 
 
 @pytest.mark.asyncio
@@ -250,10 +254,10 @@ async def test_thinking_produced_after_an_edit_is_kept() -> None:
         )
 
     assert [_thinking_blocks_in(call["messages"]) for call in calls] == [0, 0, 1]
-    # The stale turn keeps its tool_use block.
-    assert [block["type"] for block in calls[2]["messages"][1]["content"]] == [
-        "tool_use"
-    ]
+    # The stale turn keeps its tool call.
+    stale = calls[2]["messages"][1]
+    assert isinstance(stale, AIMessage)
+    assert [call.id for call in stale.tool_calls] == ["t1"]
 
 
 @pytest.mark.asyncio

@@ -1199,6 +1199,31 @@ async def test_anthropic_backend_drops_unsigned_thinking_with_thinking_off(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("method", ["complete", "stream"])
+@pytest.mark.parametrize(
+    ("model", "expected_thinking"),
+    [("claude-haiku-4-5", None), ("claude-sonnet-5-5", {"type": "adaptive"})],
+)
+async def test_anthropic_backend_configures_thinking_the_codec_withheld(
+    method: str, model: str, expected_thinking: dict[str, Any] | None
+) -> None:
+    """The codec already left the thinking out of the rendered history and
+    flags it; a budget model then runs without thinking, as when the backend
+    strips the blocks itself, and an adaptive model keeps its configuration."""
+    call = await _send(
+        method,
+        model,
+        _STRIPPED_HISTORY,
+        tools=[SEARCH_TOOL],
+        thinking_budget_tokens=2048,
+        extra_params={"thinking_withheld": True},
+    )
+
+    assert call["messages"] == _STRIPPED_HISTORY
+    assert call.get("thinking") == expected_thinking
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["complete", "stream"])
 async def test_anthropic_backend_replays_signed_and_redacted_thinking_untouched(
     method: str,
 ) -> None:

@@ -16,7 +16,9 @@ import anthropic
 import pytest
 
 from src.llm.capabilities import anthropic_capabilities
-from src.llm.history_adapters import AnthropicHistoryAdapter
+from src.llm.codecs import RenderTarget
+from src.llm.messages import ModelOrigin, ToolMessage
+from src.llm.profiles import profile_for
 from src.llm.request_builder import execute_completion, execute_stream
 
 from .conftest import (
@@ -238,7 +240,6 @@ async def test_live_anthropic_backend_continues_a_tool_loop_after_unsigned_think
     tool round, then answers with the unsigned block still in the history."""
     require_provider_key(model_spec)
     backend, config = make_backend(model_spec, **thinking_config(model_spec))
-    adapter = AnthropicHistoryAdapter()
     messages = await build_fallback_history(backend._client, model_spec.model, calls=3)
 
     third = await execute_completion(
@@ -249,17 +250,24 @@ async def test_live_anthropic_backend_continues_a_tool_loop_after_unsigned_think
         tools=favorite_prime_tools(),
     )
     assert third.tool_calls, "The model should call the tool for 'third'"
-    messages.append(adapter.format_assistant_tool_message(third))
-    messages += adapter.format_tool_results(
+    # The history so far is already in wire form (it carries the unsigned
+    # block), so only the new round is rendered, by the Anthropic codec.
+    codec = profile_for("anthropic", model_spec.model).codec
+    origin = ModelOrigin(transport="anthropic", model=model_spec.model)
+    messages += codec.render(
         [
-            {
-                "tool_id": call.id,
-                "tool_name": call.name,
-                "result": execute_local_tool(call.name, call.input),
-            }
-            for call in third.tool_calls
-        ]
-    )
+            codec.parse(third, origin),
+            *(
+                ToolMessage(
+                    tool_call_id=call.id,
+                    name=call.name,
+                    content=str(execute_local_tool(call.name, call.input)),
+                )
+                for call in third.tool_calls
+            ),
+        ],
+        RenderTarget("anthropic", model_spec.model),
+    ).messages
 
     answer = await execute_completion(
         backend,

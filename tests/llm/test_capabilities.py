@@ -1,5 +1,6 @@
 import pytest
 
+from src.config import ModelTransport
 from src.llm.capabilities import anthropic_capabilities, capabilities_for
 
 
@@ -67,3 +68,32 @@ def test_capabilities_for_other_transports_do_not_read_claude_rows() -> None:
         anthropic_capabilities("my-local-model")
     )
     assert capabilities_for("anthropic", "claude-sonnet-5-5").preserved_thinking
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "mistral-small-3.2-24b-instruct-2506",
+        "mistralai/mistral-small-3.2-24b-instruct",
+        "mistralai/Magistral-Medium-2509",
+        "devstral-small-2507",
+        "codestral-latest",
+    ],
+)
+def test_mistral_models_take_no_user_turn_after_a_tool_result(model: str) -> None:
+    assert not capabilities_for("openai", model).user_after_tool
+
+
+@pytest.mark.parametrize(
+    ("transport", "model"),
+    [
+        ("openai", "gpt-5.5"),
+        ("openai", "google/gemini-3-pro"),
+        ("anthropic", "claude-sonnet-5-5"),
+        ("gemini", "gemini-3-pro"),
+    ],
+)
+def test_other_models_take_a_user_turn_after_a_tool_result(
+    transport: ModelTransport, model: str
+) -> None:
+    assert capabilities_for(transport, model).user_after_tool

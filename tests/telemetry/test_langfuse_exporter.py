@@ -18,6 +18,7 @@ from src.config import settings
 from src.db import tenant_context
 from src.llm.backend import CompletionResult, ToolCallResult
 from src.llm.capture import CapturedSpan, CapturedToolCall, build_captured_call
+from src.llm.messages import UserMessage
 from src.llm.types import LLMTelemetryContext
 from src.telemetry import langfuse_session
 from src.telemetry.langfuse_exporter import LangfuseExporter
@@ -133,7 +134,7 @@ def _call(
         transport="anthropic",
         provider_label=None,
         model="claude-x",
-        messages=[{"role": "user", "content": "q"}],
+        messages=[UserMessage(content="q")],
         tools=None,
         tool_choice=None,
         result=result,

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 
-from src.llm.history_adapters import OpenAIHistoryAdapter
 from src.llm.request_builder import execute_completion
 
 from .conftest import (
@@ -11,6 +10,7 @@ from .conftest import (
     favorite_prime_tools,
     make_backend,
     make_large_system_prompt,
+    replay_tool_round,
     require_provider_key,
     wrap_async_method,
 )
@@ -216,7 +216,6 @@ async def test_live_openai_tool_replay_preserves_null_content(
     # explicit reasoning_effort other than 'none' on /v1/chat/completions.
     backend, config = make_backend(model_spec)
     tools = favorite_prime_tools()
-    adapter = OpenAIHistoryAdapter()
 
     initial_messages = [
         {
@@ -247,27 +246,15 @@ async def test_live_openai_tool_replay_preserves_null_content(
     else:
         assert first.content == raw_content
 
-    assistant_message = adapter.format_assistant_tool_message(first)
+    tool_call = first.tool_calls[0]
+    tool_result = execute_local_tool(tool_call.name, tool_call.input)
+    replay_messages = replay_tool_round(config, initial_messages, first, tool_result)
+    assistant_message = replay_messages[len(initial_messages)]
     assert assistant_message["content"] is (
         first.content if isinstance(first.content, str) else None
     )
     if raw_content is None:
         assert assistant_message["content"] is None
-
-    tool_call = first.tool_calls[0]
-    tool_result = execute_local_tool(tool_call.name, tool_call.input)
-    replay_messages = initial_messages + [
-        assistant_message,
-        *adapter.format_tool_results(
-            [
-                {
-                    "tool_id": tool_call.id,
-                    "tool_name": tool_call.name,
-                    "result": tool_result,
-                }
-            ]
-        ),
-    ]
 
     second = await execute_completion(
         backend,

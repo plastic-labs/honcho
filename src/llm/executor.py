@@ -15,7 +15,7 @@ import asyncio
 import hashlib
 import logging
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
 from typing import Any, Literal, TypeVar, overload
 
 from pydantic import BaseModel
@@ -27,6 +27,15 @@ from .backend import CompletionResult as BackendCompletionResult
 from .backend import StreamChunk as BackendStreamChunk
 from .backend import ToolCallResult
 from .capture import build_captured_call, dispatch_captured_call, has_exporters
+from .codecs import RenderTarget
+from .messages import (
+    AIMessage,
+    ChatMessage,
+    ModelOrigin,
+    UserMessage,
+    coerce_messages,
+)
+from .profiles import profile_for
 from .registry import backend_for_provider, default_client
 from .request_builder import (
     coerce_passthrough_mapping,
@@ -193,7 +202,7 @@ def _emit_call_telemetry(
     model: str,
     max_tokens: int,
     started_at: float,
-    messages: list[dict[str, Any]],
+    messages: Sequence[ChatMessage],
     tools: list[dict[str, Any]] | None,
     tool_choice: Any,
     was_stream: bool,
@@ -255,6 +264,7 @@ def _emit_call_telemetry(
 
 def completion_result_to_response(
     result: BackendCompletionResult,
+    message: AIMessage | None = None,
 ) -> HonchoLLMCallResponse[Any]:
     return HonchoLLMCallResponse(
         content=result.content,
@@ -267,6 +277,7 @@ def completion_result_to_response(
         thinking_content=result.thinking_content,
         thinking_blocks=result.thinking_blocks,
         reasoning_details=result.reasoning_details,
+        message=message,
     )
 
 
@@ -298,7 +309,7 @@ async def honcho_llm_call_inner(
     client_override: ProviderClient | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
-    messages: list[dict[str, Any]] | None = None,
+    messages: Sequence[ChatMessage | Mapping[str, Any]] | None = None,
     selected_config: ModelConfig | None = None,
     plan: AttemptPlan | None = None,
     telemetry: LLMTelemetryContext | None = None,
@@ -323,7 +334,7 @@ async def honcho_llm_call_inner(
     client_override: ProviderClient | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
-    messages: list[dict[str, Any]] | None = None,
+    messages: Sequence[ChatMessage | Mapping[str, Any]] | None = None,
     selected_config: ModelConfig | None = None,
     plan: AttemptPlan | None = None,
     telemetry: LLMTelemetryContext | None = None,
@@ -348,7 +359,7 @@ async def honcho_llm_call_inner(
     client_override: ProviderClient | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
-    messages: list[dict[str, Any]] | None = None,
+    messages: Sequence[ChatMessage | Mapping[str, Any]] | None = None,
     selected_config: ModelConfig | None = None,
     plan: AttemptPlan | None = None,
     telemetry: LLMTelemetryContext | None = None,
@@ -372,7 +383,7 @@ async def honcho_llm_call_inner(
     client_override: ProviderClient | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
-    messages: list[dict[str, Any]] | None = None,
+    messages: Sequence[ChatMessage | Mapping[str, Any]] | None = None,
     selected_config: ModelConfig | None = None,
     plan: AttemptPlan | None = None,
     telemetry: LLMTelemetryContext | None = None,
@@ -397,8 +408,7 @@ async def honcho_llm_call_inner(
     if client is None:
         raise ValueError(f"Missing client for {provider}")
 
-    if messages is None:
-        messages = [{"role": "user", "content": prompt}]
+    history = coerce_messages(messages) if messages else [UserMessage(content=prompt)]
 
     backend = backend_for_provider(provider, client)
 
@@ -412,6 +422,14 @@ async def honcho_llm_call_inner(
         reasoning_effort=reasoning_effort,
     )
 
+    # The history is rendered for this attempt's model, so a turn produced by
+    # another transport (an earlier attempt's fallback) arrives in this
+    # transport's own shape.
+    target = RenderTarget(provider, model, effective_config.base_url)
+    codec = profile_for(provider, model).codec
+    rendered = codec.render(history, target)
+    wire_messages = rendered.messages
+
     # json_mode + verbosity are per-call transport toggles, not ModelConfig
     # knobs — they pass through extra_params. execute_completion merges
     # build_config_extra_params(effective_config) on top for top_p/seed/etc.
@@ -419,6 +437,15 @@ async def honcho_llm_call_inner(
     tenant_headers = _tenant_headers(effective_config)
     if tenant_headers:
         call_extras["extra_headers"] = tenant_headers
+    if rendered.thinking_withheld:
+        logger.warning(
+            "Left replayed thinking out of the request to %s/%s: "
+            + "at least one replayed block has no signature",
+            provider,
+            model,
+        )
+        # The backend configures thinking for a turn that lost its own.
+        call_extras["thinking_withheld"] = True
 
     if stream:
         # Stream path: setup must run inside the awaited coroutine so it
@@ -436,7 +463,7 @@ async def honcho_llm_call_inner(
             stream_iter = await execute_stream(
                 backend,
                 effective_config,
-                messages=messages,
+                messages=wire_messages,
                 max_tokens=max_tokens,
                 tools=tools,
                 tool_choice=tool_choice,
@@ -452,7 +479,7 @@ async def honcho_llm_call_inner(
                 model=model,
                 max_tokens=max_tokens,
                 started_at=stream_start,
-                messages=messages,
+                messages=history,
                 tools=tools,
                 tool_choice=tool_choice,
                 was_stream=True,
@@ -491,7 +518,7 @@ async def honcho_llm_call_inner(
                     model=model,
                     max_tokens=max_tokens,
                     started_at=stream_start,
-                    messages=messages,
+                    messages=history,
                     tools=tools,
                     tool_choice=tool_choice,
                     was_stream=True,
@@ -508,7 +535,7 @@ async def honcho_llm_call_inner(
         backend_result = await execute_completion(
             backend,
             effective_config,
-            messages=messages,
+            messages=wire_messages,
             max_tokens=max_tokens,
             tools=tools,
             tool_choice=tool_choice,
@@ -516,7 +543,12 @@ async def honcho_llm_call_inner(
             cache_policy=effective_config.cache_policy,
             extra_params=call_extras,
         )
-        response = completion_result_to_response(backend_result)
+        origin = ModelOrigin(
+            transport=provider, model=model, base_url=effective_config.base_url
+        )
+        response = completion_result_to_response(
+            backend_result, codec.parse(backend_result, origin)
+        )
         if validate_response is not None:
             validate_response(response)
         return response
@@ -535,7 +567,7 @@ async def honcho_llm_call_inner(
             model=model,
             max_tokens=max_tokens,
             started_at=start,
-            messages=messages,
+            messages=history,
             tools=tools,
             tool_choice=tool_choice,
             was_stream=False,
