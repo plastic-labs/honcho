@@ -2,8 +2,8 @@
 
 messages is HASH(tenant_id)-partitioned, so one partition holds a slice of
 every tenant. Message search (src/utils/search.py::message_text_condition, and
-the message_text_matches function it calls under RLS) prunes to the tenant's
-partition and then matches content with full-text search OR'd with
+the message_text_matches_page function it calls under RLS) prunes to the
+tenant's partition and then matches content with full-text search OR'd with
 ``content ILIKE '%q%'``. The two GIN indexes that served those matches,
 ix_messages_content_gin and ix_messages_content_trgm, had only the text column,
 so each bitmap they returned held the matches of every tenant in the partition
@@ -31,7 +31,7 @@ one. To build them ahead of a release, run the same steps by hand under the
 same names; this revision then finds them done and only drops the old indexes.
 
 Revision ID: d4b8e2f7a913
-Revises: a1e7ce5396d5
+Revises: c7d3e9a1f5b2
 Create Date: 2026-10-30
 
 """
@@ -46,7 +46,7 @@ from migrations.utils import create_index_online, drop_index_online
 
 # revision identifiers, used by Alembic.
 revision: str = "d4b8e2f7a913"
-down_revision: str | None = "a1e7ce5396d5"
+down_revision: str | None = "c7d3e9a1f5b2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
-from src.models import MESSAGE_TEXT_MATCHES
 from tests.alembic.registry import register_after_upgrade, register_before_upgrade
 from tests.alembic.verifier import MigrationVerifier
+
+MESSAGE_TEXT_MATCHES = "message_text_matches"
 
 
 def _function_row(verifier: MigrationVerifier) -> tuple[bool, str] | None:

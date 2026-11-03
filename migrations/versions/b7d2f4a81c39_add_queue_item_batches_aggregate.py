@@ -40,12 +40,18 @@ instance_tenant = instance_tenant_id()
 #   tenant when the queue row carries no tenant (an id-only probe cannot use
 #   the composite PK as a search key and would scan).
 # - Completion and deletion are statement-level triggers over transition
-#   tables: one exact recompute per DISTINCT affected key, iterated in sorted
-#   key order, instead of one per row (a batch completion previously ran the
-#   same recompute N times; a bulk delete likewise). The UPDATE trigger carries
-#   no column list — transition tables see every UPDATE statement and the
+#   tables: one pass per DISTINCT affected key, iterated in sorted key order,
+#   instead of one per row (a batch completion previously ran the same
+#   recompute N times; a bulk delete likewise). The UPDATE trigger carries no
+#   column list — transition tables see every UPDATE statement and the
 #   function filters on processed actually changing, so payload/error-only
 #   updates walk an empty set and do no aggregate work.
+# - Completion drains rather than recomputes: it subtracts the completed rows'
+#   tokens (one messages probe each) and recounts what is left, instead of
+#   re-pricing every pending row (D probes per completion, ~D²/2b over a
+#   unit's drain). token_count never changes after a message is written, so
+#   the subtraction prices a row the same as the enqueue that added it.
+#   Reopened rows, a missing row and a drained unit take the exact recompute.
 # - _queue_item_batches_recompute LOCKS THE BACKLOG ROW FIRST (FOR UPDATE) and
 #   only then aggregates. Without that lock, READ COMMITTED lets a recompute
 #   aggregate a snapshot that excludes a concurrently-committing enqueue and
@@ -198,6 +204,41 @@ def upgrade() -> None:
 
     op.execute(
         f"""
+        CREATE OR REPLACE FUNCTION {schema}._queue_item_batches_drain(
+            key TEXT, drained_tokens BIGINT
+        ) RETURNS void AS $$
+        DECLARE
+            remaining INTEGER;
+            oldest TIMESTAMPTZ;
+        BEGIN
+            -- Lock first, for the reason _queue_item_batches_recompute does:
+            -- the scan below must see any enqueue this lock waited for.
+            PERFORM 1 FROM {schema}.queue_item_batches
+            WHERE work_unit_key = key FOR UPDATE;
+
+            -- ponytail: still visits the unit's pending rows (no messages
+            -- probes); a (work_unit_key, created_at) WHERE NOT processed index
+            -- makes it O(1) if deep units show up here.
+            SELECT count(*), min(created_at) INTO remaining, oldest
+            FROM {schema}.queue
+            WHERE work_unit_key = key AND NOT processed;
+
+            UPDATE {schema}.queue_item_batches SET
+                pending_count = remaining,
+                total_tokens = GREATEST(total_tokens - drained_tokens, 0),
+                oldest_created_at = oldest
+            WHERE work_unit_key = key AND remaining > 0;
+            IF NOT FOUND THEN
+                -- Drained (nothing left to probe, and its guard drops the
+                -- row) or no row to adjust: take the exact path.
+                PERFORM {schema}._queue_item_batches_recompute(key);
+            END IF;
+        END $$ LANGUAGE plpgsql;
+        """
+    )
+
+    op.execute(
+        f"""
         CREATE OR REPLACE FUNCTION {schema}.queue_item_batches_apply_insert()
         RETURNS trigger AS $$
         BEGIN
@@ -233,16 +274,30 @@ def upgrade() -> None:
         CREATE OR REPLACE FUNCTION {schema}.queue_item_batches_apply_update()
         RETURNS trigger AS $$
         DECLARE
-            affected_key TEXT;
+            changed RECORD;
         BEGIN
-            FOR affected_key IN
-                SELECT DISTINCT n.work_unit_key
+            FOR changed IN
+                SELECT n.work_unit_key AS key,
+                       bool_and(n.processed) AS completed,
+                       coalesce(sum(
+                           {schema}._queue_item_token_count(
+                               n.tenant_id, n.message_id, n.task_type
+                           )
+                       ), 0)::BIGINT AS tokens
                 FROM new_rows n
                 JOIN old_rows o ON o.id = n.id
                 WHERE o.processed IS DISTINCT FROM n.processed
+                GROUP BY 1
                 ORDER BY 1
             LOOP
-                PERFORM {schema}._queue_item_batches_recompute(affected_key);
+                IF changed.completed THEN
+                    PERFORM {schema}._queue_item_batches_drain(
+                        changed.key, changed.tokens
+                    );
+                ELSE
+                    -- A reopened row: rare, so recompute exactly.
+                    PERFORM {schema}._queue_item_batches_recompute(changed.key);
+                END IF;
             END LOOP;
             RETURN NULL;
         END $$ LANGUAGE plpgsql;
@@ -336,6 +391,9 @@ def downgrade() -> None:
     op.execute(f"DROP FUNCTION IF EXISTS {schema}.queue_item_batches_apply_insert()")
     op.execute(f"DROP FUNCTION IF EXISTS {schema}.queue_item_batches_apply_update()")
     op.execute(f"DROP FUNCTION IF EXISTS {schema}.queue_item_batches_apply_delete()")
+    op.execute(
+        f"DROP FUNCTION IF EXISTS {schema}._queue_item_batches_drain(TEXT, BIGINT)"
+    )
     op.execute(f"DROP FUNCTION IF EXISTS {schema}._queue_item_batches_recompute(TEXT)")
     op.execute(
         f"DROP FUNCTION IF EXISTS {schema}._queue_item_token_count(TEXT, BIGINT, TEXT)"

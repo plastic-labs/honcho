@@ -25,7 +25,6 @@ from collections.abc import Sequence
 from alembic import op
 
 from migrations.utils import get_schema
-from src.models import MESSAGE_TEXT_MATCHES, message_text_matches_ddl
 
 revision: str = "a1e7ce5396d5"
 down_revision: str | None = "b7d2e4f19c03"
@@ -33,6 +32,36 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 schema = get_schema()
+
+MESSAGE_TEXT_MATCHES = "message_text_matches"
+
+
+def message_text_matches_ddl(schema: str) -> str:
+    return f"""
+CREATE OR REPLACE FUNCTION "{schema}".{MESSAGE_TEXT_MATCHES}(
+    p_tenant text, p_workspace text, p_query text, p_pattern text, p_use_fts boolean
+) RETURNS SETOF bigint
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+    match text := 'm.content ILIKE $2 ESCAPE ' || quote_literal('\\');
+BEGIN
+    IF p_tenant IS NULL OR p_tenant IS DISTINCT FROM current_setting('app.tenant', true)
+    THEN
+        RETURN;
+    END IF;
+    IF p_use_fts THEN
+        match := 'to_tsvector(''english'', m.content)'
+            || ' @@ plainto_tsquery(''english'', $3) OR ' || match;
+    END IF;
+    RETURN QUERY EXECUTE 'SELECT m.id FROM "{schema}".messages AS m'
+        || ' WHERE m.tenant_id = ' || quote_literal(p_tenant)
+        || ' AND m.workspace_name = $1 AND (' || match || ')'
+        USING p_workspace, p_pattern, p_query;
+END
+$$
+"""  # nosec B608
 
 
 def upgrade() -> None:
