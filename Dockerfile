@@ -24,15 +24,20 @@ COPY uv.lock pyproject.toml /app/
 # Optionall include lancedb with:
 #   docker build --build-arg INSTALL_LANCEDB=true .
 ARG INSTALL_LANCEDB=false
+ARG INSTALL_SURPRISAL=false
 RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ "$INSTALL_LANCEDB" = "true" ]; then \
-        uv sync --frozen --no-install-project --no-group dev --extra lancedb; \
-    elif [ "$INSTALL_LANCEDB" = "false" ]; then \
-        uv sync --frozen --no-install-project --no-group dev; \
-    else \
-        echo "INSTALL_LANCEDB must be 'true' or 'false'" >&2; \
-        exit 2; \
-    fi
+    set --; \
+    case "$INSTALL_LANCEDB" in \
+        true) set -- "$@" --extra lancedb ;; \
+        false) ;; \
+        *) echo "INSTALL_LANCEDB must be 'true' or 'false'" >&2; exit 2 ;; \
+    esac; \
+    case "$INSTALL_SURPRISAL" in \
+        true) set -- "$@" --extra surprisal ;; \
+        false) ;; \
+        *) echo "INSTALL_SURPRISAL must be 'true' or 'false'" >&2; exit 2 ;; \
+    esac; \
+    uv sync --frozen --no-install-project --no-group dev "$@"
 
 FROM python:3.13-slim-bookworm AS runtime
 
