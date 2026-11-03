@@ -10,6 +10,14 @@ import { IntegrationsCatalog } from "/snippets/integrations-catalog.jsx";
 
 Install a plugin and your agent remembers who you are, what you're working on, and what it was doing — across sessions, restarts, and tools. All integrations share one Honcho workspace, so memory formed in one carries over to the rest.
 
+<Tip>
+Install them all with one command. `honcho install` finds the agents on your machine and adds Honcho to the ones you pick. It sets up Claude Code, Hermes, OpenClaw and Pi with their plugin, and Codex with the MCP server and skill. For any other agent it finds, it links to that agent's setup guide.
+
+```bash
+uv tool install honcho-cli && honcho install
+```
+</Tip>
+
 <IntegrationsCatalog />
 
 ## Don't see your tool?

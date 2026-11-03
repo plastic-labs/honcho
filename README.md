@@ -178,6 +178,14 @@ Honcho ships a first-party memory plugin for every major coding agent. They all 
 `~/.honcho/config.json`, so one key configures all of them — and pointing two at the same `workspace`
 gives them one shared memory.
 
+One command finds the agents on your machine and adds Honcho to the ones you pick:
+
+```bash
+uv tool install honcho-cli && honcho install
+```
+
+It installs the plugin for Claude Code, Hermes, OpenClaw and Pi, and the MCP server and skill for Codex, using each agent's own CLI. It asks for your API key if `~/.honcho/config.json` doesn't have one yet. For any other agent it finds, it links to that agent's setup guide. To install one agent by hand, use the table below.
+
 | Agent            | Install                                                 | Source                                                             |
 | ---------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
 | Claude Code      | `/plugin marketplace add plastic-labs/claude-honcho`    | [claude-honcho](https://github.com/plastic-labs/claude-honcho)     |
@@ -188,6 +196,7 @@ gives them one shared memory.
 | OpenCode         | `opencode plugin "@honcho-ai/opencode-honcho" --global` | [opencode-honcho](https://github.com/plastic-labs/opencode-honcho) |
 | Kilo Code        | `kilo plugin @honcho-ai/kilo-honcho --global`           | [kilo-honcho](kilo-honcho/)                                        |
 | OpenClaw         | `openclaw plugins install @honcho-ai/openclaw-honcho`   | [openclaw-honcho](https://github.com/plastic-labs/openclaw-honcho) |
+| Pi               | `pi install npm:@honcho-ai/pi-honcho`                   | [pi-honcho](https://github.com/plastic-labs/pi-honcho)             |
 | Hermes           | `hermes memory setup`                                   | built in upstream                                                  |
 | Any MCP client   | `claude mcp add honcho --transport http ...`            | [MCP guide](https://honcho.dev/docs/v3/guides/integrations/mcp)    |
 
@@ -295,6 +304,7 @@ The same `claude mcp add` form (or its client-specific equivalent) works in any 
 ```bash
 uv tool install honcho-cli
 honcho init                 # Honcho API key or browser login + server URL
+honcho install              # add Honcho to the AI agents on this machine
 honcho start --setup basic  # local stack: LLM provider key + Docker
 honcho doctor
 ```
