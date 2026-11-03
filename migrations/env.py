@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 from alembic import context
-from sqlalchemy import Connection, engine_from_config, text
+from sqlalchemy import Connection, engine_from_config, make_url, text
 from sqlalchemy.exc import DBAPIError
 
 from src.config import settings
@@ -17,6 +17,7 @@ from src.migrate import (
     release_migration_lock,
     run_with_lock_retry,
 )
+from src.startup.tenant_isolation_validator import apply_tenant_isolation
 
 # Import all models so they register with Base.metadata
 import src.models  # noqa: F401
@@ -61,10 +62,29 @@ OPTIONAL_EXTENSIONS = {
 
 
 def get_url() -> str:
-    url = settings.DB.CONNECTION_URI
+    url = settings.DB.OWNER_CONNECTION_URI or settings.DB.CONNECTION_URI
     if url is None:
         raise ValueError("DB_CONNECTION_URI not set")
     return url
+
+
+def _apply_tenant_isolation(connection: Connection) -> None:
+    if not settings.MULTI_TENANT:
+        return
+    app_role = make_url(settings.DB.CONNECTION_URI).username
+    if app_role is None:
+        raise ValueError("DB_CONNECTION_URI has no role to grant")
+    service_role = (
+        make_url(settings.DB.SERVICE_CONNECTION_URI).username
+        if settings.DB.SERVICE_CONNECTION_URI
+        else None
+    )
+    apply_tenant_isolation(
+        connection,
+        schema=target_metadata.schema or "public",
+        app_role=app_role,
+        service_role=service_role,
+    )
 
 
 def run_migrations_offline() -> None:
@@ -196,12 +216,15 @@ def _run_migrations_with_connection(
         acquire_migration_lock(connection, transaction_scoped=True)
         _prepare_schema(connection)
         _run_revisions(connection)
+        _apply_tenant_isolation(connection)
         return
 
     def attempt() -> None:
         _prepare_schema(connection)
         connection.commit()
         _run_revisions(connection)
+        _apply_tenant_isolation(connection)
+        connection.commit()
 
     acquire_migration_lock(connection)
     try:

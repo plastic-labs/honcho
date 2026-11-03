@@ -522,30 +522,36 @@ Contributors: install the git hooks with `uv run pre-commit install --hook-type 
 
 `MULTI_TENANT=true` makes one Honcho serve many tenants on one database, with
 row-level security scoping every query to the tenant bound on the connection.
-Honcho does not create the roles or the policies itself; the startup validator
-checks them and refuses to boot otherwise. The database needs these roles (the
-first and the last may be one role):
+Honcho does not create the roles itself; the startup validator checks them and
+refuses to boot otherwise. The database needs these roles (the first and the
+last may be one role):
 
-- the migration role, which owns the schema and runs `alembic upgrade head`,
-  created `WITH LOGIN BYPASSRLS`. Message search runs through a `SECURITY
-  DEFINER` function owned by this role: the full-text and `ILIKE` operators are
-  not leakproof, so under RLS the content indexes cannot serve them, and the
-  function reads as its owner, pinned to the bound tenant. If the function was
+- the migration role (`DB_OWNER_CONNECTION_URI`, falling back to
+  `DB_CONNECTION_URI` when unset), which owns the schema and runs
+  `alembic upgrade head`, created `WITH LOGIN BYPASSRLS`. Message search runs
+  through a `SECURITY DEFINER` function owned by this role: the full-text and
+  `ILIKE` operators are not leakproof, so under RLS the content indexes cannot
+  serve them, and the function reads as its owner, pinned to the bound tenant. If the function was
   created by a role without `BYPASSRLS`, boot fails with the repair:
   `ALTER FUNCTION message_text_matches_page(...) OWNER TO <the BYPASSRLS role>`
   (the full signature is in the error);
 - the app role (`DB_CONNECTION_URI`), an ordinary role with no `BYPASSRLS`, which
   every tenant-scoped query runs as. It needs `GRANT EXECUTE ON FUNCTION
-  message_text_matches_page(...) TO <app role>`: EXECUTE is revoked from PUBLIC
-  so no other role can reach the function's RLS bypass, and boot fails with the
-  exact statement when the grant is missing;
+  message_text_matches_page(...) TO <app role>`, which `alembic upgrade head`
+  grants with the flag on: EXECUTE is revoked from PUBLIC so no other role can
+  reach the function's RLS bypass, and boot fails with the exact statement when
+  the grant is missing;
 - the service role (`DB_SERVICE_CONNECTION_URI`), `WITH LOGIN BYPASSRLS`, for the
   cross-tenant background work (the deriver claim, the reconciler).
 
-Every tenant table needs `ENABLE` and `FORCE ROW LEVEL SECURITY` and a policy
+Every tenant table needs `ENABLE` and `FORCE ROW LEVEL SECURITY`, a policy
 `USING (tenant_id = current_setting('app.tenant', true)) WITH CHECK (...)`, and
-the connection must not go through a transaction-mode pooler. Self-hosted
-single-tenant installs leave the flag off; none of this applies then.
+`SELECT, INSERT, UPDATE, DELETE` granted to the app and service roles. With the
+flag on, `alembic upgrade head` applies all of that itself after the revisions
+run, so a release that adds a tenant table needs nothing by hand; the roles come
+from `DB_CONNECTION_URI` and `DB_SERVICE_CONNECTION_URI`. The connection must
+not go through a transaction-mode pooler. Self-hosted single-tenant installs
+leave the flag off; none of this applies then.
 
 A single-tenant instance can still name the tenant that owns its data with
 `TENANT_ID`, with the flag off.

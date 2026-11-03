@@ -72,9 +72,8 @@ LINEAGES = {
             "The shared pool: tenant_id hash-partitioned tables built by a"
             + " bootstrap, then stamped instead of replayed.",
             missing=(
-                "The shared-pool bootstrap DDL and its row-level-security"
-                + " policies are applied out of band and are not checked in"
-                + " anywhere a CI fixture could build them from.",
+                "The shared-pool bootstrap DDL is applied out of band and is"
+                + " not checked in anywhere a CI fixture could build it from.",
                 "The revision the shared pool was stamped at is not recorded"
                 + " (at or after e5fe7f8bcf62).",
                 "No released image carries the MULTI_TENANT code yet"

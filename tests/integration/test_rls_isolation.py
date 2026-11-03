@@ -1,9 +1,10 @@
 """Flag-on RLS tenant-isolation proof.
 
-The row-level-security policies that enforce tenant isolation are applied to the
-shared cloud database out of band, not by this repo, so a plain database has none.
-This test applies them itself to a dedicated throwaway database — the way the
-alembic harness stands up a real pgvector Postgres — and proves the contract the
+The row-level-security policies that enforce tenant isolation are applied by
+``apply_tenant_isolation`` after the migrations run under ``MULTI_TENANT``, so a
+plain single-tenant database has none. This test applies them the same way to a
+dedicated throwaway database — the way the alembic harness stands up a real
+pgvector Postgres — and proves the contract the
 per-connection ``app.tenant`` binding relies on: with a tenant bound a session
 sees only that tenant's rows, an empty/unset tenant sees none (fail-closed), and a
 write for another tenant is refused by the policy's WITH CHECK.
@@ -34,6 +35,10 @@ from sqlalchemy_utils import (
 
 from src.config import settings
 from src.models import MESSAGE_TEXT_MATCHES, MESSAGE_TEXT_MATCHES_ARGS
+from src.startup.tenant_isolation_validator import (
+    _RLS_REQUIRED_TABLES,  # pyright: ignore[reportPrivateUsage]
+    apply_tenant_isolation,
+)
 from tests.conftest import (
     CONNECTION_URI,
     _get_test_db_url,  # pyright: ignore[reportPrivateUsage]
@@ -47,23 +52,6 @@ _MIGRATIONS_DIR = _REPO_ROOT / "migrations"
 # two workers running this module would otherwise create and drop each other's.
 _WORKER = os.environ.get("PYTEST_XDIST_WORKER", "master")
 _RLS_TEST_DB_URL: URL = _get_test_db_url(_WORKER, tag="rls")
-
-# The eleven tenant-scoped data tables that carry RLS in the cloud deploy.
-# The tenants registry and the queue/active_queue_sessions service tables are
-# excluded by design — service paths read them across tenants.
-_RLS_TABLES: tuple[str, ...] = (
-    "workspaces",
-    "peers",
-    "sessions",
-    "messages",
-    "message_embeddings",
-    "collections",
-    "documents",
-    "document_sources",
-    "conclusion_source_messages",
-    "session_peers",
-    "webhook_endpoints",
-)
 
 # A non-owner, non-superuser role the assertions assume via SET ROLE: RLS is
 # bypassed by the owner/superuser, so the checks must run as an ordinary grantee.
@@ -80,35 +68,19 @@ def _new_id() -> str:
 
 
 def _apply_rls_and_role(engine: Engine) -> None:
-    """Apply the tenant-isolation policies to the ten data tables, then create the probe role.
+    """Create the probe role, then apply the tenant-isolation policies and grants to it.
 
     Runs after the schema exists so ``GRANT ... ON ALL TABLES`` covers every table.
     """
     with engine.begin() as conn:
-        for table in _RLS_TABLES:
-            conn.execute(text(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY"))
-            conn.execute(text(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY"))
-            conn.execute(
-                text(
-                    f"CREATE POLICY tenant_isolation ON {table} "
-                    + "USING (tenant_id = current_setting('app.tenant', true)) "
-                    + "WITH CHECK (tenant_id = current_setting('app.tenant', true))"
-                )
-            )
-
         conn.execute(text(f"DROP ROLE IF EXISTS {_RLS_ROLE}"))
         conn.execute(text(f"CREATE ROLE {_RLS_ROLE} NOLOGIN"))
         conn.execute(text(f"GRANT USAGE ON SCHEMA public TO {_RLS_ROLE}"))
+        apply_tenant_isolation(conn, schema="public", app_role=_RLS_ROLE)
         conn.execute(
             text(
                 "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES "
                 + f"IN SCHEMA public TO {_RLS_ROLE}"
-            )
-        )
-        conn.execute(
-            text(
-                "GRANT EXECUTE ON FUNCTION"
-                + f" {MESSAGE_TEXT_MATCHES}{MESSAGE_TEXT_MATCHES_ARGS} TO {_RLS_ROLE}"
             )
         )
         conn.execute(text(f"DROP ROLE IF EXISTS {_STRANGER_ROLE}"))
@@ -168,7 +140,9 @@ def rls_engine() -> Generator[Engine]:
         # settings), so it is exactly a self-hoster's schema with the default tenant
         # seeded.
         previous_uri = settings.DB.CONNECTION_URI
+        previous_owner_uri = settings.DB.OWNER_CONNECTION_URI
         settings.DB.CONNECTION_URI = db_url_str
+        settings.DB.OWNER_CONNECTION_URI = None
         try:
             cfg = Config(str(_ALEMBIC_INI))
             cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
@@ -176,6 +150,7 @@ def rls_engine() -> Generator[Engine]:
             command.upgrade(cfg, "head")
         finally:
             settings.DB.CONNECTION_URI = previous_uri
+            settings.DB.OWNER_CONNECTION_URI = previous_owner_uri
 
         _apply_rls_and_role(engine)
         # Seed here, not in the first test that needs it: under xdist the tests of
@@ -524,3 +499,78 @@ def test_text_indexes_lead_with_the_tenant_and_workspace(rls_engine: Engine) -> 
         assert f"Bitmap Index Scan on {index}" in plan, plan
         index_cond = next(line for line in plan.splitlines() if "Index Cond" in line)
         assert "tenant_id" in index_cond and "workspace_name" in index_cond, plan
+
+
+def test_apply_tenant_isolation_is_idempotent(rls_engine: Engine) -> None:
+    with rls_engine.begin() as conn:
+        apply_tenant_isolation(conn, schema="public", app_role=_RLS_ROLE)
+        rows = conn.execute(
+            text(
+                "SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,"
+                + " (SELECT count(*) FROM pg_policy p"
+                + "  WHERE p.polrelid = c.oid AND p.polname = 'tenant_isolation'),"
+                + " has_table_privilege(:role, c.oid, 'SELECT, INSERT, UPDATE, DELETE')"
+                + " FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+                + " WHERE n.nspname = 'public' AND c.relname = ANY(:tables)"
+            ),
+            {"role": _RLS_ROLE, "tables": list(_RLS_REQUIRED_TABLES)},
+        ).all()
+    assert {row[0] for row in rows} == set(_RLS_REQUIRED_TABLES)
+    assert all(row[1] and row[2] and row[3] == 1 and row[4] for row in rows)
+
+
+def test_upgrade_restores_isolation_under_multi_tenant(rls_engine: Engine) -> None:
+    with rls_engine.begin() as conn:
+        conn.execute(text("DROP POLICY tenant_isolation ON webhook_endpoints"))
+        conn.execute(text("ALTER TABLE webhook_endpoints DISABLE ROW LEVEL SECURITY"))
+        conn.execute(text("ALTER TABLE webhook_endpoints NO FORCE ROW LEVEL SECURITY"))
+        conn.execute(text(f"REVOKE ALL ON webhook_endpoints FROM {_RLS_ROLE}"))
+        conn.execute(
+            text(
+                f"REVOKE ALL ON FUNCTION {MESSAGE_TEXT_MATCHES}"
+                + f"{MESSAGE_TEXT_MATCHES_ARGS} FROM {_RLS_ROLE}"
+            )
+        )
+
+    owner_url = _RLS_TEST_DB_URL.render_as_string(hide_password=False)
+    app_url = _RLS_TEST_DB_URL.set(username=_RLS_ROLE).render_as_string(
+        hide_password=False
+    )
+    previous = (
+        settings.DB.CONNECTION_URI,
+        settings.DB.OWNER_CONNECTION_URI,
+        settings.DB.SERVICE_CONNECTION_URI,
+        settings.MULTI_TENANT,
+    )
+    settings.DB.CONNECTION_URI = app_url
+    settings.DB.OWNER_CONNECTION_URI = owner_url
+    settings.DB.SERVICE_CONNECTION_URI = None
+    settings.MULTI_TENANT = True
+    try:
+        cfg = Config(str(_ALEMBIC_INI))
+        cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
+        command.upgrade(cfg, "head")
+    finally:
+        (
+            settings.DB.CONNECTION_URI,
+            settings.DB.OWNER_CONNECTION_URI,
+            settings.DB.SERVICE_CONNECTION_URI,
+            settings.MULTI_TENANT,
+        ) = previous
+
+    with rls_engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT c.relrowsecurity, c.relforcerowsecurity,"
+                + " (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid),"
+                + " has_table_privilege(:role, c.oid, 'SELECT, INSERT, UPDATE, DELETE'),"
+                + " has_function_privilege(:role, CAST(:function AS regprocedure),"
+                + " 'EXECUTE')"
+                + " FROM pg_class c WHERE c.oid = 'webhook_endpoints'::regclass"
+            ),
+            {
+                "role": _RLS_ROLE,
+                "function": f"{MESSAGE_TEXT_MATCHES}{MESSAGE_TEXT_MATCHES_ARGS}",
+            },
+        ).one()
+    assert tuple(row) == (True, True, 1, True, True)
