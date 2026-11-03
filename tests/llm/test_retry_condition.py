@@ -281,11 +281,15 @@ class _Recorder:
         self.outcome: Any = outcome
         self.models: list[str] = []
 
-    async def __call__(self, _provider: str, model: str, *_a: Any, **_kw: Any) -> Any:
-        """Record the model, then return or raise the configured outcome."""
+    async def __call__(self, _provider: str, model: str, *_a: Any, **kw: Any) -> Any:
+        """Record the model, then return or raise the configured outcome, running
+        the caller's `validate_response` hook on a response as the executor does.
+        """
         self.models.append(model)
         if isinstance(self.outcome, BaseException):
             raise self.outcome
+        if (validate := kw.get("validate_response")) is not None:
+            validate(self.outcome)
         return self.outcome
 
 

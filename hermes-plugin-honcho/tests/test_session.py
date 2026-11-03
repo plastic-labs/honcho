@@ -116,6 +116,61 @@ class TestPeerLookupHelpers:
         # user-stated facts from assistant-derived ones.
         assert "[assistant" in result
 
+    def _search_with_fallback(self, perspective_result):
+        """Run search_context with the perspective search returning (or raising) ``perspective_result``."""
+        mgr, session = self._make_cached_manager()
+        honcho_client = MagicMock()
+        if isinstance(perspective_result, Exception):
+            honcho_client.search.side_effect = perspective_result
+        else:
+            honcho_client.search.return_value = perspective_result
+        fallback_peer = MagicMock()
+        fallback_peer.search.return_value = [
+            SimpleNamespace(content="I founded neuralancer in 2019", peer_id="robert", session_id="s-old", id="m2"),
+        ]
+        mgr._peer_ref = MagicMock(return_value=fallback_peer)
+        mgr._get_or_create_peer = MagicMock(side_effect=AssertionError("search must not create a peer"))
+        with patch.object(HonchoSessionManager, "honcho", new_callable=lambda: property(lambda s: honcho_client)):
+            result = mgr.search_context(session.key, "neuralancer")
+        return result, session, mgr, fallback_peer
+
+    def test_search_context_falls_back_to_peer_search_on_empty_perspective(self):
+        """A pre-v3.1.0 server returns [] for history outside a moved joined_at window (#1376)."""
+        result, session, mgr, fallback_peer = self._search_with_fallback([])
+
+        assert "neuralancer in 2019" in result
+        mgr._peer_ref.assert_called_once_with(session.user_peer_id)
+        fallback_peer.search.assert_called_once()
+
+    def test_search_context_falls_back_to_peer_search_when_perspective_raises(self):
+        """Servers without the perspective filter raise; peer-authored search still answers."""
+        result, session, mgr, fallback_peer = self._search_with_fallback(RuntimeError("unknown filter"))
+
+        assert "neuralancer in 2019" in result
+        mgr._peer_ref.assert_called_once_with(session.user_peer_id)
+
+    def test_search_context_skips_fallback_when_perspective_has_results(self):
+        result, _session, mgr, fallback_peer = self._search_with_fallback(
+            [SimpleNamespace(content="Robert runs neuralancer", peer_id="hermes", session_id="s-old", id="m1")]
+        )
+
+        assert "Robert runs neuralancer" in result
+        mgr._peer_ref.assert_not_called()
+        fallback_peer.search.assert_not_called()
+
+    def test_peer_ref_makes_no_api_call(self):
+        """The fallback's peer handle is local: building it must not get-or-create the peer."""
+        from honcho import Peer
+
+        mgr, _session = self._make_cached_manager()
+        honcho_client = MagicMock(workspace_id="ws")
+        with patch.object(HonchoSessionManager, "honcho", new_callable=lambda: property(lambda s: honcho_client)):
+            peer = mgr._peer_ref("robert")
+
+        assert isinstance(peer, Peer)
+        assert peer.id == "robert"
+        assert honcho_client.method_calls == []
+
 
     def test_create_conclusion_defaults_to_user_target(self):
         mgr, session = self._make_cached_manager()

@@ -912,3 +912,34 @@ class TestDeleteWorkspaceVectorNamespaceScoping:
 
         assert namespace_for_tenant_a in recording_store.deleted_namespaces
         assert namespace_if_tenant_b not in recording_store.deleted_namespaces
+
+
+class TestWorkspaceCreateRace:
+    @pytest.mark.asyncio
+    async def test_lost_create_race_reads_row_past_the_cache(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ):
+        """After a unique violation the row is read from the DB, not the cache.
+
+        The cached lookup can report a miss for a row that exists; the loser of
+        a create race must still get that row back instead of a 409.
+        """
+        from src.crud import workspace as workspace_crud
+
+        name = str(generate_nanoid())
+        await crud.get_or_create_workspace(
+            db_session, schemas.WorkspaceCreate(name=name)
+        )
+        await db_session.commit()
+
+        async def always_miss(_db: AsyncSession, _workspace_name: str):
+            return None
+
+        monkeypatch.setattr(workspace_crud, "_fetch_workspace", always_miss)
+
+        result = await crud.get_or_create_workspace(
+            db_session, schemas.WorkspaceCreate(name=name)
+        )
+
+        assert result.created is False
+        assert result.resource.name == name

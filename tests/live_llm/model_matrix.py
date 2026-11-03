@@ -51,6 +51,18 @@ MODEL_FAMILIES: tuple[LiveModelFamily, ...] = (
         supports_tool_replay=True,
         docs_url="https://docs.anthropic.com/en/docs/about-claude/models/all-models",
     ),
+    # Adaptive-only thinking, preserved thinking, and (Sonnet/Opus) forced
+    # tool_choice rejected: the request shapes src/llm/capabilities.py routes.
+    LiveModelFamily(
+        provider="anthropic",
+        family="claude_5_5",
+        env_var="LIVE_LLM_ANTHROPIC_55_MODELS",
+        supports_thinking=True,
+        supports_structured_output=True,
+        supports_caching=True,
+        supports_tool_replay=True,
+        docs_url="https://docs.anthropic.com/en/docs/about-claude/models/all-models",
+    ),
     LiveModelFamily(
         provider="openai",
         family="gpt_4_class",

@@ -15,7 +15,7 @@ import asyncio
 import hashlib
 import logging
 import time
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from typing import Any, Literal, TypeVar, overload
 
 from pydantic import BaseModel
@@ -34,6 +34,7 @@ from .request_builder import (
     execute_stream,
 )
 from .runtime import AttemptPlan, effective_config_for_call
+from .structured_output import StructuredOutputError
 from .types import (
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
@@ -58,6 +59,9 @@ def _tenant_headers(config: ModelConfig) -> dict[str, Any] | None:
         TENANT_HEADER: hashlib.sha256(tenant.encode()).hexdigest()[:32],
         **coerce_passthrough_mapping("extra_headers", operator_headers),
     }
+
+
+ResponseValidator = Callable[[HonchoLLMCallResponse[Any]], None]
 
 
 def _outcome_from_error(
@@ -298,6 +302,7 @@ async def honcho_llm_call_inner(
     selected_config: ModelConfig | None = None,
     plan: AttemptPlan | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    validate_response: ResponseValidator | None = None,
 ) -> HonchoLLMCallResponse[M]: ...
 
 
@@ -322,6 +327,7 @@ async def honcho_llm_call_inner(
     selected_config: ModelConfig | None = None,
     plan: AttemptPlan | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    validate_response: ResponseValidator | None = None,
 ) -> HonchoLLMCallResponse[str]: ...
 
 
@@ -346,6 +352,7 @@ async def honcho_llm_call_inner(
     selected_config: ModelConfig | None = None,
     plan: AttemptPlan | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    validate_response: ResponseValidator | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]: ...
 
 
@@ -369,6 +376,7 @@ async def honcho_llm_call_inner(
     selected_config: ModelConfig | None = None,
     plan: AttemptPlan | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    validate_response: ResponseValidator | None = None,
 ) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
     """One backend call. No retry, no fallback, no tool loop.
 
@@ -380,6 +388,10 @@ async def honcho_llm_call_inner(
     coroutine, within the retry boundary. Successfully opened streams are
     recorded when drained or interrupted, preserving partial output and any
     output token count reported by the backend.
+
+    ``validate_response`` (non-streaming only) runs before the attempt is
+    recorded, so a response it rejects is recorded as a failed attempt with
+    its output rather than as a success.
     """
     client = client_override or default_client(provider)
     if client is None:
@@ -504,9 +516,16 @@ async def honcho_llm_call_inner(
             cache_policy=effective_config.cache_policy,
             extra_params=call_extras,
         )
-        return completion_result_to_response(backend_result)
+        response = completion_result_to_response(backend_result)
+        if validate_response is not None:
+            validate_response(response)
+        return response
     except BaseException as exc:
         error = exc
+        if isinstance(exc, StructuredOutputError) and exc.raw_content is not None:
+            # The backend raised before building a result, so this is the only
+            # copy of what the model said; record it as the attempt's output.
+            backend_result = BackendCompletionResult(content=exc.raw_content)
         raise
     finally:
         _emit_call_telemetry(

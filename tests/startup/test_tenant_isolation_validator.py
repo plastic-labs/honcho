@@ -22,6 +22,7 @@ from src.startup.tenant_isolation_validator import (
     _RLS_REQUIRED_TABLES,  # pyright: ignore[reportPrivateUsage]
     SearchFunction,
     _assert_search_function_bypasses_rls,  # pyright: ignore[reportPrivateUsage]
+    _assert_service_role_bypasses_rls,  # pyright: ignore[reportPrivateUsage]
     _assert_tenant_role_cannot_bypass_rls,  # pyright: ignore[reportPrivateUsage]
 )
 from tests.conftest import untouchable_engine
@@ -71,6 +72,16 @@ def _fake_tenant_role(
     """
     monkeypatch.setattr(
         "src.startup.tenant_isolation_validator._introspect_tenant_role_with_retry",
+        AsyncMock(return_value=(rolname, rolsuper, rolbypassrls)),
+    )
+
+
+def _fake_service_role(
+    monkeypatch: pytest.MonkeyPatch, rolname: str, rolsuper: bool, rolbypassrls: bool
+) -> None:
+    """Stand in for the SERVICE engine's role introspection."""
+    monkeypatch.setattr(
+        "src.startup.tenant_isolation_validator._introspect_service_role_with_retry",
         AsyncMock(return_value=(rolname, rolsuper, rolbypassrls)),
     )
 
@@ -303,7 +314,7 @@ async def test_role_introspection_fails_closed_when_it_keeps_failing(
         raise OperationalError("SELECT 1", {}, Exception("DB unreachable"))
 
     monkeypatch.setattr(
-        "src.startup.tenant_isolation_validator._introspect_tenant_role_once",
+        "src.startup.tenant_isolation_validator._introspect_connecting_role_once",
         always_raise,
     )
     monkeypatch.setattr(
@@ -354,6 +365,65 @@ async def test_boots_when_the_tenant_role_cannot_bypass_rls(
 
     await validate_tenant_isolation(
         _NO_ENGINE, instance_type="api", app_settings=_flag_on_settings()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Flag on: the service role must bypass RLS
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("rolsuper", "rolbypassrls"), [(True, False), (False, True), (True, True)]
+)
+def test_assert_service_role_passes_when_it_bypasses_rls(
+    rolsuper: bool, rolbypassrls: bool
+) -> None:
+    _assert_service_role_bypasses_rls("honcho_service", rolsuper, rolbypassrls)
+
+
+def test_assert_service_role_raises_for_an_rls_bound_role() -> None:
+    with pytest.raises(StartupValidationError, match="read zero rows") as excinfo:
+        _assert_service_role_bypasses_rls("honcho_app", False, False)
+    message = str(excinfo.value)
+    assert "'honcho_app'" in message
+    assert "DB_SERVICE_CONNECTION_URI" in message
+
+
+@pytest.mark.asyncio
+async def test_refuses_boot_when_the_service_role_is_under_rls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DB_SERVICE_CONNECTION_URI set, but to the RLS-bound app role: the same
+    silent zero-row outage as leaving it unset, so boot must refuse."""
+    _fake_enforced_rls(monkeypatch)
+    _fake_tenant_role(monkeypatch, "honcho_app", False, False)
+    _fake_service_role(monkeypatch, "honcho_app", False, False)
+    _fake_search_function(monkeypatch, _OWNED_BY_BYPASSRLS)
+
+    with pytest.raises(StartupValidationError, match="read zero rows"):
+        await validate_tenant_isolation(
+            _NO_ENGINE,
+            instance_type="api",
+            app_settings=_flag_on_settings(),
+            service_engine=_NO_ENGINE,
+        )
+
+
+@pytest.mark.asyncio
+async def test_boots_when_the_service_role_bypasses_rls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_enforced_rls(monkeypatch)
+    _fake_tenant_role(monkeypatch, "honcho_app", False, False)
+    _fake_service_role(monkeypatch, "honcho_service", False, True)
+    _fake_search_function(monkeypatch, _OWNED_BY_BYPASSRLS)
+
+    await validate_tenant_isolation(
+        _NO_ENGINE,
+        instance_type="deriver",
+        app_settings=_flag_on_settings(),
+        service_engine=_NO_ENGINE,
     )
 
 

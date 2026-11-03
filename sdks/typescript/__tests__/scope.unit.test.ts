@@ -252,6 +252,31 @@ describe('scope membership ids are validated before reaching a URL', () => {
     ).rejects.toBeInstanceOf(ZodError)
     expect(body()).toBeUndefined()
   })
+
+  test('removeSessions rejects the same shape and an oversized batch', async () => {
+    const { http, calls } = capturingHttp(undefined)
+    const scope = new Scope('therapy', 'workspace-1', http)
+
+    await expect(
+      scope.removeSessions(['ok-session', 'valid-session?typo'])
+    ).rejects.toBeInstanceOf(ZodError)
+    await expect(scope.removeSessions([])).rejects.toBeInstanceOf(ZodError)
+    const tooMany = Array.from({ length: 101 }, (_, i) => `s${i}`)
+    await expect(scope.removeSessions(tooMany)).rejects.toBeInstanceOf(ZodError)
+    expect(calls).toEqual([])
+  })
+
+  test('removeSessions posts every ID to the bulk-remove route', async () => {
+    const { http, body, calls } = capturingHttp(undefined)
+    const scope = new Scope('therapy', 'workspace-1', http)
+    const session = new Session('session-b', 'workspace-1', http)
+
+    await scope.removeSessions(['session-a', session])
+    expect(calls).toEqual([
+      'POST /v3/workspaces/workspace-1/scopes/therapy/sessions/remove',
+    ])
+    expect(body()).toEqual({ session_ids: ['session-a', 'session-b'] })
+  })
 })
 
 describe('session.context scoping', () => {

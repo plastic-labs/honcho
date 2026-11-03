@@ -4,7 +4,12 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
+from anthropic.types import (
+    RedactedThinkingBlock,
+    TextBlock,
+    ThinkingBlock,
+    ToolUseBlock,
+)
 from pydantic import BaseModel
 
 from src.exceptions import ValidationException
@@ -347,6 +352,25 @@ async def test_anthropic_backend_skips_assistant_prefill_for_claude_4_models() -
     assert call["messages"][0]["content"].startswith("Hello\n\nRespond with valid JSON")
 
 
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("claude-3-5-haiku-20241022", True),
+        ("claude-3-7-sonnet-latest", True),
+        ("claude-sonnet-4-5", False),
+        ("claude-haiku-4-5-20251001", False),
+        ("claude-opus-5-5", False),
+        ("claude-haiku-5-5", False),
+        ("claude-fable-5-1", False),
+    ],
+)
+def test_anthropic_backend_supports_assistant_prefill(
+    model: str, expected: bool
+) -> None:
+    supports = AnthropicBackend._supports_assistant_prefill  # pyright: ignore[reportPrivateUsage]
+    assert supports(model) is expected
+
+
 @pytest.mark.asyncio
 async def test_anthropic_backend_forwards_provider_params_passthroughs() -> None:
     """provider_params.extra_body/extra_headers/extra_query reach the Anthropic
@@ -518,9 +542,12 @@ async def test_anthropic_backend_no_prefill_when_tools_present() -> None:
     assert isinstance(result.content, StructuredResponse)
     call = client.messages.create.await_args.kwargs
     assert call["messages"][-1]["role"] == "user"  # no assistant '{' prefill
+    # With tools, the instruction rides in the system prompt so the history
+    # replayed next round is unchanged.
+    assert call["messages"][0]["content"] == "Hello"
     assert (
         "If not responding with a tool call, respond with valid JSON"
-        in call["messages"][0]["content"]
+        in call["system"][-1]["text"]
     )
 
 
@@ -688,9 +715,12 @@ async def test_anthropic_backend_stream_no_prefill_when_tools_present() -> None:
     assert chunks[0].content == '{"answer":"ok"}'
     call = client.messages.stream.call_args.kwargs
     assert call["messages"][-1]["role"] == "user"  # no assistant '{' prefill
+    # With tools, the instruction rides in the system prompt so the history
+    # replayed next round is unchanged.
+    assert call["messages"][0]["content"] == "Hello"
     assert (
         "If not responding with a tool call, respond with valid JSON"
-        in call["messages"][0]["content"]
+        in call["system"][-1]["text"]
     )
 
 
@@ -771,3 +801,250 @@ async def test_anthropic_backend_passes_timeout_to_stream_request() -> None:
 
     assert chunks[-1].is_done is True
     assert client.messages.stream.call_args.kwargs["timeout"] == 60.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["claude-haiku-5-5", "claude-sonnet-4-6"])
+async def test_anthropic_backend_sends_adaptive_thinking_instead_of_a_budget(
+    model: str,
+) -> None:
+    client = _client_with_text_response()
+    backend = AnthropicBackend(client)
+
+    await backend.complete(
+        model=model,
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=4096,
+        thinking_budget_tokens=1024,
+    )
+
+    call = client.messages.create.await_args.kwargs
+    assert call["thinking"] == {"type": "adaptive"}
+    assert "output_config" not in call
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("thinking_effort", "expected"),
+    [("high", "high"), ("minimal", "low"), ("max", "max")],
+)
+async def test_anthropic_backend_maps_thinking_effort_to_output_config(
+    thinking_effort: str, expected: str
+) -> None:
+    client = _client_with_text_response()
+    backend = AnthropicBackend(client)
+
+    await backend.complete(
+        model="claude-sonnet-5-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=4096,
+        thinking_effort=thinking_effort,
+    )
+
+    call = client.messages.create.await_args.kwargs
+    assert call["thinking"] == {"type": "adaptive"}
+    assert call["output_config"] == {"effort": expected}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_sends_no_thinking_for_effort_none() -> None:
+    client = _client_with_text_response()
+    backend = AnthropicBackend(client)
+
+    await backend.complete(
+        model="claude-opus-5-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=4096,
+        thinking_effort="none",
+    )
+
+    call = client.messages.create.await_args.kwargs
+    assert "thinking" not in call
+    assert "output_config" not in call
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["claude-sonnet-5-5", "claude-opus-5-5"])
+@pytest.mark.parametrize("thinking_budget_tokens", [None, 2048])
+async def test_anthropic_backend_relaxes_forced_tool_choice_for_models_that_reject_it(
+    model: str, thinking_budget_tokens: int | None
+) -> None:
+    client = _client_with_text_response()
+    backend = AnthropicBackend(client)
+
+    await backend.complete(
+        model=model,
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=4096,
+        tools=[SEARCH_TOOL],
+        tool_choice="required",
+        thinking_budget_tokens=thinking_budget_tokens,
+    )
+
+    call = client.messages.create.await_args.kwargs
+    assert call["tool_choice"] == {"type": "auto"}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_keeps_forced_tool_choice_and_thinking_on_haiku_5_5() -> (
+    None
+):
+    """Haiku 5.5 accepts a forced tool_choice with thinking on, so the default
+    "throw" conflict mode must not fire."""
+    client = _client_with_text_response()
+    backend = AnthropicBackend(client)
+
+    await backend.complete(
+        model="claude-haiku-5-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=4096,
+        tools=[SEARCH_TOOL],
+        tool_choice="required",
+        thinking_budget_tokens=2048,
+    )
+
+    call = client.messages.create.await_args.kwargs
+    assert call["tool_choice"] == {"type": "any"}
+    assert call["thinking"] == {"type": "adaptive"}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_conflict_guard_sees_thinking_from_extra_body() -> None:
+    client = _client_with_text_response()
+    backend = AnthropicBackend(client)
+
+    with pytest.raises(ValidationException, match="forces tool use"):
+        await backend.complete(
+            model="claude-haiku-4-5",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=4096,
+            tools=[SEARCH_TOOL],
+            tool_choice="required",
+            extra_params={
+                "extra_body": {"thinking": {"type": "enabled", "budget_tokens": 2048}}
+            },
+        )
+
+    client.messages.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_override_thinking_drops_thinking_from_extra_body() -> (
+    None
+):
+    client = _client_with_text_response()
+    backend = AnthropicBackend(client)
+
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=4096,
+        tools=[SEARCH_TOOL],
+        tool_choice="required",
+        extra_params={
+            "thinking_tool_choice_conflict": "override_thinking",
+            "extra_body": {
+                "thinking": {"type": "enabled", "budget_tokens": 2048},
+                "metadata": {"user_id": "u"},
+            },
+        },
+    )
+
+    call = client.messages.create.await_args.kwargs
+    assert call["tool_choice"] == {"type": "any"}
+    assert "thinking" not in call
+    assert call["extra_body"] == {"metadata": {"user_id": "u"}}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_keeps_operator_thinking_from_extra_body() -> None:
+    client = _client_with_text_response()
+    backend = AnthropicBackend(client)
+
+    await backend.complete(
+        model="claude-sonnet-5-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=4096,
+        thinking_budget_tokens=2048,
+        extra_params={"extra_body": {"thinking": {"type": "adaptive"}}},
+    )
+
+    call = client.messages.create.await_args.kwargs
+    assert "thinking" not in call
+    assert call["extra_body"] == {"thinking": {"type": "adaptive"}}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_keeps_redacted_thinking_blocks() -> None:
+    client = _make_client(
+        [
+            ThinkingBlock(type="thinking", thinking="plan", signature="sig"),
+            RedactedThinkingBlock(type="redacted_thinking", data="opaque"),
+            ToolUseBlock(type="tool_use", id="t1", name="search", input={}),
+        ]
+    )
+    backend = AnthropicBackend(client)
+
+    result = await backend.complete(
+        model="claude-sonnet-5-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=4096,
+        tools=[SEARCH_TOOL],
+    )
+
+    assert result.thinking_blocks == [
+        {"type": "thinking", "thinking": "plan", "signature": "sig"},
+        {"type": "redacted_thinking", "data": "opaque"},
+    ]
+    assert result.thinking_content == "plan"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_appends_schema_instruction_to_existing_system_with_tools() -> (
+    None
+):
+    client = _make_client([TextBlock(type="text", text='{"answer":"ok"}')])
+    backend = AnthropicBackend(client)
+    history = [
+        {"role": "system", "content": "You are helpful."},
+        {"role": "user", "content": "Hello"},
+    ]
+
+    await backend.complete(
+        model="claude-sonnet-5-5",
+        messages=history,
+        max_tokens=4096,
+        tools=[SEARCH_TOOL],
+        response_format=StructuredResponse,
+    )
+
+    call = client.messages.create.await_args.kwargs
+    assert len(call["system"]) == 1
+    assert call["system"][0]["text"].startswith("You are helpful.\n\n")
+    assert "respond with valid JSON" in call["system"][0]["text"]
+    assert call["messages"] == [{"role": "user", "content": "Hello"}]
+    # The caller's history is not edited.
+    assert history[1] == {"role": "user", "content": "Hello"}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_skips_conflict_guard_when_operator_disables_thinking() -> (
+    None
+):
+    client = _client_with_text_response()
+    backend = AnthropicBackend(client)
+
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=4096,
+        tools=[SEARCH_TOOL],
+        tool_choice="required",
+        thinking_budget_tokens=2048,
+        extra_params={"extra_body": {"thinking": {"type": "disabled"}}},
+    )
+
+    call = client.messages.create.await_args.kwargs
+    assert call["tool_choice"] == {"type": "any"}
+    assert "thinking" not in call
+    assert "output_config" not in call

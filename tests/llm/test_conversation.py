@@ -318,3 +318,32 @@ def test_truncate_keeps_a_budget_line_with_its_tool_round() -> None:
     assert _is_tool_result_message(truncated[3])
     assert "[TRUNCATED to fit the input budget" in json.dumps(truncated[3])
     assert truncated[4] == budget_line
+
+
+def test_strip_thinking_blocks_keeps_other_blocks_and_drops_emptied_messages() -> None:
+    from src.llm.conversation import strip_thinking_blocks
+
+    user: dict[str, Any] = {"role": "user", "content": "hi"}
+    tool_turn: dict[str, Any] = {
+        "role": "assistant",
+        "content": [
+            {"type": "thinking", "thinking": "plan", "signature": "sig"},
+            {"type": "redacted_thinking", "data": "opaque"},
+            {"type": "tool_use", "id": "t1", "name": "search", "input": {}},
+        ],
+    }
+    thinking_only: dict[str, Any] = {
+        "role": "assistant",
+        "content": [{"type": "thinking", "thinking": "x", "signature": "s"}],
+    }
+
+    stripped, removed = strip_thinking_blocks([user, tool_turn, thinking_only])
+
+    assert removed == 3
+    assert stripped[0] is user
+    assert stripped[1]["content"] == [
+        {"type": "tool_use", "id": "t1", "name": "search", "input": {}}
+    ]
+    assert len(stripped) == 2
+    # The input history is not modified.
+    assert len(tool_turn["content"]) == 3

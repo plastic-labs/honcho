@@ -231,6 +231,10 @@ for s in therapy.sessions():
 
 therapy.remove_session("therapy-session-1")
 
+# Or remove up to 100 at once — all-or-nothing if any session doesn't exist;
+# sessions that aren't members are ignored
+therapy.remove_sessions(["therapy-session-2", "therapy-session-3"])
+
 for scope in honcho.scopes():
     print(scope.id, scope.metadata)
 ```
@@ -261,6 +265,10 @@ for await (const s of await therapy.sessions()) {
 
 await therapy.removeSession("therapy-session-1");
 
+// Or remove up to 100 at once — all-or-nothing if any session doesn't exist;
+// sessions that aren't members are ignored
+await therapy.removeSessions(["therapy-session-2", "therapy-session-3"]);
+
 for await (const scope of await honcho.scopes()) {
   console.log(scope.id, scope.metadata);
 }
@@ -290,6 +298,13 @@ curl -X POST "$HONCHO_URL/v3/workspaces/my-app/scopes/therapy/sessions/list" \
 # Remove one session
 curl -X DELETE "$HONCHO_URL/v3/workspaces/my-app/scopes/therapy/sessions/therapy-session-1" \
   -H "Authorization: Bearer $HONCHO_API_KEY"
+
+# Remove up to 100 sessions (404 and no change if any doesn't exist;
+# non-members are ignored)
+curl -X POST "$HONCHO_URL/v3/workspaces/my-app/scopes/therapy/sessions/remove" \
+  -H "Authorization: Bearer $HONCHO_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"session_ids": ["therapy-session-2", "therapy-session-3"]}'
 ```
 </CodeGroup>
 
@@ -299,12 +314,99 @@ call returns it, and any `metadata` you pass is written onto it. When a lookup
 must not create a scope — resolving a user-supplied name, for example — use
 `get_scope` / `getScope` instead, which fails with a not-found error.
 
+### Searching and Counting Scopes
+
+The scope list can filter by name and report how many sessions each scope
+holds, so a client never has to load every scope or list each one's members:
+
+<CodeGroup>
+```python Python
+# `id` matches the scope name (never the internal prefix)
+for scope in honcho.scopes({"id": {"icontains": "sup"}}, include_session_count=True):
+    print(scope.id, scope.session_count)
+```
+
+```typescript TypeScript
+const scopes = await honcho.scopes({
+  filters: { id: { icontains: "sup" } },
+  includeSessionCount: true,
+});
+for await (const scope of scopes) {
+  console.log(scope.id, scope.sessionCount);
+}
+```
+
+```bash REST
+curl -X POST "$HONCHO_URL/v3/workspaces/my-app/scopes/list?include_session_count=true" \
+  -H "Authorization: Bearer $HONCHO_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"filters": {"id": {"icontains": "sup"}}}'
+```
+</CodeGroup>
+
+`session_count` counts the sessions `scopes/{id}/sessions/list` would return,
+and is omitted unless requested. The name filter takes the same operators as
+other list filters (`icontains`, `contains`, `in`, AND/OR/NOT), plus
+`created_at` and `metadata`; `total` counts the filtered scopes.
+
 <Note>
 Every scopes route — and every read that passes `scope` — requires a
 **workspace-level or admin key**. A scope's membership can exceed any single
 peer's own session membership, so peer- and session-scoped keys are rejected
 with `401`.
 </Note>
+
+### Listing Membership From the Session Side
+
+The workspace session list can answer the reverse question — which scopes is
+this session in? — without listing every scope's members:
+
+<CodeGroup>
+```python Python
+# Each listed session's `scopes` holds its scope names, sorted ([] for none)
+for s in honcho.sessions(include_scopes=True):
+    print(s.id, s.scopes)
+
+# Only the sessions in one scope, or only the sessions in no scope
+therapy_sessions = honcho.sessions(scope="therapy")
+unscoped = honcho.sessions(in_no_scope=True)
+```
+
+```typescript TypeScript
+// Each listed session's `scopes` holds its scope names, sorted ([] for none)
+for await (const s of await honcho.sessions({ includeScopes: true })) {
+  console.log(s.id, s.scopes);
+}
+
+// Only the sessions in one scope, or only the sessions in no scope
+const therapySessions = await honcho.sessions({ scope: "therapy" });
+const unscoped = await honcho.sessions({ inNoScope: true });
+```
+
+```bash REST
+# Each session in the page carries `scopes`: its active scope names, sorted
+# ([] for a session in no scope). Without the flag, sessions have no `scopes` key.
+curl -X POST "$HONCHO_URL/v3/workspaces/my-app/sessions/list?include_scopes=true" \
+  -H "Authorization: Bearer $HONCHO_API_KEY"
+
+# Only the sessions in one scope (404 if the scope doesn't exist)
+curl -X POST "$HONCHO_URL/v3/workspaces/my-app/sessions/list" \
+  -H "Authorization: Bearer $HONCHO_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"scope": "therapy"}'
+
+# Only the sessions in no scope
+curl -X POST "$HONCHO_URL/v3/workspaces/my-app/sessions/list" \
+  -H "Authorization: Bearer $HONCHO_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"in_no_scope": true}'
+```
+</CodeGroup>
+
+`scope` and `in_no_scope` are mutually exclusive, and both combine with
+`filters`, pagination and `include_scopes`. The page's `total` counts the
+filtered sessions, so `{"in_no_scope": true}` with `size=1` tells you how many
+sessions are in no scope.
 
 ## Membership Changes Copy, They Don't Re-Derive
 

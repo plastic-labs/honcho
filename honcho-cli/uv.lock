@@ -74,21 +74,21 @@ wheels = [
 
 [[package]]
 name = "honcho-ai"
-version = "2.0.1"
+version = "2.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/93/30/d30ba159404050d53b4b1b1c4477f9591f43af18758be1fb7dab6afbfe7d/honcho_ai-2.0.1.tar.gz", hash = "sha256:6fdeebf9454e62bc523d57888e50359e67baafdb21f68621f9c14e08dc00623a", size = 46732, upload-time = "2026-02-09T21:03:26.99Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/26/a7/13ad4c1b66d1a96ac66ce8cbb6e7d4d4f91cd0c4380b00caca8d27e273eb/honcho_ai-2.6.0.tar.gz", hash = "sha256:a799eb9fd3f02e34fb2a4166d8262ed407e02d276ad446e68affb370be45e47c", size = 68183, upload-time = "2026-10-14T16:30:28.525Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e2/de/83fda0c057cfa11d6b5ed532623184591aa7dcff4a067934ba6811026229/honcho_ai-2.0.1-py3-none-any.whl", hash = "sha256:94887e61d59f353e1e1e20b395858040780f5d67ca1e9d450538646544e4e42f", size = 56780, upload-time = "2026-02-09T21:03:25.992Z" },
+    { url = "https://files.pythonhosted.org/packages/16/a5/e95f89a29b519e9e0293281b7fd8b6333c72ce44be8707cca4e452ac224e/honcho_ai-2.6.0-py3-none-any.whl", hash = "sha256:819cdd5775ecae69f617b14d60c3ea3c6ac9404b3821fa50cbf0b681aa2283cf", size = 79216, upload-time = "2026-10-14T16:30:27.211Z" },
 ]
 
 [[package]]
 name = "honcho-cli"
-version = "0.1.1"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -107,7 +107,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.0.0" },
-    { name = "honcho-ai", specifier = ">=0.1.0" },
+    { name = "honcho-ai", specifier = ">=2.5.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.14.0" },

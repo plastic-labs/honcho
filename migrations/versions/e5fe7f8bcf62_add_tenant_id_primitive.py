@@ -1,7 +1,7 @@
 """add tenant id primitive
 
 Revision ID: e5fe7f8bcf62
-Revises: a5f8da8f6d23
+Revises: c4d8e2f6a1b3
 Create Date: 2026-09-03
 
 Adds ``tenant_id`` as a first-class primitive to the data model: a new
@@ -26,7 +26,7 @@ from src.models import instance_tenant_id
 
 # revision identifiers, used by Alembic.
 revision: str = "e5fe7f8bcf62"
-down_revision: str | None = "a5f8da8f6d23"
+down_revision: str | None = "c4d8e2f6a1b3"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -45,6 +45,7 @@ TENANT_SCOPED: tuple[str, ...] = (
     "collections",
     "documents",
     "document_sources",
+    "conclusion_source_messages",
     "webhook_endpoints",
     "session_peers",
 )
@@ -60,6 +61,7 @@ NEW_PKS: dict[str, list[str]] = {
     "collections": ["tenant_id", "id"],
     "documents": ["tenant_id", "id"],
     "document_sources": ["tenant_id", "derived_id", "source_id"],
+    "conclusion_source_messages": ["tenant_id", "conclusion_id", "message_id"],
     "webhook_endpoints": ["tenant_id", "id"],
     "session_peers": ["tenant_id", "workspace_name", "session_name", "peer_name"],
 }
@@ -246,6 +248,32 @@ NEW_FKS: list[tuple[str, str, list[str], str, list[str], str | None]] = [
     (
         "fk_document_sources_ws_tenant_workspaces",
         "document_sources",
+        ["workspace_name", "tenant_id"],
+        "workspaces",
+        ["name", "tenant_id"],
+        None,
+    ),
+    # conclusion_source_messages (created by c4d8e2f6a1b3 keyed on documents.id
+    # and messages.public_id alone; same reason as document_sources)
+    (
+        "fk_conclusion_source_messages_conclusion_tenant_documents",
+        "conclusion_source_messages",
+        ["conclusion_id", "tenant_id"],
+        "documents",
+        ["id", "tenant_id"],
+        "CASCADE",
+    ),
+    (
+        "fk_conclusion_source_messages_message_tenant_messages",
+        "conclusion_source_messages",
+        ["message_id", "tenant_id"],
+        "messages",
+        ["public_id", "tenant_id"],
+        "CASCADE",
+    ),
+    (
+        "fk_conclusion_source_messages_ws_tenant_workspaces",
+        "conclusion_source_messages",
         ["workspace_name", "tenant_id"],
         "workspaces",
         ["name", "tenant_id"],
@@ -479,6 +507,31 @@ OLD_FKS: list[tuple[str, str, list[str], str, list[str], str | None]] = [
         ["name"],
         None,
     ),
+    # conclusion_source_messages
+    (
+        "fk_conclusion_source_messages_conclusion_id_documents",
+        "conclusion_source_messages",
+        ["conclusion_id"],
+        "documents",
+        ["id"],
+        "CASCADE",
+    ),
+    (
+        "fk_conclusion_source_messages_message_id_messages",
+        "conclusion_source_messages",
+        ["message_id"],
+        "messages",
+        ["public_id"],
+        "CASCADE",
+    ),
+    (
+        "fk_conclusion_source_messages_workspace_name_workspaces",
+        "conclusion_source_messages",
+        ["workspace_name"],
+        "workspaces",
+        ["name"],
+        None,
+    ),
     # webhook_endpoints
     (
         "fk_webhook_endpoints_workspace_name_workspaces",
@@ -607,19 +660,22 @@ def upgrade() -> None:
         ).bindparams(tid=DEFAULT_TENANT_ID)
     )
 
-    # 2. Add tenant_id everywhere + backfill + NOT NULL on the tenant-scoped set.
+    # 2. Add tenant_id NOT NULL on the tenant-scoped set, defaulting to this
+    #    instance's tenant. A constant default fills existing rows without
+    #    rewriting the table, and lets the previous release, which never sets
+    #    tenant_id, keep inserting during a rolling deploy.
     for tname in TENANT_SCOPED:
         if not column_exists(tname, "tenant_id"):
             op.add_column(
-                tname, sa.Column("tenant_id", sa.TEXT(), nullable=True), schema=schema
+                tname,
+                sa.Column(
+                    "tenant_id",
+                    sa.TEXT(),
+                    nullable=False,
+                    server_default=DEFAULT_TENANT_ID,
+                ),
+                schema=schema,
             )
-        op.execute(
-            sa.text(
-                f'UPDATE "{schema}"."{tname}" SET tenant_id = :tid '
-                + "WHERE tenant_id IS NULL"
-            ).bindparams(tid=DEFAULT_TENANT_ID)
-        )
-        op.alter_column(tname, "tenant_id", nullable=False, schema=schema)
 
     # 3. Drop ALL old FKs first (they block the PK/unique changes below), incl.
     #    queue.session_id -> sessions.id from an earlier revision.
@@ -782,6 +838,7 @@ def downgrade() -> None:
     old_pks = {
         "session_peers": ["workspace_name", "session_name", "peer_name"],
         "document_sources": ["derived_id", "source_id"],
+        "conclusion_source_messages": ["conclusion_id", "message_id"],
     }
     for tname in TENANT_SCOPED:
         _drop_pk(tname)

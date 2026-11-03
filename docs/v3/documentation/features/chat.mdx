@@ -81,7 +81,7 @@ const answer = await peer.chat(query, { reasoningLevel: "high" });
 
 ## Streaming Responses
 
-For longer answers, use streaming to get incremental responses:
+You can also receive the answer as a stream of text chunks:
 
 <CodeGroup>
 ```python Python
@@ -102,7 +102,7 @@ for await (const chunk of responseStream.iter_text()) {
 ```
 </CodeGroup>
 
-Streaming is useful for displaying real-time responses in chat interfaces or when asking complex questions that require longer answers.
+The agent gathers context before it answers, so the answer usually arrives as a single chunk once it finishes; only an answer synthesized at the tool-call limit streams as it is generated. See [Streaming Responses](/v3/documentation/features/advanced/streaming-response).
 
 ## Scoping to Sessions
 
@@ -287,8 +287,9 @@ Workspace chat does not accept `filters` or `target`.
 
 ### Streaming
 
-Use `chat_stream` / `chatStream` for incremental output. The stream yields text
-chunks; the REST endpoint sends `text/event-stream` when `stream` is `true`.
+Use `chat_stream` / `chatStream` to receive the answer as a stream. The stream
+yields text chunks (usually one, as for peer chat); the REST endpoint sends
+`text/event-stream` when `stream` is `true`.
 
 <CodeGroup>
 ```python Python

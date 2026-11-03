@@ -24,6 +24,7 @@ _TENANT_SCOPED = (
     "collections",
     "documents",
     "document_sources",
+    "conclusion_source_messages",
     "webhook_endpoints",
     "session_peers",
 )
@@ -73,6 +74,128 @@ def prepare_add_tenant_id_primitive(verifier: MigrationVerifier) -> None:
             "seq": 0,
         },
     )
+    _seed_populated_workspace(verifier)
+    _PRE_UPGRADE_COUNTS.clear()
+    _PRE_UPGRADE_COUNTS.update(_row_counts(verifier, (*_TENANT_SCOPED, "queue")))
+    empty = [t for t, n in _PRE_UPGRADE_COUNTS.items() if n == 0]
+    assert not empty, f"seed left tables empty: {empty}"
+
+
+POPULATED_WS = "w_populated"
+_PRE_UPGRADE_COUNTS: dict[str, int] = {}
+
+
+def _row_counts(verifier: MigrationVerifier, tables: tuple[str, ...]) -> dict[str, int]:
+    return {
+        table: verifier.conn.execute(
+            text(f'SELECT COUNT(*) FROM "{verifier.schema}"."{table}"')
+        ).scalar_one()
+        for table in tables
+    }
+
+
+def _seed_populated_workspace(verifier: MigrationVerifier) -> None:
+    """Fill every tenant-scoped table, as a self-hosted c4d8e2f6a1b3 DB would be."""
+    conn = verifier.conn
+    schema = verifier.schema
+
+    def insert(table: str, row: dict[str, object]) -> None:
+        cols = ", ".join(f'"{c}"' for c in row)
+        vals = ", ".join(f":{c}" for c in row)
+        conn.execute(
+            text(f'INSERT INTO "{schema}"."{table}" ({cols}) VALUES ({vals})'), row
+        )
+
+    ws = POPULATED_WS
+    insert("workspaces", {"id": generate_nanoid(), "name": ws})
+    for peer in ("alice", "bob"):
+        insert("peers", {"id": generate_nanoid(), "name": peer, "workspace_name": ws})
+    session_id = generate_nanoid()
+    insert("sessions", {"id": session_id, "name": "chat", "workspace_name": ws})
+    for peer in ("alice", "bob"):
+        insert(
+            "session_peers",
+            {"workspace_name": ws, "session_name": "chat", "peer_name": peer},
+        )
+    message_ids: list[str] = []
+    for seq in range(4):
+        public_id = generate_nanoid()
+        message_ids.append(public_id)
+        insert(
+            "messages",
+            {
+                "public_id": public_id,
+                "workspace_name": ws,
+                "session_name": "chat",
+                "peer_name": "alice" if seq % 2 == 0 else "bob",
+                "content": f"message {seq}",
+                "seq_in_session": seq,
+            },
+        )
+        insert(
+            "message_embeddings",
+            {
+                "content": f"message {seq}",
+                "message_id": public_id,
+                "workspace_name": ws,
+                "session_name": "chat",
+                "peer_name": "alice" if seq % 2 == 0 else "bob",
+            },
+        )
+    insert(
+        "collections",
+        {
+            "id": generate_nanoid(),
+            "workspace_name": ws,
+            "observer": "alice",
+            "observed": "alice",
+        },
+    )
+    explicit_id, deductive_id = generate_nanoid(), generate_nanoid()
+    for doc_id, level in ((explicit_id, "explicit"), (deductive_id, "deductive")):
+        insert(
+            "documents",
+            {
+                "id": doc_id,
+                "workspace_name": ws,
+                "observer": "alice",
+                "observed": "alice",
+                "content": f"{level} conclusion",
+                "level": level,
+                "session_name": "chat",
+            },
+        )
+    insert(
+        "document_sources",
+        {"derived_id": deductive_id, "source_id": explicit_id, "workspace_name": ws},
+    )
+    for position, message_id in enumerate(message_ids[:2]):
+        insert(
+            "conclusion_source_messages",
+            {
+                "conclusion_id": explicit_id,
+                "message_id": message_id,
+                "position": position,
+                "workspace_name": ws,
+            },
+        )
+    insert(
+        "webhook_endpoints",
+        {"id": generate_nanoid(), "workspace_name": ws, "url": "http://localhost/hook"},
+    )
+    conn.execute(
+        text(
+            f'INSERT INTO "{schema}"."queue" '
+            + '("session_id", "payload", "task_type", "work_unit_key", "workspace_name") '
+            + "VALUES (:sid, CAST(:payload AS jsonb), 'representation', :key, :ws)"
+        ),
+        {
+            "sid": session_id,
+            "payload": '{"message_ids": []}',
+            "key": f"representation:{ws}:chat:alice",
+            "ws": ws,
+        },
+    )
 
 
 @register_after_upgrade("e5fe7f8bcf62")
@@ -108,7 +231,15 @@ def verify_add_tenant_id_primitive(verifier: MigrationVerifier) -> None:
     # tenant_id is NOT NULL on every tenant-scoped table, and existing rows backfilled.
     for table in _TENANT_SCOPED:
         verifier.assert_column_exists(table, "tenant_id", nullable=False)
-    for table in ("workspaces", "peers", "sessions", "messages"):
+    after = _row_counts(verifier, (*_TENANT_SCOPED, "queue"))
+    assert after == _PRE_UPGRADE_COUNTS, (
+        f"row counts changed across the upgrade: {_PRE_UPGRADE_COUNTS} -> {after}"
+    )
+    queue_tenants = conn.execute(
+        text(f'SELECT COUNT(tenant_id) FROM "{schema}"."queue"')
+    ).scalar_one()
+    assert queue_tenants == 0, "queue rows must stay tenant-less (NULL) flag-off"
+    for table in _TENANT_SCOPED:
         verifier.assert_no_nulls(table, "tenant_id")
         backfilled = conn.execute(
             text(
@@ -117,6 +248,18 @@ def verify_add_tenant_id_primitive(verifier: MigrationVerifier) -> None:
             )
         ).scalar()
         assert backfilled == 0, f"{table} has rows not backfilled to the default tenant"
+
+    # The previous release never sets tenant_id; its inserts get the instance tenant.
+    with verifier.conn.begin_nested() as old_writer:
+        tenant = conn.execute(
+            text(
+                f'INSERT INTO "{schema}"."workspaces" ("id", "name") '
+                + "VALUES (:id, :name) RETURNING tenant_id"
+            ),
+            {"id": generate_nanoid(), "name": "written-by-old-image"},
+        ).scalar()
+        old_writer.rollback()
+    assert tenant == "default", f"old-image insert got tenant {tenant!r}"
 
     # Composite PK (tenant_id, id) on workspaces.
     pk = verifier.get_inspector().get_pk_constraint("workspaces", schema=schema)
@@ -137,6 +280,27 @@ def verify_add_tenant_id_primitive(verifier: MigrationVerifier) -> None:
     verifier.assert_constraint_exists(
         "document_sources",
         "fk_document_sources_derived_tenant_documents",
+        "foreign_key",
+    )
+
+    # conclusion_source_messages arrives from c4d8e2f6a1b3 keyed on documents.id
+    # and messages.public_id alone, and leaves keyed through the tenant too.
+    pk = verifier.get_inspector().get_pk_constraint(
+        "conclusion_source_messages", schema=schema
+    )
+    assert pk["constrained_columns"] == [
+        "tenant_id",
+        "conclusion_id",
+        "message_id",
+    ], f"conclusion_source_messages PK is {pk['constrained_columns']}"
+    verifier.assert_constraint_exists(
+        "conclusion_source_messages",
+        "fk_conclusion_source_messages_conclusion_tenant_documents",
+        "foreign_key",
+    )
+    verifier.assert_constraint_exists(
+        "conclusion_source_messages",
+        "fk_conclusion_source_messages_message_tenant_messages",
         "foreign_key",
     )
 

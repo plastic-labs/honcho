@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from hermes_constants import get_hermes_home
+from .attribution import HONCHO_APP_URL, attribution_url
 from .client import _first_parsed, _host_block, profile_host_key, resolve_active_host, resolve_config_path, HOST
 from .session_peers import sanitize_peer_id
 from hermes_cli.config import cfg_get
@@ -714,7 +715,7 @@ def _setup_cloud_auth(cfg: dict, hermes_host: dict, write_path: Path) -> bool:
     print("    oauth  -- sign in via browser on this machine (recommended)")
     if device_available:
         print("    device -- device code: approve from a browser on another machine (SSH / headless)")
-    print("    apikey -- paste an API key from https://app.honcho.dev")
+    print(f"    apikey -- paste an API key from {attribution_url(HONCHO_APP_URL, 'apikey-prompt')}")
 
     default_method = "oauth"
     if is_remote or not can_browse:
@@ -736,7 +737,7 @@ def _setup_cloud_auth(cfg: dict, hermes_host: dict, write_path: Path) -> bool:
         cfg["apiKey"] = new_key
     key = new_key or current
     if not key:
-        print("\n  No API key configured. Get yours at https://app.honcho.dev\n"
+        print(f"\n  No API key configured. Get yours at {attribution_url(HONCHO_APP_URL, 'missing-key')}\n"
               "  Run 'hermes honcho setup' again once you have a key.\n")
         return False
     hermes_host.pop("oauth", None)
@@ -1724,10 +1725,10 @@ Step 1  Create a Honcho account
     if has_key:
         print(f"  Honcho API key already configured: {_mask(cfg['apiKey'])}\n  Skip to Step 2.")
     else:
-        print("""  Honcho is a cloud memory service that gives Hermes persistent memory
+        print(f"""  Honcho is a cloud memory service that gives Hermes persistent memory
   across sessions. You need an API key to use it.
 
-  1. Get your API key at https://app.honcho.dev
+  1. Get your API key at {attribution_url(HONCHO_APP_URL, 'walkthrough')}
   2. Run:  hermes honcho setup
      Paste the key when prompted.
 """)
