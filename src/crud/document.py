@@ -1874,40 +1874,60 @@ async def cleanup_soft_deleted_documents(
         minutes=older_than_minutes
     )
 
-    # Find soft-deleted documents ready for cleanup
-    # Use FOR UPDATE SKIP LOCKED to prevent multiple deriver instances from
-    # processing the same documents simultaneously
-    stmt = (
-        select(models.Document)
-        .where(models.Document.deleted_at.is_not(None))
-        .where(models.Document.deleted_at < cutoff)
-        .limit(batch_size)
-        .with_for_update(skip_locked=True)
-    )
-    result = await db.execute(stmt)
-    documents = list(result.scalars().all())
+    # Find soft-deleted documents ready for cleanup, oldest first (served by the
+    # partial ix_documents_deleted_at). Use FOR UPDATE SKIP LOCKED to prevent
+    # multiple deriver instances from processing the same documents simultaneously.
+    # region ai
+    # The sweep spans tenants, and a tenant whose vector namespace can't be resolved
+    # must not strand everyone else: its rows stay eligible, so a batch they fill
+    # would clean nothing, and the next cycle would select the same rows. When a
+    # batch contains such a tenant, it is excluded and the batch re-selected. Each
+    # round excludes at least one more tenant from a batch of at most batch_size
+    # rows, so the loop ends; flag-off there is one tenant and at most two rounds.
+    # endregion
+    prefixes: dict[str, str] = {}
+    unresolvable: set[str] = set()
+    while True:
+        stmt = (
+            select(models.Document)
+            .where(models.Document.deleted_at.is_not(None))
+            .where(models.Document.deleted_at < cutoff)
+        )
+        if unresolvable:
+            stmt = stmt.where(models.Document.tenant_id.not_in(unresolvable))
+        stmt = (
+            stmt.order_by(models.Document.deleted_at)
+            .limit(batch_size)
+            .with_for_update(skip_locked=True)
+        )
+        documents = list((await db.execute(stmt)).scalars().all())
+        if not documents:
+            await db.rollback()
+            return 0
 
-    if not documents:
-        return 0
+        newly_unresolvable: set[str] = set()
+        for tenant_id in {doc.tenant_id for doc in documents} - prefixes.keys():
+            try:
+                prefixes[tenant_id] = await prefix_for_tenant(tenant_id, db)
+            except (VectorNamespaceUnresolved, VectorStoreError):
+                logger.warning(
+                    "No vector namespace for tenant %s; leaving its soft-deleted documents",
+                    tenant_id,
+                )
+                newly_unresolvable.add(tenant_id)
+        if not newly_unresolvable:
+            break
+        unresolvable |= newly_unresolvable
 
     # Group by namespace for batch vector deletion
     by_namespace: dict[str, list[models.Document]] = {}
-    # ai: contained per row — this sweep spans tenants, and an unresolvable one must not strand the rest of the batch's soft-deleted rows
     for doc in documents:
-        try:
-            prefix = await prefix_for_tenant(doc.tenant_id, db)
-        except (VectorNamespaceUnresolved, VectorStoreError):
-            logger.warning(
-                "No vector namespace for tenant %s; leaving its soft-deleted documents",
-                doc.tenant_id,
-            )
-            continue
         namespace = await external_vector_store.get_vector_namespace(
             "document",
             doc.workspace_name,
             doc.observer,
             doc.observed,
-            prefix=prefix,
+            prefix=prefixes[doc.tenant_id],
         )
         by_namespace.setdefault(namespace, []).append(doc)
 

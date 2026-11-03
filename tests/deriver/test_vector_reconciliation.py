@@ -611,6 +611,52 @@ class TestBackgroundPathPerTenantNamespaces:
         assert bad_doc.sync_state == "pending"
         assert bad_doc.sync_attempts == 1
 
+    async def test_cleanup_moves_past_a_tenant_with_no_namespace(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An unresolvable tenant's soft-deleted rows can fill a batch; the sweep
+        excludes that tenant and still cleans everyone else's rows that cycle."""
+        from src.crud.document import cleanup_soft_deleted_documents
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        now = datetime.datetime.now(datetime.UTC)
+        bad_doc, _, _ = await self._create_tenant_scoped_document(
+            db_session, vector_correlation_id=None
+        )
+        good_doc, _, _ = await self._create_tenant_scoped_document(
+            db_session, vector_correlation_id="tenant-good-app"
+        )
+        # The stuck tenant's row is the oldest, so it is first in line.
+        bad_doc.deleted_at = now - datetime.timedelta(hours=2)
+        good_doc.deleted_at = now - datetime.timedelta(hours=1)
+        await db_session.commit()
+        bad_key = (bad_doc.tenant_id, bad_doc.id)
+        good_key = (good_doc.tenant_id, good_doc.id)
+
+        with caplog.at_level("WARNING", logger="src.crud.document"):
+            cleaned = await cleanup_soft_deleted_documents(
+                db_session, _NamespaceRecordingVectorStore(), batch_size=1
+            )
+
+        assert cleaned == 1
+        # The oldest row came first and its tenant was set aside, not skipped past.
+        assert any(bad_key[0] in record.getMessage() for record in caplog.records)
+        db_session.expire_all()
+        remaining = {
+            (row.tenant_id, row.id)
+            for row in (
+                await db_session.execute(
+                    select(models.Document.tenant_id, models.Document.id).where(
+                        models.Document.id.in_([bad_key[1], good_key[1]])
+                    )
+                )
+            ).all()
+        }
+        assert remaining == {bad_key}
+
     async def _create_tenant_scoped_message_embedding(
         self, db_session: AsyncSession, *, vector_correlation_id: str | None
     ) -> tuple[models.MessageEmbedding, models.Workspace, models.Peer]:
