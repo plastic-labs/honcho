@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.db import tenant_context
+from src.exceptions import VectorNamespaceUnresolved
 from src.reconciler import sync_vectors
 from src.reconciler.sync_vectors import (
     MAX_SYNC_ATTEMPTS,
@@ -1633,6 +1634,45 @@ class TestReEmbedTenantAttribution:
         }
         assert synced == 2
         assert written == {"t-a": 1.0, "t-b": 2.0}
+
+    async def test_external_only_skips_embedding_an_unresolvable_tenant(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # With no postgres copy, an unresolvable tenant's rows have nowhere to go:
+        # embedding them would bill a call whose result is thrown away. They are
+        # deferred with a single attempt bump, not one for embed and one for resolve.
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", "turbopuffer")
+        monkeypatch.setattr(settings.VECTOR_STORE, "MIGRATED", True)
+
+        async def resolve(tenant_id: str, _db: object) -> str:
+            if tenant_id == "t-a":
+                raise VectorNamespaceUnresolved("no key yet")
+            return "prefix"
+
+        monkeypatch.setattr("src.reconciler.sync_vectors.prefix_for_tenant", resolve)
+        bumps: list[list[str]] = []
+
+        async def record_bump(_db: object, docs: list[models.Document]) -> None:
+            bumps.append([doc.tenant_id for doc in docs])
+
+        monkeypatch.setattr(
+            "src.reconciler.sync_vectors._bump_document_sync_attempts", record_bump
+        )
+        docs = self._docs(["t-a", "t-b"])
+        embedded: list[str | None] = []
+
+        async def record(contents: list[str], **_kwargs: object) -> list[list[float]]:
+            embedded.append(tenant_context.get())
+            return [[0.0] * 1536 for _ in contents]
+
+        with patch("src.reconciler.sync_vectors.embedding_client") as client:
+            client.simple_batch_embed = record
+            _synced, failed = await _sync_documents(AsyncMock(), docs, self._store())
+
+        assert embedded == ["t-b"]
+        assert bumps == [["t-a"]]
+        assert failed == 1
 
 
 async def _tenant_with_message(
