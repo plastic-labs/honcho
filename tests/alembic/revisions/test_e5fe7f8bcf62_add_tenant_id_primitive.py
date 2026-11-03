@@ -309,6 +309,21 @@ def verify_add_tenant_id_primitive(verifier: MigrationVerifier) -> None:
         "workspaces", "uq_workspaces_tenant_id_name", "unique"
     )
 
+    # The previous release's session-peer upsert still finds its conflict target.
+    verifier.assert_indexes_exist(
+        [("session_peers", "uq_session_peers_legacy_ws_session_peer")]
+    )
+    legacy_upsert = text(
+        f'INSERT INTO "{schema}"."session_peers" '
+        + "(workspace_name, session_name, peer_name) VALUES (:ws, :sn, :pn) "
+        + "ON CONFLICT (session_name, peer_name, workspace_name) "
+        + "DO UPDATE SET left_at = NULL"
+    )
+    upsert_params = {"ws": WORKSPACE_NAME, "sn": SESSION_NAME, "pn": PEER_NAME}
+    with verifier.conn.begin_nested():
+        conn.execute(legacy_upsert, upsert_params)
+        conn.execute(legacy_upsert, upsert_params)
+
     # tenant_id FK to tenants + a representative composite FK.
     verifier.assert_constraint_exists(
         "peers", "fk_peers_tenant_id_tenants", "foreign_key"

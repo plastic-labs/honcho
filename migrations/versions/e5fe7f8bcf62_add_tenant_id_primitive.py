@@ -34,6 +34,8 @@ schema = get_schema()
 
 DEFAULT_TENANT_ID = instance_tenant_id()
 
+LEGACY_SESSION_PEERS_INDEX = "uq_session_peers_legacy_ws_session_peer"
+
 # Tables that gain tenant_id + a composite PK + composite FKs (session_peers has
 # an all-natural composite PK and is handled with the rest).
 TENANT_SCOPED: tuple[str, ...] = (
@@ -692,6 +694,22 @@ def upgrade() -> None:
     for tname, uniques in NEW_UNIQUES.items():
         for uname, cols in uniques:
             op.create_unique_constraint(uname, tname, cols, schema=schema)
+    # region ai
+    # The previous release upserts session_peers with ON CONFLICT on the old
+    # (workspace, session, peer) key, which step 4 replaced. Keep a unique index on
+    # it so that image can still add peers to sessions during a rolling deploy and
+    # stays a rollback target. Only a DB that runs this body gets it, and those
+    # hold a single tenant, so it rejects nothing the new key allows. Not declared
+    # in models (see migrations/env.py); a later revision drops it once the
+    # compatibility floor passes this release.
+    # endregion
+    op.create_index(
+        LEGACY_SESSION_PEERS_INDEX,
+        "session_peers",
+        ["workspace_name", "session_name", "peer_name"],
+        unique=True,
+        schema=schema,
+    )
 
     # 6. tenant_id -> tenants.tenant_id on every tenant-scoped table, then the
     #    composite natural-key FKs (their targets — the new uniques — now exist).
@@ -840,6 +858,8 @@ def downgrade() -> None:
         "document_sources": ["derived_id", "source_id"],
         "conclusion_source_messages": ["conclusion_id", "message_id"],
     }
+    if index_exists("session_peers", LEGACY_SESSION_PEERS_INDEX):
+        op.drop_index(LEGACY_SESSION_PEERS_INDEX, "session_peers", schema=schema)
     for tname in TENANT_SCOPED:
         _drop_pk(tname)
         cols = old_pks.get(tname, ["id"])
