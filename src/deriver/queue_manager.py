@@ -741,8 +741,9 @@ class QueueManager:
         async with self.semaphore:
             queue_item_count = 0
             # region ai
-            # Set only when a fetch comes back empty: queue.empty fires on a
-            # confirmed drain, never on an error, shutdown or lost-ownership break.
+            # Set only when a fetch comes back empty and nothing is left unprocessed:
+            # queue.empty fires on a confirmed drain, never on an error, shutdown,
+            # lost-ownership break or a pause that suspended the rest.
             # endregion
             drained = False
             # region ai
@@ -814,7 +815,7 @@ class QueueManager:
                                 logger.debug(
                                     f"No more queue items to process for work unit {work_unit_key} for worker {worker_id}"
                                 )
-                                drained = True
+                                drained = await self._is_drained(work_unit_key)
                                 break
 
                             try:
@@ -874,7 +875,7 @@ class QueueManager:
                                 logger.debug(
                                     f"No more queue items to process for work unit {work_unit_key} for worker {worker_id}"
                                 )
-                                drained = True
+                                drained = await self._is_drained(work_unit_key)
                                 break
 
                             try:
@@ -1468,6 +1469,27 @@ class QueueManager:
         logger.error("%s; marked %d queue items errored", error, result.rowcount)
         if settings.SENTRY.ENABLED:
             sentry_sdk.capture_message(error, level="error")
+
+    async def _is_drained(self, work_unit_key: str) -> bool:
+        """Whether an empty fetch means the unit has no unprocessed items left."""
+        # region ai
+        # Under MULTI_TENANT the in-unit fetches also exclude a paused tenant's
+        # items, so an empty fetch can mean "suspended" rather than "done". Only a
+        # real drain may publish queue.empty. Flag-off nothing is excluded, so the
+        # empty fetch is the answer and no extra query runs.
+        # endregion
+        if not settings.MULTI_TENANT:
+            return True
+        async with service_db("queue_unit_drained", read_only=True) as db:
+            remaining = await db.scalar(
+                select(
+                    select(models.QueueItem.id)
+                    .where(models.QueueItem.work_unit_key == work_unit_key)
+                    .where(~models.QueueItem.processed)
+                    .exists()
+                )
+            )
+        return not remaining
 
     async def _cleanup_work_unit(
         self,

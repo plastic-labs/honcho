@@ -13,16 +13,18 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
 from src.crud.deriver import PAUSE_EXEMPT_TASK_TYPES, not_paused_clause
 from src.db import tenant_context
-from src.deriver.queue_manager import QueueManager
+from src.deriver.queue_manager import QueueManager, WorkerOwnership
 from src.utils.work_unit import TASK_TYPES
 from tests.deriver.conftest import SeedWorkUnit
 
@@ -230,3 +232,92 @@ async def test_the_next_batch_fetch_stops_once_the_tenant_is_paused(
     )
     assert paused_batch.items_to_process == []
     assert paused_batch.messages_context == []
+
+
+@pytest.mark.asyncio
+async def test_a_pause_mid_unit_is_not_reported_as_a_drain(
+    db_session: AsyncSession,
+    seed_work_unit: SeedWorkUnit,
+    batch_gate_settings: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The unit is released, but queue.empty is not sent while items are suspended."""
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    batch_gate_settings(workers=10)
+    tenant_id = await _register_tenant(db_session, paused=False)
+    summary_key = f"{tenant_id}:summary:workspace:session:peer:peer"
+    await seed_work_unit(
+        summary_key,
+        task_type="summary",
+        tenant_id=tenant_id,
+        token_counts=(1, 1),
+        with_messages=False,
+    )
+    qm = QueueManager()
+    claimed = await qm.get_and_claim_work_units()
+    qm.worker_ownership["w"] = WorkerOwnership(
+        work_unit_key=summary_key, aqs_id=claimed[summary_key]
+    )
+
+    async def pause_after_first_item(_item: Any) -> None:
+        await _set_paused(db_session, tenant_id, paused=True)
+
+    publish = AsyncMock()
+    with (
+        patch(
+            "src.deriver.queue_manager.process_item",
+            side_effect=pause_after_first_item,
+        ),
+        patch("src.deriver.queue_manager.publish_webhook_event", publish),
+    ):
+        await qm.process_work_unit(summary_key, "w")
+
+    publish.assert_not_awaited()
+    db_session.expire_all()
+    pending = await db_session.scalar(
+        select(func.count())
+        .select_from(models.QueueItem)
+        .where(models.QueueItem.work_unit_key == summary_key)
+        .where(~models.QueueItem.processed)
+    )
+    assert pending == 1
+    held = await db_session.scalar(
+        select(func.count())
+        .select_from(models.ActiveQueueSession)
+        .where(models.ActiveQueueSession.work_unit_key == summary_key)
+    )
+    assert held == 0
+
+
+@pytest.mark.asyncio
+async def test_a_drain_flag_on_still_reports_queue_empty(
+    db_session: AsyncSession,
+    seed_work_unit: SeedWorkUnit,
+    batch_gate_settings: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    batch_gate_settings(workers=10)
+    tenant_id = await _register_tenant(db_session, paused=False)
+    summary_key = f"{tenant_id}:summary:workspace:session:peer:peer"
+    await seed_work_unit(
+        summary_key,
+        task_type="summary",
+        tenant_id=tenant_id,
+        token_counts=(1, 1),
+        with_messages=False,
+    )
+    qm = QueueManager()
+    claimed = await qm.get_and_claim_work_units()
+    qm.worker_ownership["w"] = WorkerOwnership(
+        work_unit_key=summary_key, aqs_id=claimed[summary_key]
+    )
+
+    publish = AsyncMock()
+    with (
+        patch("src.deriver.queue_manager.process_item", AsyncMock()),
+        patch("src.deriver.queue_manager.publish_webhook_event", publish),
+    ):
+        await qm.process_work_unit(summary_key, "w")
+
+    publish.assert_awaited_once()
