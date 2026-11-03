@@ -31,6 +31,7 @@ from . import (
     test_e9b705f9adf9_add_server_defaults_to_timestamp_,
     test_ec8f94139b02_codify_workspace_name_and_message_id_in_,
     test_f1a2b3c4d5e6_add_reasoning_tree_columns,
+    test_f2a70ec72da0_add_peer_memberships_table,
 )
 
 __all__ = [
@@ -64,4 +65,5 @@ __all__ = [
     "test_e9b705f9adf9_add_server_defaults_to_timestamp_",
     "test_ec8f94139b02_codify_workspace_name_and_message_id_in_",
     "test_f1a2b3c4d5e6_add_reasoning_tree_columns",
+    "test_f2a70ec72da0_add_peer_memberships_table",
 ]

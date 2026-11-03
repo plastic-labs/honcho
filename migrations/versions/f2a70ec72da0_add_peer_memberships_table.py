@@ -7,7 +7,7 @@ time, so this revision is DDL only: additive, on an empty table, with no
 backfill.
 
 Revision ID: f2a70ec72da0
-Revises: a5f8da8f6d23
+Revises: c4d8e2f6a1b3
 Create Date: 2026-10-20
 
 """
@@ -22,7 +22,7 @@ from migrations.utils import get_schema, table_exists
 
 # revision identifiers, used by Alembic.
 revision: str = "f2a70ec72da0"
-down_revision: str | None = "a5f8da8f6d23"
+down_revision: str | None = "c4d8e2f6a1b3"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
