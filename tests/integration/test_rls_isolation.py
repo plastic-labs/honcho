@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -574,3 +575,75 @@ def test_upgrade_restores_isolation_under_multi_tenant(rls_engine: Engine) -> No
             },
         ).one()
     assert tuple(row) == (True, True, 1, True, True)
+
+
+@contextmanager
+def _migrating_as_owner(*, multi_tenant: bool) -> Generator[Config]:
+    """Settings for running alembic as the database owner with the probe as app role."""
+    previous = (
+        settings.DB.CONNECTION_URI,
+        settings.DB.OWNER_CONNECTION_URI,
+        settings.DB.SERVICE_CONNECTION_URI,
+        settings.MULTI_TENANT,
+    )
+    settings.DB.CONNECTION_URI = _RLS_TEST_DB_URL.set(
+        username=_RLS_ROLE
+    ).render_as_string(hide_password=False)
+    settings.DB.OWNER_CONNECTION_URI = _RLS_TEST_DB_URL.render_as_string(
+        hide_password=False
+    )
+    settings.DB.SERVICE_CONNECTION_URI = None
+    settings.MULTI_TENANT = multi_tenant
+    try:
+        cfg = Config(str(_ALEMBIC_INI))
+        cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
+        yield cfg
+    finally:
+        (
+            settings.DB.CONNECTION_URI,
+            settings.DB.OWNER_CONNECTION_URI,
+            settings.DB.SERVICE_CONNECTION_URI,
+            settings.MULTI_TENANT,
+        ) = previous
+
+
+def test_flag_off_upgrade_grants_the_app_role(rls_engine: Engine) -> None:
+    """A separate owner creates the tables flag-off too; the app role still gets them."""
+    with rls_engine.begin() as conn:
+        conn.execute(text(f"REVOKE ALL ON queue FROM {_RLS_ROLE}"))
+
+    with _migrating_as_owner(multi_tenant=False) as cfg:
+        command.upgrade(cfg, "head")
+
+    with rls_engine.connect() as conn:
+        granted = conn.execute(
+            text(
+                "SELECT has_table_privilege(:role, 'queue',"
+                + " 'SELECT, INSERT, UPDATE, DELETE')"
+            ),
+            {"role": _RLS_ROLE},
+        ).scalar_one()
+    assert granted
+
+
+def test_isolation_is_applied_only_at_head(rls_engine: Engine) -> None:
+    """Below head the policy's columns or the search function may not exist yet."""
+    with rls_engine.begin() as conn:
+        conn.execute(text("DROP POLICY tenant_isolation ON webhook_endpoints"))
+
+    def policies() -> int:
+        with rls_engine.connect() as conn:
+            return conn.execute(
+                text(
+                    "SELECT count(*) FROM pg_policy"
+                    + " WHERE polrelid = 'webhook_endpoints'::regclass"
+                )
+            ).scalar_one()
+
+    with _migrating_as_owner(multi_tenant=True) as cfg:
+        try:
+            command.downgrade(cfg, "-1")
+            assert policies() == 0
+        finally:
+            command.upgrade(cfg, "head")
+    assert policies() == 1
