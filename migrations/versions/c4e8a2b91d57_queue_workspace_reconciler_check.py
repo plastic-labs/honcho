@@ -22,6 +22,7 @@ re-runnable, so a run that dies between them completes on the next one.
 from collections.abc import Sequence
 
 from alembic import op
+from sqlalchemy import text
 
 from migrations.utils import constraint_exists, get_schema
 
@@ -76,16 +77,25 @@ def upgrade() -> None:
         # queue. Failing the deploy and retrying is the cheaper outcome.
         # endregion
         with op.get_context().autocommit_block():
+            # Restore the runner's lock_timeout after; RESET would drop it for
+            # every later revision in the run.
+            connection = op.get_bind()
+            previous = connection.scalar(text("SHOW lock_timeout"))
             op.execute("SET lock_timeout = '3s'")
-            op.execute(
-                f"""
-                ALTER TABLE {schema}.queue
-                ADD CONSTRAINT {CONSTRAINT_NAME}
-                CHECK ((workspace_name IS NULL) = (task_type = 'reconciler'))
-                NOT VALID
-                """
-            )
-            op.execute("RESET lock_timeout")
+            try:
+                op.execute(
+                    f"""
+                    ALTER TABLE {schema}.queue
+                    ADD CONSTRAINT {CONSTRAINT_NAME}
+                    CHECK ((workspace_name IS NULL) = (task_type = 'reconciler'))
+                    NOT VALID
+                    """
+                )
+            finally:
+                connection.execute(
+                    text("SELECT set_config('lock_timeout', :value, false)"),
+                    {"value": previous},
+                )
 
     # region ai
     # Unconditional, and outside the guard above: VALIDATE on an
