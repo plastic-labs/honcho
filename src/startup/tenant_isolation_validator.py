@@ -90,6 +90,8 @@ _RLS_REQUIRED_TABLES: tuple[str, ...] = (
     "conclusion_source_messages",
     "session_peers",
     "webhook_endpoints",
+    "dream_runs",
+    "dream_run_changes",
 )
 
 # region ai

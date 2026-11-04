@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
+from src.crud.dream_history import DreamHistoryTarget
 from src.dependencies import tracked_db
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import ResourceNotFoundException
@@ -853,6 +854,7 @@ async def create_observations(
     message_created_at: str,
     run_id: str | None = None,
     parent_category: str | None = None,
+    history: DreamHistoryTarget | None = None,
 ) -> ObservationsCreatedResult:
     """
     Create multiple observations (documents) in the memory system in a single call.
@@ -870,6 +872,7 @@ async def create_observations(
         run_id: Agent run id, threaded onto the embedding-call ContextVar so
             EmbeddingCallCompletedEvents emitted here can be joined back to
             the originating agent run.
+        history: Dream run to record the created and replaced conclusions to
 
     Returns:
         ObservationsCreatedResult with created count and any per-observation failures
@@ -1004,6 +1007,7 @@ async def create_observations(
                     observer=observer,
                     observed=observed,
                     deduplicate=settings.DERIVER.DEDUPLICATE,
+                    history=history,
                 )
             ).created_documents
         logger.info(
@@ -1221,6 +1225,10 @@ class ToolContext:
     # they loaded; `dataclasses.replace` copies of this context share the same
     # accumulator, so delegating handlers reach it without extra wiring.
     evidence: EvidenceAccumulator | None = None
+    # Set only for dream specialists whose run is recorded for Representation
+    # History. Write handlers record their changes to it in the same
+    # transaction as the change.
+    history: DreamHistoryTarget | None = None
 
 
 def _normalize_observation_id(obs_id: str) -> str:
@@ -1404,6 +1412,7 @@ async def _handle_create_observations_impl(
             message_created_at=message_created_at,
             run_id=ctx.run_id,
             parent_category=ctx.parent_category,
+            history=ctx.history,
         )
 
     # Merge validation and embedding failures
@@ -1595,6 +1604,7 @@ async def _handle_update_peer_card(
             peer_card=normalized_peer_card,
             observer=ctx.observer,
             observed=ctx.observed,
+            history=ctx.history,
         )
     logger.info(
         f"Updated peer card for {ctx.workspace_name}/{ctx.observer}/{ctx.observed}"
@@ -2135,6 +2145,7 @@ async def _handle_delete_observations(
             document_ids=observation_ids,
             observer=ctx.observer,
             observed=ctx.observed,
+            history=ctx.history,
         )
 
     deleted_ids = {doc_id for doc_id, _ in deleted}
@@ -2406,6 +2417,7 @@ async def create_tool_executor(
     session_allowlist: list[str] | None = None,
     handler_resolver: Callable[[str], Any] | None = None,
     evidence: EvidenceAccumulator | None = None,
+    history: DreamHistoryTarget | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
     Create a unified tool executor function for all agent operations.
@@ -2435,6 +2447,8 @@ async def create_tool_executor(
         evidence: Optional accumulator that read handlers record the
             conclusions and messages they load into. None means evidence was
             not requested and nothing is collected.
+        history: Dream run that write handlers record their changes to, for
+            Representation History. None records nothing.
 
     Returns:
         An async callable that executes tools with the captured context
@@ -2457,6 +2471,7 @@ async def create_tool_executor(
         agent_type=agent_type,
         parent_category=parent_category,
         evidence=evidence,
+        history=history,
     )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:

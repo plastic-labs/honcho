@@ -33,6 +33,14 @@ from .document import (
     query_external_vector_document_ids,
     summarize_documents_by_level,
 )
+from .dream_history import (
+    DreamHistoryTarget,
+    close_run,
+    get_run_detail,
+    list_runs_stmt,
+    open_run,
+    prune_dream_history,
+)
 from .message import (
     create_messages,
     get_message,
@@ -116,6 +124,13 @@ __all__ = [
     "get_active_peers",
     "WorkspaceStats",
     "ActivePeer",
+    # Dream history
+    "DreamHistoryTarget",
+    "close_run",
+    "get_run_detail",
+    "list_runs_stmt",
+    "open_run",
+    "prune_dream_history",
     # Collection
     "get_collection",
     "get_or_create_collection",

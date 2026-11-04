@@ -91,6 +91,73 @@ The system includes several safeguards to prevent wasted work:
 - **No duplicate pending dreams**: If a dream is already queued and waiting, a second enqueue request is skipped.
 - **Cancellation on new activity**: When new messages arrive for a peer, any pending (not yet started) dream for that peer is cancelled. This ensures the dream always runs on the most up-to-date set of conclusions.
 
+## Representation History
+
+Each dream is recorded as a **run**, so you can see what it changed instead of only the representation it left behind. A run lists:
+
+- **Created conclusions**, each with the conclusions it was derived from: premises for deductive conclusions, supporting evidence for inductive ones.
+- **Removed conclusions**, as they read when the dream removed them. A conclusion replaced by a near-duplicate from the same dream names its replacement in `replaced_by`.
+- **The peer card** before the dream's first update and after its last.
+
+Each change is recorded in the same transaction as the change itself, so a run that `failed` or was `interrupted` still shows everything it committed.
+
+<CodeGroup>
+```python Python
+# A peer's dream history, newest first
+for run in honcho.dreams(observed="maya"):
+    print(run.id, run.status, run.created_count, run.removed_count)
+
+# Everything one dream changed
+detail = honcho.get_dream(run_id)
+for created in detail.created:
+    print(created.conclusion.content)
+    for source in created.sources:
+        print("  from:", source.content, f"({source.status})")
+for removed in detail.removed:
+    print("removed:", removed.content)
+if detail.peer_card:
+    print(detail.peer_card.before, "->", detail.peer_card.after)
+```
+```typescript TypeScript
+// A peer's dream history, newest first
+const runs = await honcho.dreams({ observed: "maya" });
+for await (const run of runs) {
+    console.log(run.id, run.status, run.created_count, run.removed_count);
+}
+
+// Everything one dream changed
+const detail = await honcho.getDream(runId);
+for (const created of detail.created) {
+    console.log(created.conclusion.content);
+    for (const source of created.sources) {
+        console.log("  from:", source.content, `(${source.status})`);
+    }
+}
+```
+</CodeGroup>
+
+Pass `observer` as well as `observed` to narrow the list to a single representation. These endpoints accept workspace and admin keys only.
+
+### How referenced conclusions resolve
+
+Created conclusions and their sources are looked up when you read the run, and each carries a `status`:
+
+| Status | Meaning |
+|---|---|
+| `current` | Still in the representation. |
+| `removed` | A later dream removed it. `content` is the text it had, and `removed_in_run` names that dream. |
+| `unavailable` | It was deleted through the API, deleted with its session, or replaced by the deriver, or the dream that removed it is past the retention window. `content` is null. |
+
+### Retention and deletion
+
+Changes are kept for 30 days by default (`DREAM_HISTORY_RETENTION_DAYS`). After that, a run keeps only the conclusions it created that still exist, so you can always see which dream made a current conclusion. Its removed conclusions and peer-card change are deleted, and the run's `pruned_at` is set; `created_count`, `removed_count` and `peer_card_updated` still describe what the dream did. A run with nothing left is deleted. Set `DREAM_HISTORY_ENABLED=false` to stop recording.
+
+History follows the same deletion rules as the conclusions it describes:
+
+- Deleting a conclusion through the API also deletes any copy history kept of it: runs that reference it show it as `unavailable`. This works for a conclusion a dream already removed, so its recorded text can be erased too.
+- Deleting a session deletes the recorded text of conclusions that came from that session.
+- Deleting a workspace deletes all of its history.
+
 ## Configuration
 
 Dreams can be enabled or disabled at the workspace or session level:

@@ -10,9 +10,9 @@ arguments, which the JSON parser decodes into a real NUL byte.
 import re
 from typing import Any, cast, overload
 
-from pydantic import BeforeValidator
+from pydantic import AfterValidator, BeforeValidator
 
-__all__ = ["NulStripped", "escape_unstorable", "strip_nul"]
+__all__ = ["NulStripped", "StorableOnly", "escape_unstorable", "strip_nul"]
 
 # NUL and UTF-16 surrogate code points: the only characters Postgres can't store
 # in text. A Python str can hold surrogates (a JSON "\\ud83d" escape decodes to
@@ -64,3 +64,14 @@ def escape_unstorable(text: str) -> str:
 # Runs *before* the field's own constraints, so `min_length` is checked against
 # the stripped value and all-NUL input is rejected instead of becoming "".
 NulStripped = BeforeValidator(strip_nul)
+
+
+def _reject_unstorable(value: Any) -> Any:
+    if isinstance(value, str) and _UNSTORABLE.search(value):
+        raise ValueError("must not contain NUL or unpaired surrogate characters")
+    return value
+
+
+# For an identifier bound into a query, such as a lookup filter: stripping would
+# silently look up a different value, so the request is rejected (a 422) instead.
+StorableOnly = AfterValidator(_reject_unstorable)

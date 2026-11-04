@@ -4222,7 +4222,7 @@
           "conclusions"
         ],
         "summary": "Delete Conclusion",
-        "description": "Delete a single Conclusion by ID.\n\nThis action cannot be undone.",
+        "description": "Delete a single Conclusion by ID.\n\nAlso deletes any copy Representation History kept of it, so it reads as\n`unavailable` in every dream that references it. A conclusion a dream has\nalready removed can be deleted this way too. This action cannot be undone.",
         "operationId": "delete_conclusion_v3_workspaces__workspace_id__conclusions__conclusion_id__delete",
         "security": [
           {
@@ -4252,6 +4252,185 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/dreams/list": {
+      "post": {
+        "tags": [
+          "dreams"
+        ],
+        "summary": "List Dreams",
+        "description": "List dream runs, newest first. Results are paginated.\n\nEach run records what one dream changed in a representation. Filter by\n`observed_id` for a peer's history, and add `observer_id` for a single\nrepresentation. Runs are kept for the server's retention window (30 days\nby default).",
+        "operationId": "list_dreams_v3_workspaces__workspace_id__dreams_list_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 2147483647,
+              "minimum": 1,
+              "description": "Page number (offset mode)",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number (offset mode)"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`.",
+              "title": "Cursor"
+            },
+            "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`."
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/DreamRunList"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Filtering options for the dream run list",
+                "title": "Options"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Page_DreamRun_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CursorPage_DreamRun_"
+                    }
+                  ],
+                  "title": "Response List Dreams V3 Workspaces  Workspace Id  Dreams List Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/dreams/{run_id}": {
+      "get": {
+        "tags": [
+          "dreams"
+        ],
+        "summary": "Get Dream",
+        "description": "Get one dream run with every change it committed.\n\nThe response lists the conclusions the dream created with the conclusions\neach was derived from, the conclusions it removed as they read when\nremoved, and the peer card before and after.",
+        "operationId": "get_dream_v3_workspaces__workspace_id__dreams__run_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The dream's run ID",
+              "title": "Run Id"
+            },
+            "description": "The dream's run ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DreamRunDetail"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -5021,6 +5200,81 @@
         ],
         "title": "CursorPage[Conclusion]"
       },
+      "CursorPage_DreamRun_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DreamRun"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "current_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page",
+            "description": "Cursor to refetch the current page"
+          },
+          "current_page_backwards": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page Backwards",
+            "description": "Cursor to refetch the current page starting from the last item"
+          },
+          "previous_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Page",
+            "description": "Cursor for the previous page"
+          },
+          "next_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Page",
+            "description": "Cursor for the next page"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "CursorPage[DreamRun]"
+      },
       "CursorPage_Message_": {
         "properties": {
           "items": {
@@ -5600,6 +5854,71 @@
         ],
         "title": "DialecticOptions"
       },
+      "DreamConclusionRef": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content",
+            "description": "Null when the conclusion is `unavailable`"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "explicit",
+                  "deductive",
+                  "inductive",
+                  "contradiction"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "current",
+              "removed",
+              "unavailable"
+            ],
+            "title": "Status",
+            "description": "`current`: still in the representation. `removed`: a later dream removed it; `removed_in_run` names that dream. `unavailable`: it was deleted (through the API, with its session, or by the deriver), or the dream that removed it is past the retention window."
+          },
+          "removed_in_run": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Removed In Run"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "DreamConclusionRef",
+        "description": "A conclusion referenced by a dream, resolved when the run is read."
+      },
       "DreamConfiguration": {
         "properties": {
           "enabled": {
@@ -5629,6 +5948,413 @@
         },
         "type": "object",
         "title": "DreamConfiguration"
+      },
+      "DreamCreatedConclusion": {
+        "properties": {
+          "conclusion": {
+            "$ref": "#/components/schemas/DreamConclusionRef"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/DreamConclusionRef"
+            },
+            "type": "array",
+            "title": "Sources",
+            "description": "Premises for deductive conclusions, supporting evidence for inductive ones"
+          },
+          "specialist": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Specialist",
+            "description": "The dream specialist that made the change"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conclusion",
+          "sources"
+        ],
+        "title": "DreamCreatedConclusion",
+        "description": "A conclusion a dream created, with the conclusions it was derived from."
+      },
+      "DreamPeerCardChange": {
+        "properties": {
+          "before": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before",
+            "description": "Null when there was no card"
+          },
+          "after": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "After"
+          }
+        },
+        "type": "object",
+        "required": [
+          "before",
+          "after"
+        ],
+        "title": "DreamPeerCardChange",
+        "description": "The peer card before the dream's first update and after its last."
+      },
+      "DreamRemovedConclusion": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "explicit",
+                  "deductive",
+                  "inductive",
+                  "contradiction"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level"
+          },
+          "replaced_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaced By",
+            "description": "Set when a new conclusion from the same dream superseded this one as a near-duplicate"
+          },
+          "specialist": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Specialist"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "content"
+        ],
+        "title": "DreamRemovedConclusion",
+        "description": "A conclusion a dream removed, as it read when it was removed."
+      },
+      "DreamRun": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The dream's run ID"
+          },
+          "observer_id": {
+            "type": "string",
+            "title": "Observer Id",
+            "description": "The peer whose representation the dream changed"
+          },
+          "observed_id": {
+            "type": "string",
+            "title": "Observed Id",
+            "description": "The peer the representation is about"
+          },
+          "dream_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dream Type",
+            "description": "The kind of dream, e.g. `omni` (deduction and induction) or a card refresh"
+          },
+          "trigger_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Reason",
+            "description": "What scheduled the dream, e.g. `document_threshold` or `manual`"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "completed",
+              "failed",
+              "interrupted"
+            ],
+            "title": "Status",
+            "description": "`failed` and `interrupted` runs can still have changes: each change is committed as it is made."
+          },
+          "created_count": {
+            "type": "integer",
+            "title": "Created Count",
+            "description": "Conclusions the dream created"
+          },
+          "removed_count": {
+            "type": "integer",
+            "title": "Removed Count",
+            "description": "Conclusions the dream removed"
+          },
+          "peer_card_updated": {
+            "type": "boolean",
+            "title": "Peer Card Updated",
+            "description": "Whether the dream changed the peer card"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "pruned_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pruned At",
+            "description": "When retention first deleted some of this run's changes. Past the retention window a run keeps only the created conclusions that still exist; `removed` and `peer_card` are gone. The counts stay as the dream recorded them."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "observer_id",
+          "observed_id",
+          "status",
+          "created_count",
+          "removed_count",
+          "peer_card_updated",
+          "started_at"
+        ],
+        "title": "DreamRun",
+        "description": "One dream over a representation: the observer's model of the observed peer."
+      },
+      "DreamRunDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The dream's run ID"
+          },
+          "observer_id": {
+            "type": "string",
+            "title": "Observer Id",
+            "description": "The peer whose representation the dream changed"
+          },
+          "observed_id": {
+            "type": "string",
+            "title": "Observed Id",
+            "description": "The peer the representation is about"
+          },
+          "dream_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dream Type",
+            "description": "The kind of dream, e.g. `omni` (deduction and induction) or a card refresh"
+          },
+          "trigger_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Reason",
+            "description": "What scheduled the dream, e.g. `document_threshold` or `manual`"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "completed",
+              "failed",
+              "interrupted"
+            ],
+            "title": "Status",
+            "description": "`failed` and `interrupted` runs can still have changes: each change is committed as it is made."
+          },
+          "created_count": {
+            "type": "integer",
+            "title": "Created Count",
+            "description": "Conclusions the dream created"
+          },
+          "removed_count": {
+            "type": "integer",
+            "title": "Removed Count",
+            "description": "Conclusions the dream removed"
+          },
+          "peer_card_updated": {
+            "type": "boolean",
+            "title": "Peer Card Updated",
+            "description": "Whether the dream changed the peer card"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "pruned_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pruned At",
+            "description": "When retention first deleted some of this run's changes. Past the retention window a run keeps only the created conclusions that still exist; `removed` and `peer_card` are gone. The counts stay as the dream recorded them."
+          },
+          "created": {
+            "items": {
+              "$ref": "#/components/schemas/DreamCreatedConclusion"
+            },
+            "type": "array",
+            "title": "Created"
+          },
+          "removed": {
+            "items": {
+              "$ref": "#/components/schemas/DreamRemovedConclusion"
+            },
+            "type": "array",
+            "title": "Removed"
+          },
+          "peer_card": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DreamPeerCardChange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "observer_id",
+          "observed_id",
+          "status",
+          "created_count",
+          "removed_count",
+          "peer_card_updated",
+          "started_at",
+          "created",
+          "removed"
+        ],
+        "title": "DreamRunDetail",
+        "description": "A dream run with every change it committed."
+      },
+      "DreamRunList": {
+        "properties": {
+          "observed_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Id",
+            "description": "Only runs about this peer"
+          },
+          "observer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observer Id",
+            "description": "Only runs from this observer's perspective. Combine with `observed_id` for one representation."
+          }
+        },
+        "type": "object",
+        "title": "DreamRunList",
+        "description": "Filters for listing dream runs."
       },
       "DreamType": {
         "type": "string",
@@ -5918,6 +6644,47 @@
           "pages"
         ],
         "title": "Page[Conclusion]"
+      },
+      "Page_DreamRun_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DreamRun"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total",
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[DreamRun]"
       },
       "Page_Message_": {
         "properties": {

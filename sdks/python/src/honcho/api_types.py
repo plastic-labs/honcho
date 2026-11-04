@@ -551,6 +551,78 @@ class QueueStatusResponse(BaseModel):
 
 
 # ==============================================================================
+# Representation History Types
+# ==============================================================================
+
+
+class DreamRunResponse(BaseModel):
+    """One dream over a representation: the observer's model of the observed peer."""
+
+    id: str
+    """The dream's run ID."""
+    observer_id: str
+    observed_id: str
+    dream_type: str | None = None
+    trigger_reason: str | None = None
+    status: Literal["running", "completed", "failed", "interrupted"]
+    """``failed`` and ``interrupted`` runs can still have changes."""
+    created_count: int
+    removed_count: int
+    peer_card_updated: bool
+    started_at: datetime.datetime
+    finished_at: datetime.datetime | None = None
+    pruned_at: datetime.datetime | None = None
+    """When retention first deleted some of this run's changes. After that the run
+    keeps only the created conclusions that still exist; the counts are unchanged."""
+
+
+class DreamConclusionRef(BaseModel):
+    """A conclusion a dream referenced, resolved when the run is read."""
+
+    id: str
+    content: str | None = None
+    """None when ``status`` is ``unavailable``."""
+    level: str | None = None
+    status: Literal["current", "removed", "unavailable"]
+    removed_in_run: str | None = None
+    """The dream that removed it, when ``status`` is ``removed``."""
+
+
+class DreamCreatedConclusion(BaseModel):
+    """A conclusion a dream created, with the conclusions it was derived from."""
+
+    conclusion: DreamConclusionRef
+    sources: list[DreamConclusionRef] = Field(default_factory=list)
+    specialist: str | None = None
+
+
+class DreamRemovedConclusion(BaseModel):
+    """A conclusion a dream removed, as it read when it was removed."""
+
+    id: str
+    content: str
+    level: str | None = None
+    replaced_by: str | None = None
+    """Set when a conclusion from the same dream superseded this one."""
+    specialist: str | None = None
+
+
+class DreamPeerCardChange(BaseModel):
+    """The peer card before the dream's first update and after its last."""
+
+    before: list[str] | None = None
+    after: list[str]
+
+
+class DreamRunDetailResponse(DreamRunResponse):
+    """A dream run with every change it committed."""
+
+    created: list[DreamCreatedConclusion] = Field(default_factory=list)
+    removed: list[DreamRemovedConclusion] = Field(default_factory=list)
+    peer_card: DreamPeerCardChange | None = None
+
+
+# ==============================================================================
 # Dialectic (Chat) Types
 # ==============================================================================
 

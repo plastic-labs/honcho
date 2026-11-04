@@ -14,6 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from .aio import HonchoAio
 from .api_types import (
+    DreamRunDetailResponse,
+    DreamRunResponse,
     MessageResponse,
     PeerConfig,
     PeerResponse,
@@ -1050,6 +1052,67 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 "dream_type": "omni",
             },
         )
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    def dreams(
+        self,
+        observed: str | PeerBase | None = None,
+        observer: str | PeerBase | None = None,
+        *,
+        page: int = 1,
+        size: int = 50,
+    ) -> SyncPage[DreamRunResponse, DreamRunResponse]:
+        """
+        List dream runs in the workspace, newest first (Representation History).
+
+        Each run records what one dream changed in a representation. Runs are
+        kept for the server's retention window (30 days by default).
+
+        Args:
+            observed: Only runs about this peer (ID string or Peer object).
+            observer: Only runs from this observer's perspective. Combine with
+                ``observed`` for a single representation.
+            page: Page number (1-indexed). Default: 1.
+            size: Number of items per page. Default: 50.
+
+        Returns:
+            A SyncPage of dream runs.
+        """
+        self._ensure_workspace()
+        body: dict[str, Any] = {}
+        if observed is not None:
+            body["observed_id"] = resolve_id(observed)
+        if observer is not None:
+            body["observer_id"] = resolve_id(observer)
+
+        def fetch(next_page: int) -> dict[str, Any]:
+            return self._http.post(
+                routes.dreams_list(self.workspace_id),
+                body=body or None,
+                query={"page": next_page, "size": size},
+            )
+
+        def fetch_next(
+            next_page: int,
+        ) -> SyncPage[DreamRunResponse, DreamRunResponse]:
+            return SyncPage(fetch(next_page), DreamRunResponse, None, fetch_next)
+
+        return SyncPage(fetch(page), DreamRunResponse, None, fetch_next)
+
+    def get_dream(self, run_id: str) -> DreamRunDetailResponse:
+        """
+        Get one dream run with every change it committed.
+
+        The response lists the conclusions the dream created with the
+        conclusions each was derived from, the conclusions it removed as they
+        read when removed, and the peer card before and after.
+
+        Args:
+            run_id: The dream's run ID, from ``dreams()``.
+        """
+        self._ensure_workspace()
+        data = self._http.get(routes.dream(self.workspace_id, run_id))
+        return DreamRunDetailResponse.model_validate(data)
 
     @property
     def conclusions(self) -> WorkspaceConclusions:

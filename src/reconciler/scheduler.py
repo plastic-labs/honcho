@@ -55,6 +55,7 @@ def backfill_task(backfill: Backfill) -> ReconcilerTask:
 
 # Task intervals
 QUEUE_CLEANUP_INTERVAL_SECONDS = 12 * 3600  # 12 hours
+DREAM_HISTORY_PRUNE_INTERVAL_SECONDS = 12 * 3600  # 12 hours
 
 # Task registry - add new tasks here
 RECONCILER_TASKS: dict[str, ReconcilerTask] = {
@@ -70,6 +71,12 @@ RECONCILER_TASKS: dict[str, ReconcilerTask] = {
         work_unit_key="reconciler:cleanup_queue",
         interval_seconds=QUEUE_CLEANUP_INTERVAL_SECONDS,
         payload={"reconciler_type": ReconcilerType.CLEANUP_QUEUE.value},
+    ),
+    "prune_dream_history": ReconcilerTask(
+        name="prune_dream_history",
+        work_unit_key="reconciler:prune_dream_history",
+        interval_seconds=DREAM_HISTORY_PRUNE_INTERVAL_SECONDS,
+        payload={"reconciler_type": ReconcilerType.PRUNE_DREAM_HISTORY.value},
     ),
     **{task.name: task for task in map(backfill_task, BACKFILLS.values())},
 }

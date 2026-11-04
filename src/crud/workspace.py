@@ -22,6 +22,7 @@ from src.cache.client import (
 )
 from src.config import settings
 from src.crud.deriver import active_queue_session_match, queue_item_tenant_match
+from src.crud.dream_history import delete_workspace_history
 from src.crud.lifecycle import (
     live_message_row,
     live_peer_row,
@@ -428,6 +429,7 @@ async def delete_workspace(
     # then messages
 
     # then webhook endpoints
+    # then dream history
     # then session_peers
     # then sessions
     # then peers
@@ -512,12 +514,16 @@ async def delete_workspace(
             )
         )
         await db.execute(
+            delete(models.Peer).where(models.Peer.workspace_name == workspace_name)
+        )
+        # After the documents and peers: a dream locks the document or peer it
+        # changes before its run. Before the sessions: session deletion takes
+        # its history before its session row.
+        await delete_workspace_history(db, workspace_name)
+        await db.execute(
             delete(models.Session).where(
                 models.Session.workspace_name == workspace_name
             )
-        )
-        await db.execute(
-            delete(models.Peer).where(models.Peer.workspace_name == workspace_name)
         )
         await db.delete(honcho_workspace)
         await db.commit()

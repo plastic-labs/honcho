@@ -141,6 +141,52 @@ honcho doctor
 ```
 
 
+## honcho dream
+
+List dreams and inspect what each one changed in a peer's representation.
+
+<AccordionGroup>
+<Accordion title="inspect">
+Show what one dream changed.
+
+Lists the conclusions it created, each with the conclusions it was derived
+from; the conclusions it removed, as they read when removed; and the peer
+card before and after. Each source shows where it stands now: current,
+removed (and by which dream), or unavailable once deleted or removed longer
+ago than history is kept.
+
+```bash
+honcho dream inspect <run_id>
+```
+
+<ParamField path="run_id" type="string" required />
+</Accordion>
+<Accordion title="list">
+List dreams in the workspace, newest first.
+
+Pass -p to see the dreams about one peer, and --observer to narrow to one
+observer's model of that peer. `honcho dream inspect \<id>` shows what a
+dream changed.
+
+```bash
+honcho dream list
+```
+
+<ParamField path="--observer" type="string">
+  Only dreams from this observer's perspective (with -p: one representation).
+</ParamField>
+<ParamField path="--limit" type="number" default="20">
+  Dreams per page.
+</ParamField>
+<ParamField path="--page" type="number" default="1">
+  Page number, newest dreams first.
+</ParamField>
+<ParamField path="--peer" type="string">
+  Only dreams about this peer (the observed peer). Short alias: `-p`.
+</ParamField>
+</Accordion>
+</AccordionGroup>
+
 ## honcho help
 
 Show help message.

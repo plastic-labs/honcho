@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
+from src.crud.dream_history import DreamHistoryTarget
 from src.utils.agent_tools import (
     _TOOL_HANDLERS,  # pyright: ignore[reportPrivateUsage]
     _WORKSPACE_TOOL_HANDLERS,  # pyright: ignore[reportPrivateUsage]
@@ -632,8 +633,9 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
+            history: DreamHistoryTarget | None = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed, deduplicate)
+            _ = (workspace_name, observer, observed, deduplicate, history)
             created_documents.extend(documents)
             return crud.CreateDocumentsResult(created_documents=documents)
 
@@ -695,8 +697,9 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
+            history: DreamHistoryTarget | None = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed, deduplicate)
+            _ = (workspace_name, observer, observed, deduplicate, history)
             created_documents.extend(documents)
             return crud.CreateDocumentsResult(created_documents=documents)
 
@@ -756,8 +759,9 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
+            history: DreamHistoryTarget | None = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed, deduplicate)
+            _ = (workspace_name, observer, observed, deduplicate, history)
             created_documents.extend(documents)
             return crud.CreateDocumentsResult(created_documents=documents)
 
@@ -814,8 +818,9 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
+            history: DreamHistoryTarget | None = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed, deduplicate)
+            _ = (workspace_name, observer, observed, deduplicate, history)
             return crud.CreateDocumentsResult(created_documents=documents)
 
         monkeypatch.setattr(
@@ -909,8 +914,9 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
+            history: DreamHistoryTarget | None = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed)
+            _ = (workspace_name, observer, observed, history)
             captured["deduplicate"] = deduplicate
             return crud.CreateDocumentsResult(created_documents=documents)
 

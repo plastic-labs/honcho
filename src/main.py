@@ -35,6 +35,7 @@ from src.reconciler import ReconcilerScheduler, set_reconciler_scheduler
 from src.routers import (
     conclusions,
     deriver_metrics,
+    dreams,
     keys,
     messages,
     peers,
@@ -237,6 +238,7 @@ app.include_router(sessions.router, prefix="/v3")
 app.include_router(scopes.router, prefix="/v3")
 app.include_router(messages.router, prefix="/v3")
 app.include_router(conclusions.router, prefix="/v3")
+app.include_router(dreams.router, prefix="/v3")
 app.include_router(keys.router, prefix="/v3")
 # The tenant registry is the hosting provisioner's API, not part of the public
 # surface: keep it out of the published schema. Its routes still refuse every

@@ -144,6 +144,69 @@ export interface PeerChatResponse {
   evidence?: Evidence | null
 }
 
+/** One dream over a representation: the observer's model of the observed peer. */
+export interface DreamRun {
+  /** The dream's run ID. */
+  id: string
+  observer_id: string
+  observed_id: string
+  dream_type: string | null
+  trigger_reason: string | null
+  /** `failed` and `interrupted` runs can still have changes. */
+  status: 'running' | 'completed' | 'failed' | 'interrupted'
+  created_count: number
+  removed_count: number
+  peer_card_updated: boolean
+  started_at: string
+  finished_at: string | null
+  /**
+   * When retention first deleted some of this run's changes. After that the run
+   * keeps only the created conclusions that still exist; the counts are unchanged.
+   */
+  pruned_at: string | null
+}
+
+/** A conclusion a dream referenced, resolved when the run is read. */
+export interface DreamConclusionRef {
+  id: string
+  /** Null when `status` is `unavailable`. */
+  content: string | null
+  level: 'explicit' | 'deductive' | 'inductive' | 'contradiction' | null
+  status: 'current' | 'removed' | 'unavailable'
+  /** The dream that removed it, when `status` is `removed`. */
+  removed_in_run: string | null
+}
+
+/** A conclusion a dream created, with the conclusions it was derived from. */
+export interface DreamCreatedConclusion {
+  conclusion: DreamConclusionRef
+  sources: DreamConclusionRef[]
+  specialist: string | null
+}
+
+/** A conclusion a dream removed, as it read when it was removed. */
+export interface DreamRemovedConclusion {
+  id: string
+  content: string
+  level: 'explicit' | 'deductive' | 'inductive' | 'contradiction' | null
+  /** Set when a conclusion from the same dream superseded this one. */
+  replaced_by: string | null
+  specialist: string | null
+}
+
+/** The peer card before the dream's first update and after its last. */
+export interface DreamPeerCardChange {
+  before: string[] | null
+  after: string[]
+}
+
+/** A dream run with every change it committed. */
+export interface DreamRunDetail extends DreamRun {
+  created: DreamCreatedConclusion[]
+  removed: DreamRemovedConclusion[]
+  peer_card: DreamPeerCardChange | null
+}
+
 export interface WorkspaceChatParams {
   query: string
   stream?: boolean
