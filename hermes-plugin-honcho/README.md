@@ -205,7 +205,16 @@ In gateway deployments (Telegram, Discord, Slack, etc.) each user arrives with a
 | `userPeerAliases` | object | `{}` | Map of runtime IDs to peer IDs (`{"7654321": "alice"}`). Many-to-one is the intended pattern — alias all your runtime IDs to one peer name. One-to-many is not supported; one runtime ID resolves to exactly one peer |
 | `runtimePeerPrefix` | string | `""` | Prepended to unknown runtime IDs to namespace them (e.g. `"telegram_"` → `telegram_7654321`). Used only when no alias matches. Prevents collisions between platforms whose runtime IDs share the same shape |
 
-A dashboard login is a runtime identity too. The desktop passes `<provider>:<user id>` (for example `basic:alice` or `oidc:google-oauth2|1183…`) as the runtime user, so a logged-in session resolves like a gateway user: alias, then prefix, else the raw id. Enabling dashboard login on an install that ran on `peerName` moves new sessions to that peer. Keep the old history with `pinUserPeer: true` or a `userPeerAliases` entry for the login id. Without a login the desktop still uses `peerName`.
+**The machine owner is `peerName`.** Hermes treats every signed-in surface (Desktop, the web app, a phone signed in through it, the TUI, one-shot runs) as the machine's own OS account and passes it as the runtime user `uid:<n>`. When that id is this machine's own account, the session resolves to `peerName`, so your history stays on one peer. Other ids are unaffected.
+
+Other people:
+
+- **separate installs, one Honcho workspace** (two laptops, one household): set each install's `peerName` to its person.
+- **one computer, separate OS accounts:** only the account Hermes runs under is the owner. Anyone else keeps their own `uid-<n>` peer; `userPeerAliases: {"uid:1001": "alice"}` names it.
+- **an install that belongs to someone else, or a shared login:** set `peerName` to that person, or add an alias for the owner's id (`{"uid:501": "household"}`); an alias beats the owner rule.
+- **several people on one Hermes server:** Hermes treats every web or phone login as the owner, so aliases can't tell them apart. Give each person their own profile (each with its own `peerName`), or let others reach it over Telegram/Discord, where they keep their own ids.
+
+On Windows the owner id is a SID and isn't matched yet; add a `userPeerAliases` entry for it to land on `peerName`.
 
 > **Deprecated:** `pinPeerName` is a legacy alias for `pinUserPeer`, still read for back-compat (`pinUserPeer` wins where both are set). `hermes honcho setup` migrates it onto `pinUserPeer` on touch and never writes it.
 
@@ -215,13 +224,14 @@ A dashboard login is a runtime identity too. The desktop passes `<provider>:<use
 1. pinUserPeer / pinPeerName=true → return peerName (ignore runtime ID)
 2. userPeerAliases[runtime_id]   → return aliased peer
 3. userPeerAliases[runtime_id_alt] → check alt-ID too (Telegram UID + username, etc.)
-4. runtimePeerPrefix + runtime_id → namespaced peer, with sha256 collision escalation
-5. raw sanitized runtime_id      → fallback peer
-6. peerName                      → no runtime ID at all (CLI/TUI)
-7. neither                       → session init fails with a one-time notice; no peer is minted
+4. runtime_id is this machine's owner (uid:<n>) → peerName, when set
+5. runtimePeerPrefix + runtime_id → namespaced peer, with sha256 collision escalation
+6. raw sanitized runtime_id      → fallback peer
+7. peerName                      → no runtime ID at all (CLI/TUI)
+8. neither                       → session init fails with a one-time notice; no peer is minted
 ```
 
-Step 7 used to derive a peer from the session key (`user-default-<dir>`). That put a desktop or CLI session with no `peerName` on a phantom peer per directory, so its turns and memory never reached the operator's own peer (#93326). Set `peerName` (`hermes honcho peer --user <name>`) or run under a gateway that supplies a user ID.
+Step 8 used to derive a peer from the session key (`user-default-<dir>`). That put a desktop or CLI session with no `peerName` on a phantom peer per directory, so its turns and memory never reached the operator's own peer (#93326). Set `peerName` (`hermes honcho peer --user <name>`) or run under a gateway that supplies a user ID.
 
 **Why no `pinAiPeer`?** The AI peer is already pinned by construction — `aiPeer` is the only AI-side identity setting and the resolver never overrides it. Only the user-side peer has the runtime-vs-config tension that `pinUserPeer` resolves.
 
