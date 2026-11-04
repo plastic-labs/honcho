@@ -33,6 +33,14 @@ def _response(content: str) -> HonchoLLMCallResponse[str]:
     )
 
 
+def _validated(response: HonchoLLMCallResponse[Any], kwargs: dict[str, Any]) -> Any:
+    """What the executor does with the hook it is handed."""
+    validate = kwargs.get("validate_response")
+    if validate is not None:
+        validate(response)
+    return response
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "max_input_tokens",
@@ -49,9 +57,11 @@ async def test_refusal_is_retried_through_to_the_fallback(
     goes to the fallback model and its accepted response is returned."""
     models: list[str] = []
 
-    async def inner(_provider: str, model: str, *_args: Any, **_kwargs: Any) -> Any:
+    async def inner(_provider: str, model: str, *_args: Any, **kwargs: Any) -> Any:
         models.append(model)
-        return _response("good" if model == "fallback-model" else "")
+        return _validated(
+            _response("good" if model == "fallback-model" else ""), kwargs
+        )
 
     def validate(response: HonchoLLMCallResponse[Any]) -> None:
         if not response.content:
@@ -76,7 +86,10 @@ async def test_refusal_is_retried_through_to_the_fallback(
 
 @pytest.mark.asyncio
 async def test_refusal_on_every_attempt_raises_the_hook_error() -> None:
-    inner = AsyncMock(return_value=_response(""))
+    async def refused(*_args: Any, **kwargs: Any) -> Any:
+        return _validated(_response(""), kwargs)
+
+    inner = AsyncMock(side_effect=refused)
 
     def validate(_response: HonchoLLMCallResponse[Any]) -> None:
         raise Refused

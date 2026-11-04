@@ -32,6 +32,8 @@ from pydantic import BaseModel, ConfigDict, Field, validate_call
 
 from .api_types import (
     ConclusionResponse,
+    DreamRunDetailResponse,
+    DreamRunResponse,
     MessageCreateParams,
     MessageResponse,
     PeerCardResponse,
@@ -349,6 +351,9 @@ class HonchoAio(AsyncMetadataConfigMixin):
         page: int = 1,
         size: int = 50,
         reverse: bool = False,
+        scope: str | None = None,
+        in_no_scope: bool = False,
+        include_scopes: bool = False,
     ) -> AsyncPage[SessionResponse, Session]:
         """
         Get all sessions in the current workspace asynchronously.
@@ -358,14 +363,29 @@ class HonchoAio(AsyncMetadataConfigMixin):
             page: Page number (1-indexed). Default: 1.
             size: Number of items per page. Default: 50.
             reverse: If True, reverses the default ordering. Default: False.
+            scope: Only list sessions in this scope. The server returns 404 if the
+                scope does not exist.
+            in_no_scope: Only list sessions that are in no scope. Mutually
+                exclusive with ``scope``.
+            include_scopes: Set each returned session's ``scopes`` to the names of
+                the scopes it is in. Default: False.
         """
         await self._honcho._ensure_workspace_async()
+        body: dict[str, Any] = {}
+        if filters:
+            body["filters"] = filters
+        if scope is not None:
+            body["scope"] = scope
+        if in_no_scope:
+            body["in_no_scope"] = True
         query: dict[str, Any] = {"page": page, "size": size}
         if reverse:
             query["reverse"] = "true"
+        if include_scopes:
+            query["include_scopes"] = "true"
         data = await self._honcho._async_http_client.post(
             routes.sessions_list(self._honcho.workspace_id),
-            body={"filters": filters} if filters else None,
+            body=body or None,
             query=query,
         )
 
@@ -379,16 +399,15 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 created_at=session.created_at,
                 uid=session.uid,
                 is_active=session.is_active,
+                scopes=session.scopes,
             )
 
         async def fetch_next(next_page: int) -> AsyncPage[SessionResponse, Session]:
             """Fetch the next page while preserving filters and ordering."""
-            next_query: dict[str, Any] = {"page": next_page, "size": size}
-            if reverse:
-                next_query["reverse"] = "true"
+            next_query = {**query, "page": next_page}
             next_data = await self._honcho._async_http_client.post(
                 routes.sessions_list(self._honcho.workspace_id),
-                body={"filters": filters} if filters else None,
+                body=body or None,
                 query=next_query,
             )
             return AsyncPage(next_data, SessionResponse, transform, fetch_next)
@@ -471,27 +490,38 @@ class HonchoAio(AsyncMetadataConfigMixin):
 
     async def scopes(
         self,
+        filters: dict[str, object] | None = None,
         *,
         page: int = 1,
         size: int = 50,
         reverse: bool = False,
+        include_session_count: bool = False,
     ) -> AsyncPage[ScopeResponse, Scope]:
         """
         Get all scopes in the current workspace asynchronously.
 
         Args:
+            filters: Optional filter criteria. ``id`` matches the scope name, e.g.
+                ``{"id": {"icontains": "sup"}}``.
             page: Page number (1-indexed). Default: 1.
             size: Number of items per page. Default: 50.
             reverse: If True, reverses the default ordering. Default: False.
+            include_session_count: Set each returned scope's ``session_count``.
+                Default: False.
         """
         await self._honcho._ensure_workspace_async()
 
         async def fetch(next_page: int) -> dict[str, Any]:
+            """Fetch one page of scopes with the caller's filters and options."""
             query: dict[str, Any] = {"page": next_page, "size": size}
             if reverse:
                 query["reverse"] = "true"
+            if include_session_count:
+                query["include_session_count"] = "true"
             return await self._honcho._async_http_client.post(
-                routes.scopes_list(self._honcho.workspace_id), query=query
+                routes.scopes_list(self._honcho.workspace_id),
+                body={"filters": filters} if filters else None,
+                query=query,
             )
 
         def transform(scope: ScopeResponse) -> Scope:
@@ -501,6 +531,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 self._honcho,
                 metadata=scope.metadata,
                 created_at=scope.created_at,
+                session_count=scope.session_count,
             )
 
         async def fetch_next(next_page: int) -> AsyncPage[ScopeResponse, Scope]:
@@ -696,6 +727,45 @@ class HonchoAio(AsyncMetadataConfigMixin):
             query=query if query else None,
         )
         return QueueStatusResponse.model_validate(data)
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def dreams(
+        self,
+        observed: str | PeerBase | None = None,
+        observer: str | PeerBase | None = None,
+        *,
+        page: int = 1,
+        size: int = 50,
+    ) -> AsyncPage[DreamRunResponse, DreamRunResponse]:
+        """List dream runs in the workspace, newest first, asynchronously."""
+        await self._honcho._ensure_workspace_async()
+        body: dict[str, Any] = {}
+        if observed is not None:
+            body["observed_id"] = resolve_id(observed)
+        if observer is not None:
+            body["observer_id"] = resolve_id(observer)
+
+        async def fetch(next_page: int) -> dict[str, Any]:
+            return await self._honcho._async_http_client.post(
+                routes.dreams_list(self._honcho.workspace_id),
+                body=body or None,
+                query={"page": next_page, "size": size},
+            )
+
+        async def fetch_next(
+            next_page: int,
+        ) -> AsyncPage[DreamRunResponse, DreamRunResponse]:
+            return AsyncPage(await fetch(next_page), DreamRunResponse, None, fetch_next)
+
+        return AsyncPage(await fetch(page), DreamRunResponse, None, fetch_next)
+
+    async def get_dream(self, run_id: str) -> DreamRunDetailResponse:
+        """Get one dream run with every change it committed, asynchronously."""
+        await self._honcho._ensure_workspace_async()
+        data = await self._honcho._async_http_client.get(
+            routes.dream(self._honcho.workspace_id, run_id)
+        )
+        return DreamRunDetailResponse.model_validate(data)
 
     @property
     def conclusions(self) -> "WorkspaceConclusionsAio":
@@ -2036,7 +2106,7 @@ class ConclusionsViewAio:
 
         Returns:
             The Conclusion object, including its attribution fields
-            (`source_ids`, `times_derived`)
+            (`source_ids`, `source_message_ids`, `times_derived`)
 
         Raises:
             NotFoundError: If no conclusion with the given ID exists in this
@@ -2211,6 +2281,19 @@ class ScopeAio:
         await self._scope._honcho._ensure_workspace_async()
         await self._scope._honcho._async_http_client.post(
             routes.scope_sessions(self._scope.workspace_id, self._scope.id),
+            body={"session_ids": session_ids},
+        )
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def remove_sessions(self, sessions: Sequence[str | SessionBase]) -> None:
+        """Remove sessions from this scope in one request, asynchronously.
+
+        See Scope.remove_sessions for the all-or-nothing batch semantics.
+        """
+        session_ids = resolve_scope_membership(sessions)
+        await self._scope._honcho._ensure_workspace_async()
+        await self._scope._honcho._async_http_client.post(
+            routes.scope_sessions_remove(self._scope.workspace_id, self._scope.id),
             body={"session_ids": session_ids},
         )
 

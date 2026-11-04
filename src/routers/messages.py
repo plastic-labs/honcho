@@ -11,12 +11,15 @@ from fastapi import (
     Query,
     UploadFile,
 )
+from fastapi.exceptions import RequestValidationError
 from fastapi_pagination.bases import AbstractParams
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from src import crud, schemas
 from src.config import settings
+from src.db import tenant_context
 from src.dependencies import db, read_db
 from src.deriver import enqueue
 from src.exceptions import FileTooLargeError, ResourceNotFoundException
@@ -91,12 +94,20 @@ async def parse_upload_form(
             logger.warning(f"Failed to parse created_at: {created_at}")
             parsed_created_at = None
 
-    return schemas.MessageUploadCreate(
-        peer_id=peer_id,
-        metadata=parsed_metadata,
-        configuration=parsed_configuration,
-        created_at=parsed_created_at,
-    )
+    try:
+        return schemas.MessageUploadCreate(
+            peer_id=peer_id,
+            metadata=parsed_metadata,
+            configuration=parsed_configuration,
+            created_at=parsed_created_at,
+        )
+    except ValidationError as exc:
+        raise RequestValidationError(
+            [
+                {**error, "loc": ("body", *error["loc"])}
+                for error in exc.errors(include_url=False, include_input=False)
+            ]
+        ) from None
 
 
 @router.post(
@@ -165,7 +176,8 @@ async def create_messages_for_session(
         ]
 
         # Enqueue all messages in one call
-        background_tasks.add_task(enqueue, payloads)
+        # ai: tenant read now, in the request, for the reason EmbedTaskGate.try_schedule gives
+        background_tasks.add_task(enqueue, payloads, tenant_id=tenant_context.get())
 
         # Embed immediately so messages are searchable within seconds; the
         # reconciler is the fallback for anything left pending. Scheduling is
@@ -250,7 +262,8 @@ async def create_messages_with_file(
         for message in created_messages
     ]
 
-    background_tasks.add_task(enqueue, payloads)
+    # ai: tenant read now, in the request, for the reason EmbedTaskGate.try_schedule gives
+    background_tasks.add_task(enqueue, payloads, tenant_id=tenant_context.get())
 
     # Embed immediately so messages are searchable within seconds; the
     # reconciler is the fallback for anything left pending. Scheduling is

@@ -25,6 +25,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 - `honcho scope` — list, create, inspect, sessions, add-sessions, remove-session, status
 - `honcho message` — list and get
 - `honcho conclusion` — list, search, create, delete
+- `honcho dream` — list, inspect (what each dream changed; workspace or admin key)
 
 ## Rules
 
@@ -59,6 +60,13 @@ honcho peer inspect <peer_id> --json
 honcho peer card <peer_id> --json
 honcho conclusion list --observer <peer_id> --json
 honcho conclusion search "topic" --observer <peer_id> --json
+```
+
+When a fact appeared, vanished, or the card changed and nothing in the transcript explains it, check the dreams:
+
+```bash
+honcho dream list -p <peer_id> --json        # newest first
+honcho dream inspect <run_id> --json         # created (with sources), removed, card before/after
 ```
 
 ### 4. Debug a session

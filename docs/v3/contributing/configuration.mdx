@@ -373,6 +373,7 @@ The Dialectic API provides theory-of-mind informed responses. It uses a tiered r
 # Global dialectic settings
 DIALECTIC_MAX_OUTPUT_TOKENS=8192
 DIALECTIC_MAX_INPUT_TOKENS=100000
+DIALECTIC_MAX_QUERY_LENGTH=10000  # Peer chat query limit, in characters
 DIALECTIC_SESSION_HISTORY_MAX_TOKENS=4096
 DIALECTIC_BUDGET_ENABLED=false  # budget line at levels with 3+ tool iterations
 DIALECTIC_BRIEF_ENABLED=false  # memory layout, counts, and dreamer map notes
@@ -530,6 +531,8 @@ DREAM_BUDGET_ENABLED=false  # budget line + write window for deduction/induction
 DREAM_NOTES_MODE=off  # working notes between dreams: off | shadow | on
 DREAM_NOTES_MAX_TOKENS=3000
 # DREAM_WRITE_WINDOW_ITERATIONS=2  # default: 15% of each specialist's limit
+DREAM_HISTORY_ENABLED=true  # Representation History: record each dream's changes
+DREAM_HISTORY_RETENTION_DAYS=30
 
 # Specialist model configs (each is independent)
 DREAM_DEDUCTION_MODEL_CONFIG__TRANSPORT=openai
@@ -548,8 +551,10 @@ Four of the seven tree types — `kdtree` (the default), `balltree`, `graph` and
 extra rather than as a base dependency (it pulls in scipy, ~200MB installed on
 Linux, for a subsystem that is disabled by default). Install it with
 `uv sync --extra surprisal`. The default Docker image does **not** include it,
-so enabling surprisal in a container requires adding the extra to the
-`uv sync` line in the Dockerfile.
+so build from source with `docker build --build-arg INSTALL_SURPRISAL=true .`
+or `INSTALL_SURPRISAL=true docker compose up -d --build` when using the example
+Compose file. This installs the dependencies; also set
+`DREAM_SURPRISAL__ENABLED=true` to enable sampling.
 
 `rptree`, `covertree` and `lsh` need only numpy and work out of the box. With
 `DREAM_SURPRISAL__ENABLED=false` (the default) none of this applies.
@@ -576,11 +581,14 @@ SESSION_OBSERVERS_LIMIT=10
 GET_CONTEXT_MAX_TOKENS=100000
 MAX_MESSAGE_SIZE=25000
 MAX_FILE_SIZE=5242880  # 5MB
+PAGINATION_COUNT_LIMIT=100000
 EMBED_MESSAGES=true
 EMBEDDING_MAX_INPUT_TOKENS=8192
 EMBEDDING_MAX_TOKENS_PER_REQUEST=300000
 NAMESPACE=honcho
 ```
+
+`PAGINATION_COUNT_LIMIT` caps the rows a list endpoint counts for `total`. Up to the limit `total` is exact; beyond it, `total` is the limit plus one (`100001` by default), raised just past the current page while a next page exists, so `pages` still carries a client to the end of the list. Cursor pagination (`?cursor=`) never counts.
 
 **Optional Integrations:**
 ```bash
@@ -599,11 +607,17 @@ when `TELEMETRY_ENABLED=true`. With telemetry off, Langfuse keys are ignored.
 `TELEMETRY_ENDPOINT` is not required: without it, Langfuse still gets traces
 and no CloudEvents are sent.
 
+Honcho uses Langfuse Python SDK v5, which requires Langfuse Cloud or a
+self-hosted Langfuse server at v4.59.0 or later. A self-hosted Langfuse v3
+server does not accept its traces.
+
 ### Database
 
 ```bash
 # Connection (required)
 DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+# Role that owns the schema and runs migrations; defaults to DB_CONNECTION_URI
+# DB_OWNER_CONNECTION_URI=postgresql+psycopg://owner:owner@localhost:5432/postgres
 
 # Pool settings
 DB_SCHEMA=public

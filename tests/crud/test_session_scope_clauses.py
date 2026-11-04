@@ -24,6 +24,7 @@ from src import models
 from src.config import settings
 from src.crud import message as message_crud
 from src.crud.message import resolve_session_scope_clauses
+from src.models import DEFAULT_TENANT_ID
 from src.utils.agent_tools import get_observation_context
 from src.utils.scopes import scope_peer_name
 
@@ -61,11 +62,21 @@ class _CapturingDB:
         # Observer only: membership becomes a correlated EXISTS, so only the
         # workspace and peer are bound — never the session names, which is what
         # keeps the parameter count from growing with membership.
-        (None, "observer-peer", True, ["observer-peer", "workspace"]),
+        (
+            None,
+            "observer-peer",
+            True,
+            [DEFAULT_TENANT_ID, "observer-peer", "workspace"],
+        ),
         # Allowlist only: caller-supplied and therefore bounded, so IN is fine.
         (["s1", "s2"], None, False, ["s1", "s2"]),
         # Both: the EXISTS is intersected with the bounded IN.
-        (["s1"], "observer-peer", True, ["observer-peer", "s1", "workspace"]),
+        (
+            ["s1"],
+            "observer-peer",
+            True,
+            [DEFAULT_TENANT_ID, "observer-peer", "s1", "workspace"],
+        ),
         # Neither: unrestricted, nothing filtered and nothing bound.
         (None, None, False, []),
     ],
@@ -155,7 +166,13 @@ async def test_get_observation_context_scope_costs_no_per_session_parameters() -
 
     # Everything bound is either a message id, the workspace, the peer, or the
     # ±1 adjacency window — nothing that scales with the peer's session count.
-    expected = set(message_ids) | {"workspace", "observer-peer", -1, 1}
+    expected = set(message_ids) | {
+        "workspace",
+        "observer-peer",
+        DEFAULT_TENANT_ID,
+        -1,
+        1,
+    }
     assert set(params.values()) <= expected
 
 

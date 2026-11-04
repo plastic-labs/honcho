@@ -8,19 +8,22 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
+from unittest.mock import AsyncMock
 
 import pytest
 from nanoid import generate as generate_nanoid
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, models
+from src import crud, models, schemas
 from src.config import settings
 from src.crud.message import (
     _fetch_messages_by_ids,  # pyright: ignore[reportPrivateUsage]
 )
 from src.crud.representation import RepresentationManager
+from src.deriver import consumer
 from src.utils.agent_tools import get_observation_context
+from src.utils.queue_payload import SummaryPayload
 from src.utils.search import fetch_messages_by_ids, search
 
 # Every row shares one embedding so semantic queries match all of them, and
@@ -147,7 +150,7 @@ async def test_message_reads_hide_tombstones(db_session: AsyncSession, target: T
 
     for stmt in (
         await crud.get_messages(ws, session),
-        await crud.get_messages(ws, session, token_limit=10_000),
+        await crud.get_messages(ws, session, reverse=True),
         await crud.get_messages(ws, session, message_count_limit=10),
     ):
         listed = {m.public_id for m in (await db_session.scalars(stmt)).all()}
@@ -158,6 +161,10 @@ async def test_message_reads_hide_tombstones(db_session: AsyncSession, target: T
 
     by_id = await crud.get_messages_id_range(db_session, ws, session)
     assert {m.public_id for m in by_id} == expected
+    token_limited = await crud.get_messages_id_range(
+        db_session, ws, session, token_limit=10_000
+    )
+    assert {m.public_id for m in token_limited} == expected
     by_seq = await crud.get_messages_by_seq_range(db_session, ws, session)
     assert {m.public_id for m in by_seq} == expected
 
@@ -420,3 +427,49 @@ async def test_conclusion_reads_hide_either_tombstoned_peer(db_session: AsyncSes
     assert visible(await crud.get_documents_by_ids(db_session, ws, list(ids))) == set()
     stmt = crud.get_documents_with_filters(ws, filters={"observer": "bystander"})
     assert visible((await db_session.scalars(stmt)).all()) == set()
+
+
+@pytest.mark.parametrize("target", TARGETS)
+async def test_summary_fallback_skips_tombstoned_source_and_parents(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, target: Target
+) -> None:
+    graph = await _seed(db_session)
+    message = await db_session.scalar(
+        select(models.Message).where(models.Message.public_id == graph.authored)
+    )
+    assert message is not None
+    queue_item = models.QueueItem(
+        id=1,
+        task_type="summary",
+        workspace_name=graph.workspace,
+        work_unit_key=f"summary:{graph.workspace}:{graph.session}",
+        message_id=message.id,
+        payload=SummaryPayload(
+            session_name=graph.session,
+            message_seq_in_session=message.seq_in_session,
+            configuration=schemas.ResolvedConfiguration.model_validate(
+                {
+                    "reasoning": {"enabled": True},
+                    "peer_card": {"use": True, "create": True},
+                    "summary": {
+                        "enabled": True,
+                        "messages_per_short_summary": 20,
+                        "messages_per_long_summary": 60,
+                    },
+                    "dream": {"enabled": True},
+                }
+            ),
+        ).model_dump(mode="json", exclude_none=True),
+    )
+    await _tombstone(db_session, graph, target)
+    summarize = AsyncMock()
+    monkeypatch.setattr(
+        "src.deriver.consumer.summarizer.summarize_if_needed", summarize
+    )
+    await consumer.process_item(queue_item)
+    if target == "none":
+        summarize.assert_awaited_once()
+        assert summarize.await_args is not None
+        assert summarize.await_args.args[4] == graph.authored
+    else:
+        summarize.assert_not_awaited()

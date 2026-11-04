@@ -4,11 +4,12 @@ from datetime import UTC, datetime
 from logging import getLogger
 
 import sentry_sdk
-from sqlalchemy import exists, func, select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
+from src.db import tenant_context
 from src.dependencies import tracked_db
 from src.schemas import DreamType
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
@@ -77,6 +78,11 @@ class DreamScheduler:
         # Cancel any existing dream for this collection
         await self.cancel_dream(work_unit_key)
 
+        # region ai
+        # create_task snapshots the current context (contextvars), so the ambient
+        # tenant set by process_work_unit rides into the detached timer and is still
+        # present in execute_dream after the delay — no need to thread tenant_id.
+        # endregion
         task = asyncio.create_task(
             self._delayed_dream(
                 work_unit_key,
@@ -106,7 +112,7 @@ class DreamScheduler:
         return False
 
     async def cancel_dreams_for_observed(
-        self, workspace_name: str, observed: str
+        self, workspace_name: str, observed: str, *, tenant_id: str | None = None
     ) -> set[str]:
         """
         Cancel all pending dreams where the observed peer matches.
@@ -117,17 +123,42 @@ class DreamScheduler:
         Args:
             workspace_name: The workspace to match
             observed: The observed peer name to match
+            tenant_id: Tenant to match under MULTI_TENANT; defaults to the
+                ambient tenant_context (callers on a request/work-unit path
+                are already tenant-bound)
 
         Returns:
             Set of work_unit_keys that were cancelled
         """
         cancelled: set[str] = set()
 
+        # region ai
+        # The tenant is part of the match, mirroring construct_work_unit_key:
+        # (workspace, observed) names recur across tenants, so a tenant-blind
+        # match lets one tenant's message activity cancel another tenant's
+        # pending dream. Fail closed like construct_work_unit_key — silently
+        # matching nothing would just leak un-cancelled dreams instead.
+        # endregion
+        if settings.MULTI_TENANT:
+            tenant = tenant_id or tenant_context.get()
+            if not tenant:
+                raise ValueError(
+                    "cancel_dreams_for_observed requires a tenant when "
+                    + "MULTI_TENANT is on, but none is in scope — pass tenant_id "
+                    + "or set tenant_context"
+                )
+        else:
+            tenant = None
+
         # Collect keys to cancel (can't modify dict while iterating)
         keys_to_cancel: list[str] = []
         for work_unit_key in self.pending_dreams:
             parsed = parse_work_unit_key(work_unit_key)
-            if parsed.workspace_name == workspace_name and parsed.observed == observed:
+            if (
+                parsed.workspace_name == workspace_name
+                and parsed.observed == observed
+                and parsed.tenant_id == tenant
+            ):
                 keys_to_cancel.append(work_unit_key)
 
         # Cancel each matching dream
@@ -190,10 +221,19 @@ class DreamScheduler:
         from src.deriver.enqueue import enqueue_dream
         from src.utils.config_helpers import get_configuration
 
+        # region ai
+        # Go through tracked_db (RLS-scoped), not service_db: the reads below match
+        # Document/session/workspace by name only, and those names are not unique
+        # across tenants — a bypass session would read another tenant's rows. The
+        # tenant is the ambient one carried in from the scheduling context via the
+        # create_task snapshot (see schedule_dream); tracked_db inherits it, and
+        # fails closed if it is somehow absent under MULTI_TENANT.
+        # endregion
         async with tracked_db("dream_session_lookup") as db:
             stmt = (
                 select(models.Document.session_name)
                 .where(
+                    models.Document.tenant_id == models.scoped_tenant_id(),
                     models.Document.workspace_name == workspace_name,
                     models.Document.observer == observer,
                     models.Document.observed == observed,
@@ -326,11 +366,11 @@ async def check_and_schedule_dream(
 
     # Count explicit-level docs only: dreamer output (deductive/inductive/
     # contradiction) would inflate the threshold and create a feedback loop.
-    count_stmt = select(func.count(models.Document.id)).where(
-        models.Document.workspace_name == collection.workspace_name,
-        models.Document.observer == collection.observer,
-        models.Document.observed == collection.observed,
-        models.Document.level == "explicit",
+    count_stmt = select(models.Collection.explicit_count).where(
+        models.Collection.tenant_id == collection.tenant_id,
+        models.Collection.workspace_name == collection.workspace_name,
+        models.Collection.observer == collection.observer,
+        models.Collection.observed == collection.observed,
     )
     current_explicit_count = int(await db.scalar(count_stmt) or 0)
 
@@ -382,6 +422,11 @@ async def check_and_schedule_dream(
         # Queue is source of truth for in-flight dreams; mirrors
         # uq_queue_dream_pending_work_unit_key.
         enabled_dream_types = settings.DREAM.ENABLED_TYPES
+        # region ai
+        # Runs inside the deriver's representation processing, so the collection's
+        # tenant is the ambient tenant_context set by process_work_unit; the dedup
+        # keys (and the scheduled key below) pick it up so they are tenant-scoped.
+        # endregion
         pending_keys = [
             construct_work_unit_key(
                 collection.workspace_name,

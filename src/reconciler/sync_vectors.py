@@ -8,11 +8,13 @@ embeddings to the vector store on a rolling basis, healing any missed writes.
 import datetime
 import logging
 import time
+from collections.abc import Generator, Iterable, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Protocol, TypeVar, cast
 
 import sentry_sdk
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import and_, delete, or_, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 from sqlalchemy.sql import ColumnElement
@@ -20,18 +22,20 @@ from sqlalchemy.sql.functions import func
 
 from src import models
 from src.config import settings
-from src.dependencies import tracked_db
+from src.db import tenant_context
+from src.dependencies import service_db
 from src.embedding_client import embedding_client
-from src.exceptions import VectorStoreError
-from src.telemetry import prometheus_metrics
+from src.exceptions import VectorNamespaceUnresolved, VectorStoreError
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.types import embedding_call_purpose
 from src.vector_store import VectorRecord, VectorStore, get_external_vector_store
+from src.vector_store.tenant_namespace import prefix_for_tenant
 
 logger = logging.getLogger(__name__)
 
 # Constants
 RECONCILIATION_BATCH_SIZE = 50
+MESSAGE_CANDIDATE_FANOUT = 10
 RECONCILIATION_TIME_BUDGET_SECONDS = 240  # Leave headroom for other maintenance work
 MAX_SYNC_ATTEMPTS = 20  # After this many failures, mark as failed
 # Flat wait between sync attempts. With MAX_SYNC_ATTEMPTS=20 this gives ~3 hours
@@ -145,12 +149,19 @@ async def _get_message_embeddings_needing_sync(
 
     Note: "synced" = done forever, "failed" = permanent failure (manual intervention)
     """
-    # Step 1: pick distinct message_ids with at least one eligible pending row,
-    # prioritizing those with the oldest last_sync_at.
-    msg_id_stmt = (
+    # Step 1: pick distinct messages, as (tenant_id, message_id), with at least
+    # one eligible pending row, prioritizing those with the oldest last_sync_at.
+    # The key has tenant_id: the reconciler reads every tenant, and a message_id
+    # alone does not identify one tenant's message. The candidates come from
+    # an index-ordered walk of the oldest eligible rows, capped at
+    # batch_size * MESSAGE_CANDIDATE_FANOUT, so the aggregate never covers the
+    # whole pending set. A message's first appearance in that walk is its
+    # oldest chunk, so the order matches grouping over every pending row.
+    candidates = (
         select(
+            models.MessageEmbedding.tenant_id,
             models.MessageEmbedding.message_id,
-            func.min(models.MessageEmbedding.last_sync_at).label("oldest_attempt"),
+            models.MessageEmbedding.last_sync_at,
         )
         .where(
             and_(
@@ -158,13 +169,23 @@ async def _get_message_embeddings_needing_sync(
                 backoff_eligible(models.MessageEmbedding.last_sync_at),
             )
         )
-        .group_by(models.MessageEmbedding.message_id)
-        .order_by(func.min(models.MessageEmbedding.last_sync_at).asc().nullsfirst())
+        .order_by(models.MessageEmbedding.last_sync_at.asc().nullsfirst())
+        .limit(batch_size * MESSAGE_CANDIDATE_FANOUT)
+        .subquery()
+    )
+    msg_id_stmt = (
+        select(
+            candidates.c.tenant_id,
+            candidates.c.message_id,
+            func.min(candidates.c.last_sync_at).label("oldest_attempt"),
+        )
+        .group_by(candidates.c.tenant_id, candidates.c.message_id)
+        .order_by(func.min(candidates.c.last_sync_at).asc().nullsfirst())
         .limit(batch_size)
     )
     msg_id_rows = (await db.execute(msg_id_stmt)).all()
-    message_ids = [row[0] for row in msg_id_rows]
-    if not message_ids:
+    message_keys = [(row[0], row[1]) for row in msg_id_rows]
+    if not message_keys:
         return []
 
     # Step 2: claim all pending rows for those messages. Skip rows another
@@ -174,7 +195,10 @@ async def _get_message_embeddings_needing_sync(
         select(models.MessageEmbedding)
         .where(
             and_(
-                models.MessageEmbedding.message_id.in_(message_ids),
+                tuple_(
+                    models.MessageEmbedding.tenant_id,
+                    models.MessageEmbedding.message_id,
+                ).in_(message_keys),
                 models.MessageEmbedding.sync_state == "pending",
                 backoff_eligible(models.MessageEmbedding.last_sync_at),
             )
@@ -196,8 +220,10 @@ async def _bump_document_sync_attempts(
     for doc in documents:
         new_attempts = doc.sync_attempts + 1
         new_state = "failed" if new_attempts >= MAX_SYNC_ATTEMPTS else "pending"
+        # ai: tenant_id on every by-id write here — the PK is (tenant_id, id), so an id-only predicate can't seek it and reads every partition's index
         await db.execute(
             update(models.Document)
+            .where(models.Document.tenant_id == doc.tenant_id)
             .where(models.Document.id == doc.id)
             .values(
                 sync_state=new_state,
@@ -220,6 +246,7 @@ async def _bump_message_embedding_sync_attempts(
 
         await db.execute(
             update(models.MessageEmbedding)
+            .where(models.MessageEmbedding.tenant_id == emb.tenant_id)
             .where(models.MessageEmbedding.id == emb.id)
             .values(
                 sync_state=new_state,
@@ -230,35 +257,51 @@ async def _bump_message_embedding_sync_attempts(
 
 
 async def compute_chunk_positions(
-    db: AsyncSession, message_ids: list[str]
-) -> dict[int, int]:
-    """Map each MessageEmbedding row id to its 0-indexed chunk position within
-    its message.
+    db: AsyncSession, message_keys: Sequence[tuple[str, str]]
+) -> dict[tuple[str, int], int]:
+    """Map each MessageEmbedding row's ``(tenant_id, id)`` to its 0-indexed chunk
+    position within its message.
 
     Positions are derived from the full set of sibling rows for each message,
     ordered by ``(message_id, id)`` — never from a partial subset — so the
     ``{message_id}_{chunk_position}`` vector id stays stable no matter which
     rows a given caller claimed. Shared by the reconciler and the immediate
     embed path so the two writers always agree on vector ids.
+
+    ``message_keys`` are ``(tenant_id, message_id)`` pairs: the reconciler reads
+    every tenant, and a message_id alone does not identify one tenant's message.
     """
-    if not message_ids:
+    if not message_keys:
         return {}
 
+    # region ai
+    # Keyed by tenant as well as id: the PK is (tenant_id, id), so two tenants can
+    # hold the same numeric id (e.g. datasets imported from dedicated instances),
+    # and the reconciler calls this across tenants.
+    # endregion
     sibling_stmt = (
-        select(models.MessageEmbedding.id, models.MessageEmbedding.message_id)
-        .where(models.MessageEmbedding.message_id.in_(message_ids))
+        select(
+            models.MessageEmbedding.tenant_id,
+            models.MessageEmbedding.id,
+            models.MessageEmbedding.message_id,
+        )
+        .where(
+            tuple_(
+                models.MessageEmbedding.tenant_id, models.MessageEmbedding.message_id
+            ).in_(list(message_keys))
+        )
         .order_by(models.MessageEmbedding.message_id, models.MessageEmbedding.id)
     )
     sibling_rows = (await db.execute(sibling_stmt)).all()
 
-    embs_by_message: dict[str, list[int]] = {}
-    for emb_id, msg_id in sibling_rows:
-        embs_by_message.setdefault(msg_id, []).append(emb_id)
+    embs_by_message: dict[tuple[str, str], list[int]] = {}
+    for tenant_id, emb_id, msg_id in sibling_rows:
+        embs_by_message.setdefault((tenant_id, msg_id), []).append(emb_id)
 
-    chunk_position: dict[int, int] = {}
-    for emb_ids in embs_by_message.values():
+    chunk_position: dict[tuple[str, int], int] = {}
+    for (tenant_id, _), emb_ids in embs_by_message.items():
         for pos, emb_id in enumerate(emb_ids):
-            chunk_position[emb_id] = pos
+            chunk_position[(tenant_id, emb_id)] = pos
     return chunk_position
 
 
@@ -284,6 +327,70 @@ def build_message_vector_record(
             "peer_name": peer_name,
         },
     )
+
+
+class _TenantRow(Protocol):
+    tenant_id: Any
+
+
+_RowT = TypeVar("_RowT", bound=_TenantRow)
+
+
+def _tenant_groups(rows: Sequence[_RowT]) -> list[tuple[str | None, list[_RowT]]]:
+    """Split rows into per-tenant groups, in first-seen order; one group flag-off."""
+    # region ai
+    # The reconciler works across tenants, but an embedding call is billable to
+    # one. Grouping lets each call run with its tenant bound, so the telemetry it
+    # emits carries that tenant instead of arriving untenanted. Flag-off there is
+    # one tenant and the call stays a single batch, exactly as before.
+    # endregion
+    if not settings.MULTI_TENANT:
+        return [(None, list(rows))]
+    groups: dict[str, list[_RowT]] = {}
+    for row in rows:
+        groups.setdefault(row.tenant_id, []).append(row)
+    return list(groups.items())
+
+
+@contextmanager
+def _bound_tenant(tenant_id: str | None) -> Generator[None]:
+    """Bind ``tenant_context`` for the block; a no-op for ``None``."""
+    if tenant_id is None:
+        yield
+        return
+    token = tenant_context.set(tenant_id)
+    try:
+        yield
+    finally:
+        tenant_context.reset(token)
+
+
+async def _resolve_prefixes(
+    db: AsyncSession, tenant_ids: Iterable[str], noun: str
+) -> dict[str, str | None]:
+    """Each tenant's vector namespace prefix, or None when it can't be resolved."""
+    # region ai
+    # Resolved once per tenant and before any embedding call: in external-only
+    # mode an unresolvable tenant's rows have nowhere to go, so embedding them
+    # would be billed and thrown away on every retry. Contained per tenant rather
+    # than per batch: this selection spans every tenant, so one unresolvable
+    # tenant (no key yet, or a failed read) must not raise here and roll back the
+    # batch before any row's attempt counter moved, or its rows would stay
+    # pending, sort to the front of the next batch and wedge it forever. Its rows
+    # go into the same backoff accounting as any other persistent failure.
+    # endregion
+    prefixes: dict[str, str | None] = {}
+    for tenant_id in tenant_ids:
+        if tenant_id in prefixes:
+            continue
+        try:
+            prefixes[tenant_id] = await prefix_for_tenant(tenant_id, db)
+        except (VectorNamespaceUnresolved, VectorStoreError):
+            logger.warning(
+                "No vector namespace for tenant %s; deferring its %s", tenant_id, noun
+            )
+            prefixes[tenant_id] = None
+    return prefixes
 
 
 async def _sync_documents(
@@ -312,52 +419,82 @@ async def _sync_documents(
         settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED
     )
 
-    # Step 1: Re-embed documents missing embeddings in postgres (cases 2 & 3)
-    docs_needing_embed = [
-        doc for doc in documents if cast(list[float] | None, doc.embedding) is None
-    ]
-    freshly_embedded: dict[str, list[float]] = {}
+    prefixes = await _resolve_prefixes(
+        db, (doc.tenant_id for doc in documents), "documents"
+    )
 
-    if docs_needing_embed:
+    # Step 1: Re-embed documents missing embeddings in postgres (cases 2 & 3).
+    # External-only, skip rows whose tenant has no namespace (step 2 defers them).
+    docs_needing_embed = [
+        doc
+        for doc in documents
+        if cast(list[float] | None, doc.embedding) is None
+        and (store_in_postgres or prefixes[doc.tenant_id] is not None)
+    ]
+    # ai: keyed by (tenant_id, id), the PK — this batch spans tenants, and id alone is unique only within one
+    freshly_embedded: dict[tuple[str, str], list[float]] = {}
+
+    for tenant_id, group in _tenant_groups(docs_needing_embed):
         try:
-            contents = [doc.content for doc in docs_needing_embed]
-            with embedding_call_purpose(
-                EmbeddingCallPurpose.VECTOR_SYNC.value,
-                parent_category="reconciliation",
+            contents = [doc.content for doc in group]
+            with (
+                _bound_tenant(tenant_id),
+                embedding_call_purpose(
+                    EmbeddingCallPurpose.VECTOR_SYNC.value,
+                    parent_category="reconciliation",
+                ),
             ):
                 new_embeddings = await embedding_client.simple_batch_embed(
                     contents, on_oversize="truncate"
                 )
 
-            if len(new_embeddings) != len(docs_needing_embed):
+            if len(new_embeddings) != len(group):
                 logger.warning(
                     "Re-embedded %s/%s documents; remaining will be retried",
                     len(new_embeddings),
-                    len(docs_needing_embed),
+                    len(group),
                 )
 
-            for doc, emb in zip(docs_needing_embed, new_embeddings, strict=False):
-                freshly_embedded[doc.id] = emb
+            for doc, emb in zip(group, new_embeddings, strict=False):
+                freshly_embedded[(doc.tenant_id, doc.id)] = emb
                 if store_in_postgres:
                     doc.embedding = emb
         except Exception:
-            logger.exception("Failed to re-embed %s documents", len(docs_needing_embed))
+            logger.exception("Failed to re-embed %s documents", len(group))
 
     # Mark documents that failed to get an embedding
     failed_to_embed = [
-        doc for doc in docs_needing_embed if doc.id not in freshly_embedded
+        doc
+        for doc in docs_needing_embed
+        if (doc.tenant_id, doc.id) not in freshly_embedded
     ]
     if failed_to_embed:
         await _bump_document_sync_attempts(db, failed_to_embed)
         failed_count += len(failed_to_embed)
 
-    # Step 2: Build vector records and upsert to external store (all cases)
+    # Step 2: Build vector records and upsert to external store (all cases).
+    # A row that already failed to embed was bumped above; don't bump it twice.
+    already_bumped = {(doc.tenant_id, doc.id) for doc in failed_to_embed}
     by_namespace: dict[str, list[models.Document]] = {}
+    unresolved: list[models.Document] = []
     for doc in documents:
-        ns = external_vector_store.get_vector_namespace(
-            "document", doc.workspace_name, doc.observer, doc.observed
+        prefix = prefixes[doc.tenant_id]
+        if prefix is None:
+            if (doc.tenant_id, doc.id) not in already_bumped:
+                unresolved.append(doc)
+            continue
+        ns = await external_vector_store.get_vector_namespace(
+            "document",
+            doc.workspace_name,
+            doc.observer,
+            doc.observed,
+            prefix=prefix,
         )
         by_namespace.setdefault(ns, []).append(doc)
+
+    if unresolved:
+        await _bump_document_sync_attempts(db, unresolved)
+        failed_count += len(unresolved)
 
     for namespace, docs in by_namespace.items():
         docs_to_sync: list[models.Document] = []
@@ -367,7 +504,9 @@ async def _sync_documents(
             # Case 1: use existing embedding, Cases 2&3: use freshly embedded
             existing = cast(list[float] | None, doc.embedding)
             embedding = (
-                existing if existing is not None else freshly_embedded.get(doc.id)
+                existing
+                if existing is not None
+                else freshly_embedded.get((doc.tenant_id, doc.id))
             )
             if embedding is None:
                 continue
@@ -394,7 +533,11 @@ async def _sync_documents(
             await external_vector_store.upsert_many(namespace, vector_records)
             await db.execute(
                 update(models.Document)
-                .where(models.Document.id.in_([d.id for d in docs_to_sync]))
+                .where(
+                    tuple_(models.Document.tenant_id, models.Document.id).in_(
+                        [(d.tenant_id, d.id) for d in docs_to_sync]
+                    )
+                )
                 .values(sync_state="synced", last_sync_at=func.now(), sync_attempts=0)
             )
             synced_count += len(docs_to_sync)
@@ -444,44 +587,58 @@ async def _sync_message_embeddings(
         settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED
     )
 
-    # Step 1: Re-embed message embeddings missing vectors in postgres (cases 2 & 3)
-    embs_needing_embed: list[models.MessageEmbedding] = [
-        emb for emb in embeddings if emb.embedding is None
-    ]
-    freshly_embedded: dict[int, list[float]] = {}
+    prefixes = (
+        await _resolve_prefixes(db, (emb.tenant_id for emb in embeddings), "embeddings")
+        if external_vector_store is not None
+        else {}
+    )
 
-    if embs_needing_embed:
+    # Step 1: Re-embed message embeddings missing vectors in postgres (cases 2 & 3).
+    # External-only, skip rows whose tenant has no namespace (step 3 defers them).
+    embs_needing_embed: list[models.MessageEmbedding] = [
+        emb
+        for emb in embeddings
+        if emb.embedding is None
+        and (store_in_postgres or prefixes.get(emb.tenant_id) is not None)
+    ]
+    # ai: keyed by (tenant_id, id) for the same reason as the document path
+    freshly_embedded: dict[tuple[str, int], list[float]] = {}
+
+    for tenant_id, group in _tenant_groups(embs_needing_embed):
         try:
-            contents = [emb.content for emb in embs_needing_embed]
+            contents = [emb.content for emb in group]
             # MESSAGE_CREATE (not VECTOR_SYNC): these rows come from create_messages
             # as pending chunks; document re-embeds stay on VECTOR_SYNC below.
-            workspaces = {emb.workspace_name for emb in embs_needing_embed}
-            with embedding_call_purpose(
-                EmbeddingCallPurpose.MESSAGE_CREATE.value,
-                workspace_name=workspaces.pop() if len(workspaces) == 1 else None,
-                parent_category="reconciliation",
+            workspaces = {emb.workspace_name for emb in group}
+            with (
+                _bound_tenant(tenant_id),
+                embedding_call_purpose(
+                    EmbeddingCallPurpose.MESSAGE_CREATE.value,
+                    workspace_name=workspaces.pop() if len(workspaces) == 1 else None,
+                    parent_category="reconciliation",
+                ),
             ):
                 new_embeddings = await embedding_client.simple_batch_embed(contents)
 
-            if len(new_embeddings) != len(embs_needing_embed):
+            if len(new_embeddings) != len(group):
                 logger.warning(
                     "Re-embedded %s/%s message embeddings; remaining will be retried",
                     len(new_embeddings),
-                    len(embs_needing_embed),
+                    len(group),
                 )
 
-            for emb, new_emb in zip(embs_needing_embed, new_embeddings, strict=False):
-                freshly_embedded[emb.id] = new_emb
+            for emb, new_emb in zip(group, new_embeddings, strict=False):
+                freshly_embedded[(emb.tenant_id, emb.id)] = new_emb
                 if store_in_postgres:
                     emb.embedding = new_emb
         except Exception:
-            logger.exception(
-                "Failed to re-embed %s message embeddings", len(embs_needing_embed)
-            )
+            logger.exception("Failed to re-embed %s message embeddings", len(group))
 
     # Mark embeddings that failed to get a vector
     failed_to_embed: list[models.MessageEmbedding] = [
-        emb for emb in embs_needing_embed if emb.id not in freshly_embedded
+        emb
+        for emb in embs_needing_embed
+        if (emb.tenant_id, emb.id) not in freshly_embedded
     ]
     if failed_to_embed:
         await _bump_message_embedding_sync_attempts(db, failed_to_embed)
@@ -495,12 +652,13 @@ async def _sync_message_embeddings(
     if external_vector_store is None:
         embs_done: list[models.MessageEmbedding] = []
         for emb in embeddings:
-            new_emb = freshly_embedded.get(emb.id)
+            new_emb = freshly_embedded.get((emb.tenant_id, emb.id))
             existing = emb.embedding
             if new_emb is None and existing is None:
                 continue
             await db.execute(
                 update(models.MessageEmbedding)
+                .where(models.MessageEmbedding.tenant_id == emb.tenant_id)
                 .where(models.MessageEmbedding.id == emb.id)
                 .values(
                     sync_state="synced",
@@ -524,14 +682,30 @@ async def _sync_message_embeddings(
     # 1. Persisting chunk_position in the MessageEmbedding table
     # 2. Removing MessageEmbedding table entirely if it becomes unnecessary
     # See: https://github.com/plastic-labs/honcho/issues/XXX
-    message_ids = list({emb.message_id for emb in embeddings})
-    chunk_position = await compute_chunk_positions(db, message_ids)
+    message_keys = sorted({(emb.tenant_id, emb.message_id) for emb in embeddings})
+    chunk_position = await compute_chunk_positions(db, message_keys)
 
-    # Step 3: Build vector records and upsert to external store (all cases)
+    # Step 3: Build vector records and upsert to external store (all cases).
+    # A row that already failed to embed was bumped above; don't bump it twice.
+    already_bumped = {(emb.tenant_id, emb.id) for emb in failed_to_embed}
     by_namespace: dict[str, list[models.MessageEmbedding]] = {}
+    unresolved: list[models.MessageEmbedding] = []
     for emb in embeddings:
-        ns = external_vector_store.get_vector_namespace("message", emb.workspace_name)
+        prefix = prefixes[emb.tenant_id]
+        if prefix is None:
+            if (emb.tenant_id, emb.id) not in already_bumped:
+                unresolved.append(emb)
+            continue
+        ns = await external_vector_store.get_vector_namespace(
+            "message",
+            emb.workspace_name,
+            prefix=prefix,
+        )
         by_namespace.setdefault(ns, []).append(emb)
+
+    if unresolved:
+        await _bump_message_embedding_sync_attempts(db, unresolved)
+        failed_count += len(unresolved)
 
     for namespace, embs in by_namespace.items():
         embs_to_sync: list[models.MessageEmbedding] = []
@@ -541,7 +715,9 @@ async def _sync_message_embeddings(
             # Case 1: use existing embedding, Cases 2&3: use freshly embedded
             existing = emb.embedding
             embedding = (
-                existing if existing is not None else freshly_embedded.get(emb.id)
+                existing
+                if existing is not None
+                else freshly_embedded.get((emb.tenant_id, emb.id))
             )
             if embedding is None:
                 continue
@@ -549,7 +725,7 @@ async def _sync_message_embeddings(
             vector_records.append(
                 build_message_vector_record(
                     message_id=emb.message_id,
-                    chunk_position=chunk_position[emb.id],
+                    chunk_position=chunk_position[(emb.tenant_id, emb.id)],
                     session_name=emb.session_name,
                     peer_name=emb.peer_name,
                     embedding=embedding,
@@ -566,7 +742,7 @@ async def _sync_message_embeddings(
             # alongside sync_state. Session has autoflush=False so the ORM
             # mutation above isn't sufficient on its own.
             for emb in embs_to_sync:
-                new_emb = freshly_embedded.get(emb.id)
+                new_emb = freshly_embedded.get((emb.tenant_id, emb.id))
                 values: dict[str, Any] = {
                     "sync_state": "synced",
                     "last_sync_at": func.now(),
@@ -576,6 +752,7 @@ async def _sync_message_embeddings(
                     values["embedding"] = new_emb
                 await db.execute(
                     update(models.MessageEmbedding)
+                    .where(models.MessageEmbedding.tenant_id == emb.tenant_id)
                     .where(models.MessageEmbedding.id == emb.id)
                     .values(**values)
                 )
@@ -613,22 +790,26 @@ async def _cleanup_soft_deleted_documents_pgvector(
 
     # Find soft-deleted documents ready for cleanup
     stmt = (
-        select(models.Document.id)
+        select(models.Document.tenant_id, models.Document.id)
         .where(models.Document.deleted_at.is_not(None))
         .where(models.Document.deleted_at < cutoff)
         .limit(batch_size)
         .with_for_update(skip_locked=True)
     )
     result = await db.execute(stmt)
-    doc_ids = [row[0] for row in result.all()]
+    doc_keys = [tuple(row) for row in result.all()]
 
-    if not doc_ids:
+    if not doc_keys:
         return 0
 
     # Hard delete directly (no vector store cleanup needed in pgvector mode)
-    await db.execute(delete(models.Document).where(models.Document.id.in_(doc_ids)))
-    logger.debug(f"Cleaned up {len(doc_ids)} soft-deleted documents (pgvector mode)")
-    return len(doc_ids)
+    await db.execute(
+        delete(models.Document).where(
+            tuple_(models.Document.tenant_id, models.Document.id).in_(doc_keys)
+        )
+    )
+    logger.debug(f"Cleaned up {len(doc_keys)} soft-deleted documents (pgvector mode)")
+    return len(doc_keys)
 
 
 async def _reconcile_documents_batch(
@@ -640,7 +821,7 @@ async def _reconcile_documents_batch(
 
     Returns True if work was done, False otherwise.
     """
-    async with tracked_db("reconciliation_docs") as db:
+    async with service_db("reconciliation_docs") as db:
         docs = await _get_documents_needing_sync(db)
         if not docs:
             return False
@@ -664,7 +845,7 @@ async def _reconcile_message_embeddings_batch(
 
     Returns True if work was done, False otherwise.
     """
-    async with tracked_db("reconciliation_embs") as db:
+    async with service_db("reconciliation_embs") as db:
         embs = await _get_message_embeddings_needing_sync(db)
         if not embs:
             return False
@@ -692,7 +873,7 @@ async def _cleanup_documents_batch(
     """
     from src.crud.document import cleanup_soft_deleted_documents
 
-    async with tracked_db("reconciliation_cleanup") as db:
+    async with service_db("reconciliation_cleanup") as db:
         cleaned = await cleanup_soft_deleted_documents(
             db,
             external_vector_store,
@@ -714,7 +895,7 @@ async def _cleanup_pgvector_batch(
 
     Returns True if work was done, False otherwise.
     """
-    async with tracked_db("reconciliation_pgvector_cleanup") as db:
+    async with service_db("reconciliation_pgvector_cleanup") as db:
         cleaned = await _cleanup_soft_deleted_documents_pgvector(
             db, batch_size=RECONCILIATION_BATCH_SIZE
         )
@@ -724,42 +905,6 @@ async def _cleanup_pgvector_batch(
         metrics.documents_cleaned += cleaned
         await db.commit()
         return True
-
-
-async def record_pending_embeddings_backlog() -> None:
-    """Set the pending-embeddings backlog gauge to the current count of
-    MessageEmbedding rows awaiting a vector (sync_state='pending')."""
-    # region ai
-    # Called from ``ReconcilerScheduler._scheduler_loop``, deliberately NOT from
-    # ``run_vector_reconciliation_cycle``: the cycle runs off the queue behind
-    # work-unit dedup, so exactly one deriver replica executes it. Driving the gauge
-    # from there would leave every other replica exporting a stale value — or, since
-    # this metric is zero-initialized, a confident permanent 0 it never measured. The
-    # count is a property of the database, not the process, so every replica must
-    # refresh it on its own timer for ``max()``/``avg()`` to mean anything.
-    #
-    # Cost: one COUNT per replica per scheduler interval (~5 min by default).
-    # ``ix_message_embeddings_sync_state_last_sync_at`` keeps the scan proportional to
-    # the pending backlog, not the whole table — which is not the same as cheap: after
-    # an embedding outage the backlog is exactly what is large. Still a small duty
-    # cycle, and the cost shrinks as the reconciler drains.
-    #
-    # Best-effort: a metrics/DB hiccup here must never break the scheduler loop.
-    # endregion
-    if not settings.METRICS.ENABLED:
-        return
-    try:
-        async with tracked_db("reconciler_pending_count", read_only=True) as db:
-            count = await db.scalar(
-                select(func.count())
-                .select_from(models.MessageEmbedding)
-                .where(models.MessageEmbedding.sync_state == "pending")
-            )
-        prometheus_metrics.set_message_embeddings_pending(count=count or 0)
-    except Exception:
-        logger.warning(
-            "Failed to record pending-embeddings backlog gauge", exc_info=True
-        )
 
 
 async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:

@@ -52,7 +52,8 @@ class BaseEvent(BaseModel):
     All events inherit from this class and define:
     - _event_type: The CloudEvents type string
     - _schema_version: Integer version for schema evolution
-    - _category: Event category (work, activity, resource)
+    - _category: Event category, the emit group (api, agent, llm, dream, dialectic,
+      representation, reconciliation, deletion, trace)
 
     Subclasses must implement the abstract class methods by setting class variables
     and providing get_resource_id(). Subclasses define their own context fields
@@ -62,7 +63,7 @@ class BaseEvent(BaseModel):
     # Class variables for event metadata (set by subclasses)
     _event_type: ClassVar[str]
     _schema_version: ClassVar[int]
-    _category: ClassVar[str]  # "work", "activity", or "resource"
+    _category: ClassVar[str]  # the emit group: "api", "llm", "reconciliation", ...
 
     # Volume class for sampling decisions:
     # - "ground_truth": always emitted at rate 1.0 (aggregates, calibration keys)
@@ -88,7 +89,7 @@ class BaseEvent(BaseModel):
 
     @classmethod
     def category(cls) -> str:
-        """Return the event category (work, activity, or resource)."""
+        """Return the event category (the emit group, e.g. ``api`` or ``reconciliation``)."""
         return cls._category
 
     @classmethod

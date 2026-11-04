@@ -19,6 +19,7 @@ class ReconcilerType(str, Enum):
 
     SYNC_VECTORS = "sync_vectors"
     CLEANUP_QUEUE = "cleanup_queue"
+    PRUNE_DREAM_HISTORY = "prune_dream_history"
     BACKFILL_DOCUMENT_SOURCES = "backfill_document_sources"
     BACKFILL = "backfill"
 
@@ -83,6 +84,10 @@ class DocumentCreate(DocumentBase):
         default=None,
         description="Document IDs of source/premise documents -- for deductive and inductive documents",
     )
+    source_message_ids: list[str] | None = Field(
+        default=None,
+        description="Public IDs of the messages cited as evidence -- for explicit documents",
+    )
 
 
 class ObservationInput(BaseModel):
@@ -146,7 +151,17 @@ class DeriverMetrics(BaseModel):
     """Database-wide view of the deriver's outstanding work."""
 
     eligible_work_units: int = 0
+    # Work units the claim is skipping because their tenant is excluded. They
+    # are NOT in eligible_work_units: nothing will pick them up.
+    excluded_work_units: int = 0
+    # The same units broken down by tenant — the number worth watching while a
+    # tenant is paused. Sums to excluded_work_units.
+    excluded_work_units_by_tenant: dict[str, int] = Field(default_factory=dict)
+    # Tenants with derivation paused in the registry. Always 0 flag-off.
+    paused_tenants: int = 0
     claimed_work_units: int = 0
+    # Live claims by tenant; None unless DERIVER_TENANT_FAIRNESS_METRICS is on.
+    inflight_units_by_tenant: dict[str, int] | None = None
     pending_items: int = 0
     oldest_pending_age_seconds: float = 0.0
     embeddings_pending: int = 0

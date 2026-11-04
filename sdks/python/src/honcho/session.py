@@ -67,6 +67,7 @@ class Session(SessionBase, MetadataConfigMixin):
     _created_at: datetime | None = PrivateAttr(default=None)
     _uid: str | None = PrivateAttr(default=None)
     _is_active: bool | None = PrivateAttr(default=None)
+    _scopes: list[str] | None = PrivateAttr(default=None)
     _honcho: "Honcho" = PrivateAttr()
 
     @property
@@ -97,6 +98,15 @@ class Session(SessionBase, MetadataConfigMixin):
     def is_active(self) -> bool | None:
         """Whether this session is active. Only available if fetched from the API."""
         return self._is_active
+
+    @property
+    def scopes(self) -> list[str] | None:
+        """Names of the scopes this session was in when it was listed.
+
+        Only set on sessions returned by ``honcho.sessions(include_scopes=True)``,
+        and not refreshed afterwards; ``None`` otherwise.
+        """
+        return self._scopes
 
     # MetadataConfigMixin implementation
     def _get_http_client(self):
@@ -242,6 +252,10 @@ class Session(SessionBase, MetadataConfigMixin):
             None,
             description="Whether this session is active.",
         ),
+        scopes: list[str] | None = Field(
+            None,
+            description="Names of the scopes this session is a member of.",
+        ),
     ) -> None:
         """
         Initialize a new Session.
@@ -267,6 +281,7 @@ class Session(SessionBase, MetadataConfigMixin):
         self._created_at = created_at
         self._uid = uid
         self._is_active = is_active
+        self._scopes = scopes
 
     def add_peers(
         self,

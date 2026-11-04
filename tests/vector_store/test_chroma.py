@@ -63,19 +63,27 @@ def record() -> VectorRecord:
 # === Collection name mapping ===
 
 
-def test_collection_name_is_valid_and_deterministic(store: ChromaVectorStore) -> None:
-    ns = store.get_vector_namespace("document", "ws1", observer="a", observed="b")
+@pytest.mark.asyncio
+async def test_collection_name_is_valid_and_deterministic(
+    store: ChromaVectorStore,
+) -> None:
+    ns = await store.get_vector_namespace("document", "ws1", observer="a", observed="b")
     name = store._collection_name(ns)  # pyright: ignore[reportPrivateUsage]
 
     assert _CHROMA_NAME_PATTERN.match(name), name
     assert name == store._collection_name(ns)  # pyright: ignore[reportPrivateUsage]
 
 
-def test_collection_name_distinct_for_distinct_namespaces(
+@pytest.mark.asyncio
+async def test_collection_name_distinct_for_distinct_namespaces(
     store: ChromaVectorStore,
 ) -> None:
-    ns_a = store.get_vector_namespace("document", "ws1", observer="a", observed="b")
-    ns_b = store.get_vector_namespace("document", "ws1", observer="b", observed="a")
+    ns_a = await store.get_vector_namespace(
+        "document", "ws1", observer="a", observed="b"
+    )
+    ns_b = await store.get_vector_namespace(
+        "document", "ws1", observer="b", observed="a"
+    )
 
     assert store._collection_name(ns_a) != store._collection_name(ns_b)  # pyright: ignore[reportPrivateUsage]
 
@@ -406,7 +414,7 @@ async def test_persistent_round_trip() -> None:
     """Exercise the real embedded client end-to-end in a tmp dir."""
 
     store = ChromaVectorStore()
-    ns = store.get_vector_namespace("document", "ws1", observer="a", observed="b")
+    ns = await store.get_vector_namespace("document", "ws1", observer="a", observed="b")
     try:
         await store.upsert_many(
             ns,

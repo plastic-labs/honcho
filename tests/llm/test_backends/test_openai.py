@@ -1272,6 +1272,7 @@ def _tool_call_message(
     *,
     content: str | None,
     reasoning_details: list[Any] | None = None,
+    arguments: str = '{"query":"honcho"}',
 ) -> SimpleNamespace:
     return SimpleNamespace(
         content=content,
@@ -1280,7 +1281,7 @@ def _tool_call_message(
                 id="call_probe",
                 function=SimpleNamespace(
                     name="search",
-                    arguments='{"query":"honcho"}',
+                    arguments=arguments,
                 ),
             )
         ],
@@ -1300,6 +1301,23 @@ def _completion_response(
             prompt_tokens_details=None,
         ),
     )
+
+
+@pytest.mark.parametrize("arguments", ['"{\\"query\\": 1}"', "[1]", "null", "{bad"])
+def test_openai_tool_arguments_that_are_not_an_object_become_empty(
+    arguments: str,
+) -> None:
+    """Double-encoded, non-object or undecodable arguments still yield a tool
+    call the loop can run and answer, rather than failing the completion."""
+    response = _completion_response(
+        _tool_call_message(content=None, arguments=arguments), "tool_calls"
+    )
+
+    result = OpenAIBackend(Mock())._normalize_response(  # pyright: ignore[reportPrivateUsage]
+        response
+    )
+
+    assert [(call.name, call.input) for call in result.tool_calls] == [("search", {})]
 
 
 def test_openai_normalize_preserves_null_content_on_tool_call_turns() -> None:
@@ -1448,13 +1466,32 @@ async def test_openai_backend_structured_without_tools_still_uses_parse() -> Non
 
 
 @pytest.mark.asyncio
-async def test_structured_output_parse_validation_error_hides_payload() -> None:
+@pytest.mark.parametrize(
+    ("body", "raw_content"),
+    [
+        pytest.param(
+            "user said my-sentinel-secret-4417",
+            "user said my-sentinel-secret-4417",
+            id="not-json",
+        ),
+        # Only the offending sub-value survives, which is not the output.
+        pytest.param(
+            '{"explicit": [{"note": "my-sentinel-secret-4417"}]}',
+            None,
+            id="schema-mismatch",
+        ),
+    ],
+)
+async def test_structured_output_parse_validation_error_hides_payload(
+    body: str, raw_content: str | None
+) -> None:
     """parse() validates the body itself, so prose never reaches the repair
     path. For PromptRepresentation it surfaces as StructuredOutputError without
-    pydantic's input_value, which would echo the model's output."""
+    pydantic's input_value, which would echo the model's output; the body is
+    carried on the error for telemetry instead."""
     secret = "my-sentinel-secret-4417"
     with pytest.raises(ValidationError) as raised:
-        PromptRepresentation.model_validate_json(f"user said {secret}")
+        PromptRepresentation.model_validate_json(body)
     validation_error = raised.value
     client = Mock()
     client.chat.completions.parse = AsyncMock(side_effect=validation_error)
@@ -1471,6 +1508,7 @@ async def test_structured_output_parse_validation_error_hides_payload() -> None:
     assert secret in str(validation_error)
     assert secret not in str(exc_info.value)
     assert exc_info.value.__cause__ is None
+    assert exc_info.value.raw_content == raw_content
 
 
 # thinking_tool_choice_conflict on the OpenAI transport. An OpenAI-compatible
@@ -1842,3 +1880,63 @@ async def test_stream_throw_raises_before_sending() -> None:
             pass
 
     client.chat.completions.create.assert_not_awaited()
+
+
+def _chat_completion(usage: Any) -> SimpleNamespace:
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                finish_reason="stop",
+                message=SimpleNamespace(content="Hello", tool_calls=[]),
+            )
+        ],
+        usage=usage,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("usage", "expected_input", "expected_output"),
+    [
+        pytest.param(
+            SimpleNamespace(
+                prompt_tokens=None,
+                completion_tokens=None,
+                total_tokens=17,
+            ),
+            0,
+            0,
+            id="omitted-counts",
+        ),
+        pytest.param(
+            SimpleNamespace(
+                prompt_tokens=12,
+                completion_tokens=7,
+                total_tokens=19,
+            ),
+            12,
+            7,
+            id="integer-counts",
+        ),
+        pytest.param(None, 0, 0, id="usage-absent"),
+    ],
+)
+async def test_openai_backend_coalesces_missing_usage_token_counts(
+    usage: Any,
+    expected_input: int,
+    expected_output: int,
+) -> None:
+    """Gateways may return usage with only total_tokens. The SDK then sets
+    prompt_tokens and completion_tokens to None; that must not fail the call."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(return_value=_chat_completion(usage))
+
+    result = await OpenAIBackend(client).complete(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+    )
+
+    assert result.content == "Hello"
+    assert result.input_tokens == expected_input
+    assert result.output_tokens == expected_output

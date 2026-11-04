@@ -3,12 +3,13 @@ from __future__ import annotations
 import logging
 from typing import Any, cast
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import exceptions, models, schemas
 from src.cache.client import safe_cache_delete
+from src.crud.dream_history import DreamHistoryTarget, record_peer_card
 from src.crud.peer import (
     get_or_create_peers,
     get_peer,
@@ -60,6 +61,7 @@ async def set_peer_card(
     *,
     observer: str,
     observed: str,
+    history: DreamHistoryTarget | None = None,
 ) -> None:
     """
     Set peer card for a peer.
@@ -72,6 +74,8 @@ async def set_peer_card(
         peer_card: List of strings to set as the peer card
         observed: Peer name of the peer described in the peer card
         observer: Peer name of the observer
+        history: When set, record the card before and after to this dream run
+            in the same transaction
 
     """
     # A scope may be the card's *observer* — the Dreamer writes (scope, observed)
@@ -98,18 +102,30 @@ async def set_peer_card(
         db, workspace_name, [schemas.PeerSpec(name=observer)]
     )
 
+    label = construct_peer_card_label(observer=observer, observed=observed)
+    if history is not None:
+        # Locked so a concurrent write can't land between this read and the
+        # update, which would make `before` wrong.
+        before = await db.scalar(
+            select(models.Peer.internal_metadata[label])
+            .where(models.Peer.workspace_name == workspace_name)
+            .where(models.Peer.name == observer)
+            .with_for_update()
+        )
+        await record_peer_card(
+            db,
+            history,
+            workspace_name,
+            before=cast(list[str] | None, before),
+            after=peer_card,
+        )
+
     stmt = (
         update(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.Peer.name == observer)
         .values(
-            internal_metadata=models.Peer.internal_metadata.op("||")(
-                {
-                    construct_peer_card_label(
-                        observer=observer, observed=observed
-                    ): peer_card
-                }
-            )
+            internal_metadata=models.Peer.internal_metadata.op("||")({label: peer_card})
         )
     )
     result = cast(CursorResult[Any], await db.execute(stmt))

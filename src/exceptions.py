@@ -52,6 +52,11 @@ class HonchoException(Exception):
         self.status_code = status_code or self.status_code
         super().__init__(self.detail)
 
+    def effective_sentry_policy(self) -> SentryPolicy | None:
+        """The policy for this occurrence. Override when the disposition
+        depends on the instance rather than only the class."""
+        return self.sentry_policy
+
 
 @final
 class ResourceNotFoundException(HonchoException):
@@ -167,6 +172,21 @@ class VectorStoreError(HonchoException):
 
 
 @final
+class VectorNamespaceUnresolved(HonchoException):
+    """Raised when a tenant's vector-store namespace cannot be determined.
+
+    Deliberately NOT a ``VectorStoreError``. That type means "the backend is
+    having trouble, try again", and callers catch it to defer work to the
+    reconciler. This one means the tenant is not provisioned for vector storage
+    at all — retrying cannot fix it, and letting it be mistaken for a transient
+    fault is exactly how a tenant ends up with a silently empty corpus.
+    """
+
+    status_code = 500
+    detail = "Vector namespace could not be resolved for this tenant"
+
+
+@final
 class RepresentationSaveError(HonchoException):
     """Raised when every observer's representation save fails in a batch."""
 
@@ -250,6 +270,35 @@ class EmptySummaryError(DegradedLLMResponseError):
     sentry_policy: ClassVar[SentryPolicy | None] = SentryPolicy(
         level="error", fingerprint="honcho-summary-degraded-empty-summary"
     )
+
+    def effective_sentry_policy(self) -> SentryPolicy | None:
+        # A filtered summary is the provider refusing the session's content.
+        # That repeats at every boundary of the session and nothing on our side
+        # fixes it, so it is counted in summary_rejections instead of reported.
+        if self.parse_class == "content_filtered":
+            return None
+        return self.sentry_policy
+
+
+@final
+class WebhookTenantUnresolved(HonchoException):
+    """Raised when a webhook work unit has no tenant to attribute on a multi-tenant deployment."""
+
+    # region ai
+    # Deliberately terminal, not transient: ``is_retryable_error``
+    # (``src/utils/retryable_errors.py``) only recognizes DB and transport
+    # failures, so this -- like any other plain exception -- is non-retryable by
+    # default and the deriver burns the queue item to ``errored`` on the first
+    # attempt (``src/deriver/queue_manager.py``'s ``_handle_processing_error`` /
+    # ``mark_queue_item_as_errored``) instead of endlessly retrying a body that
+    # would only ever be rejected. ``QueueItem.tenant_id`` is stamped by every
+    # tenant-bound writer, so this should be unreachable in production; it
+    # exists so a future writer that forgets the stamp fails loudly instead of
+    # posting an unattributed event the control plane has no way to route.
+    # endregion
+
+    status_code = 422
+    detail = "Webhook work unit has no tenant on a multi-tenant deployment"
 
 
 @final

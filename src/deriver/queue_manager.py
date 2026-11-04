@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import math
 import random
 import signal
 import time
@@ -14,7 +15,7 @@ from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-from sqlalchemy import Text, and_, delete, literal, select, update
+from sqlalchemy import Text, and_, delete, literal, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,14 +25,15 @@ from src import models
 from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.crud.deriver import (
-    REPRESENTATION_WORK_UNIT_PREFIX,
-    representation_batch_threshold_clause,
-    unclaimed_work_unit_clause,
+    claim_heartbeat_interval_seconds,
+    claim_rows_query,
+    not_paused_clause,
 )
 from src.crud.deriver import (
     cleanup_stale_work_units as crud_cleanup_stale_work_units,
 )
-from src.dependencies import tracked_db
+from src.db import tenant_context
+from src.dependencies import service_db
 from src.deriver.consumer import (
     process_item,
     process_representation_batch,
@@ -52,7 +54,12 @@ from src.telemetry import prometheus_metrics
 from src.telemetry.sentry import initialize_sentry
 from src.utils.queue_payload import RETRY_ATTEMPTS_PAYLOAD_KEY
 from src.utils.retryable_errors import is_retryable_error
-from src.utils.work_unit import parse_work_unit_key
+from src.utils.sanitization import escape_unstorable
+from src.utils.work_unit import (
+    ParsedWorkUnit,
+    parse_work_unit_key,
+    tenant_id_for_work_unit_key,
+)
 from src.webhooks.events import (
     QueueEmptyEvent,
     publish_webhook_event,
@@ -100,7 +107,7 @@ def _detach_queue_batch_objects(
     messages_context: list[models.Message],
     items_to_process: list[QueueItem],
 ) -> None:
-    """Detach loaded batch objects so they remain usable after tracked_db exits."""
+    """Detach loaded batch objects so they remain usable after service_db exits."""
     seen: set[int] = set()
     for obj in [*messages_context, *items_to_process]:
         obj_id = id(obj)
@@ -160,8 +167,44 @@ class QueueManager:
         # random walk and untestable at non-zero jitter ratios).
         self._stale_cleanup_gate_seconds: float = 0.0
 
-        # Initialize from settings
-        self.workers: int = settings.DERIVER.WORKERS
+        # region ai
+        # Derive-with-visibility: the effective concurrency is the configured
+        # WORKERS capped by DB-pool headroom (each in-flight unit opens several
+        # sequential short sessions, so one connection services ~WORKERS_PER_
+        # POOL_CONNECTION units). Derivation only lowers; when it does, the
+        # warning plus the deriver_effective_worker_cap gauge make the binding
+        # constraint visible instead of surfacing as pool-timeout errors under
+        # load. The ratio's default is conservative until measured (DEV-2744).
+        # endregion
+        configured_workers: int = settings.DERIVER.WORKERS
+        if settings.DB.POOL_CLASS == "null":
+            # NullPool opens a connection per session and POOL_SIZE/MAX_OVERFLOW
+            # are inert, so there is no pool headroom to derive against.
+            pool_bounded_workers = configured_workers
+        else:
+            pool_capacity: int = settings.DB.POOL_SIZE + settings.DB.MAX_OVERFLOW
+            pool_bounded_workers = max(
+                1,
+                math.floor(
+                    settings.DERIVER.WORKERS_PER_POOL_CONNECTION * pool_capacity
+                ),
+            )
+        self.workers: int = min(configured_workers, pool_bounded_workers)
+        if self.workers < configured_workers:
+            logger.warning(
+                "DERIVER_WORKERS=%d exceeds the pool-derived cap %d "
+                + "(WORKERS_PER_POOL_CONNECTION=%g x pool capacity %d); "
+                + "running %d workers",
+                configured_workers,
+                pool_bounded_workers,
+                settings.DERIVER.WORKERS_PER_POOL_CONNECTION,
+                settings.DB.POOL_SIZE + settings.DB.MAX_OVERFLOW,
+                self.workers,
+            )
+        else:
+            logger.info("Deriver worker concurrency: %d", self.workers)
+        if settings.METRICS.ENABLED:
+            prometheus_metrics.set_deriver_effective_worker_cap(self.workers)
         self.semaphore: asyncio.Semaphore = asyncio.Semaphore(self.workers)
 
         # Get or create the singleton dream scheduler
@@ -189,7 +232,21 @@ class QueueManager:
     def add_task(self, task: asyncio.Task[None]) -> None:
         """Track a new task"""
         self.active_tasks.add(task)
-        task.add_done_callback(self.active_tasks.discard)
+        task.add_done_callback(self._on_task_done)
+
+    def _on_task_done(self, task: asyncio.Task[None]) -> None:
+        """Retrieve unexpected worker failures as soon as a task finishes."""
+        self.active_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error(
+                "Unhandled queue worker task exception",
+                exc_info=(type(error), error, error.__traceback__),
+            )
+            if settings.SENTRY.ENABLED:
+                sentry_sdk.capture_exception(error)
 
     def track_worker_work_unit(
         self, worker_id: str, work_unit_key: str, aqs_id: str
@@ -202,6 +259,71 @@ class QueueManager:
         ownership = self.worker_ownership.get(worker_id)
         if ownership and ownership.work_unit_key == work_unit_key:
             del self.worker_ownership[worker_id]
+
+    async def _touch_claim(self, work_unit_key: str, aqs_id: str) -> bool:
+        """Refresh one claim's last_updated. False when the row is already gone."""
+        async with service_db("heartbeat_work_unit_claim") as db:
+            result = cast(
+                CursorResult[Any],
+                await db.execute(
+                    update(models.ActiveQueueSession)
+                    .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
+                    .where(models.ActiveQueueSession.id == aqs_id)
+                    .values(last_updated=func.now())
+                ),
+            )
+            await db.commit()
+            return result.rowcount > 0
+
+    async def _heartbeat_claim(self, work_unit_key: str, worker_id: str) -> None:
+        """Keep this worker's claim alive for as long as it holds the work unit.
+
+        A claim is otherwise refreshed only when a queue ITEM completes
+        (``process_queue_item_batch``). Task types whose whole unit is one long
+        item -- the reconciler cycle, a dream -- therefore never refresh it, and
+        ``cleanup_stale_work_units`` reaps the claim out from under them once they
+        run past ``STALE_SESSION_TIMEOUT_MINUTES``. Another replica then claims the
+        same unit and runs it concurrently: ``SKIP LOCKED`` stops double-WRITING,
+        not double-scanning, so the cost of a slow cycle multiplies by however many
+        replicas pile on.
+
+        Beating from here rather than from inside each long task covers every task
+        type at once, including ones added later.
+
+        The beat shares the event loop with the work, so anything that blocks the
+        loop -- CPU-bound code, a sync ``time.sleep``, a blocking library call --
+        silences every claim in this process at once. A block longer than the stale
+        window less one interval (4 min at the defaults) gets them all reaped. That
+        coupling is deliberate: a thread-based beat would keep a wedged process's
+        claims alive forever, so no other replica could take its work over. Blocking
+        work belongs in ``asyncio.to_thread``.
+        """
+        interval = claim_heartbeat_interval_seconds()
+        while True:
+            await asyncio.sleep(interval)
+            ownership = self.worker_ownership.get(worker_id)
+            if ownership is None or ownership.work_unit_key != work_unit_key:
+                return
+            try:
+                if not await self._touch_claim(work_unit_key, ownership.aqs_id):
+                    # Already reaped: a concurrent claimer may now own this unit.
+                    # Say so loudly -- it means a beat was missed, or the work ran
+                    # past the window even with the heartbeat running.
+                    logger.warning(
+                        "Claim for work unit %s (AQS %s) no longer exists; it was"
+                        + " reaped while still being processed",
+                        work_unit_key,
+                        ownership.aqs_id,
+                    )
+                    return
+            except Exception:
+                # Never let a heartbeat failure kill the work it is protecting; the
+                # next beat retries, and four may fail before the claim goes stale.
+                logger.warning(
+                    "Failed to refresh claim for work unit %s",
+                    work_unit_key,
+                    exc_info=True,
+                )
 
     def create_worker_id(self) -> str:
         """Generate a unique worker ID for this processing task"""
@@ -262,8 +384,8 @@ class QueueManager:
         if total_work_units > 0:
             logger.debug(f"Cleaning up {total_work_units} owned work units...")
             try:
-                # Use the tracked_db dependency for transaction safety
-                async with tracked_db("queue_cleanup") as db:
+                # Use the service_db dependency for transaction safety
+                async with service_db("queue_cleanup") as db:
                     aqs_ids = [
                         ownership.aqs_id for ownership in self.worker_ownership.values()
                     ]
@@ -316,7 +438,12 @@ class QueueManager:
 
     async def cleanup_stale_work_units(self) -> None:
         """Clean up stale work units"""
-        async with tracked_db("cleanup_stale_work_units") as db:
+        # region ai
+        # Cross-tenant: stale-session cleanup spans all tenants, so it runs on the
+        # RLS-bypass service session — under MULTI_TENANT tracked_db would fail closed
+        # (no tenant in scope). Body is #1136's extracted crud helper.
+        # endregion
+        async with service_db("cleanup_stale_work_units") as db:
             await crud_cleanup_stale_work_units(db)
 
     async def get_and_claim_work_units(self) -> dict[str, str]:
@@ -336,76 +463,40 @@ class QueueManager:
             settings.DERIVER.REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS
         )
 
-        async with tracked_db("get_available_work_units") as db:
-            representation_prefix = REPRESENTATION_WORK_UNIT_PREFIX
-            token_stats_subq = (
-                select(
-                    models.QueueItem.work_unit_key,
-                    func.sum(models.Message.token_count).label("total_tokens"),
-                    func.min(models.QueueItem.created_at).label("oldest_created_at"),
-                )
-                .join(
-                    models.Message,
-                    models.QueueItem.message_id == models.Message.id,
-                )
-                .where(~models.QueueItem.processed)
-                .where(models.QueueItem.work_unit_key.startswith(representation_prefix))
-                .group_by(models.QueueItem.work_unit_key)
-                .subquery()
-            )
-
-            work_units_subq = (
-                select(
-                    models.QueueItem.work_unit_key,
-                    func.min(models.QueueItem.created_at).label("oldest_created_at"),
-                )
-                .where(~models.QueueItem.processed)
-                .group_by(models.QueueItem.work_unit_key)
-                .subquery()
-            )
-
-            query = (
-                select(
-                    work_units_subq.c.work_unit_key,
-                    token_stats_subq.c.total_tokens,
-                    token_stats_subq.c.oldest_created_at,
-                )
-                .outerjoin(
-                    token_stats_subq,
-                    work_units_subq.c.work_unit_key == token_stats_subq.c.work_unit_key,
-                )
-                .where(unclaimed_work_unit_clause(work_units_subq.c.work_unit_key))
-                .order_by(
-                    work_units_subq.c.oldest_created_at.asc(),
-                    work_units_subq.c.work_unit_key.asc(),
-                )
-                .limit(limit)
-            )
-
-            # Apply batch threshold filter (skip if FLUSH_ENABLED is True)
-            threshold_clause = representation_batch_threshold_clause(
-                work_unit_key=work_units_subq.c.work_unit_key,
-                total_tokens=token_stats_subq.c.total_tokens,
-                oldest_created_at=token_stats_subq.c.oldest_created_at,
-            )
-            if threshold_clause is not None:
-                query = query.where(threshold_clause)
-
-            result = await db.execute(query)
+        # region ai
+        # Cross-tenant claim on the service session (tracked_db would fail
+        # closed under MULTI_TENANT); work_unit_key is tenant-namespaced, so
+        # each claimed unit is still tenant-homogeneous. The candidate set is
+        # the trigger-maintained queue_item_batches — one indexed row per pending
+        # unit — instead of re-aggregating the queue, whose two GROUP BYs plus
+        # messages join are ~O(depth²) per poll at shared-queue depth.
+        # claim_rows_query locks its rows FOR UPDATE SKIP LOCKED, so concurrent
+        # claimers stay disjoint and backfill from the sorted stream (the
+        # builder carries the locking rationale, deadlock story included); the
+        # row locks release at commit, and the ActiveQueueSession insert below
+        # remains the durable claim marker for the processing duration.
+        # endregion
+        async with service_db("get_available_work_units") as db:
+            result = await db.execute(claim_rows_query(limit))
             available_rows = result.all()
             available_units: list[str] = []
-            for work_unit_key, total_tokens, oldest_created_at in available_rows:
+            for (
+                work_unit_key,
+                task_type,
+                total_tokens,
+                oldest_created_at,
+            ) in available_rows:
                 available_units.append(work_unit_key)
                 if (
                     not settings.DERIVER.FLUSH_ENABLED
                     and settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS > 0
-                    and work_unit_key.startswith(representation_prefix)
-                    and int(total_tokens or 0) < work_unit_target_tokens
+                    and task_type == "representation"
+                    and int(total_tokens) < work_unit_target_tokens
                 ):
                     logger.info(
                         "age-flushing work unit %s (tokens=%s < %s, oldest=%s)",
                         work_unit_key,
-                        total_tokens or 0,
+                        total_tokens,
                         work_unit_target_tokens,
                         oldest_created_at,
                     )
@@ -416,6 +507,14 @@ class QueueManager:
             claimed_mapping = await self.claim_work_units(db, available_units)
             await db.commit()
 
+            # ai: only the units claim_work_units took; a candidate another claimer won is not a claim
+            if settings.METRICS.ENABLED and settings.DERIVER.TENANT_FAIRNESS_METRICS:
+                oldest_by_key = {row[0]: row[3] for row in available_rows}
+                prometheus_metrics.record_deriver_claims(
+                    (tenant_id_for_work_unit_key(key), oldest_by_key[key])
+                    for key in claimed_mapping
+                )
+
             return claimed_mapping
 
     async def claim_work_units(
@@ -425,7 +524,19 @@ class QueueManager:
         Claim work units and return a mapping of work_unit_key to aqs_id.
         Returns only the work units that were successfully claimed.
         """
-        values = [{"work_unit_key": key} for key in work_unit_keys]
+        # region ai
+        # tenant_id is derived from the claimed key's prefix so the claim row
+        # carries the same tenant attribution as its queue rows — the
+        # workspace/session cleanup paths (active_queue_session_match) filter on
+        # this column flag-on, so an unstamped row would survive those deletes.
+        # endregion
+        values = [
+            {
+                "work_unit_key": key,
+                "tenant_id": tenant_id_for_work_unit_key(key),
+            }
+            for key in work_unit_keys
+        ]
 
         stmt = (
             insert(models.ActiveQueueSession)
@@ -548,7 +659,7 @@ class QueueManager:
                     logger.exception("Error in polling loop")
                     if settings.SENTRY.ENABLED:
                         sentry_sdk.capture_exception(e)
-                    # Note: rollback is handled by tracked_db dependency.
+                    # Note: rollback is handled by service_db dependency.
                     # Back off so a down/saturated DB isn't hammered every cycle.
                     await asyncio.sleep(self._advance_poll_interval())
         finally:
@@ -582,6 +693,7 @@ class QueueManager:
         Terminal errors mark only the first queue item as errored so we don't
         potentially throw away a batch. This allows us to incrementally attempt
         to process the batch while still maintaining progress in a work unit.
+        If that mark fails, the work unit is released as for a transient error.
 
         Args:
             error: The exception that occurred
@@ -625,6 +737,9 @@ class QueueManager:
                 f"Failed to mark queue items as errored for work unit {work_unit_key}: {mark_error}",
                 exc_info=True,
             )
+            mark_failed = True
+        else:
+            mark_failed = False
 
         logger.error(
             f"Error {context} for work unit {work_unit_key}: {error}",
@@ -632,15 +747,76 @@ class QueueManager:
         )
         if settings.SENTRY.ENABLED:
             sentry_sdk.capture_exception(error)
-        return False
+        # An unmarked item is still the next one in the work unit, so carrying on
+        # would re-run it at once, LLM call included, in a tight loop. Release the
+        # work unit instead and let a later poll re-claim it after the backoff.
+        return mark_failed
 
     async def process_work_unit(self, work_unit_key: str, worker_id: str) -> None:
         """Process all queue items for a specific work unit by routing to the correct handler."""
         logger.debug(f"Starting to process work unit {work_unit_key}")
-        work_unit = parse_work_unit_key(work_unit_key)
-        async with self.semaphore:
-            queue_item_count = 0
-            try:
+        work_unit: ParsedWorkUnit | None = None
+        queue_item_count = 0
+        # region ai
+        # Set only when a fetch comes back empty and nothing is left unprocessed:
+        # queue.empty fires on a confirmed drain, never on an error, shutdown,
+        # lost-ownership break or a pause that suspended the rest.
+        # endregion
+        drained = False
+        tenant_token = None
+        heartbeat = None
+        try:
+            async with self.semaphore:
+                try:
+                    work_unit = parse_work_unit_key(work_unit_key)
+                except ValueError as error:
+                    logger.exception("Invalid work unit key %s", work_unit_key)
+                    if settings.SENTRY.ENABLED:
+                        sentry_sdk.capture_exception(error)
+                    await self._mark_invalid_work_unit_as_errored(work_unit_key, error)
+                    return
+
+                # region ai
+                # Bind the work unit's tenant for the duration: every per-tenant DB
+                # session opened while processing it (the representation batch,
+                # process_item, and their nested crud/summarizer/dreamer sessions)
+                # inherits it via tracked_db. Cross-tenant claim/queue reads use
+                # service_db and ignore it. None when the key is not tenant-namespaced
+                # (MULTI_TENANT off, or the tenant-less reconciler task).
+                # endregion
+                if work_unit.tenant_id is not None:
+                    tenant_token = tenant_context.set(work_unit.tenant_id)
+                    # region ai
+                    # Errors from this work unit are filterable by tenant. Each unit
+                    # runs in its own task and AsyncioIntegration forks the isolation
+                    # scope per task, so the tag lives as long as the bind; removed in
+                    # the finally with the ContextVar reset.
+                    # endregion
+                    sentry_sdk.set_tag("tenant_id", work_unit.tenant_id)
+                # region ai
+                # Hold the claim open for as long as this worker owns the unit; the
+                # finally below cancels it. Started here rather than inside the long
+                # task types, so every task type gets it. See _heartbeat_claim for
+                # what goes wrong without it.
+                # endregion
+                heartbeat = asyncio.create_task(
+                    self._heartbeat_claim(work_unit_key, worker_id)
+                )
+                if (
+                    settings.MULTI_TENANT
+                    and work_unit.tenant_id is None
+                    and work_unit.task_type == "representation"
+                ):
+                    # region ai
+                    # An un-prefixed representation key under MULTI_TENANT (a
+                    # queue written flag-off, then switched on) can never be
+                    # scoped: get_queue_item_batch refuses it. Fail the whole
+                    # unit once here instead of looping on that refusal; the
+                    # finally releases the claim.
+                    # endregion
+                    await self._fail_unscoped_work_unit(work_unit_key)
+                    return
+
                 while not self.shutdown_event.is_set():
                     # Get worker ownership info for verification
                     ownership = self.worker_ownership.get(worker_id)
@@ -664,6 +840,7 @@ class QueueManager:
                                 logger.debug(
                                     f"No more queue items to process for work unit {work_unit_key} for worker {worker_id}"
                                 )
+                                drained = await self._is_drained(work_unit_key)
                                 break
 
                             try:
@@ -723,6 +900,7 @@ class QueueManager:
                                 logger.debug(
                                     f"No more queue items to process for work unit {work_unit_key} for worker {worker_id}"
                                 )
+                                drained = await self._is_drained(work_unit_key)
                                 break
 
                             try:
@@ -750,6 +928,14 @@ class QueueManager:
                         )
                         if settings.SENTRY.ENABLED:
                             sentry_sdk.capture_exception(e)
+                        # region ai
+                        # Back off and release the unit rather than retry in
+                        # place: an error raised before the iteration's first
+                        # await would otherwise spin without yielding and stall
+                        # every worker on this event loop.
+                        # endregion
+                        await asyncio.sleep(self._jitter(RETRY_BACKOFF_SECONDS))
+                        break
 
                     # Check for shutdown after processing each batch
                     if self.shutdown_event.is_set():
@@ -759,42 +945,58 @@ class QueueManager:
                         )
                         break
 
-            finally:
-                # Remove work unit from active_queue_sessions when done
-                ownership: WorkerOwnership | None = self.worker_ownership.get(worker_id)
+        finally:
+            # Cancel before the claim is released below. An in-flight beat
+            # could not resurrect a deleted row -- an UPDATE matches nothing --
+            # but it would log a misleading "reaped while processing" warning
+            # on an ordinary teardown.
+            if heartbeat is not None:
+                heartbeat.cancel()
+            if tenant_token is not None:
+                tenant_context.reset(tenant_token)
+                sentry_sdk.get_isolation_scope().remove_tag("tenant_id")
+            # Also release ownership on parse failure or cancellation while
+            # waiting for the semaphore. A failed DB cleanup must not leak the
+            # in-memory slot; its claim can be recovered by stale-claim cleanup.
+            try:
+                ownership = self.worker_ownership.get(worker_id)
                 if ownership and ownership.work_unit_key == work_unit_key:
                     removed = await self._cleanup_work_unit(
                         ownership.aqs_id, work_unit_key
                     )
                 else:
                     removed = False
-
+            finally:
                 self.untrack_worker_work_unit(worker_id, work_unit_key)
-                if removed and queue_item_count > 0:
-                    # Only publish webhook if we actually removed an active session
-                    try:
-                        if (
-                            work_unit.task_type in ["representation", "summary"]
-                            and work_unit.workspace_name is not None
-                        ):
-                            logger.debug(
-                                f"Publishing queue.empty event for {work_unit_key} in workspace {work_unit.workspace_name}"
-                            )
-                            await publish_webhook_event(
-                                QueueEmptyEvent(
-                                    workspace_id=work_unit.workspace_name,
-                                    queue_type=work_unit.task_type,
-                                    session_id=work_unit.session_name,
-                                    observer=work_unit.observer,
-                                    observed=work_unit.observed,
-                                )
-                            )
-                    except Exception:
-                        logger.exception("Error triggering queue_empty webhook")
-                else:
-                    logger.debug(
-                        f"Work unit {work_unit_key} already cleaned up by another worker, skipping webhook"
-                    )
+
+            if removed and drained and queue_item_count > 0 and work_unit is not None:
+                # Only publish webhook if we actually removed an active session
+                try:
+                    if (
+                        work_unit.task_type in ["representation", "summary"]
+                        and work_unit.workspace_name is not None
+                    ):
+                        logger.debug(
+                            f"Publishing queue.empty event for {work_unit_key} in workspace {work_unit.workspace_name}"
+                        )
+                        await publish_webhook_event(
+                            QueueEmptyEvent(
+                                workspace_id=work_unit.workspace_name,
+                                queue_type=work_unit.task_type,
+                                session_id=work_unit.session_name,
+                                observer=work_unit.observer,
+                                observed=work_unit.observed,
+                            ),
+                            # tenant_context is already reset above, so pass the
+                            # work unit's tenant explicitly (None when flag-off).
+                            tenant_id=work_unit.tenant_id,
+                        )
+                except Exception:
+                    logger.exception("Error triggering queue_empty webhook")
+            else:
+                logger.debug(
+                    f"Work unit {work_unit_key} not drained, empty, or already cleaned up by another worker; skipping webhook"
+                )
 
     @sentry_sdk.trace
     async def get_next_queue_item(
@@ -805,7 +1007,7 @@ class QueueManager:
             raise ValueError(
                 "representation tasks are not supported for get_next_queue_item"
             )
-        async with tracked_db("get_next_queue_item") as db:
+        async with service_db("get_next_queue_item") as db:
             # ActiveQueueSession conditions for worker ownership verification
             aqs_conditions = [
                 models.ActiveQueueSession.work_unit_key == work_unit_key,
@@ -825,11 +1027,17 @@ class QueueManager:
                 .order_by(models.QueueItem.id)
                 .limit(1)
             )
+            # ai: a pause that lands while this unit is held takes effect here: no item, so the loop releases the unit
+            pause_clause = not_paused_clause(models.QueueItem.tenant_id, task_type)
+            if pause_clause is not None:
+                query = query.where(pause_clause)
             result = await db.execute(query)
             queue_item = result.scalar_one_or_none()
 
-            # Important: commit to avoid tracked_db's rollback expiring the instance
+            # region ai
+            # Important: commit to avoid service_db's rollback expiring the instance
             # We rely on expire_on_commit=False to keep attributes accessible post-close
+            # endregion
             await db.commit()
             return queue_item
 
@@ -862,14 +1070,46 @@ class QueueManager:
         messages_context: list[models.Message] = []
         items_to_process: list[QueueItem] = []
 
-        async with tracked_db("get_queue_item_batch") as db:
+        # region ai
+        # This batch runs on the RLS-bypassing service session, so RLS does not
+        # scope the message reads. The work_unit_key is tenant-namespaced under
+        # MULTI_TENANT; carry that tenant into the message-context queries so a
+        # session/workspace name shared across tenants can't pull another tenant's
+        # messages into the batch. It also goes on every Message.id probe: the PK
+        # is (tenant_id, id), so an id-only lookup can't seek it and reads every
+        # partition's index. Flag off, the key is never prefixed and None adds
+        # no filter, so self-host is unchanged. Flag on, an unfiltered read on
+        # the service session would span every tenant, so an un-prefixed key
+        # raises before any read. process_work_unit fails such a unit before
+        # it gets here; this is the backstop for any other caller.
+        # endregion
+        if settings.MULTI_TENANT and parsed_key.tenant_id is None:
+            raise ValueError(
+                f"work_unit_key {work_unit_key!r} has no tenant prefix but "
+                + "MULTI_TENANT is enabled; refusing an unscoped batch read"
+            )
+        tenant_clause = (
+            models.Message.tenant_id == parsed_key.tenant_id
+            if parsed_key.tenant_id is not None
+            else true()
+        )
+
+        async with service_db("get_queue_item_batch") as db:
             # For batch tasks, get messages based on token limit.
-            # Step 1: Verify worker still owns the work_unit_key.
-            ownership_check = await db.execute(
+            # Step 1: Verify worker still owns the work_unit_key, and that its
+            # tenant has not been paused since the claim. Either failing returns
+            # an empty batch, which ends the loop and releases the unit.
+            ownership_query = (
                 select(models.ActiveQueueSession.id)
                 .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
                 .where(models.ActiveQueueSession.id == aqs_id)
             )
+            pause_clause = not_paused_clause(
+                models.ActiveQueueSession.tenant_id, task_type
+            )
+            if pause_clause is not None:
+                ownership_query = ownership_query.where(pause_clause)
+            ownership_check = await db.execute(ownership_query)
             if not ownership_check.scalar_one_or_none():
                 return QueueBatchResult(
                     was_flush_enabled=was_flush_enabled,
@@ -896,6 +1136,7 @@ class QueueManager:
                 .where(models.Message.session_name == parsed_key.session_name)
                 .where(models.Message.workspace_name == parsed_key.workspace_name)
                 .where(models.QueueItem.work_unit_key == work_unit_key)
+                .where(tenant_clause)
                 .scalar_subquery()
             )
 
@@ -905,6 +1146,7 @@ class QueueManager:
                 .where(models.Message.session_name == parsed_key.session_name)
                 .where(models.Message.workspace_name == parsed_key.workspace_name)
                 .where(models.Message.id < min_unprocessed_message_id_subq)
+                .where(tenant_clause)
                 .scalar_subquery()
             )
 
@@ -914,6 +1156,7 @@ class QueueManager:
                 select(models.Message.id)
                 .where(models.Message.id == immediately_preceding_id_subq)
                 .where(models.Message.peer_name != parsed_key.observed)
+                .where(tenant_clause)
                 .scalar_subquery()
             )
 
@@ -944,6 +1187,7 @@ class QueueManager:
                 .where(models.Message.session_name == parsed_key.session_name)
                 .where(models.Message.workspace_name == parsed_key.workspace_name)
                 .where(models.Message.id >= effective_start_id)
+                .where(tenant_clause)
                 .subquery()
             )
 
@@ -968,6 +1212,10 @@ class QueueManager:
                 )  # always include the first unprocessed message
             )
 
+            # queue joins on the CTE's message_id, not on Message.id. Then the
+            # planner can start from the small CTE and read each message by its
+            # primary key. With Message.id here, the planner joined messages to
+            # queue first, and that read every message of the tenant.
             query = (
                 select(
                     models.Message,
@@ -981,11 +1229,12 @@ class QueueManager:
                     and_(
                         models.QueueItem.work_unit_key == work_unit_key,
                         ~models.QueueItem.processed,
-                        models.QueueItem.message_id == models.Message.id,
+                        models.QueueItem.message_id == cte.c.message_id,
                     ),
                 )
                 .where(allowed_condition)
-                .order_by(models.Message.id, models.QueueItem.id)
+                .where(tenant_clause)
+                .order_by(cte.c.message_id, models.QueueItem.id)
             )
 
             result = await db.execute(query)
@@ -1117,7 +1366,7 @@ class QueueManager:
 
     async def _get_work_unit_retry_attempts(self, work_unit_key: str) -> int:
         """Read the shared transient-failure attempt count for a work unit."""
-        async with tracked_db("get_work_unit_retry_attempts") as db:
+        async with service_db("get_work_unit_retry_attempts") as db:
             item = await self._oldest_unprocessed_item(db, work_unit_key)
             if item is None:
                 return 0
@@ -1131,7 +1380,7 @@ class QueueManager:
         self, work_unit_key: str, attempts: int
     ) -> None:
         """Persist the shared attempt count on the oldest unprocessed item."""
-        async with tracked_db("set_work_unit_retry_attempts") as db:
+        async with service_db("set_work_unit_retry_attempts") as db:
             item = await self._oldest_unprocessed_item(
                 db, work_unit_key, for_update=True
             )
@@ -1156,7 +1405,7 @@ class QueueManager:
         operator does the strip server-side, so no rows are locked ahead of the
         write and there is no lock order to get wrong.
         """
-        async with tracked_db("clear_work_unit_retry_attempts") as db:
+        async with service_db("clear_work_unit_retry_attempts") as db:
             await db.execute(
                 update(models.QueueItem)
                 .where(
@@ -1175,12 +1424,32 @@ class QueueManager:
             )
             await db.commit()
 
+    async def _mark_invalid_work_unit_as_errored(
+        self, work_unit_key: str, error: ValueError
+    ) -> None:
+        """Quarantine pending rows sharing a key that cannot be parsed.
+
+        Unlike a processing failure, an invalid key makes every item in the
+        work unit unprocessable. Match the raw key without parsing it again.
+        """
+        error_msg = escape_unstorable(f"{error.__class__.__name__}: {error}")[:65535]
+        async with service_db("mark_invalid_work_unit_as_errored") as db:
+            await db.execute(
+                update(models.QueueItem)
+                .where(
+                    models.QueueItem.work_unit_key == work_unit_key,
+                    models.QueueItem.processed.is_(False),
+                )
+                .values(processed=True, error=error_msg)
+            )
+            await db.commit()
+
     async def mark_queue_items_as_processed(
         self, items: list[QueueItem], work_unit_key: str
     ) -> None:
         if not items:
             return
-        async with tracked_db("process_queue_item_batch") as db:
+        async with service_db("process_queue_item_batch") as db:
             work_unit = parse_work_unit_key(work_unit_key)
             item_ids = [item.id for item in items]
             await db.execute(
@@ -1213,12 +1482,15 @@ class QueueManager:
         """Mark queue item as processed with an error"""
         if not item:
             return
-        async with tracked_db("mark_queue_item_as_errored") as db:
+        async with service_db("mark_queue_item_as_errored") as db:
             await db.execute(
                 update(models.QueueItem)
                 .where(models.QueueItem.id == item.id)
                 .where(models.QueueItem.work_unit_key == work_unit_key)
-                .values(processed=True, error=error[:65535])  # Truncate to TEXT limit
+                # Escape before truncating: an exception message can echo a NUL or
+                # lone surrogate from its input, and Postgres would reject the
+                # UPDATE, leaving the item unprocessed and claimable forever.
+                .values(processed=True, error=escape_unstorable(error)[:65535])
             )
             await db.execute(
                 update(models.ActiveQueueSession)
@@ -1226,6 +1498,48 @@ class QueueManager:
                 .values(last_updated=func.now())
             )
             await db.commit()
+
+    async def _fail_unscoped_work_unit(self, work_unit_key: str) -> None:
+        """Mark every pending item of an un-prefixed key errored under MULTI_TENANT."""
+        error = (
+            f"work_unit_key {work_unit_key!r} has no tenant prefix but "
+            + "MULTI_TENANT is enabled"
+        )
+        async with service_db("fail_unscoped_work_unit") as db:
+            result = cast(
+                CursorResult[Any],
+                await db.execute(
+                    update(models.QueueItem)
+                    .where(models.QueueItem.work_unit_key == work_unit_key)
+                    .where(models.QueueItem.processed.is_(False))
+                    .values(processed=True, error=error)
+                ),
+            )
+            await db.commit()
+        logger.error("%s; marked %d queue items errored", error, result.rowcount)
+        if settings.SENTRY.ENABLED:
+            sentry_sdk.capture_message(error, level="error")
+
+    async def _is_drained(self, work_unit_key: str) -> bool:
+        """Whether an empty fetch means the unit has no unprocessed items left."""
+        # region ai
+        # Under MULTI_TENANT the in-unit fetches also exclude a paused tenant's
+        # items, so an empty fetch can mean "suspended" rather than "done". Only a
+        # real drain may publish queue.empty. Flag-off nothing is excluded, so the
+        # empty fetch is the answer and no extra query runs.
+        # endregion
+        if not settings.MULTI_TENANT:
+            return True
+        async with service_db("queue_unit_drained", read_only=True) as db:
+            remaining = await db.scalar(
+                select(
+                    select(models.QueueItem.id)
+                    .where(models.QueueItem.work_unit_key == work_unit_key)
+                    .where(~models.QueueItem.processed)
+                    .exists()
+                )
+            )
+        return not remaining
 
     async def _cleanup_work_unit(
         self,
@@ -1235,7 +1549,7 @@ class QueueManager:
         """
         Clean up a specific work unit session by both work_unit_key and AQS ID.
         """
-        async with tracked_db("cleanup_work_unit") as db:
+        async with service_db("cleanup_work_unit") as db:
             result = cast(
                 CursorResult[Any],
                 await db.execute(
@@ -1262,8 +1576,10 @@ async def main():
     try:
         await manager.initialize()
     except Exception as e:
-        logger.error(f"Error in main: {str(e)}")
+        # ai: re-raised so a refused boot (the startup validators) exits non-zero
+        logger.exception("Error in main")
         sentry_sdk.capture_exception(e)
+        raise
     finally:
         await close_cache()
         logger.debug("Main function exiting")

@@ -276,14 +276,22 @@ def _select_summary_for_context(
 )
 async def get_sessions(
     workspace_id: str = Path(...),
-    options: schemas.SessionGet | None = Body(
+    options: schemas.WorkspaceSessionGet | None = Body(
         None, description="Filtering and pagination options for the sessions list"
     ),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
+    include_scopes: bool = Query(
+        False,
+        description="Whether to include each session's active scope names as `scopes`",
+    ),
     params: AbstractParams = Depends(pagination_params),
     db: AsyncSession = read_db,
 ):
-    """Get all Sessions for a Workspace, paginated with optional filters."""
+    """Get all Sessions for a Workspace, paginated with optional filters.
+
+    Pass `scope` to list only a scope's member sessions (404 if the scope does
+    not exist), or `in_no_scope` to list only sessions that are in no scope.
+    """
     filter_param = None
 
     if options and hasattr(options, "filters") and options.filters:
@@ -291,15 +299,33 @@ async def get_sessions(
         if filter_param == {}:  # Explicitly check for empty dict
             filter_param = None
 
-    return await paginate_offset_or_cursor(
+    scope_name = options.scope if options else None
+    if scope_name is not None:
+        await crud.get_scope_or_raise(db, workspace_id, scope_name)
+
+    page = await paginate_offset_or_cursor(
         db,
         await crud.get_sessions(
             workspace_name=workspace_id,
             filters=filter_param,
             reverse=reverse,
+            scope_name=scope_name,
+            in_no_scope=options.in_no_scope if options else False,
         ),
         params,
     )
+
+    if include_scopes:
+        scopes = await crud.get_session_scopes(
+            db, workspace_id, [session.name for session in page.items]
+        )
+        page.items = [
+            schemas.Session.model_validate(session).model_copy(
+                update={"scopes": scopes[session.name]}
+            )
+            for session in page.items
+        ]
+    return page
 
 
 @router.post(

@@ -40,6 +40,7 @@ from typing import Any
 from src.config import settings
 from src.llm.capture import CapturedLLMCall, CapturedSpan, CapturedToolCall
 from src.telemetry import langfuse_session
+from src.telemetry.tenant import current_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -363,7 +364,7 @@ class LangfuseExporter:
         start_ns: int | None,
         end_ns: int,
     ) -> None:
-        level = "ERROR" if (call.finish_reason in _ERROR_FINISHES) else None
+        failed = call.finish_reason in _ERROR_FINISHES
         obs = client.start_observation(
             trace_context=self._trace_context(lf_trace_id, parent_span_id),
             name=self._gen_name(call),
@@ -373,7 +374,8 @@ class LangfuseExporter:
             output=self._output(call),
             metadata=self._generation_metadata(call),
             usage_details=self._usage(call),
-            level=level,
+            level="ERROR" if failed else None,
+            status_message=call.error_class if failed else None,
         )
         backdated = self._backdate_start(obs, start_ns)
         self._attach(obs, parent_span_id, self._trace_name(call))
@@ -457,7 +459,11 @@ class LangfuseExporter:
             return
         from langfuse import LangfuseOtelSpanAttributes as Attr
 
-        span.set_attribute(Attr.TRACE_USER_ID, str(settings.NAMESPACE))
+        # The tenant is the Langfuse user (flag-off, TENANT_ID when set); with no
+        # tenant the namespace (the instance) is, exactly as before tenancy.
+        span.set_attribute(
+            Attr.TRACE_USER_ID, current_tenant_id() or str(settings.NAMESPACE)
+        )
         if trace_name:
             span.set_attribute(Attr.TRACE_NAME, trace_name)
 
@@ -471,6 +477,8 @@ class LangfuseExporter:
         # run shares span_id == trace_id == run_id, so surfacing them here only
         # duplicates trace_id and misleads. Re-add once the source differentiates.
         md: dict[str, str] = {"namespace": str(settings.NAMESPACE)}
+        if (tenant_id := current_tenant_id()) is not None:
+            md["tenant_id"] = tenant_id
         for key, value in (
             ("workspace_name", call.workspace_name),
             ("call_purpose", call.call_purpose),
@@ -494,6 +502,8 @@ class LangfuseExporter:
         # carries only trace-level fields — not a single specialist's agent_type/
         # observer/observed/call_purpose.
         md: dict[str, str] = {"namespace": str(settings.NAMESPACE)}
+        if (tenant_id := current_tenant_id()) is not None:
+            md["tenant_id"] = tenant_id
         for key, value in (
             ("workspace_name", call.workspace_name),
             ("trace_id", call.trace_id),
@@ -518,6 +528,12 @@ class LangfuseExporter:
         md = self._step_metadata(call)
         if call.custom_instructions:
             md["custom_instructions"] = call.custom_instructions
+        # A failed attempt keeps its output, so these are what tell it apart
+        # from a successful one when filtering generations.
+        if call.outcome is not None:
+            md["outcome"] = call.outcome
+        if call.error_class is not None:
+            md["error_class"] = call.error_class
         return md
 
     @staticmethod

@@ -274,7 +274,9 @@ class TestDeriverStatusEndpoint:
             )
         )
 
-        # Add internal task types (should NOT be counted)
+        # Add internal task types (should NOT be counted). The reconciler is
+        # the tenant-less lane and carries no workspace (the queue CHECK
+        # enforces it); the other internal types belong to a workspace.
         for task_type in ("reconciler", "webhook", "deletion"):
             internal_payload = {
                 "task_type": task_type,
@@ -287,7 +289,9 @@ class TestDeriverStatusEndpoint:
                     work_unit_key=f"{task_type}:{workspace.name}:internal",
                     payload=internal_payload,
                     processed=False,
-                    workspace_name=workspace.name,
+                    workspace_name=(
+                        None if task_type == "reconciler" else workspace.name
+                    ),
                 )
             )
 
@@ -356,3 +360,46 @@ class TestDeriverStatusEndpoint:
             responses.append(response.json())  # pyright: ignore
         # Check consistency
         assert all(r == responses[0] for r in responses)  # pyright: ignore
+
+
+@pytest.mark.asyncio
+async def test_queue_status_counts_only_the_bound_tenant(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """queue has no RLS and workspace_name is unique only per tenant, so the status
+    of one tenant's "default" workspace must not count another tenant's."""
+    from nanoid import generate as generate_nanoid
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from src import crud
+    from src.config import settings
+    from src.db import tenant_context
+
+    workspace_name = str(generate_nanoid())
+    for tenant_id in ("tenant-a", "tenant-b"):
+        await db_session.execute(
+            pg_insert(models.Tenant)
+            .values(tenant_id=tenant_id, tier="shared")
+            .on_conflict_do_nothing()
+        )
+        db_session.add(
+            models.QueueItem(
+                tenant_id=tenant_id,
+                workspace_name=workspace_name,
+                session_id=f"{tenant_id}-session",
+                work_unit_key=f"{tenant_id}:representation:{workspace_name}:a:a",
+                task_type="representation",
+                payload={},
+            )
+        )
+    await db_session.commit()
+
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    token = tenant_context.set("tenant-a")
+    try:
+        status = await crud.get_queue_status(db_session, workspace_name)
+    finally:
+        tenant_context.reset(token)
+
+    assert status.total_work_units == 1
+    assert set(status.sessions or {}) == {"tenant-a-session"}

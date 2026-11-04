@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `honcho dream list` and `honcho dream inspect <id>` (Representation History): list the dreams in a workspace, newest first, or the dreams about one peer with `-p`, and see what a dream changed. `inspect` shows the conclusions it created, each with the conclusions it was derived from and where those stand now (current, removed and by which dream, or unavailable once deleted or removed longer ago than history is kept); the conclusions it removed, as they read when removed; and the peer card before and after. A dream past the retention window shows when it was pruned and keeps only the conclusions it created that still exist. Needs a workspace or admin key (DEV-3249)
+
+## [0.4.0] - 2026-10-29
+
+### Added
+
+- `source_message_ids` on conclusion output: the messages an explicit conclusion cites as evidence (Honcho v3.5.0+; a count in table mode, the full list in JSON). `conclusion list --cites <message_id>` narrows to the conclusions that cite a message. Null in JSON on servers or SDKs that predate the field (#935)
+
+### Changed
+
+- Requires `honcho-ai` 2.8.0 or newer, the first Python SDK that carries `source_message_ids`
+
 ## [0.3.0] - 2026-10-23
 
 ### Added
@@ -17,6 +31,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Requires `certifi` 2026.10.19 or newer, the first CA bundle without the emSign root behind the compromised eMudhra intermediates. Upgrading the CLI now upgrades the bundle it verifies TLS with, including under `pip install -U`, which otherwise leaves dependencies alone
 - A local stack keeps the Honcho image it pinned on first `honcho start`, so a stack set up before this release can still be running an image with the old bundle. Move to the patched image with `honcho stop`, then `honcho start --image ghcr.io/plastic-labs/honcho:v3.4.1`; data is kept
+
+## [0.2.1] - 2026-10-20
+
+### Fixed
+
+- `honcho session summaries`, `honcho session inspect`, `honcho session context` and `honcho workspace queue-status` emit nested SDK objects (summaries, context messages, per-session queue status) as JSON objects instead of Python repr strings like `"content='...' message_id='...'"` (#1324)
 
 ## [0.2.1] - 2026-10-20
 

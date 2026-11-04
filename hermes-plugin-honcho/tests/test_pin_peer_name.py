@@ -22,7 +22,11 @@ import pytest
 
 from hermes_plugin_honcho.client import HonchoClientConfig
 from hermes_plugin_honcho.session import HonchoSessionManager
-from hermes_plugin_honcho.session_peers import HonchoPeerUnresolvedError
+from hermes_plugin_honcho.session_peers import (
+    HonchoPeerUnresolvedError,
+    machine_owner_id,
+    sanitize_peer_id,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +360,28 @@ class TestPeerResolutionOrder:
         assert mgr._get_or_create_peer.call_count == 0
         assert mgr._get_or_create_honcho_session.call_count == 0
         assert key not in mgr._cache
+
+    @pytest.mark.skipif(machine_owner_id() is None, reason="machine owner id is POSIX uid:<n>")
+    @pytest.mark.parametrize("runtime_id, aliases, peer_name, expected", [
+        ("OWNER", {}, "Igor", "Igor"),                     # Desktop/web/phone owner → peerName
+        ("OWNER", {"OWNER": "alice"}, "Igor", "alice"),    # an alias overrides the owner default
+        ("OWNER", {}, None, "OWNER-PEER"),                 # no peerName: unchanged fallback
+        ("uid:-1", {}, "Igor", "uid--1"),                  # another OS user stays separate
+        ("7654321", {}, "Igor", "7654321"),                # messaging user stays separate
+    ])
+    def test_machine_owner_resolves_to_peer_name(self, runtime_id, aliases, peer_name, expected):
+        owner = machine_owner_id()
+        runtime_id = owner if runtime_id == "OWNER" else runtime_id
+        aliases = {owner if k == "OWNER" else k: v for k, v in aliases.items()}
+        expected = sanitize_peer_id(owner) if expected == "OWNER-PEER" else expected
+        mgr = HonchoSessionManager(
+            honcho=MagicMock(),
+            config=self._config(peer_name=peer_name, pin_peer_name=False, user_peer_aliases=aliases),
+            runtime_user_peer_name=runtime_id,
+        )
+        _patch_manager_for_resolution_test(mgr)
+
+        assert mgr.get_or_create("local:desk").user_peer_id == expected
 
     def test_peer_name_alone_is_the_declared_owner(self):
         """No runtime identity: the configured peerName is the peer, unpinned or not."""

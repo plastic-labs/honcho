@@ -87,7 +87,9 @@ async def process_item(queue_item: models.QueueItem) -> None:
                 queue_payload,
             )
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
-        await webhook_delivery.deliver_webhook(validated, workspace_name)
+        await webhook_delivery.deliver_webhook(
+            validated, workspace_name, tenant_id=queue_item.tenant_id
+        )
 
     elif task_type == "summary":
         try:
@@ -393,6 +395,8 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
     - sync_vectors: Syncs pending documents/message embeddings to vector store
       and cleans up soft-deleted documents.
     - cleanup_queue: Removes old processed queue items.
+    - prune_dream_history: Deletes Representation History runs past the
+      retention window.
     - backfill (and legacy per-backfill types): Runs one cycle of a
       registered backfill.
 
@@ -448,6 +452,10 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
                     total_duration_ms=duration_ms,
                 )
             )
+    elif reconciler_type == ReconcilerType.PRUNE_DREAM_HISTORY:
+        pruned_count = await crud.prune_dream_history()
+        if pruned_count > 0:
+            logger.info("Pruned %d dream history runs", pruned_count)
     elif (
         backfill := resolve_backfill(reconciler_type, payload.backfill_name)
     ) is not None:

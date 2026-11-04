@@ -64,10 +64,13 @@ def get_flag_overrides() -> dict[str, str | None]:
 def maybe_refresh_token(config: CLIConfig) -> None:
     """Refresh an expired OAuth access token in place and persist it.
 
-    No-op when there is no grant for the current host or the token is still
-    valid. A dead grant degrades to the saved apiKey with a warning; exits
-    only when nothing is left to authenticate with.
+    No-op when HONCHO_API_KEY is set (the env key wins, so the grant goes
+    unused), when there is no grant for the current host, or when the token is
+    still valid. A dead grant degrades to the saved apiKey with a warning;
+    exits only when nothing is left to authenticate with.
     """
+    if config.api_key_from_env:
+        return
     tokens = config.usable_oauth()
     if tokens is None or tokens.access_valid():
         return
@@ -83,15 +86,19 @@ def maybe_refresh_token(config: CLIConfig) -> None:
         if refreshed is not None:
             # rotation-safe: persist the (possibly new) refresh token before
             # it's reused; keep the old one if the server didn't rotate
-            # (refresh_token is optional)
+            # (refresh_token is optional). Only the grant is written: config
+            # carries env overrides that must not land in the shared file.
+            # Bind it to the host it was refreshed against, so a legacy
+            # hostless grant refreshed under HONCHO_BASE_URL isn't later sent
+            # to the saved environmentUrl.
             config.oauth = OAuthTokens.from_response(
                 refreshed,
                 client_id=tokens.client_id,
                 scope_fallback=tokens.scope,
                 refresh_fallback=tokens.refresh_token,
-                host=tokens.host,
+                host=config.base_url,
             )
-            config.save()
+            config.save(oauth_only=True)
             return
 
     if config.api_key:

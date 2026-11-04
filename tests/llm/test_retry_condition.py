@@ -37,6 +37,7 @@ from src.llm import tool_loop as tool_loop_module
 from src.llm.errors import is_non_retryable_client_error, llm_retry_condition
 from src.llm.runtime import AttemptPlan
 from src.llm.structured_output import StructuredOutputError
+from tests.llm.conftest import with_assistant_turn
 
 _REQUEST = httpx.Request("POST", "http://tentacruel-litellm.internal/v1/chat")
 
@@ -281,11 +282,15 @@ class _Recorder:
         self.outcome: Any = outcome
         self.models: list[str] = []
 
-    async def __call__(self, _provider: str, model: str, *_a: Any, **_kw: Any) -> Any:
-        """Record the model, then return or raise the configured outcome."""
+    async def __call__(self, _provider: str, model: str, *_a: Any, **kw: Any) -> Any:
+        """Record the model, then return or raise the configured outcome, running
+        the caller's `validate_response` hook on a response as the executor does.
+        """
         self.models.append(model)
         if isinstance(self.outcome, BaseException):
             raise self.outcome
+        if (validate := kw.get("validate_response")) is not None:
+            validate(self.outcome)
         return self.outcome
 
 
@@ -446,11 +451,13 @@ async def _recall(_name: str, _input: dict[str, Any]) -> str:
 
 def _tool_call_response() -> HonchoLLMCallResponse[Any]:
     """A model response that calls the `recall` tool, so the loop continues."""
-    return HonchoLLMCallResponse(
-        content="",
-        output_tokens=1,
-        finish_reasons=["tool_use"],
-        tool_calls_made=[{"id": "t0", "name": "recall", "input": {}}],
+    return with_assistant_turn(
+        HonchoLLMCallResponse(
+            content="",
+            output_tokens=1,
+            finish_reasons=["tool_use"],
+            tool_calls_made=[{"id": "t0", "name": "recall", "input": {}}],
+        )
     )
 
 
