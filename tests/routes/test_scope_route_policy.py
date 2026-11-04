@@ -292,11 +292,11 @@ def _b_peer_config(c: TestClient, ws: str, s: str, p: str):
     )
 
 
-def _b_dreams_observer(c: TestClient, ws: str, s: str, p: str):
+def _b_dreams_observer(c: TestClient, ws: str, _s: str, p: str):
     return c.post(f"/v3/workspaces/{ws}/dreams/list", json={"observer_id": p})
 
 
-def _b_dreams_observed(c: TestClient, ws: str, s: str, p: str):
+def _b_dreams_observed(c: TestClient, ws: str, _s: str, p: str):
     return c.post(f"/v3/workspaces/{ws}/dreams/list", json={"observed_id": p})
 
 

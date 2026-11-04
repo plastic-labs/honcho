@@ -635,7 +635,7 @@ class TestCreateObservations:
             deduplicate: bool = False,
             history: DreamHistoryTarget | None = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed, deduplicate)
+            _ = (workspace_name, observer, observed, deduplicate, history)
             created_documents.extend(documents)
             return crud.CreateDocumentsResult(created_documents=documents)
 
@@ -699,7 +699,7 @@ class TestCreateObservations:
             deduplicate: bool = False,
             history: DreamHistoryTarget | None = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed, deduplicate)
+            _ = (workspace_name, observer, observed, deduplicate, history)
             created_documents.extend(documents)
             return crud.CreateDocumentsResult(created_documents=documents)
 
@@ -761,7 +761,7 @@ class TestCreateObservations:
             deduplicate: bool = False,
             history: DreamHistoryTarget | None = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed, deduplicate)
+            _ = (workspace_name, observer, observed, deduplicate, history)
             created_documents.extend(documents)
             return crud.CreateDocumentsResult(created_documents=documents)
 
@@ -820,7 +820,7 @@ class TestCreateObservations:
             deduplicate: bool = False,
             history: DreamHistoryTarget | None = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed, deduplicate)
+            _ = (workspace_name, observer, observed, deduplicate, history)
             return crud.CreateDocumentsResult(created_documents=documents)
 
         monkeypatch.setattr(
@@ -916,7 +916,7 @@ class TestCreateObservations:
             deduplicate: bool = False,
             history: DreamHistoryTarget | None = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed)
+            _ = (workspace_name, observer, observed, history)
             captured["deduplicate"] = deduplicate
             return crud.CreateDocumentsResult(created_documents=documents)
 

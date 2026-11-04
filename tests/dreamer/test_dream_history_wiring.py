@@ -13,7 +13,7 @@ from src import crud, models
 from src.config import settings
 from src.crud.dream_history import DreamHistoryTarget
 from src.dreamer import orchestrator
-from src.dreamer.specialists import DeductionSpecialist, SpecialistResult
+from src.dreamer.specialists import SPECIALISTS, DeductionSpecialist, SpecialistResult
 from src.llm import HonchoLLMCallResponse
 from src.models import Peer, Workspace
 from src.utils.agent_tools import (
@@ -179,7 +179,7 @@ async def test_run_dream_opens_and_closes_its_run(
         return type("Stub", (), {"run": staticmethod(run)})()
 
     with patch.dict(
-        orchestrator.SPECIALISTS,
+        SPECIALISTS,
         {
             "deduction": _specialist("deduction", success=True),
             "induction": _specialist("induction", success=induction_succeeds),
@@ -225,7 +225,7 @@ async def test_run_dream_without_history_passes_none(
         return _result("x", success=True)
 
     stub = type("Stub", (), {"run": staticmethod(run)})()
-    with patch.dict(orchestrator.SPECIALISTS, {"deduction": stub, "induction": stub}):
+    with patch.dict(SPECIALISTS, {"deduction": stub, "induction": stub}):
         await orchestrator.run_dream(workspace.name, peer.name, peer.name)
 
     assert seen == [None, None]
