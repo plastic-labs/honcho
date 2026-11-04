@@ -75,6 +75,7 @@ dev = [
     "chromadb>=1.5.2",
     "schemathesis>=4.31.1",
     "hypothesis>=6.170.1",
+    "pytest-socket>=0.7.0",
 ]
 
 [tool.uv]
@@ -117,7 +118,7 @@ extend-immutable-calls = ["fastapi.Depends"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
-addopts = "--strict-markers -n auto --ignore=tests/alembic"
+addopts = "--strict-markers -n auto --ignore=tests/alembic --disable-socket --allow-unix-socket --allow-hosts=127.0.0.1,::1,localhost"
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
