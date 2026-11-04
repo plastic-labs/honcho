@@ -41,9 +41,10 @@ if TYPE_CHECKING:
 # cache write), so the one transition the API allows is one no process holds.
 #
 # There is no TTL, so any change outside that path takes effect only after every replica
-# restarts: deleting an empty tenant and recreating the same id with a different key, or
-# re-keying tenants wholesale. No in-process fix would be complete anyway, since every
-# replica caches independently. reset_prefix_cache() clears one process.
+# restarts: re-keying tenants wholesale, or deleting an empty tenant and recreating the
+# same id with a different key. delete_tenant evicts its tenant here, which covers the
+# replica that served the delete; every other replica caches independently and keeps
+# the old key until it restarts. reset_prefix_cache() clears one process.
 # endregion
 _prefix_cache: dict[str, str] = {}
 
@@ -163,6 +164,11 @@ async def prefix_for_tenant(
         )
     _prefix_cache[tenant_id] = key
     return key
+
+
+def evict_prefix(tenant_id: str) -> None:
+    """Drop one tenant's cached key in this process (a deleted tenant)."""
+    _prefix_cache.pop(tenant_id, None)
 
 
 def reset_prefix_cache() -> None:

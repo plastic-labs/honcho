@@ -25,7 +25,7 @@ from src.exceptions import ConflictException, ResourceNotFoundException
 logger = getLogger(__name__)
 
 COLLECTION_CACHE_KEY_TEMPLATE = (
-    "v3:workspace:{workspace_name}:collection:{observer}:{observed}"
+    "v2:workspace:{workspace_name}:collection:{observer}:{observed}"
 )
 COLLECTION_LOCK_PREFIX = f"{cache_prefix_namespace()}:lock:v2"
 
@@ -71,11 +71,6 @@ async def _fetch_collection(
     if obj is None:
         return None
     return {
-        # region ai
-        # tenant_id leads the composite PK; without it the reconstructed object
-        # has an incomplete identity and merge/update can't locate its row.
-        # endregion
-        "tenant_id": obj.tenant_id,
         "id": obj.id,
         "observer": obj.observer,
         "observed": obj.observed,
@@ -134,7 +129,7 @@ async def get_collection(
     if data is None:
         raise ResourceNotFoundException("Collection not found")
     # Reconstruct ORM object from cached dict and merge into session
-    obj = models.Collection(**data)
+    obj = models.Collection(**models.with_cached_tenant(data))
     make_transient_to_detached(obj)
     collection = await db.merge(obj, load=False)
     return collection
@@ -166,7 +161,6 @@ async def get_or_create_collection(
             await safe_cache_set(
                 key,
                 {
-                    "tenant_id": honcho_collection.tenant_id,
                     "id": honcho_collection.id,
                     "observer": honcho_collection.observer,
                     "observed": honcho_collection.observed,

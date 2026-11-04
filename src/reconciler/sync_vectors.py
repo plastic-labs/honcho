@@ -8,7 +8,7 @@ embeddings to the vector store on a rolling basis, healing any missed writes.
 import datetime
 import logging
 import time
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar, cast
@@ -365,6 +365,34 @@ def _bound_tenant(tenant_id: str | None) -> Generator[None]:
         tenant_context.reset(token)
 
 
+async def _resolve_prefixes(
+    db: AsyncSession, tenant_ids: Iterable[str], noun: str
+) -> dict[str, str | None]:
+    """Each tenant's vector namespace prefix, or None when it can't be resolved."""
+    # region ai
+    # Resolved once per tenant and before any embedding call: in external-only
+    # mode an unresolvable tenant's rows have nowhere to go, so embedding them
+    # would be billed and thrown away on every retry. Contained per tenant rather
+    # than per batch: this selection spans every tenant, so one unresolvable
+    # tenant (no key yet, or a failed read) must not raise here and roll back the
+    # batch before any row's attempt counter moved, or its rows would stay
+    # pending, sort to the front of the next batch and wedge it forever. Its rows
+    # go into the same backoff accounting as any other persistent failure.
+    # endregion
+    prefixes: dict[str, str | None] = {}
+    for tenant_id in tenant_ids:
+        if tenant_id in prefixes:
+            continue
+        try:
+            prefixes[tenant_id] = await prefix_for_tenant(tenant_id, db)
+        except (VectorNamespaceUnresolved, VectorStoreError):
+            logger.warning(
+                "No vector namespace for tenant %s; deferring its %s", tenant_id, noun
+            )
+            prefixes[tenant_id] = None
+    return prefixes
+
+
 async def _sync_documents(
     db: AsyncSession,
     documents: list[models.Document],
@@ -391,9 +419,17 @@ async def _sync_documents(
         settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED
     )
 
-    # Step 1: Re-embed documents missing embeddings in postgres (cases 2 & 3)
+    prefixes = await _resolve_prefixes(
+        db, (doc.tenant_id for doc in documents), "documents"
+    )
+
+    # Step 1: Re-embed documents missing embeddings in postgres (cases 2 & 3).
+    # External-only, skip rows whose tenant has no namespace (step 2 defers them).
     docs_needing_embed = [
-        doc for doc in documents if cast(list[float] | None, doc.embedding) is None
+        doc
+        for doc in documents
+        if cast(list[float] | None, doc.embedding) is None
+        and (store_in_postgres or prefixes[doc.tenant_id] is not None)
     ]
     # ai: keyed by (tenant_id, id), the PK — this batch spans tenants, and id alone is unique only within one
     freshly_embedded: dict[tuple[str, str], list[float]] = {}
@@ -436,27 +472,16 @@ async def _sync_documents(
         await _bump_document_sync_attempts(db, failed_to_embed)
         failed_count += len(failed_to_embed)
 
-    # Step 2: Build vector records and upsert to external store (all cases)
-    # region ai
-    # Resolution is contained per row, not per batch. This selection spans every tenant,
-    # so an unresolvable one — no key yet, or a failed read — would otherwise raise here,
-    # before the upsert's own error handling, and roll the transaction back before any
-    # row's attempt counter moved. The bad row would stay pending, sort to the front of
-    # the next batch and take its co-tenants down with it on every cycle, forever.
-    # Skipping it into the same backoff accounting lets it reach MAX_SYNC_ATTEMPTS like
-    # any other persistent failure.
-    # endregion
+    # Step 2: Build vector records and upsert to external store (all cases).
+    # A row that already failed to embed was bumped above; don't bump it twice.
+    already_bumped = {(doc.tenant_id, doc.id) for doc in failed_to_embed}
     by_namespace: dict[str, list[models.Document]] = {}
     unresolved: list[models.Document] = []
     for doc in documents:
-        try:
-            prefix = await prefix_for_tenant(doc.tenant_id, db)
-        except (VectorNamespaceUnresolved, VectorStoreError):
-            logger.warning(
-                "No vector namespace for tenant %s; deferring its documents",
-                doc.tenant_id,
-            )
-            unresolved.append(doc)
+        prefix = prefixes[doc.tenant_id]
+        if prefix is None:
+            if (doc.tenant_id, doc.id) not in already_bumped:
+                unresolved.append(doc)
             continue
         ns = await external_vector_store.get_vector_namespace(
             "document",
@@ -562,9 +587,19 @@ async def _sync_message_embeddings(
         settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED
     )
 
-    # Step 1: Re-embed message embeddings missing vectors in postgres (cases 2 & 3)
+    prefixes = (
+        await _resolve_prefixes(db, (emb.tenant_id for emb in embeddings), "embeddings")
+        if external_vector_store is not None
+        else {}
+    )
+
+    # Step 1: Re-embed message embeddings missing vectors in postgres (cases 2 & 3).
+    # External-only, skip rows whose tenant has no namespace (step 3 defers them).
     embs_needing_embed: list[models.MessageEmbedding] = [
-        emb for emb in embeddings if emb.embedding is None
+        emb
+        for emb in embeddings
+        if emb.embedding is None
+        and (store_in_postgres or prefixes.get(emb.tenant_id) is not None)
     ]
     # ai: keyed by (tenant_id, id) for the same reason as the document path
     freshly_embedded: dict[tuple[str, int], list[float]] = {}
@@ -650,19 +685,16 @@ async def _sync_message_embeddings(
     message_keys = sorted({(emb.tenant_id, emb.message_id) for emb in embeddings})
     chunk_position = await compute_chunk_positions(db, message_keys)
 
-    # Step 3: Build vector records and upsert to external store (all cases)
-    # ai: contained per row for the same reason as the document path — one unresolvable tenant must not wedge the whole cross-tenant batch
+    # Step 3: Build vector records and upsert to external store (all cases).
+    # A row that already failed to embed was bumped above; don't bump it twice.
+    already_bumped = {(emb.tenant_id, emb.id) for emb in failed_to_embed}
     by_namespace: dict[str, list[models.MessageEmbedding]] = {}
     unresolved: list[models.MessageEmbedding] = []
     for emb in embeddings:
-        try:
-            prefix = await prefix_for_tenant(emb.tenant_id, db)
-        except (VectorNamespaceUnresolved, VectorStoreError):
-            logger.warning(
-                "No vector namespace for tenant %s; deferring its embeddings",
-                emb.tenant_id,
-            )
-            unresolved.append(emb)
+        prefix = prefixes[emb.tenant_id]
+        if prefix is None:
+            if (emb.tenant_id, emb.id) not in already_bumped:
+                unresolved.append(emb)
             continue
         ns = await external_vector_store.get_vector_namespace(
             "message",

@@ -678,6 +678,123 @@ class TestAuthNamedScopeTenantThreading:
         assert tenant_context.get() is None
 
 
+class TestAuthFlagOffIgnoresTokenTenant:
+    """Flag-off, auth()'s membership reads ignore the token's `tn`.
+
+    A control plane that mints tenant claims for every tenant may also talk to a
+    flag-off instance, whose rows all carry the instance tenant. The member-read
+    and named-scope lookups must read under that tenant, not the token's, or a
+    real member is denied (require_auth already ignores `tn` flag-off; see
+    TestRequireAuthTenantBinding).
+    """
+
+    @pytest.mark.asyncio
+    async def test_member_allowed_when_token_carries_another_tenant(
+        self,
+        db_engine: AsyncEngine,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(settings, "MULTI_TENANT", False)
+        tenant_id = models.instance_tenant_id()
+        workspace_name = f"ws-{generate_nanoid()}"
+        peer_name = f"alice-{generate_nanoid()}"
+        session_name = f"sess-{generate_nanoid()}"
+
+        db_session.add(models.Workspace(name=workspace_name, tenant_id=tenant_id))
+        db_session.add(
+            models.Peer(
+                name=peer_name, workspace_name=workspace_name, tenant_id=tenant_id
+            )
+        )
+        db_session.add(
+            models.Session(
+                name=session_name,
+                workspace_name=workspace_name,
+                tenant_id=tenant_id,
+                configuration={},
+            )
+        )
+        await db_session.flush()
+        await db_session.execute(
+            models.SessionPeer.__table__.insert().values(
+                tenant_id=tenant_id,
+                workspace_name=workspace_name,
+                session_name=session_name,
+                peer_name=peer_name,
+            )
+        )
+        await db_session.commit()
+
+        _bind_tracked_db_to_test_engine(monkeypatch, db_engine)
+        creds = _bearer(create_jwt(JWTParams(tn="acme", w=workspace_name, p=peer_name)))
+        params = await auth(
+            credentials=creds,
+            workspace_name=workspace_name,
+            session_name=session_name,
+            allow_member_read=True,
+        )
+        assert params.p == peer_name
+        assert tenant_context.get() is None
+
+    @pytest.mark.asyncio
+    async def test_scope_session_member_allowed_when_token_carries_another_tenant(
+        self,
+        db_engine: AsyncEngine,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from src.utils.scopes import SCOPE_KIND, scope_peer_name
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", False)
+        tenant_id = models.instance_tenant_id()
+        workspace_name = f"ws-{generate_nanoid()}"
+        scope_name = f"scope-{generate_nanoid()}"
+        session_name = f"sess-{generate_nanoid()}"
+
+        db_session.add(models.Workspace(name=workspace_name, tenant_id=tenant_id))
+        await db_session.flush()
+        db_session.add(
+            models.Peer(
+                name=scope_peer_name(scope_name),
+                workspace_name=workspace_name,
+                tenant_id=tenant_id,
+                internal_metadata={"kind": SCOPE_KIND},
+            )
+        )
+        db_session.add(
+            models.Session(
+                name=session_name,
+                workspace_name=workspace_name,
+                tenant_id=tenant_id,
+                configuration={},
+            )
+        )
+        await db_session.flush()
+        await db_session.execute(
+            models.SessionPeer.__table__.insert().values(
+                tenant_id=tenant_id,
+                workspace_name=workspace_name,
+                session_name=session_name,
+                peer_name=scope_peer_name(scope_name),
+            )
+        )
+        await db_session.commit()
+
+        _bind_tracked_db_to_test_engine(monkeypatch, db_engine)
+        creds = _bearer(
+            create_jwt(JWTParams(tn="acme", w=workspace_name, sc=scope_name))
+        )
+        params = await auth(
+            credentials=creds,
+            workspace_name=workspace_name,
+            session_name=session_name,
+            allow_scope=True,
+        )
+        assert params.sc == scope_name
+        assert tenant_context.get() is None
+
+
 SCOPES = [
     {"ad": True},
     {"w": "ws-a"},

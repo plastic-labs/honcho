@@ -107,8 +107,11 @@ async def tracked_db(
         context = f"task:{operation_name}:{str(uuid.uuid4())[:8]}"
         token = request_context.set(context)
 
+    # Flag-off a passed tenant is ignored, like require_auth ignores the token's
+    # `tn`: rows carry the instance tenant, so binding another would make
+    # scoped_tenant_id() filter on (and _default_tenant_id() stamp) the wrong one.
     tenant_token = None
-    if tenant_id is not None:
+    if settings.MULTI_TENANT and tenant_id is not None:
         tenant_token = tenant_context.set(tenant_id)
 
     db = (ReadSessionLocal if read_only else SessionLocal)()

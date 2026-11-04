@@ -110,6 +110,20 @@ def scoped_tenant_id() -> str:
     return instance_tenant_id()
 
 
+def with_cached_tenant(data: dict[str, Any]) -> dict[str, Any]:
+    """A cached row's fields plus its tenant_id, ready to rebuild the ORM object."""
+    # region ai
+    # Cached rows (the workspace/peer/session/collection entries) leave tenant_id
+    # out so the entry stays in the previous release's format: during a rolling
+    # deploy both releases share the cache, and each must read the other's entries
+    # and clear them on write. The tenant is still known here: flag-on the cache
+    # key is prefixed with the bound tenant, so the entry is that tenant's row, and
+    # flag-off every row carries the instance tenant. tenant_id leads the composite
+    # PK, so the rebuilt object needs it for merge/update to locate its row.
+    # endregion
+    return {**data, "tenant_id": scoped_tenant_id()}
+
+
 class TenantPartitioned:
     """Mixin for the models whose table has RLS and is HASH partitioned by tenant_id.
 

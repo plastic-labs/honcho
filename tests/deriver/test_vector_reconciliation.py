@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.db import tenant_context
+from src.exceptions import VectorNamespaceUnresolved
 from src.reconciler import sync_vectors
 from src.reconciler.sync_vectors import (
     MAX_SYNC_ATTEMPTS,
@@ -609,6 +610,52 @@ class TestBackgroundPathPerTenantNamespaces:
         await db_session.refresh(bad_doc)
         assert bad_doc.sync_state == "pending"
         assert bad_doc.sync_attempts == 1
+
+    async def test_cleanup_moves_past_a_tenant_with_no_namespace(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An unresolvable tenant's soft-deleted rows can fill a batch; the sweep
+        excludes that tenant and still cleans everyone else's rows that cycle."""
+        from src.crud.document import cleanup_soft_deleted_documents
+
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        now = datetime.datetime.now(datetime.UTC)
+        bad_doc, _, _ = await self._create_tenant_scoped_document(
+            db_session, vector_correlation_id=None
+        )
+        good_doc, _, _ = await self._create_tenant_scoped_document(
+            db_session, vector_correlation_id="tenant-good-app"
+        )
+        # The stuck tenant's row is the oldest, so it is first in line.
+        bad_doc.deleted_at = now - datetime.timedelta(hours=2)
+        good_doc.deleted_at = now - datetime.timedelta(hours=1)
+        await db_session.commit()
+        bad_key = (bad_doc.tenant_id, bad_doc.id)
+        good_key = (good_doc.tenant_id, good_doc.id)
+
+        with caplog.at_level("WARNING", logger="src.crud.document"):
+            cleaned = await cleanup_soft_deleted_documents(
+                db_session, _NamespaceRecordingVectorStore(), batch_size=1
+            )
+
+        assert cleaned == 1
+        # The oldest row came first and its tenant was set aside, not skipped past.
+        assert any(bad_key[0] in record.getMessage() for record in caplog.records)
+        db_session.expire_all()
+        remaining = {
+            (row.tenant_id, row.id)
+            for row in (
+                await db_session.execute(
+                    select(models.Document.tenant_id, models.Document.id).where(
+                        models.Document.id.in_([bad_key[1], good_key[1]])
+                    )
+                )
+            ).all()
+        }
+        assert remaining == {bad_key}
 
     async def _create_tenant_scoped_message_embedding(
         self, db_session: AsyncSession, *, vector_correlation_id: str | None
@@ -1633,6 +1680,45 @@ class TestReEmbedTenantAttribution:
         }
         assert synced == 2
         assert written == {"t-a": 1.0, "t-b": 2.0}
+
+    async def test_external_only_skips_embedding_an_unresolvable_tenant(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # With no postgres copy, an unresolvable tenant's rows have nowhere to go:
+        # embedding them would bill a call whose result is thrown away. They are
+        # deferred with a single attempt bump, not one for embed and one for resolve.
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", "turbopuffer")
+        monkeypatch.setattr(settings.VECTOR_STORE, "MIGRATED", True)
+
+        async def resolve(tenant_id: str, _db: object) -> str:
+            if tenant_id == "t-a":
+                raise VectorNamespaceUnresolved("no key yet")
+            return "prefix"
+
+        monkeypatch.setattr("src.reconciler.sync_vectors.prefix_for_tenant", resolve)
+        bumps: list[list[str]] = []
+
+        async def record_bump(_db: object, docs: list[models.Document]) -> None:
+            bumps.append([doc.tenant_id for doc in docs])
+
+        monkeypatch.setattr(
+            "src.reconciler.sync_vectors._bump_document_sync_attempts", record_bump
+        )
+        docs = self._docs(["t-a", "t-b"])
+        embedded: list[str | None] = []
+
+        async def record(contents: list[str], **_kwargs: object) -> list[list[float]]:
+            embedded.append(tenant_context.get())
+            return [[0.0] * 1536 for _ in contents]
+
+        with patch("src.reconciler.sync_vectors.embedding_client") as client:
+            client.simple_batch_embed = record
+            _synced, failed = await _sync_documents(AsyncMock(), docs, self._store())
+
+        assert embedded == ["t-b"]
+        assert bumps == [["t-a"]]
+        assert failed == 1
 
 
 async def _tenant_with_message(

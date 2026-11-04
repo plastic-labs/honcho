@@ -164,6 +164,11 @@ def _prepare_schema(connection: Connection) -> None:
     connection.execute(text(f"SET search_path TO {schema}, public, extensions"))
 
 
+# Objects a migration creates without a models.py declaration: the legacy
+# session_peers key the previous release's upsert targets (e5fe7f8bcf62).
+_MIGRATION_ONLY_OBJECTS = frozenset({"uq_session_peers_legacy_ws_session_peer"})
+
+
 def _run_revisions(connection: Connection) -> None:
     context.configure(
         connection=connection,
@@ -172,9 +177,13 @@ def _run_revisions(connection: Connection) -> None:
         include_schemas=True,
         include_object=lambda obj, name, type_, reflected, compare_to: (
             # Only include objects from our target schema
-            getattr(obj, "schema", None) == target_metadata.schema
-            if hasattr(obj, "schema")
-            else True
+            (
+                getattr(obj, "schema", None) == target_metadata.schema
+                if hasattr(obj, "schema")
+                else True
+            )
+            # Migration-only, so autogenerate must not offer to drop it.
+            and name not in _MIGRATION_ONLY_OBJECTS
         ),
     )
 

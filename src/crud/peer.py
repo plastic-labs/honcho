@@ -39,7 +39,7 @@ logger = getLogger(__name__)
 # Matches the peers.name CHECK constraint and PeerCreate's max_length.
 PEER_NAME_MAX_LENGTH = 512
 
-PEER_CACHE_KEY_TEMPLATE = "v3:workspace:{workspace_name}:peer:{peer_name}"
+PEER_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}:peer:{peer_name}"
 PEER_LOCK_PREFIX = f"{cache_prefix_namespace()}:lock:v2"
 
 
@@ -431,11 +431,6 @@ async def _fetch_peer(
     if obj is None:
         return None
     return {
-        # region ai
-        # tenant_id leads the composite PK; without it the reconstructed object
-        # has an incomplete identity and merge/update can't locate its row.
-        # endregion
-        "tenant_id": obj.tenant_id,
         "id": obj.id,
         "name": obj.name,
         "workspace_name": obj.workspace_name,
@@ -477,7 +472,7 @@ async def get_peer(
         )
 
     # Reconstruct ORM object from cached dict and merge into session
-    obj = models.Peer(**data)
+    obj = models.Peer(**models.with_cached_tenant(data))
     make_transient_to_detached(obj)
     existing_peer = await db.merge(obj, load=False)
 
