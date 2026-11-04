@@ -29,13 +29,16 @@ def configure_alembic_settings(alembic_database: str) -> Generator[None]:
     """Point application settings at the Alembic test database."""
 
     previous_uri = settings.DB.CONNECTION_URI
+    previous_owner_uri = settings.DB.OWNER_CONNECTION_URI
     os.environ["DB_CONNECTION_URI"] = alembic_database
     settings.DB.CONNECTION_URI = alembic_database
+    settings.DB.OWNER_CONNECTION_URI = None
 
     try:
         yield
     finally:
         settings.DB.CONNECTION_URI = previous_uri
+        settings.DB.OWNER_CONNECTION_URI = previous_owner_uri
         if previous_uri:
             os.environ["DB_CONNECTION_URI"] = previous_uri
         else:

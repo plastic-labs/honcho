@@ -2,10 +2,12 @@
 
 `dream_runs` holds one row per dream and `dream_run_changes` one row per change
 a dream committed: conclusions created, conclusions removed, and peer-card
-updates. DDL only: dreams before this revision recorded nothing to backfill.
+updates. Both are tenant-scoped like the other data tables (tenant_id leads the
+primary key and every foreign key), minus physical partitioning. DDL only:
+dreams before this revision recorded nothing to backfill.
 
 Revision ID: a7e3c1d9f2b4
-Revises: c4d8e2f6a1b3
+Revises: d4b8e2f7a913
 Create Date: 2026-11-03
 
 """
@@ -20,7 +22,7 @@ from migrations.utils import get_schema, table_exists
 
 # revision identifiers, used by Alembic.
 revision: str = "a7e3c1d9f2b4"
-down_revision: str | None = "c4d8e2f6a1b3"
+down_revision: str | None = "d4b8e2f7a913"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -34,6 +36,7 @@ def upgrade() -> None:
     if not table_exists("dream_runs", inspector):
         op.create_table(
             "dream_runs",
+            sa.Column("tenant_id", sa.TEXT, nullable=False),
             sa.Column("id", sa.TEXT, nullable=False),
             sa.Column("workspace_name", sa.TEXT, nullable=False),
             sa.Column("observer", sa.TEXT, nullable=False),
@@ -58,8 +61,13 @@ def upgrade() -> None:
                 server_default=sa.func.now(),
             ),
             sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
-            sa.PrimaryKeyConstraint("id"),
-            sa.ForeignKeyConstraint(["workspace_name"], [f"{schema}.workspaces.name"]),
+            sa.PrimaryKeyConstraint("tenant_id", "id"),
+            sa.ForeignKeyConstraint(["tenant_id"], [f"{schema}.tenants.tenant_id"]),
+            sa.ForeignKeyConstraint(
+                ["workspace_name", "tenant_id"],
+                [f"{schema}.workspaces.name", f"{schema}.workspaces.tenant_id"],
+                name="fk_dream_runs_ws_tenant_workspaces",
+            ),
             sa.CheckConstraint(
                 "status IN ('running', 'completed', 'failed', 'interrupted')",
                 name="status_valid",
@@ -67,9 +75,9 @@ def upgrade() -> None:
             schema=schema,
         )
         op.create_index(
-            "ix_dream_runs_workspace_observed_started",
+            "ix_dream_runs_tenant_workspace_observed_started",
             "dream_runs",
-            ["workspace_name", "observed", "started_at", "id"],
+            ["tenant_id", "workspace_name", "observed", "started_at", "id"],
             schema=schema,
         )
         op.create_index(
@@ -79,6 +87,7 @@ def upgrade() -> None:
     if not table_exists("dream_run_changes", inspector):
         op.create_table(
             "dream_run_changes",
+            sa.Column("tenant_id", sa.TEXT, nullable=False),
             sa.Column("id", sa.BigInteger, sa.Identity(), nullable=False),
             sa.Column("run_id", sa.TEXT, nullable=False),
             sa.Column("workspace_name", sa.TEXT, nullable=False),
@@ -98,33 +107,41 @@ def upgrade() -> None:
                 nullable=False,
                 server_default=sa.func.now(),
             ),
-            sa.PrimaryKeyConstraint("id"),
+            sa.PrimaryKeyConstraint("tenant_id", "id"),
+            sa.ForeignKeyConstraint(["tenant_id"], [f"{schema}.tenants.tenant_id"]),
             sa.ForeignKeyConstraint(
-                ["run_id"], [f"{schema}.dream_runs.id"], ondelete="CASCADE"
+                ["run_id", "tenant_id"],
+                [f"{schema}.dream_runs.id", f"{schema}.dream_runs.tenant_id"],
+                ondelete="CASCADE",
+                name="fk_dream_run_changes_run_tenant_dream_runs",
             ),
-            sa.ForeignKeyConstraint(["workspace_name"], [f"{schema}.workspaces.name"]),
+            sa.ForeignKeyConstraint(
+                ["workspace_name", "tenant_id"],
+                [f"{schema}.workspaces.name", f"{schema}.workspaces.tenant_id"],
+                name="fk_dream_run_changes_ws_tenant_workspaces",
+            ),
             sa.CheckConstraint(
                 "kind IN ('created', 'removed', 'peer_card')", name="kind_valid"
             ),
             schema=schema,
         )
         op.create_index(
-            "ix_dream_run_changes_run_id_id",
+            "ix_dream_run_changes_tenant_run_id",
             "dream_run_changes",
-            ["run_id", "id"],
+            ["tenant_id", "run_id", "id"],
             schema=schema,
         )
         op.create_index(
             "ix_dream_run_changes_removed_conclusion",
             "dream_run_changes",
-            ["workspace_name", "conclusion_id"],
+            ["tenant_id", "workspace_name", "conclusion_id"],
             postgresql_where=sa.text("kind = 'removed'"),
             schema=schema,
         )
         op.create_index(
             "ix_dream_run_changes_session",
             "dream_run_changes",
-            ["workspace_name", "session_name"],
+            ["tenant_id", "workspace_name", "session_name"],
             postgresql_where=sa.text("session_name IS NOT NULL"),
             schema=schema,
         )

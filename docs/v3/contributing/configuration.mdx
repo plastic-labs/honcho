@@ -616,6 +616,8 @@ server does not accept its traces.
 ```bash
 # Connection (required)
 DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+# Role that owns the schema and runs migrations; defaults to DB_CONNECTION_URI
+# DB_OWNER_CONNECTION_URI=postgresql+psycopg://owner:owner@localhost:5432/postgres
 
 # Pool settings
 DB_SCHEMA=public

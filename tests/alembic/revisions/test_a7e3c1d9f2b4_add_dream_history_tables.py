@@ -18,7 +18,8 @@ def prepare_dream_history(verifier: MigrationVerifier) -> None:
     verifier.assert_table_exists("dream_run_changes", exists=False)
     verifier.conn.execute(
         text(
-            f'INSERT INTO "{verifier.schema}"."workspaces" ("id", "name") VALUES (:id, :n)'
+            f'INSERT INTO "{verifier.schema}"."workspaces" (tenant_id, id, name)'
+            + " VALUES ('default', :id, :n)"
         ),
         {"id": generate_nanoid(), "n": WORKSPACE_NAME},
     )
@@ -30,9 +31,9 @@ def verify_dream_history(verifier: MigrationVerifier) -> None:
     verifier.assert_table_exists("dream_run_changes")
     verifier.assert_indexes_exist(
         [
-            ("dream_runs", "ix_dream_runs_workspace_observed_started"),
+            ("dream_runs", "ix_dream_runs_tenant_workspace_observed_started"),
             ("dream_runs", "ix_dream_runs_started_at"),
-            ("dream_run_changes", "ix_dream_run_changes_run_id_id"),
+            ("dream_run_changes", "ix_dream_run_changes_tenant_run_id"),
             ("dream_run_changes", "ix_dream_run_changes_removed_conclusion"),
             ("dream_run_changes", "ix_dream_run_changes_session"),
         ]
@@ -44,8 +45,8 @@ def verify_dream_history(verifier: MigrationVerifier) -> None:
     connection.execute(
         text(
             f"""INSERT INTO "{schema}"."dream_runs"
-                ("id", "workspace_name", "observer", "observed")
-            VALUES (:id, :w, 'alice', 'alice')"""
+                ("tenant_id", "id", "workspace_name", "observer", "observed")
+            VALUES ('default', :id, :w, 'alice', 'alice')"""
         ),
         {"id": RUN_ID, "w": WORKSPACE_NAME},
     )
@@ -58,8 +59,9 @@ def verify_dream_history(verifier: MigrationVerifier) -> None:
     connection.execute(
         text(
             f"""INSERT INTO "{schema}"."dream_run_changes"
-                ("run_id", "workspace_name", "kind", "conclusion_id", "content")
-            VALUES (:r, :w, 'removed', :c, 'an old fact')"""
+                ("tenant_id", "run_id", "workspace_name", "kind",
+                 "conclusion_id", "content")
+            VALUES ('default', :r, :w, 'removed', :c, 'an old fact')"""
         ),
         {"r": RUN_ID, "w": WORKSPACE_NAME, "c": generate_nanoid()},
     )

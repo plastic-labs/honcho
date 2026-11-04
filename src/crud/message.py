@@ -4,20 +4,21 @@ from logging import getLogger
 from typing import Any
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import ColumnElement, Select, and_, func, or_, select, text
+from sqlalchemy import ColumnElement, Select, TextClause, and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from src import models, schemas
 from src.config import settings
 from src.crud.lifecycle import live_session_peer_row
+from src.db import tenant_context
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
-from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
 from src.utils.path_params import schema_from_path
 from src.utils.scopes import is_scope_peer_name
+from src.utils.search import matching_messages, message_text_condition
 from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
 
@@ -85,6 +86,7 @@ async def get_peer_session_names(
     """
     stmt = (
         select(models.SessionPeer.session_name)
+        .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
         .where(models.SessionPeer.workspace_name == workspace_name)
         .where(models.SessionPeer.peer_name == peer_name)
         .where(live_session_peer_row())
@@ -197,6 +199,7 @@ def observer_scope_clause(
     session_peers = models.session_peers_table
     stmt = (
         select(1)
+        .where(session_peers.c.tenant_id == models.scoped_tenant_id())
         .where(session_peers.c.workspace_name == workspace_name)
         .where(session_peers.c.peer_name == observer)
         .where(session_peers.c.session_name == session_column)
@@ -263,41 +266,48 @@ def resolve_session_scope_clauses(
     return clauses, False
 
 
-def _apply_token_limit(
-    base_conditions: list[ColumnElement[Any]], token_limit: int
-) -> Select[tuple[models.Message]]:
-    """
-    Helper function to apply token limit logic to a message query.
+# Rows in one page of the backward walk in _ids_within_token_limit.
+TOKEN_WALK_PAGE_SIZE = 1000
 
-    Creates a subquery that calculates running sum of tokens for most recent messages
-    and returns a select statement that joins with this subquery to limit results
-    based on token count.
+
+async def _ids_within_token_limit(
+    db: AsyncSession, base_conditions: list[ColumnElement[Any]], token_limit: int
+) -> list[int]:
+    """
+    Get the ids of the most recent messages whose token counts add up to at most
+    token_limit, newest first.
+
+    Reads (id, token_count) from ix_messages_session_tokens one page at a time,
+    newest first. Stops at the first message that does not fit, and does not use
+    older messages, also when they are smaller. Because token_count is not
+    negative, the running sum does not decrease.
 
     Args:
+        db: Database session
         base_conditions: List of conditions to apply to the base query
         token_limit: Maximum number of tokens to include in the messages
 
     Returns:
-        Select statement with token limit applied
+        Message ids, newest first
     """
-    # Create a subquery that calculates running sum of tokens for most recent messages
-    token_subquery = (
-        select(
-            models.Message.id,
-            func.sum(models.Message.token_count)
-            .over(order_by=models.Message.id.desc())
-            .label("running_token_sum"),
-        )
-        .where(*base_conditions)
-        .subquery()
+    stmt = (
+        select(models.Message.id, models.Message.token_count)
+        .where(models.Message.tenant_id == models.scoped_tenant_id(), *base_conditions)
+        .order_by(models.Message.id.desc())
+        .limit(TOKEN_WALK_PAGE_SIZE)
     )
-
-    # Select Message objects where running sum doesn't exceed token_limit
-    return (
-        select(models.Message)
-        .join(token_subquery, models.Message.id == token_subquery.c.id)
-        .where(token_subquery.c.running_token_sum <= token_limit)
-    )
+    ids: list[int] = []
+    running_token_sum = 0
+    while True:
+        page = stmt.where(models.Message.id < ids[-1]) if ids else stmt
+        rows = (await db.execute(page)).all()
+        for message_id, token_count in rows:
+            running_token_sum += token_count
+            if running_token_sum > token_limit:
+                return ids
+            ids.append(message_id)
+        if len(rows) < TOKEN_WALK_PAGE_SIZE:
+            return ids
 
 
 async def _build_merged_snippets(
@@ -400,6 +410,43 @@ async def _build_merged_snippets(
     return snippets
 
 
+def _ingest_lock(
+    workspace_name: str, session_name: str
+) -> tuple[TextClause, dict[str, str]]:
+    """The per-session advisory lock that serializes seq_in_session assignment."""
+    # region ai
+    # Advisory locks are database-wide, not RLS-scoped. Under MULTI_TENANT every
+    # tenant has a "default" workspace and session names are customer-chosen, so
+    # keying on (workspace, session) alone made unrelated tenants queue behind
+    # each other's ingests. The tenant joins the first key flag-on only: flag-off
+    # SQL is unchanged, so a self-host rolling deploy never has old and new pods
+    # locking different keys for the same session.
+    # endregion
+    if not settings.MULTI_TENANT:
+        return (
+            text(
+                "SELECT pg_advisory_xact_lock(hashtext(:workspace_name), hashtext(:session_name))"
+            ),
+            {"workspace_name": workspace_name, "session_name": session_name},
+        )
+    tenant = tenant_context.get()
+    if not tenant:
+        raise ValueError(
+            "message ingest requires a tenant when MULTI_TENANT is enabled"
+        )
+    return (
+        text(
+            "SELECT pg_advisory_xact_lock("
+            + "hashtext(:tenant || ':' || :workspace_name), hashtext(:session_name))"
+        ),
+        {
+            "tenant": tenant,
+            "workspace_name": workspace_name,
+            "session_name": session_name,
+        },
+    )
+
+
 async def create_messages(
     db: AsyncSession,
     messages: list[schemas.MessageCreate],
@@ -444,12 +491,7 @@ async def create_messages(
     )
 
     await db.execute(text("SET LOCAL lock_timeout = '5s'"))
-    await db.execute(
-        text(
-            "SELECT pg_advisory_xact_lock(hashtext(:workspace_name), hashtext(:session_name))"
-        ),
-        {"workspace_name": workspace_name, "session_name": session_name},
-    )
+    await db.execute(*_ingest_lock(workspace_name, session_name))
 
     # Get the last sequence number on a session - uses (workspace_name, session_name, seq_in_session) index
     last_seq = (
@@ -524,21 +566,17 @@ async def get_messages(
     session_name: str,
     reverse: bool | None = False,
     filters: dict[str, Any] | None = None,
-    token_limit: int | None = None,
     message_count_limit: int | None = None,
 ) -> Select[tuple[models.Message]]:
     """
-    Get messages from a session. If token_limit is provided, the n most recent messages
-    with token count adding up to the limit will be returned. If message_count_limit is provided,
-    the n most recent messages will be returned. If both are provided, message_count_limit will be
-    used.
+    Get messages from a session. If message_count_limit is provided, the n most
+    recent messages will be returned. For a token limit, use get_messages_id_range.
 
     Args:
         workspace_name: Name of the workspace
         session_name: Name of the session
         reverse: Whether to reverse the order of messages
         filters: Filter to apply to the messages
-        token_limit: Maximum number of tokens to include in the messages
         message_count_limit: Maximum number of messages to include
 
     Returns:
@@ -550,23 +588,13 @@ async def get_messages(
         models.Message.session_name == session_name,
     ]
 
-    # Apply message count limit first (takes precedence over token limit)
+    # Apply message count limit
     if message_count_limit is not None:
         stmt = select(models.Message).where(*base_conditions)
         stmt = apply_filter(stmt, models.Message, filters)
         # For message count limit, we want the most recent N messages
         # So we order by id desc to get most recent, then apply limit
         stmt = stmt.order_by(models.Message.id.desc()).limit(message_count_limit)
-
-        # Apply final ordering based on reverse parameter
-        if reverse:
-            stmt = stmt.order_by(models.Message.id.desc())
-        else:
-            stmt = stmt.order_by(models.Message.id.asc())
-    elif token_limit is not None:
-        # Apply token limit logic using helper function
-        stmt = _apply_token_limit(base_conditions, token_limit)
-        stmt = apply_filter(stmt, models.Message, filters)
 
         # Apply final ordering based on reverse parameter
         if reverse:
@@ -606,6 +634,8 @@ async def get_messages_id_range(
         session_name: Name of the session
         start_id: Primary key ID of the first message to return
         end_id: Primary key ID of the last message (exclusive)
+        token_limit: If set, return only the most recent messages whose token
+            counts add up to at most this limit
 
     Returns:
         List of messages
@@ -625,9 +655,20 @@ async def get_messages_id_range(
         base_conditions.append(models.Message.id >= start_id)
 
     if token_limit:
-        # Apply token limit logic using helper function
-        stmt = _apply_token_limit(base_conditions, token_limit)
-        stmt = stmt.order_by(models.Message.id)
+        ids = await _ids_within_token_limit(db, base_conditions, token_limit)
+        if not ids:
+            return []
+        # The ingest lock of the session gives each new message a higher id.
+        # Thus this range contains only the messages that the walk counted.
+        stmt = (
+            select(models.Message)
+            .where(
+                models.Message.tenant_id == models.scoped_tenant_id(),
+                *base_conditions,
+                models.Message.id.between(ids[-1], ids[0]),
+            )
+            .order_by(models.Message.id)
+        )
     else:
         stmt = select(models.Message).where(*base_conditions)
 
@@ -774,7 +815,9 @@ async def _search_messages_external(
     if external_vector_store is None:
         return []
 
-    namespace = external_vector_store.get_vector_namespace("message", workspace_name)
+    namespace = await external_vector_store.get_vector_namespace(
+        "message", workspace_name
+    )
 
     vector_filters: dict[str, Any] = {}
     if session_name:
@@ -1050,24 +1093,24 @@ async def _grep_messages_internal(
     scope_clauses: Sequence[ColumnElement[bool]] = (),
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """Internal implementation of exact-text message search."""
-    # Build the base query with ILIKE for case-insensitive text search
-    escaped_text = escape_ilike_pattern(text)
-    match_stmt = (
-        select(models.Message)
-        .where(models.Message.workspace_name == workspace_name)
-        .where(
-            models.Message.content.ilike(f"%{escaped_text}%", escape=ILIKE_ESCAPE_CHAR)
-        )
-        .order_by(models.Message.created_at.desc())
-        .limit(limit)
+    match_stmt = select(models.Message).where(
+        models.Message.workspace_name == workspace_name
     )
-
     if session_name:
         match_stmt = match_stmt.where(models.Message.session_name == session_name)
     match_stmt = match_stmt.where(*scope_clauses)
 
-    result = await db.execute(match_stmt)
-    matched_messages = list(result.scalars().all())
+    if settings.MULTI_TENANT:
+        matched_messages = await matching_messages(
+            db, match_stmt, workspace_name, text, use_fts=False, limit=limit
+        )
+    else:
+        match_stmt = (
+            match_stmt.where(message_text_condition(text, use_fts=False))
+            .order_by(models.Message.created_at.desc())
+            .limit(limit)
+        )
+        matched_messages = list((await db.execute(match_stmt)).scalars().all())
 
     return await _build_merged_snippets(
         db, workspace_name, matched_messages, context_window

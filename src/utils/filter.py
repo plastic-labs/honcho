@@ -570,9 +570,12 @@ def _build_source_ids_condition(
 
         Entries are validated by the shared linkage-filter grammar.
         """
+        # An entity column, not literal(1): then the tenant predicate hook
+        # (models._add_tenant_predicate) adds tenant_id to this subquery.
         linked = (
-            select(literal(1))
+            select(DocumentSource.derived_id)
             .where(
+                DocumentSource.tenant_id == model_class.tenant_id,
                 DocumentSource.derived_id == model_class.id,
                 DocumentSource.source_id == sid,
             )
@@ -591,9 +594,12 @@ def _build_source_message_ids_condition(
     from ..models import ConclusionSourceMessage
 
     def _member(mid: str) -> ColumnElement[bool]:
+        # An entity column, not literal(1): then the tenant predicate hook
+        # (models._add_tenant_predicate) adds tenant_id to this subquery.
         return (
-            select(literal(1))
+            select(ConclusionSourceMessage.conclusion_id)
             .where(
+                ConclusionSourceMessage.tenant_id == model_class.tenant_id,
                 ConclusionSourceMessage.conclusion_id == model_class.id,
                 ConclusionSourceMessage.message_id == mid,
             )

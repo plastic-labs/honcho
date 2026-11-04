@@ -14,13 +14,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, Select, delete, select, update
+from sqlalchemy import CursorResult, Select, delete, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql import func
+from sqlalchemy.sql import ColumnElement, func
 
 from src import models, schemas
 from src.config import settings
-from src.dependencies import tracked_db
+from src.dependencies import service_db, tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.utils.types import DocumentLevel
 
@@ -54,6 +54,14 @@ class RemovedConclusion:
     content: str
     session_name: str | None
     replaced_by: str | None = None
+
+
+def _run_key(run_id: str) -> tuple[ColumnElement[bool], ColumnElement[bool]]:
+    """The predicate for one run in the bound tenant."""
+    return (
+        models.DreamRun.tenant_id == models.scoped_tenant_id(),
+        models.DreamRun.id == run_id,
+    )
 
 
 async def open_run(
@@ -101,7 +109,7 @@ async def close_run(run_id: str, *, succeeded: bool) -> None:
             await db.execute(
                 update(models.DreamRun)
                 .where(
-                    models.DreamRun.id == run_id,
+                    *_run_key(run_id),
                     models.DreamRun.status == "running",
                 )
                 .values(
@@ -139,7 +147,7 @@ async def record_created(
     )
     await db.execute(
         update(models.DreamRun)
-        .where(models.DreamRun.id == target.run_id)
+        .where(*_run_key(target.run_id))
         .values(created_count=models.DreamRun.created_count + len(created))
     )
 
@@ -169,7 +177,7 @@ async def record_removed(
     )
     await db.execute(
         update(models.DreamRun)
-        .where(models.DreamRun.id == target.run_id)
+        .where(*_run_key(target.run_id))
         .values(removed_count=models.DreamRun.removed_count + len(removed))
     )
 
@@ -195,7 +203,7 @@ async def record_peer_card(
     )
     await db.execute(
         update(models.DreamRun)
-        .where(models.DreamRun.id == target.run_id)
+        .where(*_run_key(target.run_id))
         .values(peer_card_updated=True)
     )
 
@@ -208,7 +216,8 @@ def list_runs_stmt(
 ) -> Select[tuple[models.DreamRun]]:
     """Runs in a workspace, newest first, optionally for one observed/observer peer."""
     stmt = select(models.DreamRun).where(
-        models.DreamRun.workspace_name == workspace_name
+        models.DreamRun.tenant_id == models.scoped_tenant_id(),
+        models.DreamRun.workspace_name == workspace_name,
     )
     if observed is not None:
         stmt = stmt.where(models.DreamRun.observed == observed)
@@ -228,7 +237,7 @@ async def get_run_detail(
     """
     run = await db.scalar(
         select(models.DreamRun).where(
-            models.DreamRun.id == run_id,
+            *_run_key(run_id),
             models.DreamRun.workspace_name == workspace_name,
         )
     )
@@ -238,7 +247,10 @@ async def get_run_detail(
     changes = (
         await db.scalars(
             select(models.DreamRunChange)
-            .where(models.DreamRunChange.run_id == run_id)
+            .where(
+                models.DreamRunChange.tenant_id == run.tenant_id,
+                models.DreamRunChange.run_id == run_id,
+            )
             .order_by(models.DreamRunChange.id)
         )
     ).all()
@@ -312,6 +324,7 @@ async def _resolve_conclusions(
     live = await db.execute(
         select(models.Document.id, models.Document.content, models.Document.level)
         .where(
+            models.Document.tenant_id == models.scoped_tenant_id(),
             models.Document.id.in_(conclusion_ids),
             models.Document.workspace_name == workspace_name,
             models.Document.observer == observer,
@@ -335,6 +348,7 @@ async def _resolve_conclusions(
                 models.DreamRunChange.run_id,
             )
             .where(
+                models.DreamRunChange.tenant_id == models.scoped_tenant_id(),
                 models.DreamRunChange.workspace_name == workspace_name,
                 models.DreamRunChange.kind == "removed",
                 models.DreamRunChange.conclusion_id.in_(missing),
@@ -360,18 +374,21 @@ async def delete_session_history(
     Run it after the session's documents are deleted, so a dream still committing
     a copy of one of them has finished first.
     """
+    tenant_id = models.scoped_tenant_id()
     # Locked in id order: an IN predicate alone imposes none.
     await db.execute(
         delete(models.DreamRunChange).where(
+            models.DreamRunChange.tenant_id == tenant_id,
             models.DreamRunChange.id.in_(
                 select(models.DreamRunChange.id)
                 .where(
+                    models.DreamRunChange.tenant_id == tenant_id,
                     models.DreamRunChange.workspace_name == workspace_name,
                     models.DreamRunChange.session_name == session_name,
                 )
                 .order_by(models.DreamRunChange.id)
                 .with_for_update()
-            )
+            ),
         )
     )
 
@@ -381,14 +398,19 @@ async def delete_workspace_history(db: AsyncSession, workspace_name: str) -> Non
 
     Runs are locked in id order, the same order the retention prune takes them.
     """
+    tenant_id = models.scoped_tenant_id()
     await db.execute(
         delete(models.DreamRun).where(
+            models.DreamRun.tenant_id == tenant_id,
             models.DreamRun.id.in_(
                 select(models.DreamRun.id)
-                .where(models.DreamRun.workspace_name == workspace_name)
+                .where(
+                    models.DreamRun.tenant_id == tenant_id,
+                    models.DreamRun.workspace_name == workspace_name,
+                )
                 .order_by(models.DreamRun.id)
                 .with_for_update()
-            )
+            ),
         )
     )
 
@@ -401,17 +423,19 @@ async def prune_dream_history() -> int:
     now = datetime.datetime.now(datetime.UTC)
     cutoff = now - datetime.timedelta(days=settings.DREAM.HISTORY_RETENTION_DAYS)
     deleted = 0
-    async with tracked_db("dream_history.prune") as db:
+    run_key = tuple_(models.DreamRun.tenant_id, models.DreamRun.id)
+    # Runs across every tenant, so it uses the cross-tenant service session.
+    async with service_db("dream_history.prune") as db:
         await db.execute(
             update(models.DreamRun)
             .where(
-                models.DreamRun.id.in_(
-                    select(models.DreamRun.id)
+                run_key.in_(
+                    select(models.DreamRun.tenant_id, models.DreamRun.id)
                     .where(
                         models.DreamRun.status == "running",
                         models.DreamRun.started_at < now - _STALE_RUN_AFTER,
                     )
-                    .order_by(models.DreamRun.id)
+                    .order_by(models.DreamRun.tenant_id, models.DreamRun.id)
                     .with_for_update()
                 )
             )
@@ -419,16 +443,16 @@ async def prune_dream_history() -> int:
         )
         await db.commit()
         while True:
-            # Changes cascade from their run. Runs are locked in id order, as
-            # workspace deletion takes them.
+            # Changes cascade from their run. Within a tenant, runs are locked in
+            # id order, as workspace deletion takes them.
             result = cast(
                 CursorResult[Any],
                 await db.execute(
                     delete(models.DreamRun).where(
-                        models.DreamRun.id.in_(
-                            select(models.DreamRun.id)
+                        run_key.in_(
+                            select(models.DreamRun.tenant_id, models.DreamRun.id)
                             .where(models.DreamRun.started_at < cutoff)
-                            .order_by(models.DreamRun.id)
+                            .order_by(models.DreamRun.tenant_id, models.DreamRun.id)
                             .limit(_PRUNE_BATCH_SIZE)
                             .with_for_update()
                         )

@@ -7,7 +7,7 @@ from logging import getLogger
 from typing import Any
 
 from cashews import NOT_NONE
-from sqlalchemy import Select, delete, exists, func, select
+from sqlalchemy import Select, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import make_transient_to_detached
@@ -21,6 +21,7 @@ from src.cache.client import (
     safe_cache_set,
 )
 from src.config import settings
+from src.crud.deriver import active_queue_session_match, queue_item_tenant_match
 from src.crud.dream_history import delete_workspace_history
 from src.crud.lifecycle import (
     live_message_row,
@@ -49,6 +50,14 @@ class WorkspaceDeletionResult:
     conclusions_deleted: int
 
 
+# region ai
+# Keep v2 (and the same on the session/peer/collection templates, which share
+# this prefix so delete_workspace's delete_match still sweeps them): the cached
+# dicts deliberately match the previous release's, without tenant_id, which
+# models.with_cached_tenant restores on read. A version bump would split the
+# cache between releases during a rolling deploy, so neither would clear the
+# other's entries on write.
+# endregion
 WORKSPACE_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}"
 WORKSPACE_LOCK_PREFIX = f"{cache_prefix_namespace()}:lock:v2"
 
@@ -106,7 +115,7 @@ async def _existing_workspace_result(
     db: AsyncSession, data: dict[str, Any]
 ) -> GetOrCreateResult[models.Workspace]:
     """Reconstruct a workspace from its fetched dict and merge it into the session."""
-    obj = models.Workspace(**data)
+    obj = models.Workspace(**models.with_cached_tenant(data))
     make_transient_to_detached(obj)
     existing_workspace = await db.merge(obj, load=False)
     return GetOrCreateResult(existing_workspace, created=False)
@@ -232,7 +241,7 @@ async def get_workspace(
         raise ResourceNotFoundException(f"Workspace {workspace_name} not found")
 
     # Reconstruct ORM object from cached dict and merge into session
-    obj = models.Workspace(**data)
+    obj = models.Workspace(**models.with_cached_tenant(data))
     make_transient_to_detached(obj)
     existing_workspace = await db.merge(obj, load=False)
 
@@ -317,13 +326,18 @@ async def check_no_active_sessions(db: AsyncSession, workspace_name: str) -> Non
     Raises:
         ConflictException: If active sessions exist in the workspace
     """
+    # The subquery selects an entity column, thus the tenant predicate hook
+    # (models._add_tenant_predicate) adds tenant_id to it. A bare exists() has
+    # no entity.
     has_active_sessions: bool = bool(
         await db.scalar(
             select(
-                exists().where(
+                select(models.Session.id)
+                .where(
                     models.Session.workspace_name == workspace_name,
                     models.Session.is_active == True,  # noqa: E712
                 )
+                .exists()
             )
         )
     )
@@ -370,7 +384,8 @@ async def delete_workspace(
         created_at=honcho_workspace.created_at,
     )
 
-    # Count resources before deletion for telemetry
+    # Count resources before deletion for telemetry. A count(*) names its model
+    # in select_from, thus the tenant predicate hook adds tenant_id to it.
     peers_count = int(
         await db.scalar(
             select(func.count(models.Peer.id)).where(
@@ -381,17 +396,17 @@ async def delete_workspace(
     )
     sessions_count = int(
         await db.scalar(
-            select(func.count(models.Session.id)).where(
-                models.Session.workspace_name == workspace_name
-            )
+            select(func.count())
+            .select_from(models.Session)
+            .where(models.Session.workspace_name == workspace_name)
         )
         or 0
     )
     messages_count = int(
         await db.scalar(
-            select(func.count(models.Message.id)).where(
-                models.Message.workspace_name == workspace_name
-            )
+            select(func.count())
+            .select_from(models.Message)
+            .where(models.Message.workspace_name == workspace_name)
         )
         or 0
     )
@@ -420,34 +435,41 @@ async def delete_workspace(
     # then peers
     # then workspace
 
-    # Delete ActiveQueueSession entries first
-    # Work unit keys have format: {task_type}:{workspace_name}:{...}
-    # Extract workspace_name from position 2 (second component after splitting by ':')
+    # Delete ActiveQueueSession entries first, matching on the work_unit_key
+    # (flag-aware position + tenant pinning; rationale lives on the helper).
+    active_queue_match = active_queue_session_match(workspace_name)
     try:
-        await db.execute(
-            delete(models.ActiveQueueSession).where(
-                func.split_part(models.ActiveQueueSession.work_unit_key, ":", 2)
-                == workspace_name
-            )
-        )
+        await db.execute(delete(models.ActiveQueueSession).where(active_queue_match))
 
-        # Then delete QueueItem entries
-        await db.execute(
-            delete(models.QueueItem).where(
-                models.QueueItem.workspace_name == workspace_name
-            )
+        # Then delete QueueItem entries. workspace_name is only unique per
+        # tenant (every tenant has a "default" workspace) and queue is
+        # deliberately not under RLS (see _RLS_REQUIRED_TABLES), so a
+        # tenant-blind match here would delete another tenant's same-named
+        # workspace's queue rows too; pin to the ambient tenant, flag-aware.
+        queue_item_match = queue_item_tenant_match()
+        queue_item_delete = delete(models.QueueItem).where(
+            models.QueueItem.workspace_name == workspace_name
         )
+        if queue_item_match is not None:
+            queue_item_delete = queue_item_delete.where(queue_item_match)
+        await db.execute(queue_item_delete)
 
         # Also delete any queue items that reference messages in this workspace
-        # (handles race condition where deriver creates new queue items)
+        # (handles race condition where deriver creates new queue items).
+        # messages is under RLS so this subquery is already tenant-scoped, and
+        # message ids are drawn from one global sequence, but pin tenant_id
+        # here too for defense in depth.
         message_ids_subquery = select(models.Message.id).where(
             models.Message.workspace_name == workspace_name
         )
-        await db.execute(
-            delete(models.QueueItem).where(
-                models.QueueItem.message_id.in_(message_ids_subquery)
-            )
+        message_queue_item_delete = delete(models.QueueItem).where(
+            models.QueueItem.message_id.in_(message_ids_subquery)
         )
+        if queue_item_match is not None:
+            message_queue_item_delete = message_queue_item_delete.where(
+                queue_item_match
+            )
+        await db.execute(message_queue_item_delete)
 
         # Get all collections for this workspace to delete their vector namespaces
         collections_result = await db.execute(
@@ -466,7 +488,8 @@ async def delete_workspace(
         # takes them; see delete_session.
         await db.execute(
             delete(models.SessionPeer).where(
-                models.SessionPeer.workspace_name == workspace_name
+                models.SessionPeer.tenant_id == models.scoped_tenant_id(),
+                models.SessionPeer.workspace_name == workspace_name,
             )
         )
         await db.execute(
@@ -507,7 +530,7 @@ async def delete_workspace(
 
         # Delete message embeddings namespace for this workspace
         if external_vector_store:
-            message_namespace = external_vector_store.get_vector_namespace(
+            message_namespace = await external_vector_store.get_vector_namespace(
                 "message", workspace_name
             )
             try:
@@ -526,7 +549,7 @@ async def delete_workspace(
 
             # Delete document embeddings namespaces for each collection
             for collection in collections:
-                doc_namespace = external_vector_store.get_vector_namespace(
+                doc_namespace = await external_vector_store.get_vector_namespace(
                     "document",
                     workspace_name,
                     collection.observer,
@@ -628,7 +651,9 @@ async def get_workspace_stats(
         )
         session_count = int(
             await db.scalar(
-                select(func.count(models.Session.id)).where(
+                select(func.count())
+                .select_from(models.Session)
+                .where(
                     models.Session.workspace_name == workspace_name,
                     models.Session.name.in_(session_names),
                     live_session_row(),
@@ -649,7 +674,9 @@ async def get_workspace_stats(
         )
         session_count = int(
             await db.scalar(
-                select(func.count(models.Session.id)).where(
+                select(func.count())
+                .select_from(models.Session)
+                .where(
                     models.Session.workspace_name == workspace_name,
                     live_session_row(),
                 )
@@ -657,10 +684,18 @@ async def get_workspace_stats(
             or 0
         )
 
+    # region ai
+    # count(*), not count(id): id is not in ix_messages_peer_lookup, so counting
+    # it forces a heap fetch per row. Under MULTI_TENANT (RLS supplies the
+    # leading tenant_id), count(*) lets the (tenant_id, workspace_name,
+    # peer_name, created_at) index answer count/min/max on its own when no
+    # session allowlist applies, with heap visits only for pages not yet
+    # all-visible. Same result: id is NOT NULL.
+    # endregion
     msg_row = (
         await db.execute(
             select(
-                func.count(models.Message.id),
+                func.count(),
                 func.min(models.Message.created_at),
                 func.max(models.Message.created_at),
             ).where(*msg_filters)
@@ -721,7 +756,7 @@ async def get_active_peers(
     subq = (
         select(
             models.Message.peer_name,
-            func.count(models.Message.id).label("msg_count"),
+            func.count().label("msg_count"),
             func.max(models.Message.created_at).label("last_msg_at"),
         )
         .where(*msg_filters)
