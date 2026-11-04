@@ -160,7 +160,10 @@ def _source_line(source: Any, run_id: str) -> Text:
         line.append(f"  {_removed_note(source.removed_in_run, run_id)}", style="dim red")
     else:
         line.append("? ", style="dim")
-        line.append(f"{source.id} (unavailable: its session was deleted)", style="dim")
+        line.append(
+            f"{source.id} (unavailable: deleted, or removed longer ago than history is kept)",
+            style="dim",
+        )
     return line
 
 
@@ -278,7 +281,8 @@ def inspect(
     Lists the conclusions it created, each with the conclusions it was derived
     from; the conclusions it removed, as they read when removed; and the peer
     card before and after. Each source shows where it stands now: current,
-    removed (and by which dream), or unavailable once its session is deleted.
+    removed (and by which dream), or unavailable once deleted or removed longer
+    ago than history is kept.
     """
     handle_cmd_flags(json_output=json_output, workspace=workspace)
     validate_resource_id(run_id, "dream")
