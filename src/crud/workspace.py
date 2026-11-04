@@ -513,7 +513,6 @@ async def delete_workspace(
                 models.WebhookEndpoint.workspace_name == workspace_name
             )
         )
-        await delete_workspace_history(db, workspace_name)
         await db.execute(
             delete(models.Session).where(
                 models.Session.workspace_name == workspace_name
@@ -522,6 +521,9 @@ async def delete_workspace(
         await db.execute(
             delete(models.Peer).where(models.Peer.workspace_name == workspace_name)
         )
+        # After the documents and peers: a dream locks the document or peer it
+        # changes before its run, so the runs are taken last here too.
+        await delete_workspace_history(db, workspace_name)
         await db.delete(honcho_workspace)
         await db.commit()
 
