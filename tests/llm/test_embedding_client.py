@@ -5,6 +5,8 @@ from typing import Any, cast
 
 import pytest
 from google.genai import types as genai_types
+from hypothesis import given
+from hypothesis import strategies as st
 
 from src.config import (
     EmbeddingEncodingFormat,
@@ -17,6 +19,7 @@ from src.embedding_client import (
     EmbeddingTokenLimitError,
     _EmbeddingClient,  # pyright: ignore[reportPrivateUsage]
 )
+from tests.tokenizer_strategies import TOKENIZER_PROPERTIES, special_token_content
 
 
 def gemini_call_texts(contents: Any) -> list[str]:
@@ -1148,7 +1151,7 @@ async def test_simple_batch_embed_truncate_reencodes_until_under_cap(
 
     encode_calls = {"n": 0}
 
-    def encode(text: str) -> list[int]:
+    def encode(text: str, **_: object) -> list[int]:
         encode_calls["n"] += 1
         if text.startswith("LONG"):
             # 1: original oversize; 2: still over after first slice; 3+: fits.
@@ -1243,6 +1246,142 @@ def test_prepare_chunks_returns_ordered_chunks(
     assert len(out["long"]) > 1
     # Order preserved
     assert isinstance(out["long"][0], str)
+
+
+@pytest.mark.asyncio
+async def test_simple_batch_embed_treats_special_token_strings_as_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Text quoting tokenizer special tokens embeds as-is instead of raising."""
+    client, fake_embeddings = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 4,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=4,
+    )
+    text = "The model emitted <|endoftext|> right after <|fim_prefix|>."
+
+    out = await client.simple_batch_embed([text])
+
+    assert out == [[0.1] * 4]
+    assert fake_embeddings.calls[0]["input"] == [text]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model", ["text-embedding-3-small", "unmapped-embedding-model"]
+)
+@TOKENIZER_PROPERTIES
+@given(contents=st.lists(special_token_content("cl100k_base"), min_size=1, max_size=3))
+async def test_embedding_paths_preserve_special_token_content(
+    model: str, contents: list[str]
+) -> None:
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        client, provider = _build_openai_client(
+            monkeypatch,
+            embedding=[0.1] * 4,
+            model=model,
+            send_dimensions=False,
+            vector_dimensions=4,
+        )
+        client.max_embedding_tokens = max(
+            len(client.encoding.encode_ordinary(content)) for content in contents
+        )
+
+        for content in contents:
+            assert await client.embed(content) == [0.1] * 4
+        assert [call["input"] for call in provider.calls] == [
+            [text] for text in contents
+        ]
+
+        provider.calls.clear()
+        assert await client.simple_batch_embed(contents) == [[0.1] * 4] * len(contents)
+        assert [call["input"] for call in provider.calls] == [contents]
+
+        provider.calls.clear()
+        documents = {str(index): text for index, text in enumerate(contents)}
+        assert await client.batch_embed(documents) == {
+            key: [[0.1] * 4] for key in documents
+        }
+        assert [call["input"] for call in provider.calls] == [contents]
+
+
+@pytest.mark.asyncio
+@TOKENIZER_PROPERTIES
+@given(content=special_token_content("cl100k_base"))
+async def test_special_token_embedding_inputs_still_enforce_token_limit(
+    content: str,
+) -> None:
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        client, provider = _build_openai_client(
+            monkeypatch,
+            embedding=[0.1] * 4,
+            model="text-embedding-3-small",
+            send_dimensions=False,
+            vector_dimensions=4,
+        )
+        count = len(client.encoding.encode_ordinary(content))
+        client.max_embedding_tokens = count - 1
+
+        with pytest.raises(EmbeddingTokenLimitError, match="maximum token limit"):
+            await client.embed(content)
+        with pytest.raises(EmbeddingTokenLimitError, match="maximum token limit"):
+            await client.simple_batch_embed([content])
+        assert provider.calls == []
+
+
+@TOKENIZER_PROPERTIES
+@given(content=special_token_content("cl100k_base"), limit=st.integers(1, 200))
+def test_special_token_truncation_is_bounded_and_idempotent(
+    content: str, limit: int
+) -> None:
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        client, provider = _build_openai_client(
+            monkeypatch,
+            embedding=[0.1] * 4,
+            model="text-embedding-3-small",
+            send_dimensions=False,
+            vector_dimensions=4,
+        )
+        client.max_embedding_tokens = limit
+
+        truncated, count = client.truncate_to_token_limit(content)
+
+        assert count == len(client.encoding.encode_ordinary(truncated))
+        assert count <= limit
+        assert client.truncate_to_token_limit(truncated) == (truncated, count)
+        if len(client.encoding.encode_ordinary(content)) <= limit:
+            assert truncated == content
+        assert provider.calls == []
+
+
+@TOKENIZER_PROPERTIES
+@given(content=special_token_content("cl100k_base"), limit=st.integers(1, 200))
+def test_special_token_chunk_preparation_preserves_ordinary_token_slices(
+    content: str, limit: int
+) -> None:
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        client, provider = _build_openai_client(
+            monkeypatch,
+            embedding=[0.1] * 4,
+            model="text-embedding-3-small",
+            send_dimensions=False,
+            vector_dimensions=4,
+        )
+        client.max_embedding_tokens = limit
+        tokens = client.encoding.encode_ordinary(content)
+        if len(tokens) <= limit:
+            expected = [content]
+        else:
+            step = limit - int(limit * 0.2)
+            expected = [
+                client.encoding.decode(tokens[start : start + limit])
+                for start in range(0, len(tokens), step)
+            ]
+
+        assert client.prepare_chunks({"doc": content}) == {"doc": expected}
+        assert provider.calls == []
 
 
 def test_embedding_model_config_parses_max_batch_size_from_env(
