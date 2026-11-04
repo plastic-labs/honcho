@@ -2699,7 +2699,7 @@ def _estimate_tokens(text: str) -> int:
         # Use cl100k_base as a stable default — matches the embedding-client
         # fallback. Exact accuracy isn't required; this is a size proxy.
         encoding = tiktoken.get_encoding("cl100k_base")
-        return len(encoding.encode(text))
+        return len(encoding.encode(text, disallowed_special=()))
     except Exception:
         # Fall back to a rough char→token ratio so the field is always populated.
         return max(1, len(text) // 4)

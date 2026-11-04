@@ -474,7 +474,7 @@ class MessageCreate(MessageBase):
     @model_validator(mode="after")
     def validate_and_set_token_count(self) -> Self:
         encoding = tiktoken.get_encoding("o200k_base")
-        encoded_message = encoding.encode(self.content)
+        encoded_message = encoding.encode(self.content, disallowed_special=())
 
         self._encoded_message = encoded_message
         return self
@@ -912,7 +912,7 @@ class ConclusionCreate(BaseModel):
     def validate_token_count(self) -> Self:
         """Validate that content doesn't exceed embedding token limit."""
         encoding = tiktoken.get_encoding("o200k_base")
-        tokens = encoding.encode(self.content)
+        tokens = encoding.encode(self.content, disallowed_special=())
         self._token_count = len(tokens)
 
         if self._token_count > settings.EMBEDDING.MAX_INPUT_TOKENS:
