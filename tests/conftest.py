@@ -442,7 +442,9 @@ async def db_engine(worker_id: str):
     # its password (str(URL) masks it as '***', which then fails auth at migrate).
     db_url_str = test_db_url.render_as_string(hide_password=False)
     previous_uri = settings.DB.CONNECTION_URI
+    previous_owner_uri = settings.DB.OWNER_CONNECTION_URI
     settings.DB.CONNECTION_URI = db_url_str  # env.py reads the migration URL from here
+    settings.DB.OWNER_CONNECTION_URI = None
     try:
         alembic_cfg = Config(str(_ALEMBIC_INI))
         alembic_cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
@@ -450,6 +452,7 @@ async def db_engine(worker_id: str):
         await asyncio.to_thread(command.upgrade, alembic_cfg, "head")
     finally:
         settings.DB.CONNECTION_URI = previous_uri
+        settings.DB.OWNER_CONNECTION_URI = previous_owner_uri
 
     try:
         yield engine

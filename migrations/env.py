@@ -5,7 +5,9 @@ from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 from alembic import context
-from sqlalchemy import Connection, engine_from_config, text
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
+from sqlalchemy import Connection, engine_from_config, make_url, text
 from sqlalchemy.exc import DBAPIError
 
 from src.config import settings
@@ -17,6 +19,7 @@ from src.migrate import (
     release_migration_lock,
     run_with_lock_retry,
 )
+from src.startup.tenant_isolation_validator import apply_tenant_isolation
 
 # Import all models so they register with Base.metadata
 import src.models  # noqa: F401
@@ -61,10 +64,60 @@ OPTIONAL_EXTENSIONS = {
 
 
 def get_url() -> str:
-    url = settings.DB.CONNECTION_URI
+    url = settings.DB.OWNER_CONNECTION_URI or settings.DB.CONNECTION_URI
     if url is None:
         raise ValueError("DB_CONNECTION_URI not set")
     return url
+
+
+def _at_head(connection: Connection) -> bool:
+    """Whether the database is at every head revision."""
+    current = MigrationContext.configure(
+        connection, opts={"version_table_schema": target_metadata.schema}
+    ).get_current_heads()
+    return set(current) == set(ScriptDirectory.from_config(config).get_heads())
+
+
+def _grant_app_roles(
+    connection: Connection, *, schema: str, app_role: str, service_role: str | None
+) -> None:
+    """Grant the app and service roles the tables and sequences the owner created."""
+    preparer = connection.dialect.identifier_preparer
+    roles = ", ".join(
+        preparer.quote(role)
+        for role in dict.fromkeys(r for r in (app_role, service_role) if r)
+    )
+    quoted_schema = preparer.quote_schema(schema)
+    for statement in (
+        f"GRANT USAGE ON SCHEMA {quoted_schema} TO {roles}",
+        f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {quoted_schema} TO {roles}",
+        f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA {quoted_schema} TO {roles}",
+    ):
+        connection.execute(text(statement))
+
+
+def _apply_tenant_isolation(connection: Connection) -> None:
+    if not settings.MULTI_TENANT and not settings.DB.OWNER_CONNECTION_URI:
+        return
+    if not _at_head(connection):
+        return
+    schema = target_metadata.schema or "public"
+    app_role = make_url(settings.DB.CONNECTION_URI).username
+    if app_role is None:
+        raise ValueError("DB_CONNECTION_URI has no role to grant")
+    service_role = (
+        make_url(settings.DB.SERVICE_CONNECTION_URI).username
+        if settings.DB.SERVICE_CONNECTION_URI
+        else None
+    )
+    if settings.MULTI_TENANT:
+        apply_tenant_isolation(
+            connection, schema=schema, app_role=app_role, service_role=service_role
+        )
+    else:
+        _grant_app_roles(
+            connection, schema=schema, app_role=app_role, service_role=service_role
+        )
 
 
 def run_migrations_offline() -> None:
@@ -205,12 +258,15 @@ def _run_migrations_with_connection(
         acquire_migration_lock(connection, transaction_scoped=True)
         _prepare_schema(connection)
         _run_revisions(connection)
+        _apply_tenant_isolation(connection)
         return
 
     def attempt() -> None:
         _prepare_schema(connection)
         connection.commit()
         _run_revisions(connection)
+        _apply_tenant_isolation(connection)
+        connection.commit()
 
     acquire_migration_lock(connection)
     try:

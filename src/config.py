@@ -745,6 +745,7 @@ class DBSettings(HonchoSettings):
     # it (a session that merely lacks a tenant would otherwise see zero rows).
     # endregion
     SERVICE_CONNECTION_URI: str | None = None
+    OWNER_CONNECTION_URI: str | None = None
     SCHEMA: str = "public"
     POOL_CLASS: str = "default"
     # The pooling mode the deployment's connection path actually runs — hand-set
@@ -1744,8 +1745,7 @@ class AppSettings(HonchoSettings):
     # When on, tenant-scoped DB sessions carry a request-scoped `app.tenant` GUC
     # so Postgres row-level-security policies resolve, and `tracked_db` requires a
     # tenant_id (failing closed if it is absent). When off, no tenant is bound and
-    # Honcho runs as a plain single-tenant app on RLS-free Postgres. The RLS
-    # policies are provisioned on the database out of band, not by this app.
+    # Honcho runs as a plain single-tenant app on RLS-free Postgres.
     # endregion
     MULTI_TENANT: bool = False
 

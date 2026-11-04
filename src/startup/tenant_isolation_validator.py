@@ -54,7 +54,7 @@ from __future__ import annotations
 import logging
 from typing import Literal, NamedTuple
 
-from sqlalchemy import text
+from sqlalchemy import Connection, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 from tenacity import (
@@ -323,8 +323,8 @@ def _assert_rls_enforced(rls: dict[str, tuple[bool, bool]], *, schema: str) -> N
         raise StartupValidationError(
             "MULTI_TENANT is on but RLS is not enabled+forced on: "
             + ", ".join(unenforced)
-            + ". Apply the tenant-isolation policies (ENABLE + FORCE ROW LEVEL"
-            + " SECURITY) before enabling the flag."
+            + ". Run `alembic upgrade head` with MULTI_TENANT on, which applies"
+            + " the tenant-isolation policies."
         )
 
 
@@ -531,7 +531,68 @@ def _assert_search_function_bypasses_rls(
         raise StartupValidationError(
             f"MULTI_TENANT is on but the TENANT engine's role cannot execute {name},"
             + " so every message search would fail. EXECUTE is revoked from PUBLIC"
-            + " on purpose; grant it to the app role:"
+            + " on purpose. Run `alembic upgrade head` with MULTI_TENANT on, or"
+            + " grant it to the app role:"
             + f" `GRANT EXECUTE ON FUNCTION {name}{MESSAGE_TEXT_MATCHES_ARGS}"
             + " TO <the DB_CONNECTION_URI role>`."
         )
+
+
+_TENANT_POLICY = "tenant_isolation"
+_TENANT_PREDICATE = "tenant_id = current_setting('app.tenant', true)"
+
+
+def apply_tenant_isolation(
+    connection: Connection,
+    *,
+    schema: str,
+    app_role: str,
+    service_role: str | None = None,
+) -> None:
+    """Enable and force RLS, create the tenant policy, and grant the roles on every
+    required table and on the message search function. Idempotent; runs as the
+    schema owner.
+    """
+    preparer = connection.dialect.identifier_preparer
+    roles = ", ".join(
+        preparer.quote(role)
+        for role in dict.fromkeys(r for r in (app_role, service_role) if r)
+    )
+    for table in _RLS_REQUIRED_TABLES:
+        qualified = f"{preparer.quote_schema(schema)}.{preparer.quote(table)}"
+        enabled, forced, has_policy = connection.execute(
+            text(
+                """
+                SELECT c.relrowsecurity, c.relforcerowsecurity,
+                       EXISTS (SELECT 1 FROM pg_policy p
+                               WHERE p.polrelid = c.oid AND p.polname = :policy)
+                FROM pg_class c WHERE c.oid = CAST(:name AS regclass)
+                """
+            ),
+            {"policy": _TENANT_POLICY, "name": qualified},
+        ).one()
+        if not enabled:
+            connection.execute(
+                text(f"ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY")
+            )
+        if not forced:
+            connection.execute(
+                text(f"ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY")
+            )
+        if not has_policy:
+            connection.execute(
+                text(
+                    f"CREATE POLICY {_TENANT_POLICY} ON {qualified}"
+                    + f" USING ({_TENANT_PREDICATE})"
+                    + f" WITH CHECK ({_TENANT_PREDICATE})"
+                )
+            )
+
+        connection.execute(
+            text(f"GRANT SELECT, INSERT, UPDATE, DELETE ON {qualified} TO {roles}")
+        )
+    function = (
+        f"{preparer.quote_schema(schema)}.{MESSAGE_TEXT_MATCHES}"
+        + MESSAGE_TEXT_MATCHES_ARGS
+    )
+    connection.execute(text(f"GRANT EXECUTE ON FUNCTION {function} TO {roles}"))

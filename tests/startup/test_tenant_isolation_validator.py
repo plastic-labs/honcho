@@ -17,6 +17,8 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.config import AppSettings, settings
+from src.db import Base
+from src.models import TenantPartitioned
 from src.startup import StartupValidationError, validate_tenant_isolation
 from src.startup.tenant_isolation_validator import (
     _RLS_REQUIRED_TABLES,  # pyright: ignore[reportPrivateUsage]
@@ -108,6 +110,14 @@ def _fake_search_function(
 # ---------------------------------------------------------------------------
 # Flag off: the single-tenant default
 # ---------------------------------------------------------------------------
+
+
+def test_the_rls_table_list_matches_the_tenant_partitioned_models() -> None:
+    assert set(_RLS_REQUIRED_TABLES) == {
+        mapper.tables[0].name
+        for mapper in Base.registry.mappers
+        if issubclass(mapper.class_, TenantPartitioned)
+    }
 
 
 def test_the_shipped_default_is_single_tenant() -> None:
@@ -234,7 +244,7 @@ async def test_fails_closed_when_introspection_keeps_failing(
 
 @pytest.mark.asyncio
 async def test_refuses_boot_when_rls_is_not_enforced(db_engine: AsyncEngine) -> None:
-    """The migrated schema carries no RLS (policies are provisioned out of band), which
+    """The schema migrated with the flag off carries no RLS, which
     is exactly what a self-hoster who flips the flag has. Boot must refuse."""
     with pytest.raises(StartupValidationError, match=r"RLS is not enabled\+forced"):
         await validate_tenant_isolation(
