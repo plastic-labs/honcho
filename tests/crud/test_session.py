@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 from nanoid import generate as generate_nanoid
-from sqlalchemy import Boolean, func, select
+from sqlalchemy import Boolean, String, func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -127,6 +127,31 @@ class TestSessionCRUD:
         assert rejoined_joined_at > second_joined_at
         assert rejoined_left_at is None
         assert rejoined_config == updated_config.model_dump()
+
+    @pytest.mark.asyncio
+    async def test_re_adding_active_peers_does_not_rewrite_rows(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Re-adding an active peer leaves its membership row untouched (same
+        xmin), so concurrent re-adds don't queue on its row lock."""
+        test_workspace, test_peer = sample_data
+        workspace_name, peer_name = test_workspace.name, test_peer.name
+        session_name = str(generate_nanoid())
+        config = schemas.SessionPeerConfig(observe_others=True, observe_me=False)
+        xmin_stmt = select(literal_column("xmin::text", String)).where(
+            models.SessionPeer.session_name == session_name,
+            models.SessionPeer.peer_name == peer_name,
+            models.SessionPeer.workspace_name == workspace_name,
+        )
+        create = schemas.SessionCreate(name=session_name, peers={peer_name: config})
+
+        await crud.get_or_create_session(db_session, create, workspace_name)
+        xmin = await db_session.scalar(xmin_stmt)
+
+        await crud.get_or_create_session(db_session, create, workspace_name)
+        assert await db_session.scalar(xmin_stmt) == xmin
 
     @pytest.mark.asyncio
     async def test_set_peers_preserves_active_joined_at(
