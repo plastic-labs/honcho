@@ -218,8 +218,9 @@ async def test_read_only_session_runs_in_autocommit_on_the_wire() -> None:
     # autocommit is a driver behavior, not a server isolation level.
     from sqlalchemy import text
 
-    from src.db import read_engine
+    from src.db import ReadSessionLocal
 
+    read_engine = ReadSessionLocal.kw["bind"]
     async with real_tracked_db("read_op", read_only=True) as db:
         pid = (await db.execute(text("SELECT pg_backend_pid()"))).scalar()
         conn = await db.connection()
@@ -249,8 +250,9 @@ async def test_write_session_holds_idle_in_transaction_after_select() -> None:
     # transaction-mode pooler backend.
     from sqlalchemy import text
 
-    from src.db import read_engine
+    from src.db import ReadSessionLocal
 
+    read_engine = ReadSessionLocal.kw["bind"]
     async with real_tracked_db("write_op") as db:
         pid = (await db.execute(text("SELECT pg_backend_pid()"))).scalar()
         async with read_engine.connect() as observer:
@@ -276,11 +278,14 @@ async def test_read_only_session_works_with_tracing_checkout_hook() -> None:
     from sqlalchemy import event, text
 
     from src.db import (
+        ReadSessionLocal,
+        SessionLocal,
         _set_application_name_on_checkout,  # pyright: ignore[reportPrivateUsage]
-        engine,
-        read_engine,
     )
 
+    # The engine tracked_db sessions are bound to (the test database's)
+    engine = SessionLocal.kw["bind"]
+    read_engine = ReadSessionLocal.kw["bind"]
     context_token = request_context.set("tracing-regression")
     event.listen(engine.sync_engine, "checkout", _set_application_name_on_checkout)
     try:

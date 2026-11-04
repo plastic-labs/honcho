@@ -282,6 +282,8 @@ src/
 ```
 
 - Tests in pytest with fixtures in tests/conftest.py; subdirs mirror src/ (`tests/deriver/`, `tests/dialectic/`, etc.) plus `tests/bench/` (perf benchmarks), `tests/integration/`, `tests/live_llm/` (gated by `--live-llm`), and `tests/unified/` (the unified runner).
+- The suite is hermetic: non-loopback sockets are blocked (pytest-socket) and provider keys are placeholders, except under `--live-llm`. Fake LLM calls at the import site the code under test uses.
+- A test that reproduces a known, still-open bug is marked `pytest.mark.xfail(strict=True, reason="... (issue N)")`. Once the bug is fixed the test passes, strict mode turns that into a failure, and the fix removes the marker.
 - Use environment variables via python-dotenv (.env). Config precedence: env > .env > config.toml > defaults.
 
 ### Database Design
