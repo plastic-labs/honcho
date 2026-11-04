@@ -200,6 +200,8 @@ def observer_scope_clause(
     session_peers = models.session_peers_table
     stmt = (
         select(1)
+        .select_from(session_peers)
+        .where(live_session_peer_row())
         .where(session_peers.c.tenant_id == models.scoped_tenant_id())
         .where(session_peers.c.workspace_name == workspace_name)
         .where(session_peers.c.peer_name == observer)
@@ -207,7 +209,7 @@ def observer_scope_clause(
     )
     if is_scope_peer_name(observer):
         stmt = stmt.where(session_peers.c.left_at.is_(None))
-    return stmt.exists()
+    return stmt.correlate_except(session_peers).exists()
 
 
 def resolve_session_scope_clauses(

@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
-from src.crud.lifecycle import live_message_row
+from src.crud.lifecycle import live_message_row, live_session_peer_row
 from src.dependencies import tracked_db
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import ValidationException
@@ -240,6 +240,7 @@ async def _filter_by_peer_perspective(
     # Get all session memberships for this peer in this workspace
     session_memberships_query = (
         select(session_peers_table)
+        .where(live_session_peer_row())
         .where(session_peers_table.c.tenant_id == models.scoped_tenant_id())
         .where(session_peers_table.c.workspace_name == workspace_name)
         .where(session_peers_table.c.peer_name == peer_name)
@@ -248,21 +249,26 @@ async def _filter_by_peer_perspective(
     memberships = result.all()
 
     # Build a lookup of session -> time windows
-    session_windows: dict[str, list[tuple[Any, Any]]] = {}
+    session_windows: dict[tuple[str, str, str], list[tuple[Any, Any]]] = {}
     for membership in memberships:
-        session_name = membership.session_name
-        if session_name not in session_windows:
-            session_windows[session_name] = []
-        session_windows[session_name].append((membership.joined_at, membership.left_at))
+        session_key = (
+            membership.tenant_id,
+            membership.workspace_name,
+            membership.session_name,
+        )
+        if session_key not in session_windows:
+            session_windows[session_key] = []
+        session_windows[session_key].append((membership.joined_at, membership.left_at))
 
     # Filter messages
     filtered_messages: list[models.Message] = []
     for msg in messages:
-        if msg.session_name not in session_windows:
+        session_key = (msg.tenant_id, msg.workspace_name, msg.session_name)
+        if session_key not in session_windows:
             continue
 
         # Check if message was created during any of the peer's active windows in this session
-        for joined_at, left_at in session_windows[msg.session_name]:
+        for joined_at, left_at in session_windows[session_key]:
             if msg.created_at >= joined_at and (
                 left_at is None or msg.created_at <= left_at
             ):
@@ -464,6 +470,7 @@ async def search(
         stmt = stmt.join(
             session_peers_table,
             and_(
+                models.Message.tenant_id == session_peers_table.c.tenant_id,
                 models.Message.session_name == session_peers_table.c.session_name,
                 models.Message.workspace_name == session_peers_table.c.workspace_name,
                 models.Message.created_at >= session_peers_table.c.joined_at,
@@ -475,6 +482,7 @@ async def search(
         ).where(
             session_peers_table.c.tenant_id == models.scoped_tenant_id(),
             session_peers_table.c.peer_name == peer_perspective_name,
+            live_session_peer_row(),
         )
 
     stmt = apply_filter(stmt, models.Message, filters)
