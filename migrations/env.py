@@ -97,14 +97,6 @@ def _grant_app_roles(
 
 
 def _apply_tenant_isolation(connection: Connection) -> None:
-    # region ai
-    # Only at head: after a downgrade or a partial upgrade, the tables may not
-    # have tenant_id yet and the message search function may not exist, so the
-    # policy and grants below would fail.
-    # Flag-off there is no RLS to apply, but a separate owner role still creates
-    # the tables, so the app role needs its grants or it can't read what the
-    # migrations built.
-    # endregion
     if not settings.MULTI_TENANT and not settings.DB.OWNER_CONNECTION_URI:
         return
     if not _at_head(connection):
