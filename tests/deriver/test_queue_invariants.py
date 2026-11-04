@@ -76,11 +76,6 @@ SCENARIOS = [
     pytest.param(
         Scenario(unparsable_work_unit_key=True),
         id="unparsable-work-unit-key",
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason="parse_work_unit_key raises outside the try/finally that "
-            + "releases the claim (issue 1506)",
-        ),
     ),
 ]
 
