@@ -9,6 +9,17 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+### Added
+
+- `list_dreams` and `get_dream` read Representation History: the dreams that
+  changed a workspace's representations, newest first and filterable by
+  `observed_id` and `observer_id`, and one dream's created conclusions with
+  their sources, removed conclusions, and peer card before and after.
+  `get_dream` returns at most 50 created and 50 removed conclusions and counts
+  the rest. Both need a workspace or admin key and a Honcho server with
+  Representation History. Requires the `@honcho-ai/sdk` release with `dreams()`
+  and `getDream()` (DEV-3260)
+
 ## [3.3.0] - 2026-10-29
 
 ### Added
