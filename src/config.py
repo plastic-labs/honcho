@@ -661,6 +661,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "EMBEDDING": "embedding",
         "DERIVER": "deriver",
         "PEER_CARD": "peer_card",
+        "PEER": "peer",
         "DIALECTIC": "dialectic",
         "SUMMARY": "summary",
         "WEBHOOK": "webhook",
@@ -1016,6 +1017,40 @@ class PeerCardSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="PEER_CARD_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = True
+
+
+class PeerSettings(HonchoSettings):
+    """Bounds on peer memberships and on read-time aggregation over them."""
+
+    model_config = SettingsConfigDict(env_prefix="PEER_", extra="ignore")  # pyright: ignore
+
+    # Depth a read that names a target uses when the caller passes none:
+    # 0 is the target alone, 1 adds its members, and so on.
+    AGGREGATION_DEFAULT_DEPTH: Annotated[int, Field(ge=0)] = 1
+    AGGREGATION_MAX_DEPTH: Annotated[int, Field(ge=0)] = 3
+    # Largest expanded set of observed peers per read, the target included.
+    AGGREGATION_MAX_FANOUT: Annotated[int, Field(ge=1)] = 50
+    # Below the fan-out cap, so a parent at the limit, plus itself, stays readable
+    # at depth 1.
+    MAX_MEMBERS: Annotated[int, Field(ge=1)] = 49
+
+    @model_validator(mode="after")
+    def _default_depth_within_max(self) -> "PeerSettings":
+        if self.AGGREGATION_DEFAULT_DEPTH > self.AGGREGATION_MAX_DEPTH:
+            raise ValueError(
+                "PEER_AGGREGATION_DEFAULT_DEPTH must not exceed "
+                + "PEER_AGGREGATION_MAX_DEPTH"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _members_readable_within_fanout(self) -> "PeerSettings":
+        if self.MAX_MEMBERS >= self.AGGREGATION_MAX_FANOUT:
+            raise ValueError(
+                "PEER_MAX_MEMBERS must be less than PEER_AGGREGATION_MAX_FANOUT, "
+                + "which counts the parent itself"
+            )
+        return self
 
 
 # Reasoning levels for dialectic - defined here to avoid circular imports with schemas.
@@ -1691,6 +1726,7 @@ class AppSettings(HonchoSettings):
     DERIVER: DeriverSettings = Field(default_factory=DeriverSettings)
     DIALECTIC: DialecticSettings = Field(default_factory=DialecticSettings)
     PEER_CARD: PeerCardSettings = Field(default_factory=PeerCardSettings)
+    PEER: PeerSettings = Field(default_factory=PeerSettings)
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
     METRICS: MetricsSettings = Field(default_factory=MetricsSettings)

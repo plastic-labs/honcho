@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Any, cast
 
@@ -90,6 +90,10 @@ class ObservationMetadata(BaseModel):
         description="Public ids of the messages cited as evidence, in citation order",
     )
     session_name: str | None = None
+    # The peer the observation is about. Set when read back from a document, so
+    # a read that spans several peers keeps each observation attributed and
+    # does not merge the same fact held about two different peers.
+    observed: str | None = None
 
 
 class ExplicitObservationBase(BaseModel):
@@ -221,7 +225,7 @@ class ExplicitObservation(ExplicitObservationBase, ObservationMetadata):
         """
         Make ExplicitObservation hashable for use in sets.
         """
-        return hash((self.content, self.created_at, self.session_name))
+        return hash((self.content, self.created_at, self.session_name, self.observed))
 
     def __eq__(self, other: object) -> bool:
         """
@@ -234,6 +238,7 @@ class ExplicitObservation(ExplicitObservationBase, ObservationMetadata):
             self.content == other.content
             and self.created_at == other.created_at
             and self.session_name == other.session_name
+            and self.observed == other.observed
         )
 
 
@@ -258,7 +263,9 @@ class DeductiveObservation(DeductiveObservationBase, ObservationMetadata):
         """
         Make DeductiveObservation hashable for use in sets. NOTE: premises are not included in the hash.
         """
-        return hash((self.conclusion, self.created_at, self.session_name))
+        return hash(
+            (self.conclusion, self.created_at, self.session_name, self.observed)
+        )
 
     def __eq__(self, other: object) -> bool:
         """
@@ -271,6 +278,7 @@ class DeductiveObservation(DeductiveObservationBase, ObservationMetadata):
             self.conclusion == other.conclusion
             and self.created_at == other.created_at
             and self.session_name == other.session_name
+            and self.observed == other.observed
         )
 
 
@@ -302,7 +310,9 @@ class InductiveObservation(InductiveObservationBase, ObservationMetadata):
 
     def __hash__(self) -> int:
         """Make InductiveObservation hashable for use in sets."""
-        return hash((self.conclusion, self.created_at, self.session_name))
+        return hash(
+            (self.conclusion, self.created_at, self.session_name, self.observed)
+        )
 
     def __eq__(self, other: object) -> bool:
         """Define equality for InductiveObservation objects."""
@@ -312,6 +322,7 @@ class InductiveObservation(InductiveObservationBase, ObservationMetadata):
             self.conclusion == other.conclusion
             and self.created_at == other.created_at
             and self.session_name == other.session_name
+            and self.observed == other.observed
         )
 
 
@@ -343,7 +354,7 @@ class ContradictionObservation(ContradictionObservationBase, ObservationMetadata
 
     def __hash__(self) -> int:
         """Make ContradictionObservation hashable for use in sets."""
-        return hash((self.content, self.created_at, self.session_name))
+        return hash((self.content, self.created_at, self.session_name, self.observed))
 
     def __eq__(self, other: object) -> bool:
         """Define equality for ContradictionObservation objects."""
@@ -353,6 +364,7 @@ class ContradictionObservation(ContradictionObservationBase, ObservationMetadata
             self.content == other.content
             and self.created_at == other.created_at
             and self.session_name == other.session_name
+            and self.observed == other.observed
         )
 
 
@@ -658,6 +670,43 @@ class Representation(BaseModel):
 
         return "\n".join(parts)
 
+    def group_by_observed(
+        self, order: Sequence[str]
+    ) -> list[tuple[str, "Representation"]]:
+        """Split into one representation per observed peer, in ``order``.
+
+        Peers in ``order`` with no observations here are left out. Observations
+        whose peer is not in ``order`` (or is unknown) follow, grouped by peer.
+        """
+        groups: dict[str | None, Representation] = {}
+        for level in ("explicit", "deductive", "inductive", "contradiction"):
+            for observation in getattr(self, level):
+                group = groups.setdefault(observation.observed, Representation())
+                getattr(group, level).append(observation)
+        ordered: list[tuple[str, Representation]] = [
+            (peer, groups.pop(peer)) for peer in order if peer in groups
+        ]
+        ordered.extend((peer or "unknown", group) for peer, group in groups.items())
+        return ordered
+
+    def render_attributed(
+        self,
+        order: Sequence[str],
+        render: Callable[["Representation"], str],
+    ) -> str:
+        """Render with a heading per observed peer when more than one is present.
+
+        ``order`` is the expanded set a read covered, target first. When every
+        observation is about the target -- always the case for a read that did
+        not aggregate -- this is exactly ``render(self)``, so single-peer output
+        is unchanged. Observations about a member always get a heading, even
+        when that member is the only peer with any.
+        """
+        groups = self.group_by_observed(order)
+        if not groups or (len(groups) == 1 and order and groups[0][0] == order[0]):
+            return render(self)
+        return "\n".join(f"# {peer}\n\n{render(group)}" for peer, group in groups)
+
     @classmethod
     def from_documents(cls, documents: Sequence[models.Document]) -> "Representation":
         return cls(
@@ -673,6 +722,7 @@ class Representation(BaseModel):
                     ),
                     source_message_ids=doc.source_message_ids or [],
                     session_name=doc.session_name,
+                    observed=doc.observed,
                 )
                 for doc in documents
                 if doc.level == "explicit"
@@ -688,6 +738,7 @@ class Representation(BaseModel):
                         doc.internal_metadata.get("message_ids", [])
                     ),
                     session_name=doc.session_name,
+                    observed=doc.observed,
                     source_ids=doc.source_ids or [],
                     premises=doc.internal_metadata.get("premises", []),
                 )
@@ -703,6 +754,7 @@ class Representation(BaseModel):
                     conclusion=doc.content,
                     message_ids=doc.internal_metadata.get("message_ids", []),
                     session_name=doc.session_name,
+                    observed=doc.observed,
                     source_ids=doc.source_ids or [],
                     sources=doc.internal_metadata.get("sources", []),
                     pattern_type=doc.internal_metadata.get("pattern_type", "pattern"),
@@ -720,6 +772,7 @@ class Representation(BaseModel):
                     content=doc.content,
                     message_ids=doc.internal_metadata.get("message_ids", []),
                     session_name=doc.session_name,
+                    observed=doc.observed,
                     source_ids=doc.source_ids or [],
                     sources=doc.internal_metadata.get("sources", []),
                 )

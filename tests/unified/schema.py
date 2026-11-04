@@ -81,6 +81,18 @@ class CreateScopeAction(TestStep):
     )
 
 
+class AddMemberAction(TestStep):
+    """Make ``peer_id`` a member of ``parent_peer_id``, creating either peer if needed.
+
+    Reads that name the parent then aggregate the member's memory, down to the
+    query's ``depth``.
+    """
+
+    step_type: Literal["add_member"] = "add_member"
+    parent_peer_id: str
+    peer_id: str
+
+
 # --- Wait Actions ---
 
 
@@ -256,6 +268,10 @@ class QueryAction(TestStep):
     # context go over raw HTTP; workspace_chat uses the SDK `scope` argument.
     scope: str | list[str] | None = None
 
+    # for chat and get_representation - how many levels of members to
+    # aggregate; None leaves the server default
+    depth: int | None = Field(default=None, ge=0)
+
     assertions: list[
         LLMJudgeAssertion
         | ContainsAssertion
@@ -264,6 +280,12 @@ class QueryAction(TestStep):
         | JsonMatchAssertion
         | EvidenceContainsAssertion
     ]
+
+    @model_validator(mode="after")
+    def _validate_depth(self) -> Self:
+        if self.depth is not None and self.target not in ("chat", "get_representation"):
+            raise ValueError("depth applies only to chat and get_representation")
+        return self
 
 
 # --- Unified Step Type ---
@@ -280,6 +302,7 @@ class TestDefinition(BaseModel):
             | AddMessageAction
             | AddMessagesAction
             | CreateScopeAction
+            | AddMemberAction
             | WaitAction
             | ScheduleDreamAction
             | QueryAction,

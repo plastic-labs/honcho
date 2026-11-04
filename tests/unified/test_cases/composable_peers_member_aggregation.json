@@ -1,0 +1,131 @@
+{
+  "description": "Composable peers: a parent peer that never speaks reads its members' memory at read time. Alice and Bob talk in a session; the deriver forms their own conclusions as usual. Only afterwards are they made members of 'team', which is itself a member of 'org', so nothing is backfilled and the parents hold no memory of their own. Reads of team and org must reach each member down to the requested depth, and a member read must never see its siblings. Every assertion is a substring or evidence check, so the case depends on the deriver recording two plain facts, not on how the dialectic phrases an answer.",
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "standup",
+      "peer_configs": {
+        "alice": { "observe_me": true },
+        "bob": { "observe_me": true }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "standup",
+      "messages": [
+        { "peer_id": "alice", "content": "I'm leading the Rust rewrite of our ingestion service." },
+        { "peer_id": "bob", "content": "I own the billing service, and I'm migrating it to Stripe this quarter." },
+        { "peer_id": "alice", "content": "The Rust rewrite should be done before the end of the month." },
+        { "peer_id": "bob", "content": "Once the Stripe migration lands I'll be on vacation for a week." }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 180
+    },
+    {
+      "step_type": "add_member",
+      "parent_peer_id": "team",
+      "peer_id": "alice",
+      "description": "Memberships are added after the deriver has finished: aggregation happens on read, so no new conclusions are needed."
+    },
+    {
+      "step_type": "add_member",
+      "parent_peer_id": "team",
+      "peer_id": "bob"
+    },
+    {
+      "step_type": "add_member",
+      "parent_peer_id": "org",
+      "peer_id": "team"
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "team",
+      "description": "Team's own read at the default depth (1) includes both members.",
+      "assertions": [
+        { "assertion_type": "contains", "text": "# alice" },
+        { "assertion_type": "contains", "text": "# bob" },
+        { "assertion_type": "contains", "text": "Rust" },
+        { "assertion_type": "contains", "text": "Stripe" }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "team",
+      "depth": 0,
+      "description": "At depth 0 team reads only itself, and it never spoke.",
+      "assertions": [
+        { "assertion_type": "not_contains", "text": "Rust" },
+        { "assertion_type": "not_contains", "text": "Stripe" }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "description": "A member read sees only the member: no sibling, no parent.",
+      "assertions": [
+        { "assertion_type": "contains", "text": "Rust" },
+        { "assertion_type": "not_contains", "text": "Stripe" },
+        { "assertion_type": "not_contains", "text": "# alice" }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "org",
+      "depth": 1,
+      "description": "org -> team -> members: depth 1 stops at team, which holds nothing of its own.",
+      "assertions": [
+        { "assertion_type": "not_contains", "text": "Rust" },
+        { "assertion_type": "not_contains", "text": "Stripe" }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "org",
+      "depth": 2,
+      "description": "Depth 2 reaches the members of team.",
+      "assertions": [
+        { "assertion_type": "contains", "text": "# alice" },
+        { "assertion_type": "contains", "text": "# bob" },
+        { "assertion_type": "contains", "text": "Rust" },
+        { "assertion_type": "contains", "text": "Stripe" }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "chat",
+      "observer_peer_id": "team",
+      "input": "Who is leading the Rust rewrite, and who owns billing?",
+      "reasoning_level": "minimal",
+      "description": "Chat over team reads conclusions about both members.",
+      "assertions": [
+        {
+          "assertion_type": "evidence_contains",
+          "conclusions_from_peers": ["alice", "bob"]
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "chat",
+      "observer_peer_id": "org",
+      "input": "Who is leading the Rust rewrite, and who owns billing?",
+      "reasoning_level": "minimal",
+      "depth": 2,
+      "description": "Chat over org at depth 2 reaches team's members.",
+      "assertions": [
+        {
+          "assertion_type": "evidence_contains",
+          "conclusions_from_peers": ["alice", "bob"]
+        }
+      ]
+    }
+  ]
+}

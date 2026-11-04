@@ -18,6 +18,7 @@ from .api_types import (
     PeerCardResponse,
     PeerConfig,
     PeerContextResponse,
+    PeerMembership,
     PeerResponse,
     RepresentationResponse,
     SessionConfiguration,
@@ -25,6 +26,7 @@ from .api_types import (
 )
 from .base import PeerBase, ScopeBase, SessionBase
 from .conclusions import ConclusionsView
+from .members import PeerMembers, list_memberships
 from .http import routes
 from .message import Message
 from .mixins import MetadataConfigMixin
@@ -303,6 +305,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         sessions: Sequence[str | SessionBase] | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
+        depth: int | None = None,
         response_format: type[TResponseFormat],
         include_evidence: Literal[False] = False,
         timeout: float | None = None,
@@ -319,6 +322,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         sessions: Sequence[str | SessionBase] | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
+        depth: int | None = None,
         response_format: type[TResponseFormat],
         include_evidence: Literal[True],
         timeout: float | None = None,
@@ -335,6 +339,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         sessions: Sequence[str | SessionBase] | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
+        depth: int | None = None,
         response_format: dict[str, Any] | None = None,
         include_evidence: Literal[True],
         timeout: float | None = None,
@@ -351,6 +356,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         sessions: Sequence[str | SessionBase] | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
+        depth: int | None = None,
         response_format: dict[str, Any] | None = None,
         include_evidence: Literal[False] = False,
         timeout: float | None = None,
@@ -367,6 +373,9 @@ class Peer(PeerBase, MetadataConfigMixin):
         sessions: Sequence[str | SessionBase] | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
+        depth: int | None = Field(
+            None, ge=0, description="How far to aggregate over members"
+        ),
         response_format: type[BaseModel] | dict[str, Any] | None = None,
         include_evidence: bool = False,
         timeout: float | None = Field(
@@ -404,6 +413,10 @@ class Peer(PeerBase, MetadataConfigMixin):
                       allowlist. Reach for a named ``scope`` when you need that depth.
             reasoning_level: Optional reasoning level for the query: "minimal", "low", "medium",
                              "high", or "max". Defaults to "low" if not provided.
+            depth: Optional depth to aggregate over the target's members. 0 reads
+                   the target alone; 1 adds its members; 2 adds their members,
+                   and so on. Each member's knowledge is attributed to that
+                   member. Defaults to the server's default (1) if not provided.
             response_format: Optional structure for the answer. Pass a Pydantic
                              model class to get a parsed instance back, or a raw
                              JSON Schema dict (root type "object") to get the
@@ -444,6 +457,8 @@ class Peer(PeerBase, MetadataConfigMixin):
             body["session_id"] = resolved_session_id
         if reasoning_level:
             body["reasoning_level"] = reasoning_level
+        if depth is not None:
+            body["depth"] = depth
         response_format_schema = serialize_response_format(response_format)
         if response_format_schema is not None:
             body["response_format"] = response_format_schema
@@ -468,6 +483,9 @@ class Peer(PeerBase, MetadataConfigMixin):
         sessions: Sequence[str | SessionBase] | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
+        depth: int | None = Field(
+            None, ge=0, description="How far to aggregate over members"
+        ),
         response_format: type[BaseModel] | dict[str, Any] | None = None,
         include_evidence: bool = False,
     ) -> DialecticStreamResponse:
@@ -492,6 +510,8 @@ class Peer(PeerBase, MetadataConfigMixin):
                       :meth:`chat` for the depth caveat.
             reasoning_level: Optional reasoning level for the query: "minimal", "low", "medium",
                              "high", or "max". Defaults to "low" if not provided.
+            depth: Optional depth to aggregate over the target's members. See
+                   :meth:`chat`.
             response_format: Optional structure for the answer: a Pydantic model
                              class or a JSON Schema dict (root type "object").
                              Streamed chunks stay raw text that accumulates to a
@@ -525,6 +545,8 @@ class Peer(PeerBase, MetadataConfigMixin):
             body["session_id"] = resolved_session_id
         if reasoning_level:
             body["reasoning_level"] = reasoning_level
+        if depth is not None:
+            body["depth"] = depth
         response_format_schema = serialize_response_format(response_format)
         if response_format_schema is not None:
             body["response_format"] = response_format_schema
@@ -684,25 +706,35 @@ class Peer(PeerBase, MetadataConfigMixin):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
+        *,
+        depth: int | None = Field(
+            None, ge=0, description="How far to aggregate over members"
+        ),
     ) -> list[Message]:
         """
         Search across all messages in the workspace with this peer as author.
 
-        Makes an API call to search endpoint.
+        Makes an API call to search endpoint. When this peer has members,
+        messages any of them wrote match too, down to ``depth``.
 
         Args:
             query: The search query to use
             filters: Filters to scope the search. See [search filters documentation](https://honcho.dev/docs/v3/documentation/core-concepts/features/using-filters).
             limit: Number of results to return (1-100, default: 10)
+            depth: Optional depth to aggregate over this peer's members. See
+                   :meth:`chat`.
 
         Returns:
             A list of Message objects representing the search results.
             Returns an empty list if no messages are found.
         """
         self._honcho._ensure_workspace()
+        body: dict[str, Any] = {"query": query, "filters": filters, "limit": limit}
+        if depth is not None:
+            body["depth"] = depth
         data = self._honcho._http.post(
             routes.peer_search(self.workspace_id, self.id),
-            body={"query": query, "filters": filters, "limit": limit},
+            body=body,
         )
         return [
             Message.from_api_response(MessageResponse.model_validate(item))
@@ -797,6 +829,9 @@ class Peer(PeerBase, MetadataConfigMixin):
         *,
         scope: str | ScopeBase | Sequence[str | ScopeBase] | None = None,
         sessions: Sequence[str | SessionBase] | None = None,
+        depth: int | None = Field(
+            None, ge=0, description="How far to aggregate over members"
+        ),
     ) -> str:
         """
         Get a subset of the representation of the peer.
@@ -815,6 +850,8 @@ class Peer(PeerBase, MetadataConfigMixin):
             sessions: Optional allowlist of sessions confining the representation to
                       directly-stated conclusions from those sessions. See
                       :meth:`chat` for the depth caveat.
+            depth: Optional depth to aggregate over the target's members, each
+                   member's conclusions attributed to it. See :meth:`chat`.
 
         Returns:
             A Representation string
@@ -860,6 +897,8 @@ class Peer(PeerBase, MetadataConfigMixin):
             body["include_most_frequent"] = include_most_frequent
         if max_conclusions is not None:
             body["max_conclusions"] = max_conclusions
+        if depth is not None:
+            body["depth"] = depth
 
         data = self._honcho._http.post(
             routes.peer_representation(self.workspace_id, self.id),
@@ -877,12 +916,18 @@ class Peer(PeerBase, MetadataConfigMixin):
         search_max_distance: float | None = Field(None, ge=0.0, le=1.0),
         include_most_frequent: bool | None = None,
         max_conclusions: int | None = Field(None, ge=1, le=100),
+        *,
+        depth: int | None = Field(
+            None, ge=0, description="How far to aggregate over members"
+        ),
     ) -> PeerContextResponse:
         """
         Get context for this peer, including representation and peer card.
 
         This is a convenience method that retrieves both the working representation
-        and peer card in a single API call.
+        and peer card in a single API call. When the target has members, the
+        representation includes theirs and their cards come back in
+        ``member_cards``.
 
         Args:
             target: Optional target peer to get context for. If provided, returns
@@ -893,9 +938,13 @@ class Peer(PeerBase, MetadataConfigMixin):
             search_max_distance: Maximum semantic distance for search results (0.0-1.0)
             include_most_frequent: Whether to include the most frequent conclusions
             max_conclusions: Maximum number of conclusions to include
+            depth: Optional depth to aggregate over the target's members. See
+                   :meth:`chat`.
 
         Returns:
-            A PeerContext object containing the representation and peer card
+            A PeerContext object containing the representation and peer card,
+            plus ``member_cards`` (keyed by member peer ID) when the read
+            aggregated over members
 
         Example:
             ```python
@@ -930,6 +979,8 @@ class Peer(PeerBase, MetadataConfigMixin):
             query["include_most_frequent"] = include_most_frequent
         if max_conclusions is not None:
             query["max_conclusions"] = max_conclusions
+        if depth is not None:
+            query["depth"] = depth
 
         data = self._honcho._http.get(
             routes.peer_context(self.workspace_id, self.id),
@@ -992,6 +1043,54 @@ class Peer(PeerBase, MetadataConfigMixin):
         """
         target_id = target.id if isinstance(target, PeerBase) else target
         return ConclusionsView(self._honcho, self.workspace_id, self.id, target_id)
+
+    @property
+    def members(self) -> PeerMembers:
+        """
+        Access this peer's members.
+
+        Reads that name this peer as their target aggregate its own knowledge
+        plus its members', down to the requested ``depth``.
+
+        Returns:
+            A PeerMembers view for adding, listing, and removing members
+
+        Example:
+            ```python
+            team = honcho.peer("engineering-team")
+            team.members.add("alice", metadata={"role": "lead"})
+            team.members.list()
+            team.chat("what did we decide about the rewrite?")
+            ```
+        """
+        return PeerMembers(self._honcho, self.workspace_id, self.id)
+
+    def parents(
+        self,
+        filters: dict[str, Any] | None = None,
+        *,
+        page: int = 1,
+        size: int = 50,
+    ) -> SyncPage[PeerMembership]:
+        """
+        Get the peers this peer is a member of, oldest membership first.
+
+        Args:
+            filters: Optional filter criteria on the parent peers, in the same
+                shape as ``honcho.peers()``.
+            page: Page number (1-indexed). Default: 1.
+            size: Number of items per page. Default: 50.
+
+        Returns:
+            A paginated list of memberships
+        """
+        return list_memberships(
+            self._honcho,
+            routes.peer_parents_list(self.workspace_id, self.id),
+            filters,
+            page=page,
+            size=size,
+        )
 
     def __repr__(self) -> str:
         """
