@@ -159,3 +159,71 @@ async def test_peer_and_session_keys_cannot_read_history(
     )
     assert client.post(f"{root}/list", json={}).status_code == 200
     assert client.get(f"{root}/{run_id}").status_code == 200
+
+
+@pytest.mark.parametrize("field", ["observed_id", "observer_id"])
+async def test_list_rejects_a_lone_surrogate_in_a_filter(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    field: str,
+):
+    workspace, _peer = sample_data
+
+    response = client.post(
+        f"/v3/workspaces/{workspace.name}/dreams/list",
+        content='{"' + field + '": "\\ud800"}',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 422
+
+
+async def test_deleting_a_removed_conclusion_through_the_api_erases_its_copy(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    workspace, peer = sample_data
+    workspace_name, maya = workspace.name, peer.name
+    run_id = await _run(
+        db_session, workspace_name, observer=maya, observed=maya, started_minutes_ago=1
+    )
+    conclusion_id = generate_nanoid()
+    db_session.add(
+        models.DreamRunChange(
+            run_id=run_id,
+            workspace_name=workspace_name,
+            kind="removed",
+            conclusion_id=conclusion_id,
+            level="explicit",
+            content="Maya drinks coffee daily",
+        )
+    )
+    await db_session.commit()
+
+    response = client.delete(
+        f"/v3/workspaces/{workspace_name}/conclusions/{conclusion_id}"
+    )
+    assert response.status_code == 204
+
+    detail = client.get(f"/v3/workspaces/{workspace_name}/dreams/{run_id}").json()
+    assert detail["removed"] == []
+    # Deleting it again finds nothing left to delete.
+    response = client.delete(
+        f"/v3/workspaces/{workspace_name}/conclusions/{conclusion_id}"
+    )
+    assert response.status_code == 404
+
+
+async def test_list_rejects_nul_in_a_filter(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+):
+    workspace, _peer = sample_data
+
+    response = client.post(
+        f"/v3/workspaces/{workspace.name}/dreams/list",
+        json={"observed_id": "maya\x00"},
+    )
+
+    assert response.status_code == 422

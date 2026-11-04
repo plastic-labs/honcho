@@ -817,12 +817,6 @@ async def delete_session(
             batch_size=5000,
         )
 
-        # Representation History copies of conclusions this session produced
-        # go with the conclusions themselves. After the documents: a dream that
-        # was removing one of them holds its row until it commits the copy, so
-        # the document delete above waits for that commit and this one sees it.
-        await delete_session_history(db, workspace_name, session_name)
-
         # Delete Message entries in batches
         messages_deleted = await _batch_delete_matching(
             db,
@@ -833,6 +827,14 @@ async def delete_session(
             ],
             batch_size=5000,
         )
+
+        # Representation History copies of conclusions this session produced
+        # go with the conclusions themselves. After the documents: a dream that
+        # was removing one of them holds its row until it commits the copy, so
+        # the document delete above waits for that commit and this one sees it.
+        # After the messages and before the session row, the order workspace
+        # deletion takes them in.
+        await delete_session_history(db, workspace_name, session_name)
 
         # Finally, delete the session itself
         await db.delete(honcho_session)

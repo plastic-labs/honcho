@@ -375,6 +375,50 @@ async def test_a_conclusion_deleted_through_the_api_is_unavailable(
     assert created.conclusion.content is None
 
 
+async def test_deleting_a_restored_conclusion_erases_the_copy_a_dream_kept(
+    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    workspace, peer = sample_data
+    workspace_name, peer_name = workspace.name, peer.name
+    _session_name, (coffee_id, nights_id) = await _seed(
+        db_session, workspace_name, peer_name
+    )
+    first = await _open(workspace_name, peer_name)
+    await crud.create_documents(
+        db_session,
+        [_deductive("Ann relies on caffeine to work nights", [coffee_id, nights_id])],
+        workspace_name,
+        observer=peer_name,
+        observed=peer_name,
+        history=first,
+    )
+    second = await _open(workspace_name, peer_name)
+    await crud.delete_documents(
+        db_session,
+        workspace_name,
+        [coffee_id],
+        observer=peer_name,
+        observed=peer_name,
+        history=second,
+    )
+    # Something restores the same conclusion id (as a scope backfill can).
+    await db_session.execute(
+        update(models.Document)
+        .where(models.Document.id == coffee_id)
+        .values(deleted_at=None)
+    )
+    await db_session.commit()
+
+    await crud.delete_document_by_id(db_session, workspace_name, coffee_id)
+
+    db_session.expire_all()
+    removal = await crud.get_run_detail(db_session, workspace_name, second.run_id)
+    assert removal.removed == []
+    detail = await crud.get_run_detail(db_session, workspace_name, first.run_id)
+    coffee = next(s for s in detail.created[0].sources if s.id == coffee_id)
+    assert (coffee.status, coffee.content) == ("unavailable", None)
+
+
 async def test_deleting_the_workspace_deletes_its_history(
     db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
 ):

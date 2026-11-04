@@ -154,7 +154,7 @@ Changes are kept for 30 days by default (`DREAM_HISTORY_RETENTION_DAYS`). After 
 
 History follows the same deletion rules as the conclusions it describes:
 
-- Deleting a conclusion through the API also removes its text from history: runs that reference it show it as `unavailable`.
+- Deleting a conclusion through the API also deletes any copy history kept of it: runs that reference it show it as `unavailable`. This works for a conclusion a dream already removed, so its recorded text can be erased too.
 - Deleting a session deletes the recorded text of conclusions that came from that session.
 - Deleting a workspace deletes all of its history.
 

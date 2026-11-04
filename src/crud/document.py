@@ -20,6 +20,7 @@ from src.crud.dream_history import (
     CreatedConclusion,
     DreamHistoryTarget,
     RemovedConclusion,
+    erase_conclusion_history,
     record_created,
     record_removed,
 )
@@ -1255,10 +1256,12 @@ async def delete_document_by_id(
     document_id: str,
 ) -> None:
     """
-    Soft-delete a document by ID and workspace.
+    Soft-delete a document by ID and workspace, and erase its history copies.
 
     Sets deleted_at timestamp to mark the document as deleted. The reconciliation
-    job handles vector store cleanup and hard deletion from the database.
+    job handles vector store cleanup and hard deletion from the database. Any
+    copy Representation History kept of it is deleted in the same transaction,
+    so a conclusion a dream already removed can still be erased this way.
 
     Args:
         db: Database session
@@ -1266,7 +1269,8 @@ async def delete_document_by_id(
         document_id: ID of the document to delete
 
     Raises:
-        ResourceNotFoundException: If document not found or doesn't belong to the workspace
+        ResourceNotFoundException: If neither a live document nor a history copy
+            with this ID exists in the workspace
     """
     update_stmt = (
         update(models.Document)
@@ -1278,8 +1282,10 @@ async def delete_document_by_id(
         .values(deleted_at=func.now())
     )
     result = cast(CursorResult[Any], await db.execute(update_stmt))
+    # After the document, the order a dream takes them in when it removes one.
+    erased = await erase_conclusion_history(db, workspace_name, document_id)
 
-    if result.rowcount == 0:
+    if result.rowcount == 0 and erased == 0:
         raise ResourceNotFoundException(
             f"Document {document_id} not found or does not belong to workspace {workspace_name}"
         )

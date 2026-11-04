@@ -4222,7 +4222,7 @@
           "conclusions"
         ],
         "summary": "Delete Conclusion",
-        "description": "Delete a single Conclusion by ID.\n\nThis action cannot be undone.",
+        "description": "Delete a single Conclusion by ID.\n\nAlso deletes any copy Representation History kept of it, so it reads as\n`unavailable` in every dream that references it. A conclusion a dream has\nalready removed can be deleted this way too. This action cannot be undone.",
         "operationId": "delete_conclusion_v3_workspaces__workspace_id__conclusions__conclusion_id__delete",
         "security": [
           {

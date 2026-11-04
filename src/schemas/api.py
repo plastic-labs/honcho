@@ -31,7 +31,7 @@ from src.schemas.configuration import (
     SessionPeerConfig,
     WorkspaceConfiguration,
 )
-from src.utils.sanitization import NulStripped, strip_nul
+from src.utils.sanitization import NulStripped, StorableOnly, strip_nul
 from src.utils.scopes import (
     SCOPE_PEER_PREFIX,
     is_scope_peer_name,
@@ -1359,10 +1359,12 @@ class WebhookEndpoint(WebhookEndpointBase):
 class DreamRunList(BaseModel):
     """Filters for listing dream runs."""
 
-    observed_id: str | None = Field(
+    # Peer IDs, which can be legacy or scope-backed names outside the new-peer
+    # pattern, so only characters Postgres can't bind are rejected.
+    observed_id: Annotated[str, StorableOnly] | None = Field(
         default=None, description="Only runs about this peer"
     )
-    observer_id: str | None = Field(
+    observer_id: Annotated[str, StorableOnly] | None = Field(
         default=None,
         description="Only runs from this observer's perspective. Combine with `observed_id` for one representation.",
     )
