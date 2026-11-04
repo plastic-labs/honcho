@@ -13,6 +13,7 @@ import jwt
 import pytest
 import pytest_asyncio
 import sentry_sdk
+import tiktoken
 from alembic import command
 from alembic.config import Config
 from cashews.picklers import PicklerType
@@ -37,7 +38,13 @@ from sqlalchemy_utils import (
 from src import models
 from src.cache.client import cache
 from src.config import settings
-from src.db import Base, tenant_context
+from src.db import (
+    Base,
+    ReadSessionLocal,
+    ServiceReadSessionLocal,
+    ServiceSessionLocal,
+    SessionLocal,
+)
 from src.dependencies import get_db, get_read_db
 from src.exceptions import HonchoException
 from src.models import Peer, Workspace
@@ -49,6 +56,13 @@ from src.security import JWTParams, create_admin_jwt, create_jwt
 settings.LANGFUSE_PUBLIC_KEY = None
 
 from src.main import app  # noqa: E402
+
+# Every tiktoken encoding src/ loads. tiktoken downloads an encoding on first use,
+# and conftest runs before pytest-socket blocks non-loopback sockets, so loading
+# them here keeps tests that load one lazily from failing on a cold cache (CI).
+TIKTOKEN_ENCODINGS = ("cl100k_base", "o200k_base")
+for _encoding_name in TIKTOKEN_ENCODINGS:
+    tiktoken.get_encoding(_encoding_name)
 
 
 # Create a custom handler that doesn't get closed prematurely
@@ -113,6 +127,7 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/llm/",
     # Settings validation only; no database or provider calls.
     "tests/test_config.py",
+    "tests/test_pytest_configuration.py",
     # LLM transport tests mock providers directly and don't need database/runtime setup.
     "tests/utils/test_length_finish_reason.py",
     "tests/utils/test_clients.py",
@@ -130,6 +145,21 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/integration/test_rls_isolation.py",
     # The mock provider is a standalone ASGI app with no database or LLM of its
     # own; the runtime mocks would patch the very seams it exists to replace.
+    "tests/mock_provider/",
+)
+
+_DB_FREE_TEST_PREFIXES = (
+    "tests/llm/",
+    "tests/live_llm/",
+    "tests/test_config.py",
+    "tests/test_pytest_configuration.py",
+    "tests/utils/test_length_finish_reason.py",
+    "tests/utils/test_clients.py",
+    "tests/crud/test_session_scope_clauses.py",
+    "tests/deriver/test_prompts.py",
+    "tests/utils/test_custom_instructions_prompts.py",
+    "tests/test_security.py",
+    "tests/test_generate_jwt_script.py",
     "tests/mock_provider/",
 )
 
@@ -178,8 +208,9 @@ def pytest_collection_modifyitems(
     skip_live = pytest.mark.skip(reason=_LIVE_LLM_SKIP_REASON)
     skip_fuzz = pytest.mark.skip(reason=_FUZZ_SKIP_REASON)
     for item in items:
-        if not run_live and _LIVE_LLM_MARKER in item.keywords:
-            item.add_marker(skip_live)
+        if _LIVE_LLM_MARKER in item.keywords:
+            # The suite blocks non-loopback sockets (pytest-socket, see addopts)
+            item.add_marker(pytest.mark.enable_socket if run_live else skip_live)
         if not run_fuzz and item.nodeid.startswith(_FUZZ_TEST_PREFIX):
             item.add_marker(skip_fuzz)
 
@@ -200,17 +231,21 @@ _SWEEPABLE_DB_NAME = re.compile(
 )
 
 
-def pytest_configure(config: pytest.Config) -> None:  # pyright: ignore[reportUnusedParameter]
-    """Stamp this pytest run with an id so its databases can't collide with another run's.
+_DUMMY_PROVIDER_API_KEY = "test-key-not-a-real-credential"
 
-    The xdist controller runs this first and its environment is inherited by the
-    workers it spawns, so `setdefault` gives every worker in a run the same id
-    while separate runs (concurrent worktrees, two agents, a local run alongside
-    CI) each get their own. Set the env var yourself to pin a stable name.
 
-    The id leads with a sortable local-time timestamp so leaked databases can be
-    aged out (see `_sweep_stale_test_databases`); the random tail keeps two runs
-    starting in the same second apart.
+def pytest_configure(config: pytest.Config) -> None:
+    """Per-run setup: run id, placeholder provider keys, and the DB preflight.
+
+    The run id keeps this run's databases apart from any other run's. The xdist
+    controller runs this first and its workers inherit its environment, so
+    `setdefault` gives every worker in a run the same id. Set the env var
+    yourself to pin a stable name. The id leads with a sortable local-time
+    timestamp so leaked databases can be aged out (see
+    `_sweep_stale_test_databases`).
+
+    Provider API keys are replaced with a placeholder unless --live-llm is set,
+    so results don't depend on which keys are in the environment.
     """
 
     os.environ.setdefault(
@@ -218,9 +253,57 @@ def pytest_configure(config: pytest.Config) -> None:  # pyright: ignore[reportUn
         f"{time.strftime(_RUN_ID_TIME_FORMAT)}_{uuid.uuid4().hex[:4]}",
     )
 
+    if not config.getoption("--live-llm"):
+        settings.LLM.ANTHROPIC_API_KEY = _DUMMY_PROVIDER_API_KEY
+        settings.LLM.OPENAI_API_KEY = _DUMMY_PROVIDER_API_KEY
+        settings.LLM.GEMINI_API_KEY = _DUMMY_PROVIDER_API_KEY
+
     # Workers inherit the controller's env and would each redo this.
     if os.environ.get("PYTEST_XDIST_WORKER") is None:
+        if not (
+            config.option.collectonly
+            or config.option.help
+            or config.option.showfixtures
+            or config.option.markers
+            or _only_db_free_tests_selected(config)
+        ):
+            _check_test_database_reachable()
         _sweep_stale_test_databases()
+
+
+def _only_db_free_tests_selected(config: pytest.Config) -> bool:
+    """Whether every path on the command line is under a DB-free test prefix."""
+
+    if not config.args:
+        return False
+    for arg in config.args:
+        path = arg.split("::", 1)[0]
+        relative = os.path.relpath(os.path.abspath(path), config.rootpath)
+        relative = relative.replace(os.sep, "/")
+        if os.path.isdir(path):
+            relative += "/"
+        if not relative.startswith(_DB_FREE_TEST_PREFIXES):
+            return False
+    return True
+
+
+def _check_test_database_reachable() -> None:
+    """Abort the run with one clear error when the test Postgres is unreachable."""
+
+    url = CONNECTION_URI.set(database="postgres")
+    engine = create_engine(url, connect_args={"connect_timeout": 5})
+    try:
+        with engine.connect():
+            pass
+    except OperationalError as e:
+        reason = str(e.orig or e).strip().splitlines()[0]
+        raise pytest.UsageError(
+            "Cannot connect to the test Postgres at "
+            + f"{url.render_as_string(hide_password=True)}: {reason}\n"
+            + "Set DB_CONNECTION_URI to a Postgres server with pgvector."
+        ) from None
+    finally:
+        engine.dispose()
 
 
 def _get_test_db_url(worker_id: str, *, tag: str | None = None) -> URL:
@@ -454,9 +537,27 @@ async def db_engine(worker_id: str):
         settings.DB.CONNECTION_URI = previous_uri
         settings.DB.OWNER_CONNECTION_URI = previous_owner_uri
 
+    # The app's own sessionmakers (tracked_db, workers) use this database too,
+    # with the read-only one in AUTOCOMMIT as in production.
+    # The cross-tenant service factories (service_db) too: flag-off they are the
+    # same single engine in production, and the test database has no RLS.
+    app_bind = SessionLocal.kw["bind"]
+    app_read_bind = ReadSessionLocal.kw["bind"]
+    service_bind = ServiceSessionLocal.kw["bind"]
+    service_read_bind = ServiceReadSessionLocal.kw["bind"]
+    autocommit_engine = engine.execution_options(isolation_level="AUTOCOMMIT")
+    SessionLocal.configure(bind=engine)
+    ReadSessionLocal.configure(bind=autocommit_engine)
+    ServiceSessionLocal.configure(bind=engine)
+    ServiceReadSessionLocal.configure(bind=autocommit_engine)
+
     try:
         yield engine
     finally:
+        SessionLocal.configure(bind=app_bind)
+        ReadSessionLocal.configure(bind=app_read_bind)
+        ServiceSessionLocal.configure(bind=service_bind)
+        ServiceReadSessionLocal.configure(bind=service_read_bind)
         await engine.dispose()
 
         # Restore original schema
@@ -1101,92 +1202,10 @@ def mock_honcho_llm_call(request: pytest.FixtureRequest):
 
 
 @pytest.fixture(autouse=True)
-def mock_tracked_db(request: pytest.FixtureRequest):
-    """Mock tracked_db to create fresh sessions per call.
-
-    Using a session factory instead of a shared session avoids asyncio lock
-    errors when multiple tracked_db calls run concurrently via asyncio.gather.
-    """
-    if not _requires_runtime_mocks(_get_nodeid(request)):
-        yield
-        return
-
-    from contextlib import ExitStack, asynccontextmanager
-
-    db_engine = request.getfixturevalue("db_engine")
-    session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
-
-    @asynccontextmanager
-    async def mock_tracked_db_context(
-        _: str | None = None, *, read_only: bool = False, tenant_id: str | None = None
-    ):
-        # read_only is accepted and ignored: in tests both engines resolve to the
-        # same per-test database, and RLS isn't applied. tenant_id is bound into
-        # tenant_context for the block, as the real tracked_db does, because code
-        # inside the block (work-unit key construction) reads it from there.
-        del read_only
-        # region ai
-        # Mirrors the real tracked_db/service_db teardown (rollback, then close).
-        # The rollback expires every loaded instance and the close detaches it,
-        # so a route that returns an ORM row from inside the block fails here
-        # exactly as it does in production, instead of passing on a stand-in
-        # that merely closed.
-        # endregion
-        tenant_token = tenant_context.set(tenant_id) if tenant_id is not None else None
-        try:
-            async with session_factory() as session:
-                try:
-                    yield session
-                finally:
-                    await session.rollback()
-        finally:
-            if tenant_token is not None:
-                tenant_context.reset(tenant_token)
-
-    # Each module imports tracked_db by name, so patch every import site.
-    # Use ExitStack (not a parenthesized `with`) to stay under CPython's
-    # 20-statically-nested-block limit as this list grows.
-    tracked_db_targets = [
-        "src.dependencies.tracked_db",
-        # `src.vector_store.tenant_namespace` does `from src.dependencies import
-        # service_db` lazily inside its loader (see its module docstring), the same
-        # deferred-import shape `src.security.auth()` uses for `tracked_db` above --
-        # so patching the definition site here is what reaches it, not a per-module
-        # import-site entry.
-        "src.dependencies.service_db",
-        "src.deriver.queue_manager.service_db",
-        "src.deriver.consumer.tracked_db",
-        "src.deriver.deriver.tracked_db",
-        "src.deriver.enqueue.service_db",
-        "src.deriver.enqueue.tracked_db",
-        "src.routers.peers.tracked_db",
-        "src.routers.workspaces.tracked_db",
-        "src.crud.representation.tracked_db",
-        "src.dreamer.orchestrator.tracked_db",
-        "src.dreamer.dream_scheduler.tracked_db",
-        "src.dialectic.chat.tracked_db",
-        "src.utils.summarizer.tracked_db",
-        "src.webhooks.events.tracked_db",
-        "src.webhooks.webhook_delivery.tracked_db",
-        "src.utils.agent_tools.tracked_db",
-        "src.utils.search.tracked_db",
-        "src.crud.document.tracked_db",
-        "src.crud.message.tracked_db",
-        "src.reconciler.sync_vectors.service_db",
-        "src.reconciler.backfill.service_db",
-        "src.reconciler.embed_now.tracked_db",
-        "src.routers.tenants.service_db",
-        "src.dialectic.core.tracked_db",
-        "src.dreamer.specialists.tracked_db",
-        "src.utils.memory_brief.tracked_db",
-        "src.dreamer.working_memory.tracked_db",
-        "src.dreamer.surprisal.tracked_db",
-        "src.deriver.scope_backfill.tracked_db",
-    ]
-    with ExitStack() as stack:
-        for target in tracked_db_targets:
-            stack.enter_context(patch(target, mock_tracked_db_context))
-        yield
+def use_test_database(request: pytest.FixtureRequest):
+    """Create the test database, which `db_engine` also binds the app's sessions to."""
+    if _requires_runtime_mocks(_get_nodeid(request)):
+        request.getfixturevalue("db_engine")
 
 
 @pytest.fixture(autouse=True)

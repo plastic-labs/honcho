@@ -1390,11 +1390,12 @@ class TestEnqueueTenant:
         monkeypatch: pytest.MonkeyPatch,
     ):
         """The failure the explicit tenant prevents: with nothing bound and none
-        passed, the work-unit key can't be built and the batch is dropped."""
+        passed, tracked_db fails closed before anything is written."""
         payload = await self._session_payload(db_session, sample_data)
         monkeypatch.setattr(settings, "MULTI_TENANT", True)
 
-        await enqueue(payload, tenant_id=None)
+        with pytest.raises(ValueError, match="requires a tenant"):
+            await enqueue(payload, tenant_id=None)
 
         assert await self._queued_tenants(db_session, payload) == []
 

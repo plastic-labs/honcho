@@ -50,6 +50,34 @@ async def test_create_message(
 
 
 @pytest.mark.asyncio
+async def test_create_message_with_special_token_strings(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Content quoting tokenizer special tokens is stored as plain text, not a 422."""
+    test_workspace, test_peer = sample_data
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    content = "The model emitted <|endoftext|> right after <|fim_prefix|>."
+    url = f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages"
+
+    response = client.post(
+        url, json={"messages": [{"content": content, "peer_id": test_peer.name}]}
+    )
+    assert response.status_code == 201
+    created = response.json()[0]
+    assert created["content"] == content
+    assert created["token_count"] > 0
+
+    response = client.post(f"{url}/list", json={})
+    assert response.status_code == 200
+    assert [m["content"] for m in response.json()["items"]] == [content]
+
+
+@pytest.mark.asyncio
 async def test_create_message_schedules_immediate_embed(
     client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
 ):

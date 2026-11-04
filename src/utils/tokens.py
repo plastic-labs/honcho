@@ -18,7 +18,7 @@ def estimate_tokens(text: str | list[str] | None) -> int:
     if isinstance(text, list):
         text = "\n".join(text)
     try:
-        return len(tokenizer.encode(text))
+        return len(tokenizer.encode(text, disallowed_special=()))
     except Exception:
         return len(text) // 4
 
