@@ -13,7 +13,7 @@ no-op if the same flag was already set at an outer level.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 
@@ -21,6 +21,7 @@ from honcho import Honcho
 
 from honcho_cli import oauth
 from honcho_cli.config import CLIConfig, OAuthTokens, get_client_kwargs
+from honcho_cli.credentials import arm_named_scope_client, is_named_scope_key
 from honcho_cli.output import print_error, set_json_mode
 from honcho_cli.validation import validate_resource_id
 
@@ -121,7 +122,23 @@ def get_client(*, require_workspace: bool = True):
         )
         raise typer.Exit(1)
     maybe_refresh_token(config)
-    return Honcho(**get_client_kwargs(config)), config
+    client = Honcho(**get_client_kwargs(config))
+    # Named-scope keys are rejected on workspace get-or-create. Arm the client
+    # before any command runs so that preamble never fires.
+    api_key = config.resolved_api_key()
+    if is_named_scope_key(api_key):
+        arm_named_scope_client(client, api_key)
+    return client, config
+
+
+def resource_uid(obj: object) -> str | None:
+    """Server-assigned ``uid``, or None when this object or server has none.
+
+    A test double's ``uid`` is a mock, not a string; treat that as absent so
+    it cannot leak into JSON as a Python repr.
+    """
+    uid = getattr(obj, "uid", None)
+    return uid if isinstance(uid, str) else None
 
 
 def handle_cmd_flags(
@@ -168,7 +185,7 @@ def add_common_options(app: typer.Typer) -> None:
             typer.echo(ctx.get_help())
 
 
-def format_evidence(evidence) -> dict:
+def format_evidence(evidence: Any) -> dict[str, Any]:
     """Shape a dialectic `Evidence` for output.
 
     Evidence is collated from what the agent accessed rather than reported by
@@ -191,6 +208,8 @@ def format_evidence(evidence) -> dict:
                 "level": c.level,
                 "content": c.content,
                 "source_ids": list(c.source_ids or []),
+                "observer_id": c.observer_id,
+                "observed_id": c.observed_id,
                 "session_id": c.session_id,
                 "created_at": str(c.created_at),
             }

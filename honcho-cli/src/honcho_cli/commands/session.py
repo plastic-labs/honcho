@@ -21,6 +21,7 @@ from honcho_cli.common import (
     get_flag_overrides,
     get_resolved_config,
     handle_cmd_flags,
+    resource_uid,
 )
 
 app = typer.Typer(cls=HonchoTyperGroup, help="List, inspect, view, create, delete, and manage conversation sessions and their peers.")
@@ -74,13 +75,18 @@ def list_sessions(
         items = [
             {
                 "id": s.id,
+                "uid": resource_uid(s),
                 "is_active": s.is_active,
                 "metadata": s.metadata,
                 "created_at": str(s.created_at),
             }
             for s in raw_sessions
         ]
-        print_result(items, columns=["id", "is_active", "metadata", "created_at"], title="Sessions")
+        print_result(
+            items,
+            columns=["id", "uid", "is_active", "metadata", "created_at"],
+            title="Sessions",
+        )
     except Exception as e:
         _handle_error(e, "session", "list")
 
@@ -114,7 +120,7 @@ def create_session(
         sess = client.session(sid, metadata=parsed_metadata)
         if peer_ids:
             sess.add_peers(peer_ids)
-        result: dict[str, object] = {"session_id": sess.id}
+        result: dict[str, object] = {"session_id": sess.id, "uid": resource_uid(sess)}
         if parsed_metadata is not None:
             result["metadata"] = parsed_metadata
         if peer_ids:
@@ -146,7 +152,8 @@ def inspect(
 
         result = {
             "session_id": sid,
-            "peers": [{"id": p.id} for p in peers],
+            "uid": resource_uid(sess),
+            "peers": [{"id": p.id, "uid": resource_uid(p)} for p in peers],
             "message_count": msg_page.total,
             "summaries": {
                 "short": _summary_to_dict(summaries.short_summary),
@@ -497,8 +504,8 @@ def session_peers(
 
     try:
         peers = sess.peers()
-        items = [{"id": p.id} for p in peers]
-        print_result(items, columns=["id"], title=f"Session peers ({sid})")
+        items = [{"id": p.id, "uid": resource_uid(p)} for p in peers]
+        print_result(items, columns=["id", "uid"], title=f"Session peers ({sid})")
     except Exception as e:
         _handle_error(e, "session", sid)
 

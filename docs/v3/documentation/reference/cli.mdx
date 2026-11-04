@@ -153,7 +153,7 @@ CI pipelines and agent runtimes can branch on these without parsing stderr.
 <CliCommands />
 
 <Note>
-  `honcho peer chat` covers peer chat only. [Workspace chat](/v3/documentation/features/chat#workspace-chat) has no CLI command yet; use the API or SDKs.
+  `honcho peer chat` asks about one peer. `honcho workspace chat` asks across the workspace. Both take `--scope`, `--response-format` (a JSON Schema object), and `--evidence`. On workspace chat, `--scope` is always a session allowlist, including a single name.
 </Note>
 
 ## Workflows

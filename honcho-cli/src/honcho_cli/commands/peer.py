@@ -9,13 +9,27 @@ import typer
 
 from honcho.api_types import PeerConfig
 
+from honcho_cli.chat_options import (
+    named_scope_recall,
+    parse_response_format,
+    present_chat_content,
+)
 from honcho_cli.commands.workspace import _config_to_dict, _handle_chat_error, _handle_error, _raw_list
+from honcho_cli.credentials import peer_for_recall
 from honcho_cli.output import print_error, print_result, use_json
 from honcho_cli.recall import parse_csv_repeatable, reject_incompatible_recall, scope_for_sdk
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli._help import HonchoTyperGroup
-from honcho_cli.common import add_common_options, format_evidence, get_client, get_flag_overrides, get_resolved_config, handle_cmd_flags
+from honcho_cli.common import (
+    add_common_options,
+    format_evidence,
+    get_client,
+    get_flag_overrides,
+    get_resolved_config,
+    handle_cmd_flags,
+    resource_uid,
+)
 
 app = typer.Typer(cls=HonchoTyperGroup, help="List, create, chat with, search, and manage peers and their representations.")
 add_common_options(app)
@@ -51,13 +65,14 @@ def list_peers(
         items = [
             {
                 "id": p.id,
+                "uid": resource_uid(p),
                 "metadata": p.metadata,
                 "configuration": _config_to_dict(p.configuration) if p.configuration else None,
                 "created_at": str(p.created_at),
             }
             for p in raw_peers
         ]
-        print_result(items, columns=["id", "metadata", "created_at"], title="Peers")
+        print_result(items, columns=["id", "uid", "metadata", "created_at"], title="Peers")
     except Exception as e:
         _handle_error(e, "peer", "list")
 
@@ -89,6 +104,7 @@ def inspect(
 
         result = {
             "id": pid,
+            "uid": resource_uid(p),
             "card": card,
             "configuration": _config_to_dict(peer_config) if peer_config else None,
             "session_count": session_page.total,
@@ -97,7 +113,9 @@ def inspect(
                 {"id": c.id, "content": c.content if use_json() else c.content[:200], "created_at": str(c.created_at)}
                 for c in conclusion_items
             ],
-            "sessions": [{"id": s.id} for s in session_items[:10]],
+            "sessions": [
+                {"id": s.id, "uid": resource_uid(s)} for s in session_items[:10]
+            ],
         }
         print_result(result)
     except Exception as e:
@@ -141,6 +159,14 @@ def chat(
         "--sessions",
         help="Recall only from these session IDs (repeat or comma-separate); explicit conclusions only. Excludes -s and --scope.",
     ),
+    response_format: Optional[str] = typer.Option(
+        None,
+        "--response-format",
+        help=(
+            "JSON Schema the answer must match (root type object). "
+            "Inline JSON, or @path/to/schema.json. Sent as a schema object."
+        ),
+    ),
     evidence: bool = typer.Option(
         False,
         "--evidence",
@@ -164,11 +190,22 @@ def chat(
     scope_names = parse_csv_repeatable(scope, kind="scope", flag="--scope")
     session_allowlist = parse_csv_repeatable(sessions, kind="session", flag="--sessions")
     session_id = config.session_id or None
+    session_from_flag = bool(get_flag_overrides()["session"])
+    # A named-scope key drops an ambient HONCHO_SESSION_ID. Do that before the
+    # mutual-exclusion check so the key's own --scope is not rejected just
+    # because the environment still names a session.
+    session_id, scope_names = named_scope_recall(
+        client,
+        session_id=session_id,
+        session_from_flag=session_from_flag,
+        scope_names=scope_names,
+        sessions=session_allowlist,
+    )
     reject_incompatible_recall(
         session_id=session_id,
         scope=scope_names,
         sessions=session_allowlist,
-        session_from_env=not get_flag_overrides()["session"],
+        session_from_env=not session_from_flag,
     )
 
     chat_kwargs: dict[str, object] = {
@@ -181,19 +218,32 @@ def chat(
         chat_kwargs["scope"] = scope_arg
     if session_allowlist is not None:
         chat_kwargs["sessions"] = session_allowlist
+    schema = parse_response_format(response_format)
+    if schema is not None:
+        chat_kwargs["response_format"] = schema
 
     try:
-        p = client.peer(pid)
+        p = peer_for_recall(client, pid)
         if not evidence:
             response = p.chat(query, **chat_kwargs)
-            print_result({"peer_id": pid, "query": query, "response": response})
+            print_result(
+                {
+                    "peer_id": pid,
+                    "query": query,
+                    "response": present_chat_content(
+                        response, structured=schema is not None
+                    ),
+                }
+            )
             return
         result = p.chat(query, include_evidence=True, **chat_kwargs)
         print_result(
             {
                 "peer_id": pid,
                 "query": query,
-                "response": result.content,
+                "response": present_chat_content(
+                    result.content, structured=schema is not None
+                ),
                 "evidence": format_evidence(result.evidence),
             }
         )
@@ -261,7 +311,7 @@ def create_peer(
         # metadata — in that case get-or-create may have returned a
         # pre-existing peer and the echoed output would lie. When no input
         # was passed, skip the two extra API calls entirely.
-        result: dict[str, object] = {"peer_id": p.id}
+        result: dict[str, object] = {"peer_id": p.id, "uid": resource_uid(p)}
         if peer_config is not None or parsed_metadata is not None:
             result["metadata"] = p.get_metadata()
             result["configuration"] = _config_to_dict(p.get_configuration())
@@ -335,12 +385,19 @@ def representation(
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer, session=session)
     pid = _get_peer_id(peer_id)
     client, config = get_client()
-    p = client.peer(pid)
+    session_id, _scope = named_scope_recall(
+        client,
+        session_id=config.session_id or None,
+        session_from_flag=bool(get_flag_overrides()["session"]),
+        scope_names=None,
+        sessions=None,
+    )
+    p = peer_for_recall(client, pid)
 
     try:
         result = p.representation(
             target=target,
-            session=config.session_id or None,
+            session=session_id,
             search_query=search_query,
             max_conclusions=max_conclusions,
         )

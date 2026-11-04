@@ -178,12 +178,24 @@ class TestDestructiveConfirm:
 class TestJsonContract:
     def test_workspace_list_json_array_shape(self, cfg, runner):
         cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
+        page = MagicMock()
+        page._raw_items = [
+            MagicMock(id="ws-a", uid="ua", created_at="2026-01-01T00:00:00Z"),
+            MagicMock(id="ws-b", uid="ub", created_at="2026-01-02T00:00:00Z"),
+        ]
+        # uid must be a real string; a MagicMock uid is omitted rather than repr'd.
+        page._raw_items[0].uid = "ua"
+        page._raw_items[1].uid = "ub"
+        page.has_next_page.return_value = False
         client = MagicMock()
-        client.workspaces.return_value = ["ws-a", "ws-b"]
+        client.workspaces.return_value = page
         with patch("honcho_cli.commands.workspace.get_client", return_value=(client, MagicMock())):
             result = runner.invoke(app, ["workspace", "list"])
         assert result.exit_code == 0, result.stderr
-        assert json.loads(result.stdout) == [{"id": "ws-a"}, {"id": "ws-b"}]
+        assert json.loads(result.stdout) == [
+            {"id": "ws-a", "uid": "ua", "created_at": "2026-01-01T00:00:00Z"},
+            {"id": "ws-b", "uid": "ub", "created_at": "2026-01-02T00:00:00Z"},
+        ]
 
     def test_workspace_search_preserves_full_content_in_json_mode(self, cfg, runner):
         cfg.write_text(json.dumps({
@@ -233,6 +245,8 @@ class TestJsonContract:
             "what themes?",
             session="sess1",
             reasoning_level="low",
+            scope=None,
+            response_format=None,
         )
 
     def test_workspace_chat_forwards_single_scope(self, cfg, runner):
@@ -251,6 +265,7 @@ class TestJsonContract:
             session=None,
             reasoning_level=None,
             scope="therapy",
+            response_format=None,
         )
 
     def test_workspace_chat_forwards_scope_allowlist(self, cfg, runner):
@@ -279,6 +294,7 @@ class TestJsonContract:
             session=None,
             reasoning_level=None,
             scope=["therapy", "work", "home"],
+            response_format=None,
         )
 
     def test_peer_chat_forwards_sessions_allowlist(self, cfg, runner):
@@ -795,14 +811,18 @@ class TestScopeCommands:
         scope.add_sessions.assert_called_once_with(["s1", "s2", "s3"])
 
     def test_scope_inspect_unknown_name_fails_closed(self, cfg, runner):
-        """inspect never calls the get-or-create `client.scope()`; a miss is SCOPE_NOT_FOUND, exit 1."""
+        """inspect uses get_scope, never the get-or-create `client.scope()`."""
+        from honcho import NotFoundError
+
         cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
         client = MagicMock()
-        client.scopes.return_value = [MagicMock(id="work")]
+        client.get_scope.side_effect = NotFoundError("missing")
         with patch("honcho_cli.commands.scope.get_client", return_value=(client, MagicMock(workspace_id="ws1"))):
             result = runner.invoke(app, ["scope", "inspect", "therapy", "-w", "ws1"])
         assert result.exit_code == 1
         err = json.loads(result.stderr)["error"]
         assert err["code"] == "SCOPE_NOT_FOUND"
         assert "honcho scope create therapy" in err["message"]
+        client.get_scope.assert_called_once_with("therapy")
         client.scope.assert_not_called()
+        client.scopes.assert_not_called()
