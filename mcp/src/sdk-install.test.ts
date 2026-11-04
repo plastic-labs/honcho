@@ -21,6 +21,8 @@ test("installed @honcho-ai/sdk matches the lockfile", () => {
 test("installed @honcho-ai/sdk has the surface the tools call", () => {
   expect(typeof sdk.Honcho.prototype.chat).toBe("function"); // workspace_chat
   expect(typeof sdk.Honcho.prototype.scopes).toBe("function"); // list_scopes
+  expect(typeof sdk.Honcho.prototype.dreams).toBe("function"); // list_dreams
+  expect(typeof sdk.Honcho.prototype.getDream).toBe("function"); // get_dream
   expect(typeof sdk.Scope).toBe("function"); // get_scope_status, get_scope_sessions, …
 
   const honcho = new sdk.Honcho({
