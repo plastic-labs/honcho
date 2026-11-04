@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
-- `honcho dream list` and `honcho dream inspect <id>` (Representation History): list the dreams in a workspace, newest first, or the dreams about one peer with `-p`, and see what a dream changed. `inspect` shows the conclusions it created, each with the conclusions it was derived from and where those stand now (current, removed and by which dream, or unavailable once deleted or removed longer ago than history is kept); the conclusions it removed, as they read when removed; and the peer card before and after. Needs a workspace or admin key (DEV-3249)
+- `honcho dream list` and `honcho dream inspect <id>` (Representation History): list the dreams in a workspace, newest first, or the dreams about one peer with `-p`, and see what a dream changed. `inspect` shows the conclusions it created, each with the conclusions it was derived from and where those stand now (current, removed and by which dream, or unavailable once deleted or removed longer ago than history is kept); the conclusions it removed, as they read when removed; and the peer card before and after. A dream past the retention window shows when it was pruned and keeps only the conclusions it created that still exist. Needs a workspace or admin key (DEV-3249)
 
 ## [0.4.0] - 2026-10-29
 

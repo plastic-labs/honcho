@@ -571,6 +571,9 @@ class DreamRunResponse(BaseModel):
     peer_card_updated: bool
     started_at: datetime.datetime
     finished_at: datetime.datetime | None = None
+    pruned_at: datetime.datetime | None = None
+    """When retention first deleted some of this run's changes. After that the run
+    keeps only the created conclusions that still exist; the counts are unchanged."""
 
 
 class DreamConclusionRef(BaseModel):

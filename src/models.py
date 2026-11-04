@@ -1448,6 +1448,11 @@ class DreamRun(Base, TenantPartitioned):
     finished_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Set when retention first deletes some of this run's changes. Past the
+    # window a run keeps only the created changes whose conclusion still exists.
+    pruned_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         PrimaryKeyConstraint("tenant_id", "id"),
@@ -1465,7 +1470,7 @@ class DreamRun(Base, TenantPartitioned):
             "started_at",
             "id",
         ),
-        # Retention pruning and the stale-run sweep, which run across tenants.
+        # Retention and the stale-run sweep, which run across tenants.
         Index("ix_dream_runs_started_at", "started_at"),
         CheckConstraint(
             "status IN ('running', 'completed', 'failed', 'interrupted')",

@@ -14,7 +14,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, Select, delete, select, tuple_, update
+from sqlalchemy import (
+    CursorResult,
+    Select,
+    and_,
+    delete,
+    literal,
+    select,
+    tuple_,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import ColumnElement, func
 
@@ -416,14 +425,38 @@ async def delete_workspace_history(db: AsyncSession, workspace_name: str) -> Non
 
 
 async def prune_dream_history() -> int:
-    """Delete runs past the retention window and mark stale running runs interrupted.
+    """Mark stale running runs interrupted and apply the retention window.
 
-    Returns the number of runs deleted.
+    Past the window, a run keeps only its `created` changes whose conclusion
+    still exists, so which dream made a live conclusion stays readable. Its
+    other changes are deleted and the run gets `pruned_at`. A run with nothing
+    left is deleted. Returns the number of runs deleted.
     """
     now = datetime.datetime.now(datetime.UTC)
     cutoff = now - datetime.timedelta(days=settings.DREAM.HISTORY_RETENTION_DAYS)
     deleted = 0
     run_key = tuple_(models.DreamRun.tenant_id, models.DreamRun.id)
+    change_run_key = tuple_(
+        models.DreamRunChange.tenant_id, models.DreamRunChange.run_id
+    )
+    change_key = tuple_(models.DreamRunChange.tenant_id, models.DreamRunChange.id)
+    conclusion_exists = (
+        select(models.Document.id)
+        .where(
+            models.Document.tenant_id == models.DreamRunChange.tenant_id,
+            models.Document.id == models.DreamRunChange.conclusion_id,
+            models.Document.deleted_at.is_(None),
+        )
+        .exists()
+    )
+    has_changes = (
+        select(models.DreamRunChange.id)
+        .where(
+            models.DreamRunChange.tenant_id == models.DreamRun.tenant_id,
+            models.DreamRunChange.run_id == models.DreamRun.id,
+        )
+        .exists()
+    )
     # Runs across every tenant, so it uses the cross-tenant service session.
     async with service_db("dream_history.prune") as db:
         await db.execute(
@@ -442,25 +475,68 @@ async def prune_dream_history() -> int:
             .values(status="interrupted")
         )
         await db.commit()
+
+        after: tuple[str, str] | None = None
         while True:
-            # Changes cascade from their run. Within a tenant, runs are locked in
-            # id order, as workspace deletion takes them.
+            # Runs are locked before their changes, the order workspace
+            # deletion takes them in. Within a tenant that is id order.
+            batch_stmt = (
+                select(models.DreamRun.tenant_id, models.DreamRun.id)
+                .where(models.DreamRun.started_at < cutoff)
+                .order_by(models.DreamRun.tenant_id, models.DreamRun.id)
+                .limit(_PRUNE_BATCH_SIZE)
+                .with_for_update()
+            )
+            if after is not None:
+                batch_stmt = batch_stmt.where(run_key > tuple_(*map(literal, after)))
+            batch = [(row[0], row[1]) for row in (await db.execute(batch_stmt)).all()]
+            if not batch:
+                break
+            after = batch[-1]
+
+            # Changes are locked in id order, as session deletion takes them.
+            pruned = await db.execute(
+                delete(models.DreamRunChange)
+                .where(
+                    change_key.in_(
+                        select(
+                            models.DreamRunChange.tenant_id, models.DreamRunChange.id
+                        )
+                        .where(
+                            change_run_key.in_(batch),
+                            ~and_(
+                                models.DreamRunChange.kind == "created",
+                                conclusion_exists,
+                            ),
+                        )
+                        .order_by(
+                            models.DreamRunChange.tenant_id, models.DreamRunChange.id
+                        )
+                        .with_for_update(of=models.DreamRunChange)
+                    )
+                )
+                .returning(
+                    models.DreamRunChange.tenant_id, models.DreamRunChange.run_id
+                )
+            )
+            pruned_runs = {(row[0], row[1]) for row in pruned.all()}
+            if pruned_runs:
+                await db.execute(
+                    update(models.DreamRun)
+                    .where(
+                        run_key.in_(sorted(pruned_runs)),
+                        models.DreamRun.pruned_at.is_(None),
+                    )
+                    .values(pruned_at=now)
+                )
             result = cast(
                 CursorResult[Any],
                 await db.execute(
-                    delete(models.DreamRun).where(
-                        run_key.in_(
-                            select(models.DreamRun.tenant_id, models.DreamRun.id)
-                            .where(models.DreamRun.started_at < cutoff)
-                            .order_by(models.DreamRun.tenant_id, models.DreamRun.id)
-                            .limit(_PRUNE_BATCH_SIZE)
-                            .with_for_update()
-                        )
-                    )
+                    delete(models.DreamRun).where(run_key.in_(batch), ~has_changes)
                 ),
             )
             await db.commit()
             deleted += result.rowcount
-            if result.rowcount < _PRUNE_BATCH_SIZE:
+            if len(batch) < _PRUNE_BATCH_SIZE:
                 break
     return deleted

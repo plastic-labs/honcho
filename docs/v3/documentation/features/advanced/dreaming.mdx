@@ -150,7 +150,7 @@ Created conclusions and their sources are looked up when you read the run, and e
 
 ### Retention and deletion
 
-Runs are kept for 30 days by default (`DREAM_HISTORY_RETENTION_DAYS`) and then pruned. Set `DREAM_HISTORY_ENABLED=false` to stop recording.
+Changes are kept for 30 days by default (`DREAM_HISTORY_RETENTION_DAYS`). After that, a run keeps only the conclusions it created that still exist, so you can always see which dream made a current conclusion. Its removed conclusions and peer-card change are deleted, and the run's `pruned_at` is set; `created_count`, `removed_count` and `peer_card_updated` still describe what the dream did. A run with nothing left is deleted. Set `DREAM_HISTORY_ENABLED=false` to stop recording.
 
 History follows the same deletion rules as the conclusions it describes:
 

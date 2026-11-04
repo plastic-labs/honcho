@@ -6158,6 +6158,19 @@
               }
             ],
             "title": "Finished At"
+          },
+          "pruned_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pruned At",
+            "description": "When retention first deleted some of this run's changes. Past the retention window a run keeps only the created conclusions that still exist; `removed` and `peer_card` are gone. The counts stay as the dream recorded them."
           }
         },
         "type": "object",
@@ -6257,6 +6270,19 @@
               }
             ],
             "title": "Finished At"
+          },
+          "pruned_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pruned At",
+            "description": "When retention first deleted some of this run's changes. Past the retention window a run keeps only the created conclusions that still exist; `removed` and `peer_card` are gone. The counts stay as the dream recorded them."
           },
           "created": {
             "items": {

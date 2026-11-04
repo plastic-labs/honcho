@@ -61,6 +61,7 @@ def upgrade() -> None:
                 server_default=sa.func.now(),
             ),
             sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("pruned_at", sa.DateTime(timezone=True), nullable=True),
             sa.PrimaryKeyConstraint("tenant_id", "id"),
             sa.ForeignKeyConstraint(["tenant_id"], [f"{schema}.tenants.tenant_id"]),
             sa.ForeignKeyConstraint(

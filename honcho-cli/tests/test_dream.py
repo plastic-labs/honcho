@@ -203,6 +203,25 @@ def test_inspect_renders_changes_for_a_terminal(cfg, runner):
     assert "+ ATTRIBUTE: Works night shifts" in out
 
 
+def test_inspect_says_when_retention_pruned_the_run(cfg, runner):
+    detail = _detail().model_copy(
+        update={"pruned_at": FINISHED, "removed": [], "peer_card": None}
+    )
+    get_dream = MagicMock(return_value=detail)
+    with (
+        patch(
+            "honcho_cli.commands.dream.get_client",
+            return_value=(_client_with(get_dream=get_dream), MagicMock()),
+        ),
+        patch("honcho_cli.commands.dream.use_json", return_value=False),
+    ):
+        result = runner.invoke(app, ["dream", "inspect", "run1", "-w", "ws1"])
+
+    assert result.exit_code == 0, result.stderr
+    assert "past retention" in result.stdout
+    assert "Maya relies on caffeine" in result.stdout
+
+
 def test_inspect_unknown_dream_exits_with_not_found(cfg, runner):
     get_dream = MagicMock(side_effect=NotFoundError("not found"))
     with patch(

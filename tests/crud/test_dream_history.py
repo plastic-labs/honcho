@@ -438,6 +438,144 @@ async def test_prune_deletes_old_runs_and_interrupts_stale_ones(
     assert fresh_detail.status == "running"
 
 
+async def _age_past_retention(db_session: AsyncSession, run_id: str) -> None:
+    now = datetime.datetime.now(datetime.UTC)
+    retention = datetime.timedelta(days=settings.DREAM.HISTORY_RETENTION_DAYS)
+    await db_session.execute(
+        update(models.DreamRun)
+        .where(models.DreamRun.id == run_id)
+        .values(started_at=now - retention - datetime.timedelta(hours=1))
+    )
+    await db_session.commit()
+
+
+async def test_prune_keeps_what_a_dream_created_while_it_exists(
+    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    workspace, peer = sample_data
+    workspace_name, peer_name = workspace.name, peer.name
+    _session_name, (coffee_id, nights_id) = await _seed(
+        db_session, workspace_name, peer_name
+    )
+    target = await _open(workspace_name, peer_name)
+    await crud.create_documents(
+        db_session,
+        [_deductive("Ann relies on caffeine to work nights", [coffee_id, nights_id])],
+        workspace_name,
+        observer=peer_name,
+        observed=peer_name,
+        history=target,
+    )
+    await crud.delete_documents(
+        db_session,
+        workspace_name,
+        [coffee_id],
+        observer=peer_name,
+        observed=peer_name,
+        history=target,
+    )
+    await crud.set_peer_card(
+        db_session,
+        workspace_name,
+        ["IDENTITY: Name: Ann"],
+        observer=peer_name,
+        observed=peer_name,
+        history=target,
+    )
+    await _age_past_retention(db_session, target.run_id)
+
+    assert await crud.prune_dream_history() == 0
+
+    db_session.expire_all()
+    detail = await crud.get_run_detail(db_session, workspace_name, target.run_id)
+    assert detail.pruned_at is not None
+    [created] = detail.created
+    assert created.conclusion.content == "Ann relies on caffeine to work nights"
+    assert created.conclusion.status == "current"
+    assert detail.removed == []
+    assert detail.peer_card is None
+    # The counts are what the dream did, not what is left.
+    assert (detail.created_count, detail.removed_count) == (1, 1)
+    assert detail.peer_card_updated
+
+    # Once that conclusion is gone, the next prune deletes the run.
+    await crud.delete_documents(
+        db_session,
+        workspace_name,
+        [created.conclusion.id],
+        observer=peer_name,
+        observed=peer_name,
+    )
+    assert await crud.prune_dream_history() == 1
+    db_session.expire_all()
+    with pytest.raises(ResourceNotFoundException):
+        await crud.get_run_detail(db_session, workspace_name, target.run_id)
+
+
+async def test_prune_leaves_a_run_with_nothing_to_drop_unmarked(
+    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    workspace, peer = sample_data
+    workspace_name, peer_name = workspace.name, peer.name
+    _session_name, (coffee_id, nights_id) = await _seed(
+        db_session, workspace_name, peer_name
+    )
+    target = await _open(workspace_name, peer_name)
+    await crud.create_documents(
+        db_session,
+        [_deductive("Ann relies on caffeine to work nights", [coffee_id, nights_id])],
+        workspace_name,
+        observer=peer_name,
+        observed=peer_name,
+        history=target,
+    )
+    await _age_past_retention(db_session, target.run_id)
+
+    assert await crud.prune_dream_history() == 0
+
+    db_session.expire_all()
+    detail = await crud.get_run_detail(db_session, workspace_name, target.run_id)
+    assert detail.pruned_at is None
+    assert len(detail.created) == 1
+
+
+async def test_prune_walks_every_batch(
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace, peer = sample_data
+    workspace_name, peer_name = workspace.name, peer.name
+    _session_name, (coffee_id, nights_id) = await _seed(
+        db_session, workspace_name, peer_name
+    )
+    kept = await _open(workspace_name, peer_name)
+    await crud.create_documents(
+        db_session,
+        [_deductive("Ann relies on caffeine to work nights", [coffee_id, nights_id])],
+        workspace_name,
+        observer=peer_name,
+        observed=peer_name,
+        history=kept,
+    )
+    empty = [await _open(workspace_name, peer_name) for _ in range(3)]
+    for run in [kept, *empty]:
+        await _age_past_retention(db_session, run.run_id)
+    monkeypatch.setattr("src.crud.dream_history._PRUNE_BATCH_SIZE", 1)
+
+    assert await crud.prune_dream_history() == 3
+
+    db_session.expire_all()
+    remaining = (
+        await db_session.scalars(
+            select(models.DreamRun.id).where(
+                models.DreamRun.workspace_name == workspace_name
+            )
+        )
+    ).all()
+    assert remaining == [kept.run_id]
+
+
 async def test_get_run_detail_is_scoped_to_its_workspace(
     db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
 ):

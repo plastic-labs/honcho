@@ -1401,6 +1401,15 @@ class DreamRun(BaseModel):
     )
     started_at: datetime.datetime
     finished_at: datetime.datetime | None = None
+    pruned_at: datetime.datetime | None = Field(
+        default=None,
+        description=(
+            "When retention first deleted some of this run's changes. Past the"
+            " retention window a run keeps only the created conclusions that still"
+            " exist; `removed` and `peer_card` are gone. The counts stay as the"
+            " dream recorded them."
+        ),
+    )
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)  # pyright: ignore
 

@@ -1533,8 +1533,9 @@ class DreamSettings(HonchoSettings):
         None
     )
     # Representation History: each dream's created and removed conclusions and
-    # peer-card changes, readable through the dreams API. Runs older than the
-    # retention window are pruned by the reconciler.
+    # peer-card changes, readable through the dreams API. Past the retention
+    # window the reconciler prunes a run to the created conclusions that still
+    # exist, and deletes it once none do.
     HISTORY_ENABLED: bool = True
     HISTORY_RETENTION_DAYS: Annotated[int, Field(default=30, ge=1, le=3650)] = 30
 

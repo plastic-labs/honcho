@@ -29,6 +29,7 @@ def prepare_dream_history(verifier: MigrationVerifier) -> None:
 def verify_dream_history(verifier: MigrationVerifier) -> None:
     verifier.assert_table_exists("dream_runs")
     verifier.assert_table_exists("dream_run_changes")
+    verifier.assert_column_exists("dream_runs", "pruned_at")
     verifier.assert_indexes_exist(
         [
             ("dream_runs", "ix_dream_runs_tenant_workspace_observed_started"),

@@ -22,6 +22,7 @@ const RUN: DreamRun = {
   peer_card_updated: false,
   started_at: '2026-11-03T00:00:00Z',
   finished_at: '2026-11-03T00:01:00Z',
+  pruned_at: null,
 }
 
 function honchoWith(response: unknown) {

@@ -185,6 +185,15 @@ def _header(detail: Any) -> Panel:
             f"{_format_timestamp(detail.finished_at)}  "
             f"({_duration(detail.started_at, detail.finished_at)})",
         )
+    if detail.pruned_at:
+        grid.add_row(
+            "pruned",
+            Text(
+                f"{_format_timestamp(detail.pruned_at)}  past retention: only "
+                "created conclusions that still exist are shown",
+                style="dim",
+            ),
+        )
     grid.add_row(
         "changes",
         Text.assemble(

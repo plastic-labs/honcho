@@ -159,6 +159,11 @@ export interface DreamRun {
   peer_card_updated: boolean
   started_at: string
   finished_at: string | null
+  /**
+   * When retention first deleted some of this run's changes. After that the run
+   * keeps only the created conclusions that still exist; the counts are unchanged.
+   */
+  pruned_at: string | null
 }
 
 /** A conclusion a dream referenced, resolved when the run is read. */
