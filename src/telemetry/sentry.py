@@ -17,6 +17,7 @@ from src.config import settings
 from src.exceptions import HonchoException, SentryPolicy
 from src.llm import errors as llm_errors
 from src.llm.structured_output import StructuredOutputError
+from src.telemetry.tenant import current_tenant_id
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -201,6 +202,8 @@ def initialize_sentry(
     # instance. Set on the global scope so it applies regardless of the current
     # isolation/task scope.
     sentry_sdk.get_global_scope().set_tag("namespace", settings.NAMESPACE)
+    if (tenant_id := current_tenant_id()) is not None:
+        sentry_sdk.get_global_scope().set_tag("tenant_id", tenant_id)
 
 
 def with_sentry_transaction(

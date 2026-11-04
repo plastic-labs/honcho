@@ -16,7 +16,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import models
+from src import crud, models
 from src.config import settings
 from src.deriver.enqueue import enqueue_dream
 from src.dreamer.dream_scheduler import (
@@ -184,16 +184,18 @@ class TestLastDreamAtCompletionWrite:
             internal_metadata={},
         )
         db_session.add(collection)
-        for i in range(7):
-            db_session.add(
-                models.Document(
-                    content=f"explicit {i}",
-                    level="explicit",
-                    workspace_name=workspace.name,
-                    observer=peer.name,
-                    observed=peer.name,
-                )
+        docs = [
+            models.Document(
+                content=f"explicit {i}",
+                level="explicit",
+                workspace_name=workspace.name,
+                observer=peer.name,
+                observed=peer.name,
             )
+            for i in range(7)
+        ]
+        db_session.add_all(docs)
+        await crud.record_explicit_documents(db_session, docs)
         await db_session.commit()
         await db_session.refresh(collection)
 
@@ -215,6 +217,37 @@ class TestLastDreamAtCompletionWrite:
             "last_dream_document_count must equal the current explicit-doc count "
             "at completion time; both guard fields advance together."
         )
+
+    @pytest.mark.asyncio
+    async def test_completion_reads_the_collection_explicit_count(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        workspace, peer = sample_data
+        collection = models.Collection(
+            observer=peer.name,
+            observed=peer.name,
+            workspace_name=workspace.name,
+            internal_metadata={},
+            explicit_count=12,
+        )
+        db_session.add(collection)
+        await db_session.commit()
+
+        payload = DreamPayload(
+            dream_type=DreamType.OMNI,
+            observer=collection.observer,
+            observed=collection.observed,
+        )
+        with patch(
+            "src.dreamer.orchestrator.run_dream",
+            new=AsyncMock(return_value=_make_dream_result()),
+        ):
+            await process_dream(payload, collection.workspace_name)
+
+        dream_meta = await _get_dream_metadata(db_session, collection)
+        assert dream_meta.get("last_dream_document_count") == 12
 
     @pytest.mark.asyncio
     async def test_exception_path_leaves_last_dream_at_null(
@@ -491,16 +524,18 @@ class TestGuardPairCoherence:
             internal_metadata={},
         )
         db_session.add(collection)
-        for i in range(50):
-            db_session.add(
-                models.Document(
-                    content=f"explicit {i}",
-                    level="explicit",
-                    workspace_name=workspace.name,
-                    observer=peer.name,
-                    observed=peer.name,
-                )
+        docs = [
+            models.Document(
+                content=f"explicit {i}",
+                level="explicit",
+                workspace_name=workspace.name,
+                observer=peer.name,
+                observed=peer.name,
             )
+            for i in range(50)
+        ]
+        db_session.add_all(docs)
+        await crud.record_explicit_documents(db_session, docs)
         await db_session.commit()
         await db_session.refresh(collection)
 
@@ -568,16 +603,18 @@ class TestGuardPairCoherence:
             internal_metadata={},
         )
         db_session.add(collection)
-        for i in range(50):
-            db_session.add(
-                models.Document(
-                    content=f"explicit {i}",
-                    level="explicit",
-                    workspace_name=workspace.name,
-                    observer=peer.name,
-                    observed=peer.name,
-                )
+        docs = [
+            models.Document(
+                content=f"explicit {i}",
+                level="explicit",
+                workspace_name=workspace.name,
+                observer=peer.name,
+                observed=peer.name,
             )
+            for i in range(50)
+        ]
+        db_session.add_all(docs)
+        await crud.record_explicit_documents(db_session, docs)
         await db_session.commit()
         await db_session.refresh(collection)
 

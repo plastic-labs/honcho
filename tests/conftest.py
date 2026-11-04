@@ -1,16 +1,21 @@
+import asyncio
 import logging
 import os
 import re
 import time
 import uuid
 from collections.abc import AsyncGenerator, Callable
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
 import pytest_asyncio
+import sentry_sdk
 import tiktoken
+from alembic import command
+from alembic.config import Config
 from cashews.picklers import PicklerType
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -33,7 +38,13 @@ from sqlalchemy_utils import (
 from src import models
 from src.cache.client import cache
 from src.config import settings
-from src.db import Base, ReadSessionLocal, SessionLocal
+from src.db import (
+    Base,
+    ReadSessionLocal,
+    ServiceReadSessionLocal,
+    ServiceSessionLocal,
+    SessionLocal,
+)
 from src.dependencies import get_db, get_read_db
 from src.exceptions import HonchoException
 from src.models import Peer, Workspace
@@ -82,6 +93,30 @@ DB_URI = (
 )
 CONNECTION_URI = make_url(DB_URI)
 
+# Repo paths for building the test schema via the real migrations (see db_engine).
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_ALEMBIC_INI = _REPO_ROOT / "alembic.ini"
+_MIGRATIONS_DIR = _REPO_ROOT / "migrations"
+
+
+class _UntouchableEngine:
+    def __getattr__(self, name: str) -> object:
+        raise AssertionError(
+            f"validator touched the engine ({name!r}) when it should have been a no-op"
+        )
+
+
+def untouchable_engine() -> AsyncEngine:
+    """An engine stand-in for validators that must not reach the database.
+
+    Any attribute access — ``connect``, ``begin``, anything — fails the test, so a
+    validator that is supposed to be a no-op is proven not to open a connection.
+    Typed as ``AsyncEngine`` so call sites read like the real thing; the object
+    shares no structure with it, hence the cast through ``object``.
+    """
+    return cast(AsyncEngine, cast(object, _UntouchableEngine()))
+
+
 _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     # Benchmarks and migration tests have their own execution/runtime constraints.
     "tests/bench/",
@@ -104,6 +139,10 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     # Pure JWT scope tests — operate on src.security directly, no DB needed.
     "tests/test_security.py",
     "tests/test_generate_jwt_script.py",
+    # Own-runtime RLS test: stands up its own database, applies the cloud RLS
+    # policies, and drives raw SQL under SET ROLE. It needs neither the shared
+    # db_engine nor the app-runtime mocks.
+    "tests/integration/test_rls_isolation.py",
     # The mock provider is a standalone ASGI app with no database or LLM of its
     # own; the runtime mocks would patch the very seams it exists to replace.
     "tests/mock_provider/",
@@ -184,9 +223,12 @@ _RUN_ID_TIME_FORMAT = "%Y%m%d%H%M%S"
 # morning is gone by the afternoon.
 _STALE_DB_AGE_SECONDS = 2 * 60 * 60
 
-# test_db_<14-digit timestamp>_<4 hex>[_gwN] -- only names this function minted.
-# A pinned HONCHO_TEST_RUN_ID deliberately won't match, so it's never swept.
-_SWEEPABLE_DB_NAME = re.compile(r"^test_db_(\d{14})_[0-9a-f]{4}(?:_gw\d+)?$")
+# test_db_<14-digit timestamp>_<4 hex>[_tag][_gwN] -- only names _get_test_db_url
+# minted (the tag is a fixture's own throwaway database, e.g. "fresh"). A pinned
+# HONCHO_TEST_RUN_ID deliberately won't match, so it's never swept.
+_SWEEPABLE_DB_NAME = re.compile(
+    r"^test_db_(\d{14})_[0-9a-f]{4}(?:_[a-z]+)?(?:_gw\d+)?$"
+)
 
 
 _DUMMY_PROVIDER_API_KEY = "test-key-not-a-real-credential"
@@ -264,12 +306,17 @@ def _check_test_database_reachable() -> None:
         engine.dispose()
 
 
-def _get_test_db_url(worker_id: str) -> URL:
-    """Get a worker-specific test database URL for pytest-xdist parallelism."""
+def _get_test_db_url(worker_id: str, *, tag: str | None = None) -> URL:
+    """Get a worker-specific test database URL for pytest-xdist parallelism.
+
+    `tag` names a fixture's own throwaway database alongside the suite one (same
+    run id and worker suffix, so it is swept by the same rule if a run dies).
+    """
 
     run_id = os.environ.get(_RUN_ID_ENV_VAR, "local")
+    tagged = f"_{tag}" if tag else ""
     suffix = "" if worker_id == "master" else f"_{worker_id}"
-    return CONNECTION_URI.set(database=f"test_db_{run_id}{suffix}")
+    return CONNECTION_URI.set(database=f"test_db_{run_id}{tagged}{suffix}")
 
 
 def _drop_database(db_url: URL) -> None:
@@ -424,16 +471,33 @@ async def _clear_all_tables(engine: AsyncEngine) -> None:
     """
 
     table_names: list[str] = []
+    tenants_name: str | None = None
     for table in reversed(Base.metadata.sorted_tables):
-        if table.schema:
-            table_names.append(f'"{table.schema}"."{table.name}"')
-        else:
-            table_names.append(f'"{table.name}"')
+        quoted = (
+            f'"{table.schema}"."{table.name}"' if table.schema else f'"{table.name}"'
+        )
+        # Preserve the tenants table: the migration seeds the DEFAULT_TENANT_ID row
+        # that every tenant-scoped row FKs to, and it must survive between tests.
+        if table.name == "tenants":
+            tenants_name = quoted
+            continue
+        table_names.append(quoted)
 
     if not table_names:
         return
 
     statement = "; ".join(f"DELETE FROM {name}" for name in table_names)
+    if tenants_name is not None:
+        # region ai
+        # The preserved tenants rows still carry per-test mutable state: a pause
+        # one test set must not exclude that tenant from another test's claim,
+        # and a vector_correlation_id one test set must not collide, under the
+        # key's unique index, with the same literal key in a later test.
+        # endregion
+        statement += (
+            f"; UPDATE {tenants_name} "
+            + "SET derivation_paused = false, vector_correlation_id = NULL"
+        )
     async with engine.begin() as conn:
         await conn.exec_driver_sql(statement)
 
@@ -453,26 +517,47 @@ async def db_engine(worker_id: str):
     for table in Base.metadata.tables.values():
         table.schema = "public"
 
-    # Drop all tables first to ensure clean state
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        # Then create all tables with current models
-        await conn.run_sync(Base.metadata.create_all)
+    # Build the schema via the real migrations, NOT create_all: the models
+    # declare HASH(tenant_id) partitioning, so create_all emits partitioned parents
+    # with zero partitions and every insert fails. `alembic upgrade head` builds the
+    # non-partitioned schema a self-hoster actually runs, and seeds the
+    # DEFAULT_TENANT_ID tenant every tenant-scoped row FKs to. Render the URL with
+    # its password (str(URL) masks it as '***', which then fails auth at migrate).
+    db_url_str = test_db_url.render_as_string(hide_password=False)
+    previous_uri = settings.DB.CONNECTION_URI
+    previous_owner_uri = settings.DB.OWNER_CONNECTION_URI
+    settings.DB.CONNECTION_URI = db_url_str  # env.py reads the migration URL from here
+    settings.DB.OWNER_CONNECTION_URI = None
+    try:
+        alembic_cfg = Config(str(_ALEMBIC_INI))
+        alembic_cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
+        alembic_cfg.set_main_option("sqlalchemy.url", db_url_str)
+        await asyncio.to_thread(command.upgrade, alembic_cfg, "head")
+    finally:
+        settings.DB.CONNECTION_URI = previous_uri
+        settings.DB.OWNER_CONNECTION_URI = previous_owner_uri
 
     # The app's own sessionmakers (tracked_db, workers) use this database too,
     # with the read-only one in AUTOCOMMIT as in production.
+    # The cross-tenant service factories (service_db) too: flag-off they are the
+    # same single engine in production, and the test database has no RLS.
     app_bind = SessionLocal.kw["bind"]
     app_read_bind = ReadSessionLocal.kw["bind"]
+    service_bind = ServiceSessionLocal.kw["bind"]
+    service_read_bind = ServiceReadSessionLocal.kw["bind"]
+    autocommit_engine = engine.execution_options(isolation_level="AUTOCOMMIT")
     SessionLocal.configure(bind=engine)
-    ReadSessionLocal.configure(
-        bind=engine.execution_options(isolation_level="AUTOCOMMIT")
-    )
+    ReadSessionLocal.configure(bind=autocommit_engine)
+    ServiceSessionLocal.configure(bind=engine)
+    ServiceReadSessionLocal.configure(bind=autocommit_engine)
 
     try:
         yield engine
     finally:
         SessionLocal.configure(bind=app_bind)
         ReadSessionLocal.configure(bind=app_read_bind)
+        ServiceSessionLocal.configure(bind=service_bind)
+        ServiceReadSessionLocal.configure(bind=service_read_bind)
         await engine.dispose()
 
         # Restore original schema
@@ -570,16 +655,24 @@ async def client(
     # for isolation and so data written by a test is visible to its reads.
     app.dependency_overrides[get_read_db] = override_get_db
 
-    # No-op the startup embedding-schema validator inside the lifespan. The
-    # global `engine` it would inspect points to a DB that isn't migrated in
-    # CI (per-worker test DBs are migrated separately by db_engine), and we
-    # don't want the validator to dispose the test engine via the lifespan
-    # finally block either. The validator has its own dedicated coverage in
-    # tests/startup/test_embedding_validator.py against db_engine directly.
+    # No-op the startup embedding-schema and queue_item_batches-trigger
+    # validators inside the lifespan. The global `engine` they would inspect
+    # points to a DB that isn't migrated in CI (per-worker test DBs are
+    # migrated separately by db_engine), and we don't want a validator to
+    # dispose the test engine via the lifespan finally block either. Both have
+    # dedicated coverage in tests/startup/ against db_engine directly.
     async def _skip_validate(_engine: object) -> None:
         return None
 
     monkeypatch.setattr("src.main.validate_embedding_schema", _skip_validate)
+    monkeypatch.setattr("src.main.validate_queue_item_batches", _skip_validate)
+
+    # fastapi_pagination's lifespan wrapper regenerates and re-patches the whole
+    # OpenAPI schema on every startup once `app.openapi_schema` is cached (~80ms).
+    # Production starts once; this fixture starts the app per test, so after any
+    # test fetches /openapi.json every later client would pay it. Drop the cache
+    # so startup stays cheap; a test that needs the schema regenerates it.
+    app.openapi_schema = None
 
     # fastapi_pagination's lifespan wrapper regenerates and re-patches the whole
     # OpenAPI schema on every startup once `app.openapi_schema` is cached (~80ms).
@@ -657,6 +750,36 @@ async def sample_data(
     await db_session.commit()
 
     yield test_workspace, test_peer
+
+
+@pytest.fixture(autouse=True)
+def _reset_vector_namespace_cache():  # pyright: ignore[reportUnusedFunction]
+    """Drop every memoized tenant namespace prefix around each test.
+
+    The cache is process-global and never expires, so one test's resolved prefix
+    would otherwise satisfy or contradict another's assertion depending on run
+    order. Several modules outside tests/vector_store/ now resolve real prefixes,
+    so this belongs here rather than in any one of them.
+    """
+    from src.vector_store.tenant_namespace import reset_prefix_cache
+
+    reset_prefix_cache()
+    yield
+    reset_prefix_cache()
+
+
+@pytest.fixture(autouse=True)
+def _reset_sentry_tenant_tag():  # pyright: ignore[reportUnusedFunction]
+    """Drop the Sentry tenant_id tag around each test.
+
+    Without a Sentry ASGI middleware scope, require_auth tags the process-wide
+    isolation scope, and sentry_sdk.isolation_scope() forks from it, so one
+    test's tenant would otherwise leak into another's assertions depending on
+    which tests share a worker.
+    """
+    sentry_sdk.get_isolation_scope().remove_tag("tenant_id")
+    yield
+    sentry_sdk.get_isolation_scope().remove_tag("tenant_id")
 
 
 @pytest.fixture(autouse=True)
@@ -850,13 +973,20 @@ def mock_vector_store(request: pytest.FixtureRequest):
     mock_vs.delete_many = AsyncMock(side_effect=mock_delete_many)
     mock_vs.delete_namespace = AsyncMock(side_effect=mock_delete_namespace)
 
-    def mock_get_vector_namespace(
+    async def mock_get_vector_namespace(
         namespace_type: str,
         workspace_name: str,
         observer: str | None = None,
         observed: str | None = None,
+        *,
+        prefix: str | None = None,
     ) -> str:
-        # Uses real hash function for consistency with production
+        # Uses real hash function for consistency with production. `prefix` is
+        # accepted (and ignored) because production call sites now pass it -- the
+        # cross-tenant background paths resolve it via prefix_for_tenant -- but this
+        # fixture keeps every test's namespace deterministically "honcho2345",
+        # independent of tenancy.
+        del prefix
         if namespace_type == "document":
             if observer is None or observed is None:
                 raise ValueError(

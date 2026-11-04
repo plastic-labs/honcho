@@ -472,7 +472,7 @@ async def get_peer(
         )
 
     # Reconstruct ORM object from cached dict and merge into session
-    obj = models.Peer(**data)
+    obj = models.Peer(**models.with_cached_tenant(data))
     make_transient_to_detached(obj)
     existing_peer = await db.merge(obj, load=False)
 
@@ -497,7 +497,9 @@ async def get_peers(
             scope peers, and "all" returns everything.
     """
     stmt = select(models.Peer).where(
-        models.Peer.workspace_name == workspace_name, live_peer_row()
+        models.Peer.tenant_id == models.scoped_tenant_id(),
+        models.Peer.workspace_name == workspace_name,
+        live_peer_row(),
     )
 
     if kind is None:
@@ -610,7 +612,9 @@ async def get_sessions_for_peer(
             (models.Session.name == models.SessionPeer.session_name)
             & (models.Session.workspace_name == models.SessionPeer.workspace_name),
         )
+        .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
         .where(models.SessionPeer.peer_name == peer_name)
+        .where(models.Session.tenant_id == models.scoped_tenant_id())
         .where(models.Session.workspace_name == workspace_name)
         .where(live_session_row(), live_session_peer_row())
     )

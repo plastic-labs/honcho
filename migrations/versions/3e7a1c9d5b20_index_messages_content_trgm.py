@@ -28,6 +28,17 @@ When env.py runs on a caller-supplied connection (the alembic test pipeline),
 the caller owns the surrounding transaction and an autocommit block can't
 run, so that path builds the index with a plain, transactional CREATE INDEX.
 
+Postgres can't build or drop an index CONCURRENTLY on a partitioned table, so
+where messages is partitioned (the multi-tenant schema hash-partitions it by
+tenant_id) both directions take the same transactional path. That build
+cascades to every partition, blocks writes to messages until it finishes, and
+runs under the migration's own lock_timeout retries and 5 minute
+statement_timeout. To build it ahead of the release without blocking:
+CREATE INDEX ... ON ONLY the parent, CREATE INDEX CONCURRENTLY on each
+partition, then ALTER INDEX ... ATTACH PARTITION each one; the parent turns
+valid once all are attached. A parent left INVALID by an unfinished attach is
+dropped and rebuilt here.
+
 pg_trgm is created in migrations/env.py. Where the migration role cannot
 create extensions, the index is skipped with a warning and search keeps
 working without it. The revision is still stamped, so the index then has to
@@ -83,6 +94,26 @@ def _index_valid(connection: Connection) -> bool | None:
     )
 
 
+def _messages_partitioned(connection: Connection) -> bool:
+    """True when messages is a partitioned table (relkind 'p')."""
+    return (
+        connection.scalar(
+            text(
+                "SELECT c.relkind FROM pg_class c"
+                + " JOIN pg_namespace n ON n.oid = c.relnamespace"
+                + " WHERE c.relname = 'messages' AND n.nspname = :schema"
+            ),
+            {"schema": schema},
+        )
+        == "p"
+    )
+
+
+def _concurrent_unavailable(connection: Connection) -> bool:
+    """True when the build/drop must run inside the migration's transaction."""
+    return _caller_owns_transaction() or _messages_partitioned(connection)
+
+
 def _caller_owns_transaction() -> bool:
     """True when env.py is running inside a transaction the caller opened."""
     config = op.get_context().config
@@ -130,7 +161,11 @@ def upgrade() -> None:
         )
         return
 
-    if _caller_owns_transaction():
+    if _concurrent_unavailable(connection):
+        if _index_valid(connection) is False:
+            op.drop_index(
+                INDEX_NAME, table_name="messages", schema=schema, if_exists=True
+            )
         op.create_index(
             INDEX_NAME,
             "messages",
@@ -170,11 +205,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    if _caller_owns_transaction():
+    connection = op.get_bind()
+    if _concurrent_unavailable(connection):
         op.drop_index(INDEX_NAME, table_name="messages", schema=schema, if_exists=True)
         return
 
-    connection = op.get_bind()
     with op.get_context().autocommit_block(), _build_timeouts(connection):
         op.drop_index(
             INDEX_NAME,

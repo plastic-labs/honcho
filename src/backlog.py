@@ -10,7 +10,8 @@ import sentry_sdk
 
 from src import crud, schemas
 from src.config import settings
-from src.dependencies import tracked_db
+from src.db import tenant_context
+from src.dependencies import service_db
 from src.deriver.enqueue import enqueue_dream
 from src.dreamer.dream_due import DueDream, list_due_dreams
 from src.telemetry import prometheus_metrics
@@ -65,6 +66,7 @@ class DeriverMetricsPoller:
         self._next_dream_poll: float | None = None
         self._due_dreams: list[DueDream] = []
         self._next_stale_cleanup: float | None = None
+        self._embeddings_pending: tuple[int, int] = (0, 0)
 
     @property
     def snapshot(self) -> DeriverMetricsSnapshot:
@@ -117,17 +119,36 @@ class DeriverMetricsPoller:
 
     async def refresh(self) -> None:
         """One pass. The snapshot only advances on a complete pass."""
-        dreams_refreshed = False
-        async with tracked_db("deriver_metrics", read_only=True) as db:
-            stats = await crud.get_deriver_metrics(db)
-            if self._dream_poll_due():
+        dream_tick = self._dream_poll_due()
+        # region ai
+        # Cross-tenant: the metrics query and the due-dream scan both read across every
+        # tenant's queue/documents, so they run on the RLS-bypass service session. Under
+        # MULTI_TENANT tracked_db would fail closed here (this poller runs on API boot
+        # with no request tenant in scope). read_only — no writes on this pass.
+        # endregion
+        async with service_db("deriver_metrics", read_only=True) as db:
+            stats = await crud.get_deriver_metrics(db, count_embeddings=dream_tick)
+            if dream_tick:
                 self._due_dreams = await list_due_dreams(db)
                 self._next_dream_poll = (
                     time.monotonic() + settings.DREAM.DUE_POLL_INTERVAL_SECONDS
                 )
-                dreams_refreshed = True
 
-        if dreams_refreshed and settings.DERIVER.SCHEDULER == "api":
+        if dream_tick:
+            self._embeddings_pending = (
+                stats.embeddings_pending,
+                stats.embeddings_pending_due,
+            )
+        # We're not fetching these stats anew this turn; copy old ones
+        else:
+            stats = stats.model_copy(
+                update={
+                    "embeddings_pending": self._embeddings_pending[0],
+                    "embeddings_pending_due": self._embeddings_pending[1],
+                }
+            )
+
+        if dream_tick and settings.DERIVER.SCHEDULER == "api":
             await self._enqueue_due_dreams()
 
         signal = outstanding_work_seconds(stats, dreams_due=len(self._due_dreams))
@@ -143,12 +164,17 @@ class DeriverMetricsPoller:
         metrics = prometheus_metrics
         metrics.set_deriver_metrics(
             eligible_work_units=stats.eligible_work_units,
+            excluded_work_units=stats.excluded_work_units,
+            excluded_work_units_by_tenant=stats.excluded_work_units_by_tenant,
             claimed_work_units=stats.claimed_work_units,
+            inflight_units_by_tenant=stats.inflight_units_by_tenant,
             pending_items=stats.pending_items,
             oldest_pending_age_seconds=stats.oldest_pending_age_seconds,
             embeddings_pending=stats.embeddings_pending,
             embeddings_pending_due=stats.embeddings_pending_due,
         )
+        if settings.MULTI_TENANT:
+            metrics.set_paused_tenants(count=stats.paused_tenants)
         metrics.set_dreams_due(count=len(self._due_dreams))
         metrics.set_deriver_outstanding_work(seconds=signal)
         metrics.set_deriver_metrics_last_success(timestamp=measured_at)
@@ -162,6 +188,18 @@ class DeriverMetricsPoller:
     async def _enqueue_due_dreams(self) -> None:
         cap = settings.DREAM.MAX_ENQUEUED_PER_POLL
         for due_dream in self._due_dreams[:cap]:
+            # region ai
+            # enqueue_dream opens tracked_db, which fails closed flag-on without a
+            # tenant, so bind this due-dream's tenant (its collection's tenant_id, from
+            # list_due_dreams). The binding also lets RLS scope enqueue_dream's reads
+            # and construct_work_unit_key namespace the queued dream to it, keeping the
+            # deriver's batch tenant-homogeneous. No-op flag off.
+            # endregion
+            tenant_token = (
+                tenant_context.set(due_dream.tenant_id)
+                if settings.MULTI_TENANT
+                else None
+            )
             try:
                 await enqueue_dream(
                     due_dream.workspace_name,
@@ -182,6 +220,9 @@ class DeriverMetricsPoller:
                 )
                 if settings.SENTRY.ENABLED:
                     sentry_sdk.capture_exception(e)
+            finally:
+                if tenant_token is not None:
+                    tenant_context.reset(tenant_token)
 
     async def _maybe_cleanup_stale_work_units(self) -> None:
         interval = settings.DERIVER.STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS
@@ -191,5 +232,10 @@ class DeriverMetricsPoller:
         ):
             return
         self._next_stale_cleanup = time.monotonic() + interval
-        async with tracked_db("cleanup_stale_work_units") as db:
+        # region ai
+        # Cross-tenant: stale-session cleanup spans all tenants (service session, not
+        # tracked_db which would fail closed under MULTI_TENANT). Mirrors the deriver's
+        # own cleanup_stale_work_units call in queue_manager.
+        # endregion
+        async with service_db("cleanup_stale_work_units") as db:
             await crud.cleanup_stale_work_units(db)

@@ -497,6 +497,7 @@ class RepresentationManager:
             select(models.Document)
             .limit(top_k)
             .where(
+                models.Document.tenant_id == models.scoped_tenant_id(),
                 models.Document.workspace_name == self.workspace_name,
                 models.Document.observer == self.observer,
                 models.Document.observed == self.observed,
@@ -533,6 +534,7 @@ class RepresentationManager:
             select(models.Document)
             .limit(top_k)
             .where(
+                models.Document.tenant_id == models.scoped_tenant_id(),
                 models.Document.workspace_name == self.workspace_name,
                 models.Document.observer == self.observer,
                 models.Document.observed == self.observed,

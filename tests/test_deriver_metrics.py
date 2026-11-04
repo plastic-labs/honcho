@@ -15,6 +15,7 @@ from src.backlog import (
 )
 from src.config import settings
 from src.dreamer.dream_due import DueDream
+from src.models import DEFAULT_TENANT_ID
 from src.routers import deriver_metrics
 
 
@@ -26,6 +27,7 @@ def _due_dreams(count: int) -> list[DueDream]:
             observed=f"peer-{i}",
             dream_type=schemas.DreamType.OMNI,
             session_name=f"session-{i}",
+            tenant_id=DEFAULT_TENANT_ID,
         )
         for i in range(count)
     ]
@@ -266,6 +268,37 @@ class TestPoller:
 
 
 @pytest.mark.asyncio
+class TestEmbeddingCounts:
+    @pytest.mark.parametrize("scheduler", ["api", "deriver"])
+    async def test_embeddings_are_counted_only_on_the_dream_tick(
+        self, monkeypatch: pytest.MonkeyPatch, scheduler: str
+    ):
+        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", scheduler)
+        poller = DeriverMetricsPoller()
+        metrics = AsyncMock(
+            side_effect=[
+                schemas.DeriverMetrics(embeddings_pending=7, embeddings_pending_due=3),
+                schemas.DeriverMetrics(eligible_work_units=1),
+            ]
+        )
+
+        with (
+            patch("src.backlog.crud.get_deriver_metrics", metrics),
+            patch("src.backlog.list_due_dreams", AsyncMock(return_value=[])),
+        ):
+            await poller.refresh()
+            await poller.refresh()
+
+        assert [c.kwargs["count_embeddings"] for c in metrics.await_args_list] == [
+            True,
+            False,
+        ]
+        stats = poller.snapshot.stats
+        assert stats.eligible_work_units == 1
+        assert (stats.embeddings_pending, stats.embeddings_pending_due) == (7, 3)
+
+
+@pytest.mark.asyncio
 class TestDeriverMetricsRoute:
     async def test_serves_the_cached_snapshot(self):
         poller = DeriverMetricsPoller()
@@ -335,6 +368,7 @@ class TestLifespanScheduler:
             patch.object(main_module, "register_db_query_instrumentation"),
             patch.object(main_module, "register_db_connection_instrumentation"),
             patch.object(main_module, "validate_embedding_schema", AsyncMock()),
+            patch.object(main_module, "validate_queue_item_batches", AsyncMock()),
             patch.object(main_module, "init_cache", AsyncMock()),
             patch.object(main_module, "close_cache", AsyncMock()),
             patch.object(main_module, "shutdown_telemetry", AsyncMock()),

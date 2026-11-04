@@ -17,6 +17,7 @@ from sqlalchemy import (
     func,
     insert,
     select,
+    tuple_,
     update,
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -35,6 +36,7 @@ from src.cache.client import (
     safe_cache_set,
 )
 from src.config import settings
+from src.crud.deriver import active_queue_session_match, queue_item_tenant_match
 from src.crud.lifecycle import live_session_peer_row, live_session_row
 from src.exceptions import (
     AuthenticationException,
@@ -191,6 +193,7 @@ async def get_sessions(
     """
     stmt = (
         select(models.Session)
+        .where(models.Session.tenant_id == models.scoped_tenant_id())
         .where(models.Session.workspace_name == workspace_name)
         .where(models.Session.is_active == True)  # noqa: E712
         .where(live_session_row())
@@ -261,7 +264,7 @@ async def get_or_create_session(
     # Reconstruct and merge cached dict into session if it exists
     honcho_session: models.Session | None = None
     if session_data is not None:
-        obj = models.Session(**session_data)
+        obj = models.Session(**models.with_cached_tenant(session_data))
         make_transient_to_detached(obj)
         honcho_session = await db.merge(obj, load=False)
 
@@ -444,6 +447,8 @@ async def get_or_create_session(
                 )
             )
         )
+        # ai: end the read's transaction so this session's connection returns to the pool before each enqueue checks out its own; holding both can deadlock a saturated pool
+        await db.commit()
         if has_messages:
             # Imported lazily: src.deriver.enqueue imports crud at module level.
             from src.deriver.enqueue import enqueue_scope_backfill
@@ -517,7 +522,7 @@ async def get_session(
         )
 
     # Reconstruct ORM object from cached dict and merge into session
-    obj = models.Session(**data)
+    obj = models.Session(**models.with_cached_tenant(data))
     make_transient_to_detached(obj)
     session = await db.merge(obj, load=False)
 
@@ -614,13 +619,20 @@ async def _batch_delete_matching(
         Total number of records deleted
     """
     total_deleted = 0
-    primary_key_column = model.__table__.primary_key.columns.values()[0]
+    # The full key: tenant_id leads the composite PKs, so its first column
+    # alone matches every row of the tenant.
+    primary_key = model.__table__.primary_key.columns.values()
 
     while True:
+        # select_from names the model, thus the tenant predicate hook adds
+        # tenant_id to the subquery too. The table columns alone do not.
         subquery = (
-            select(primary_key_column).where(and_(*filter_conditions)).limit(batch_size)
+            select(*primary_key)
+            .select_from(model)
+            .where(and_(*filter_conditions))
+            .limit(batch_size)
         )
-        delete_stmt = delete(model).where(primary_key_column.in_(subquery))
+        delete_stmt = delete(model).where(tuple_(*primary_key).in_(subquery))
         delete_result = typing_cast(CursorResult[Any], await db.execute(delete_stmt))
         batch_deleted = delete_result.rowcount or 0
         total_deleted += batch_deleted
@@ -664,25 +676,26 @@ async def delete_session(
     # Perform cascading deletes in order
     # Order is important to avoid foreign key constraint violations
     try:
-        # Delete ActiveQueueSession entries
-        # Work unit keys have format: {task_type}:{workspace_name}:{session_name}:{...}
+        # Delete ActiveQueueSession entries, matching on the work_unit_key
+        # (flag-aware position + tenant pinning; rationale lives on the helper).
         await db.execute(
             delete(models.ActiveQueueSession).where(
-                and_(
-                    func.split_part(models.ActiveQueueSession.work_unit_key, ":", 2)
-                    == workspace_name,
-                    func.split_part(models.ActiveQueueSession.work_unit_key, ":", 3)
-                    == session_name,
-                )
+                active_queue_session_match(workspace_name, session_name)
             )
         )
 
-        # Delete QueueItem entries
-        await db.execute(
-            delete(models.QueueItem).where(
-                models.QueueItem.session_id == honcho_session.id
-            )
+        # Delete QueueItem entries. session_id is globally unique in practice,
+        # but pin to the ambient tenant, flag-aware, for defense in depth
+        # (rationale lives on the helper).
+        queue_item_match = queue_item_tenant_match()
+        session_queue_item_delete = delete(models.QueueItem).where(
+            models.QueueItem.session_id == honcho_session.id
         )
+        if queue_item_match is not None:
+            session_queue_item_delete = session_queue_item_delete.where(
+                queue_item_match
+            )
+        await db.execute(session_queue_item_delete)
 
         # Delete message vectors from vector store before deleting DB records
         # Vector IDs are {message_id}_{chunk_index}, where chunk_index is the 0-based
@@ -712,7 +725,7 @@ async def delete_session(
 
             # Try to delete from external vector store (best effort)
             try:
-                namespace = external_vector_store.get_vector_namespace(
+                namespace = await external_vector_store.get_vector_namespace(
                     "message", workspace_name
                 )
                 await external_vector_store.delete_many(namespace, vector_ids)
@@ -744,6 +757,7 @@ async def delete_session(
                 models.Document.observer,
                 models.Document.observed,
             ).where(
+                models.Document.tenant_id == models.scoped_tenant_id(),
                 models.Document.session_name == session_name,
                 models.Document.workspace_name == workspace_name,
             )
@@ -755,7 +769,7 @@ async def delete_session(
             # Group document IDs by namespace (observer/observed)
             docs_by_namespace: dict[str, list[str]] = {}
             for doc in documents:
-                namespace = external_vector_store.get_vector_namespace(
+                namespace = await external_vector_store.get_vector_namespace(
                     "document",
                     workspace_name,
                     doc.observer,
@@ -784,6 +798,7 @@ async def delete_session(
         await db.execute(
             delete(models.SessionPeer).where(
                 models.SessionPeer.session_name == session_name,
+                models.SessionPeer.tenant_id == models.scoped_tenant_id(),
                 models.SessionPeer.workspace_name == workspace_name,
             )
         )
@@ -793,6 +808,7 @@ async def delete_session(
             db,
             models.Document,
             [
+                models.Document.tenant_id == models.scoped_tenant_id(),
                 models.Document.session_name == session_name,
                 models.Document.workspace_name == workspace_name,
             ],
@@ -926,6 +942,7 @@ async def clone_session(
 
     # Clone peers from original session to new session (including their configurations)
     stmt = select(models.SessionPeer).where(
+        models.SessionPeer.tenant_id == models.scoped_tenant_id(),
         models.SessionPeer.workspace_name == workspace_name,
         models.SessionPeer.session_name == original_session_name,
     )
@@ -999,6 +1016,7 @@ async def remove_peers_from_session(
         update(models.SessionPeer)
         .where(
             models.SessionPeer.session_name == session_name,
+            models.SessionPeer.tenant_id == models.scoped_tenant_id(),
             models.SessionPeer.workspace_name == workspace_name,
             models.SessionPeer.peer_name.in_(peer_names),
             models.SessionPeer.left_at.is_(None),  # Only update active peers
@@ -1057,6 +1075,7 @@ async def get_peers_from_session(
                 models.Peer.workspace_name == models.SessionPeer.workspace_name,
             ),
         )
+        .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
         .where(models.SessionPeer.session_name == session_name)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.SessionPeer.left_at.is_(None))  # Only active peers
@@ -1093,6 +1112,7 @@ async def is_peer_in_session(
     """
     result = await db.scalar(
         select(models.SessionPeer.peer_name)
+        .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
         .where(models.SessionPeer.workspace_name == workspace_name)
         .where(models.SessionPeer.session_name == session_name)
         .where(models.SessionPeer.peer_name == peer_name)
@@ -1135,6 +1155,7 @@ async def get_session_peer_configuration(
         )
         .where(models.SessionPeer.session_name == session_name)
         .where(models.Peer.workspace_name == workspace_name)
+        .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
         .where(models.SessionPeer.workspace_name == workspace_name)
     )
 
@@ -1200,6 +1221,7 @@ async def set_peers_for_session(
         update(models.SessionPeer)
         .where(
             models.SessionPeer.session_name == session_name,
+            models.SessionPeer.tenant_id == models.scoped_tenant_id(),
             models.SessionPeer.workspace_name == workspace_name,
             models.SessionPeer.left_at.is_(None),  # Only update active peers
             models.SessionPeer.peer_name.notin_(peer_names.keys()),
@@ -1305,12 +1327,49 @@ async def _get_or_add_peers_to_session(
         ObserverException: If the resulting active peer set would exceed the
             observer limit
     """
-    # If no peers to add, skip the insert and just return existing active session peers
+    # On an add, read before writing and write only the peers that are new or
+    # rejoining: an active row would come out of the upsert unchanged, but
+    # ON CONFLICT DO UPDATE still locks and rewrites it, so clients re-adding the
+    # same peers to a session would queue on each other's row locks for nothing.
+    # Skipping an active row on a stale read orders this add before a concurrent
+    # removal; anything the read missed is still handled by the upsert below.
+    # A replace writes every row: two replaces that each skipped the rows they
+    # left unchanged could interleave into a state neither asked for.
+    existing = (
+        {
+            row.peer_name: row
+            for row in await db.execute(
+                select(
+                    models.SessionPeer.peer_name,
+                    models.SessionPeer.left_at,
+                    models.SessionPeer.configuration,
+                ).where(
+                    models.SessionPeer.session_name == session_name,
+                    models.SessionPeer.tenant_id == models.scoped_tenant_id(),
+                    models.SessionPeer.workspace_name == workspace_name,
+                    models.SessionPeer.peer_name.in_(peer_names),
+                )
+            )
+        }
+        if peer_names and not replace_config
+        else {}
+    )
+    # Sorted so concurrent upserts lock overlapping rows in the same order.
+    peer_names = {
+        peer_name: configuration
+        for peer_name, configuration in sorted(peer_names.items())
+        if replace_config
+        or (row := existing.get(peer_name)) is None
+        or row.left_at is not None
+    }
+
+    # Nothing to write: just return existing active session peers
     if not peer_names:
         if not fetch_after_upsert:
             return []
         select_stmt = select(models.SessionPeer).where(
             models.SessionPeer.session_name == session_name,
+            models.SessionPeer.tenant_id == models.scoped_tenant_id(),
             models.SessionPeer.workspace_name == workspace_name,
             models.SessionPeer.left_at.is_(None),  # Only active peers
         )
@@ -1352,7 +1411,11 @@ async def _get_or_add_peers_to_session(
     # wins -- otherwise PUT /peers could never change the configuration of a peer
     # already in the session.
     stmt = stmt.on_conflict_do_update(
-        index_elements=["session_name", "peer_name", "workspace_name"],
+        # region ai
+        # tenant_id leads the composite PK, so it must be in the conflict
+        # target — otherwise there is no matching unique constraint.
+        # endregion
+        index_elements=["tenant_id", "session_name", "peer_name", "workspace_name"],
         set_={
             "joined_at": case(
                 (models.SessionPeer.left_at.is_not(None), func.now()),
@@ -1379,10 +1442,10 @@ async def _get_or_add_peers_to_session(
     # from those branches. Raising here rolls the upsert back: ObserverException
     # is never caught, and both get_db and tracked_db roll back on exception.
     #
-    # Gated on the request actually asking for a non-scope observer so that a
+    # Gated on the request actually writing a non-scope observer so that a
     # session already over the limit keeps behaving as it does today: it can
-    # still take non-observers and scope attachments, and only a request that
-    # would make it worse is rejected.
+    # still take non-observers, scope attachments and no-op re-adds, and only a
+    # request that would make it worse is rejected.
     if any(
         config.observe_others
         for peer_name, config in peer_names.items()
@@ -1392,6 +1455,7 @@ async def _get_or_add_peers_to_session(
             await db.scalar(
                 select(func.count()).where(
                     models.SessionPeer.session_name == session_name,
+                    models.SessionPeer.tenant_id == models.scoped_tenant_id(),
                     models.SessionPeer.workspace_name == workspace_name,
                     models.SessionPeer.left_at.is_(None),  # Only active peers
                     models.SessionPeer.configuration["observe_others"].astext.cast(
@@ -1418,6 +1482,7 @@ async def _get_or_add_peers_to_session(
     # Return all active session peers after the upsert
     select_stmt = select(models.SessionPeer).where(
         models.SessionPeer.session_name == session_name,
+        models.SessionPeer.tenant_id == models.scoped_tenant_id(),
         models.SessionPeer.workspace_name == workspace_name,
         models.SessionPeer.left_at.is_(None),  # Only active peers
     )
@@ -1457,6 +1522,7 @@ async def get_peer_config(
 
     # Get row from session_peer table
     stmt = select(models.SessionPeer).where(
+        models.SessionPeer.tenant_id == models.scoped_tenant_id(),
         models.SessionPeer.workspace_name == workspace_name,
         models.SessionPeer.session_name == session_name,
         models.SessionPeer.peer_name == peer_id,
@@ -1510,6 +1576,7 @@ async def set_peer_config(
         select(models.SessionPeer)
         .where(models.SessionPeer.session_name == session_name)
         .where(models.SessionPeer.peer_name == peer_name)
+        .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
         .where(models.SessionPeer.workspace_name == workspace_name)
     )
     result = await db.execute(stmt)
@@ -1529,6 +1596,7 @@ async def set_peer_config(
             # Use a single efficient query to count existing observers
             existing_observers_stmt = select(func.count()).where(
                 models.SessionPeer.session_name == session_name,
+                models.SessionPeer.tenant_id == models.scoped_tenant_id(),
                 models.SessionPeer.workspace_name == workspace_name,
                 models.SessionPeer.left_at.is_(None),  # Only active peers
                 models.SessionPeer.peer_name

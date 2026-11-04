@@ -583,6 +583,21 @@ async def execute_tool_loop(
                 empty_response_retries < 1 and iteration < max_tool_iterations - 1
             )
 
+            # A provider can ignore a forced tool_choice and answer outright.
+            # While the gate is unmet, a no-tool answer is discarded for a
+            # nudge, so it isn't held to `response_model`. Nor is it under
+            # stream_final, which streams the answer afresh and doesn't
+            # validate it.
+            gate_nudge_due = (
+                gate is not None
+                and effective_tool_choice in ("required", "any")
+                and forced_rounds + 1 < max_forced_iterations
+                and iteration < max_tool_iterations - 1
+            )
+            empty_nudge_due = (
+                empty_response_retries < 1 and iteration < max_tool_iterations - 1
+            )
+
             async def _call_with_messages(
                 tool_choice_for_call: str
                 | dict[str, Any]

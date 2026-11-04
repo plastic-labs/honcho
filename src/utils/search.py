@@ -6,9 +6,22 @@ of each item's rank in each list, then summing these reciprocal ranks.
 """
 
 import re
+from datetime import datetime
 from typing import Any, TypeVar
 
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import (
+    BigInteger,
+    ColumnElement,
+    DateTime,
+    Float,
+    Integer,
+    Select,
+    and_,
+    cast,
+    func,
+    or_,
+    select,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -89,7 +102,9 @@ async def query_external_vector_message_ids(
     if external_vector_store is None:
         return []
 
-    namespace = external_vector_store.get_vector_namespace("message", workspace_name)
+    namespace = await external_vector_store.get_vector_namespace(
+        "message", workspace_name
+    )
 
     vector_filters: dict[str, Any] = {}
     if filters:
@@ -217,6 +232,7 @@ async def _filter_by_peer_perspective(
     # Get all session memberships for this peer in this workspace
     session_memberships_query = (
         select(session_peers_table)
+        .where(session_peers_table.c.tenant_id == models.scoped_tenant_id())
         .where(session_peers_table.c.workspace_name == workspace_name)
         .where(session_peers_table.c.peer_name == peer_name)
     )
@@ -248,11 +264,99 @@ async def _filter_by_peer_perspective(
     return filtered_messages
 
 
+TEXT_MATCH_PAGE_SIZE = 100
+
+
+def message_text_condition(query: str, *, use_fts: bool) -> ColumnElement[bool]:
+    """The inline predicate that matches messages.content against a search query."""
+    pattern = f"%{escape_ilike_pattern(query)}%"
+    condition: ColumnElement[bool] = models.Message.content.ilike(
+        pattern, escape=ILIKE_ESCAPE_CHAR
+    )
+    if use_fts:
+        condition = or_(
+            func.to_tsvector("english", models.Message.content).op("@@")(
+                func.plainto_tsquery("english", query)
+            ),
+            condition,
+        )
+    return condition
+
+
+def message_text_page(
+    workspace_name: str,
+    query: str,
+    *,
+    use_fts: bool,
+    after: tuple[float, datetime, int] | None,
+    limit: int,
+) -> Select[tuple[int, datetime, float]]:
+    """One page of ``(id, created_at, rank)`` from ``message_text_matches_page``."""
+    pattern = f"%{escape_ilike_pattern(query)}%"
+    rank, created_at, id_ = after if after is not None else (None, None, None)
+    page = (
+        getattr(func, settings.DB.SCHEMA)
+        .message_text_matches_page(
+            models.scoped_tenant_id(),
+            workspace_name,
+            query,
+            pattern,
+            use_fts,
+            cast(rank, Float),
+            cast(created_at, DateTime(timezone=True)),
+            cast(id_, BigInteger),
+            cast(limit, Integer),
+        )
+        .table_valued("id", "created_at", "rank")
+    )
+    return select(page.c.id, page.c.created_at, page.c.rank)
+
+
+async def matching_messages(
+    db: AsyncSession,
+    stmt: Select[tuple[models.Message]],
+    workspace_name: str,
+    query: str,
+    *,
+    use_fts: bool,
+    limit: int,
+) -> list[models.Message]:
+    """The first ``limit`` messages of ``stmt`` whose content matches ``query``,
+    under row-level security."""
+    found: list[models.Message] = []
+    after: tuple[float, datetime, int] | None = None
+    while len(found) < limit:
+        page = (
+            await db.execute(
+                message_text_page(
+                    workspace_name,
+                    query,
+                    use_fts=use_fts,
+                    after=after,
+                    limit=TEXT_MATCH_PAGE_SIZE,
+                )
+            )
+        ).all()
+        if not page:
+            break
+        position = {row.id: index for index, row in enumerate(page)}
+        rows = (
+            await db.execute(stmt.where(models.Message.id.in_(list(position))))
+        ).scalars()
+        found.extend(sorted(rows, key=lambda m: position[m.id]))
+        if len(page) < TEXT_MATCH_PAGE_SIZE:
+            break
+        last = page[-1]
+        after = (last.rank, last.created_at, last.id)
+    return found[:limit]
+
+
 async def _fulltext_search(
     db: AsyncSession,
     query: str,
     stmt: Select[tuple[models.Message]],
     limit: int,
+    workspace_name: str | None = None,
 ) -> list[models.Message]:
     """
     Perform full-text search using PostgreSQL FTS and ILIKE fallback.
@@ -262,6 +366,7 @@ async def _fulltext_search(
         query: Search query
         stmt: Base SQL query conditions
         limit: Maximum number of results to return
+        workspace_name: The workspace the statement is scoped to, if known
 
     Returns:
         list of messages ordered by text search relevance
@@ -271,30 +376,20 @@ async def _fulltext_search(
         re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)
     )
 
-    # Escape ILIKE pattern characters to treat user input literally
-    escaped_query = escape_ilike_pattern(query)
+    if settings.MULTI_TENANT and workspace_name is not None:
+        return await matching_messages(
+            db, stmt, workspace_name, query, use_fts=not has_special_chars, limit=limit
+        )
 
     if has_special_chars:
         # For queries with special characters, use exact string matching (ILIKE)
-        search_condition = models.Message.content.ilike(
-            f"%{escaped_query}%", escape=ILIKE_ESCAPE_CHAR
-        )
+        search_condition = message_text_condition(query, use_fts=False)
         fulltext_query = stmt.where(search_condition).order_by(
             models.Message.created_at.desc()
         )
     else:
         # For natural language queries, use full text search with ranking
-        fts_condition = func.to_tsvector("english", models.Message.content).op("@@")(
-            func.plainto_tsquery("english", query)
-        )
-
-        # Combine FTS with ILIKE as fallback for better coverage
-        combined_condition = or_(
-            fts_condition,
-            models.Message.content.ilike(
-                f"%{escaped_query}%", escape=ILIKE_ESCAPE_CHAR
-            ),
-        )
+        combined_condition = message_text_condition(query, use_fts=True)
 
         fulltext_query = stmt.where(combined_condition).order_by(
             # Order by FTS relevance first, then by creation time
@@ -369,7 +464,10 @@ async def search(
                     models.Message.created_at <= session_peers_table.c.left_at,
                 ),
             ),
-        ).where(session_peers_table.c.peer_name == peer_perspective_name)
+        ).where(
+            session_peers_table.c.tenant_id == models.scoped_tenant_id(),
+            session_peers_table.c.peer_name == peer_perspective_name,
+        )
 
     stmt = apply_filter(stmt, models.Message, filters)
 
@@ -442,6 +540,7 @@ async def search(
             query=query,
             stmt=stmt,
             limit=limit * 2,
+            workspace_name=workspace_name,
         )
         search_results.append(fulltext_results)
 

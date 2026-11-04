@@ -120,8 +120,6 @@ async def test_parent_tombstones_and_workspace_isolation(
             context,
             PrimitiveIdentity("message", target.workspace.id, message.public_id),
         )
-    # This is today's dedicated schema: workspaces are NOT simulated tenants.
-    assert "tenant_id" not in models.Workspace.__table__.columns
     assert context.db is db_session
 
 
@@ -223,7 +221,7 @@ async def test_caller_owns_flush_commit_rollback_and_snapshot(
     graph = await _seed_graph(db_session, "transactions")
     await db_session.commit()
     identity = graph.identity("message")
-    message_id = graph.message.id
+    message_key = (graph.message.tenant_id, graph.message.id)
     context = DedicatedTenantContext(db_session)
 
     # A normal autoflush-enabled session must not flush dirty or pending rows.
@@ -246,7 +244,7 @@ async def test_caller_owns_flush_commit_rollback_and_snapshot(
     assert await is_primitive_live(context, identity)
 
     # Bypass a stale ORM instance: liveness reads the authoritative database.
-    cached_message = await db_session.get(models.Message, message_id)
+    cached_message = await db_session.get(models.Message, message_key)
     assert cached_message is not None and cached_message.deleted_at is None
     async with AsyncSession(db_engine) as writer:
         await writer.execute(

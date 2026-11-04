@@ -15,7 +15,7 @@ from sqlalchemy.sql.functions import func
 
 from src import models, schemas
 from src.config import settings
-from src.crud.collection import get_or_create_collection
+from src.crud.collection import get_or_create_collection, record_explicit_documents
 from src.crud.peer import get_peer, reject_scope_observed
 from src.crud.session import get_session
 from src.dependencies import tracked_db
@@ -23,6 +23,7 @@ from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import (
     ResourceNotFoundException,
     ValidationException,
+    VectorNamespaceUnresolved,
     VectorStoreError,
 )
 from src.utils.filter import apply_filter
@@ -31,6 +32,7 @@ from src.vector_store import (
     VectorStore,
     get_external_vector_store,
 )
+from src.vector_store.tenant_namespace import prefix_for_tenant
 
 logger = getLogger(__name__)
 
@@ -102,6 +104,7 @@ def get_all_documents(
     """
     stmt = (
         select(models.Document)
+        .where(models.Document.tenant_id == models.scoped_tenant_id())
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.observer == observer)
         .where(models.Document.observed == observed)
@@ -145,6 +148,7 @@ def get_documents_with_filters(
     """
     stmt = (
         select(models.Document)
+        .where(models.Document.tenant_id == models.scoped_tenant_id())
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.deleted_at.is_(None))  # Exclude soft-deleted
     )
@@ -188,6 +192,7 @@ async def query_documents_recent(
         Sequence of documents ordered by created_at descending
     """
     stmt = select(models.Document).where(
+        models.Document.tenant_id == models.scoped_tenant_id(),
         models.Document.workspace_name == workspace_name,
         models.Document.observer == observer,
         models.Document.observed == observed,
@@ -326,6 +331,7 @@ async def query_documents_most_derived(
     stmt = (
         select(models.Document)
         .where(
+            models.Document.tenant_id == models.scoped_tenant_id(),
             models.Document.workspace_name == workspace_name,
             models.Document.observer == observer,
             models.Document.observed == observed,
@@ -410,7 +416,7 @@ async def query_external_vector_document_ids(
     if external_vector_store is None:
         return []
 
-    namespace = external_vector_store.get_vector_namespace(
+    namespace = await external_vector_store.get_vector_namespace(
         "document", workspace_name, observer, observed
     )
 
@@ -993,6 +999,7 @@ async def create_documents(
             if fallback_doc.embedding:
                 docs_with_embeddings.append((new_doc, fallback_doc.embedding))
         db.add_all(honcho_documents)
+        await record_explicit_documents(db, honcho_documents)
         # NOTE
         # If the process crashes after this commit but before vector upsert completes,
         # documents will be left in sync_state='pending' with NULL embeddings.
@@ -1018,7 +1025,7 @@ async def create_documents(
                 await db.commit()
             else:
                 # External vector store - upsert and track sync state
-                namespace = external_vector_store.get_vector_namespace(
+                namespace = await external_vector_store.get_vector_namespace(
                     "document",
                     workspace_name,
                     observer,
@@ -1358,6 +1365,7 @@ async def create_observations(
 
     try:
         db.add_all(honcho_documents)
+        await record_explicit_documents(db, honcho_documents)
         await db.commit()
         # Refresh all documents to get generated IDs and timestamps
         for doc in honcho_documents:
@@ -1385,7 +1393,7 @@ async def create_observations(
                 observer,
                 observed,
             ), docs_with_embeddings in collection_embeddings.items():
-                namespace = external_vector_store.get_vector_namespace(
+                namespace = await external_vector_store.get_vector_namespace(
                     "document",
                     workspace_name,
                     observer,
@@ -1870,56 +1878,89 @@ async def cleanup_soft_deleted_documents(
         minutes=older_than_minutes
     )
 
-    # Find soft-deleted documents ready for cleanup
-    # Use FOR UPDATE SKIP LOCKED to prevent multiple deriver instances from
-    # processing the same documents simultaneously
-    stmt = (
-        select(models.Document)
-        .where(models.Document.deleted_at.is_not(None))
-        .where(models.Document.deleted_at < cutoff)
-        .limit(batch_size)
-        .with_for_update(skip_locked=True)
-    )
-    result = await db.execute(stmt)
-    documents = list(result.scalars().all())
+    # Find soft-deleted documents ready for cleanup, oldest first (served by the
+    # partial ix_documents_deleted_at). Use FOR UPDATE SKIP LOCKED to prevent
+    # multiple deriver instances from processing the same documents simultaneously.
+    # region ai
+    # The sweep spans tenants, and a tenant whose vector namespace can't be resolved
+    # must not strand everyone else: its rows stay eligible, so a batch they fill
+    # would clean nothing, and the next cycle would select the same rows. When a
+    # batch contains such a tenant, it is excluded and the batch re-selected. Each
+    # round excludes at least one more tenant from a batch of at most batch_size
+    # rows, so the loop ends; flag-off there is one tenant and at most two rounds.
+    # endregion
+    prefixes: dict[str, str] = {}
+    unresolvable: set[str] = set()
+    while True:
+        stmt = (
+            select(models.Document)
+            .where(models.Document.deleted_at.is_not(None))
+            .where(models.Document.deleted_at < cutoff)
+        )
+        if unresolvable:
+            stmt = stmt.where(models.Document.tenant_id.not_in(unresolvable))
+        stmt = (
+            stmt.order_by(models.Document.deleted_at)
+            .limit(batch_size)
+            .with_for_update(skip_locked=True)
+        )
+        documents = list((await db.execute(stmt)).scalars().all())
+        if not documents:
+            await db.rollback()
+            return 0
 
-    if not documents:
-        return 0
+        newly_unresolvable: set[str] = set()
+        for tenant_id in {doc.tenant_id for doc in documents} - prefixes.keys():
+            try:
+                prefixes[tenant_id] = await prefix_for_tenant(tenant_id, db)
+            except (VectorNamespaceUnresolved, VectorStoreError):
+                logger.warning(
+                    "No vector namespace for tenant %s; leaving its soft-deleted documents",
+                    tenant_id,
+                )
+                newly_unresolvable.add(tenant_id)
+        if not newly_unresolvable:
+            break
+        unresolvable |= newly_unresolvable
 
     # Group by namespace for batch vector deletion
-    by_namespace: dict[str, list[str]] = {}
+    by_namespace: dict[str, list[models.Document]] = {}
     for doc in documents:
-        namespace = external_vector_store.get_vector_namespace(
+        namespace = await external_vector_store.get_vector_namespace(
             "document",
             doc.workspace_name,
             doc.observer,
             doc.observed,
+            prefix=prefixes[doc.tenant_id],
         )
-        by_namespace.setdefault(namespace, []).append(doc.id)
+        by_namespace.setdefault(namespace, []).append(doc)
 
     # Delete from external vector store (per namespace) and track successful deletions
-    successfully_deleted_ids: set[str] = set()
-    for namespace, ids in by_namespace.items():
+    successfully_deleted_keys: set[tuple[str, str]] = set()
+    for namespace, docs in by_namespace.items():
         try:
-            await external_vector_store.delete_many(namespace, ids)
-            # Only add to successfully_deleted_ids if vector deletion succeeded
-            successfully_deleted_ids.update(ids)
+            await external_vector_store.delete_many(namespace, [d.id for d in docs])
+            # Only add to successfully_deleted_keys if vector deletion succeeded
+            successfully_deleted_keys.update((d.tenant_id, d.id) for d in docs)
         except Exception as e:
             # Log but continue - vectors may already be deleted or namespace may not exist
             logger.warning(f"Failed to delete vectors from {namespace}: {e}")
 
     # Only hard delete documents where vector deletion succeeded
-    if successfully_deleted_ids:
+    # ai: keyed on (tenant_id, id), the PK — an id-only IN can't seek it and reads every partition's index
+    if successfully_deleted_keys:
         await db.execute(
             delete(models.Document).where(
-                models.Document.id.in_(successfully_deleted_ids)
+                tuple_(models.Document.tenant_id, models.Document.id).in_(
+                    successfully_deleted_keys
+                )
             )
         )
         await db.commit()
         logger.debug(
-            f"Cleaned up {len(successfully_deleted_ids)} soft-deleted documents"
+            f"Cleaned up {len(successfully_deleted_keys)} soft-deleted documents"
         )
-        return len(successfully_deleted_ids)
+        return len(successfully_deleted_keys)
 
     # No documents were successfully deleted from vector store
     # Release FOR UPDATE locks by rolling back the transaction
@@ -1985,9 +2026,12 @@ def get_child_observations(
         Select query for documents that reference this document as a source,
         for pagination support via apaginate()
     """
+    # An entity column, not literal(1): then the tenant predicate hook
+    # (models._add_tenant_predicate) adds tenant_id to this subquery.
     linked = (
-        select(literal(1))
+        select(models.DocumentSource.derived_id)
         .where(
+            models.DocumentSource.tenant_id == models.Document.tenant_id,
             models.DocumentSource.derived_id == models.Document.id,
             models.DocumentSource.source_id == parent_id,
         )
@@ -1995,6 +2039,7 @@ def get_child_observations(
     )
     # Undrained rows still carry linkage in the legacy JSONB column.
     stmt = select(models.Document).where(
+        models.Document.tenant_id == models.scoped_tenant_id(),
         models.Document.workspace_name == workspace_name,
         or_(linked, models.Document.legacy_source_ids.contains([parent_id])),
         models.Document.deleted_at.is_(None),

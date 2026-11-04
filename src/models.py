@@ -17,18 +17,29 @@ from sqlalchemy import (
     Identity,
     Index,
     Integer,
+    PrimaryKeyConstraint,
     Table,
     UniqueConstraint,
+    event,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
-from sqlalchemy.orm import Mapped, MappedColumn, mapped_column, relationship
-from sqlalchemy.sql import func
+from sqlalchemy.orm import (
+    Mapped,
+    MappedColumn,
+    ORMExecuteState,
+    mapped_column,
+    relationship,
+    with_loader_criteria,
+)
+from sqlalchemy.orm import Session as OrmSession
+from sqlalchemy.schema import conv
+from sqlalchemy.sql import ColumnElement, func
 
 from src.config import settings
 from src.utils.types import DocumentLevel, TaskType, VectorSyncState
 
-from .db import Base
+from .db import CROSS_TENANT, Base, tenant_context
 
 load_dotenv(override=True)
 
@@ -37,14 +48,109 @@ _VECTOR_DIM: int = settings.EMBEDDING.VECTOR_DIMENSIONS
 logger = getLogger(__name__)
 
 
+# The tenant a single-tenant / self-host deployment operates as when TENANT_ID
+# is unset, and the bootstrap tenants row the migration seeds in that case.
+# region ai
+# New tenant-scoped rows default to the current tenant (tenant_context, when one
+# is bound) or instance_tenant_id() when no tenant is in scope (flag off).
+# endregion
+DEFAULT_TENANT_ID = "default"
+
+
+def instance_tenant_id() -> str:
+    """The tenant a flag-off instance operates as: TENANT_ID, else 'default'."""
+    # region ai
+    # The migrations read it too, and two write it into a function body as a SQL
+    # literal (no bind there); TENANT_ID's pattern (alphanumerics, '_' and '-')
+    # keeps it a safe one.
+    # endregion
+    return settings.TENANT_ID or DEFAULT_TENANT_ID
+
+
+def _default_tenant_id() -> str:
+    """Model-side default for tenant_id columns: the bound tenant; flag-off with
+    none bound, the instance's tenant; flag-on with none bound, raises."""
+    # region ai
+    # Populates every ORM create without threading tenant_id through call sites.
+    # Intentionally NOT a DB-level default: that would need a migration and could
+    # silently stamp a tenant on a flag-on row that forgot to set one (tracked_db
+    # fail-closes that case instead). Flag-on with no tenant bound raises for
+    # the same reason: the instance tenant is a single-tenant id, and stamping it
+    # on a multi-tenant row would file the row under the wrong tenant silently.
+    # (tracked_db already refuses an unbound session; this also covers inserts
+    # on service_db, which binds no tenant.)
+    # endregion
+    tenant = tenant_context.get()
+    if tenant:
+        return tenant
+    if settings.MULTI_TENANT:
+        raise ValueError(
+            "tenant_id default requires a bound tenant when MULTI_TENANT is "
+            + "enabled; set tenant_context or pass tenant_id explicitly"
+        )
+    return instance_tenant_id()
+
+
+def scoped_tenant_id() -> str:
+    """The tenant_id a tenant-scoped read filters on explicitly."""
+    # region ai
+    # The bound tenant, or instance_tenant_id() flag-off: the same value
+    # _default_tenant_id stamps on writes. Under MULTI_TENANT with no tenant bound
+    # it raises rather than read the instance tenant (tracked_db fail-closes the
+    # same case). Binding tenant_id explicitly, not only through RLS, lets the
+    # (tenant_id, ...) indexes give order flag-off too, where no policy supplies it.
+    # endregion
+    tenant = tenant_context.get()
+    if tenant:
+        return tenant
+    if settings.MULTI_TENANT:
+        raise ValueError(
+            "no tenant bound under MULTI_TENANT; a tenant-scoped read needs one"
+        )
+    return instance_tenant_id()
+
+
+def with_cached_tenant(data: dict[str, Any]) -> dict[str, Any]:
+    """A cached row's fields plus its tenant_id, ready to rebuild the ORM object."""
+    # region ai
+    # Cached rows (the workspace/peer/session/collection entries) leave tenant_id
+    # out so the entry stays in the previous release's format: during a rolling
+    # deploy both releases share the cache, and each must read the other's entries
+    # and clear them on write. The tenant is still known here: flag-on the cache
+    # key is prefixed with the bound tenant, so the entry is that tenant's row, and
+    # flag-off every row carries the instance tenant. tenant_id leads the composite
+    # PK, so the rebuilt object needs it for merge/update to locate its row.
+    # endregion
+    return {**data, "tenant_id": scoped_tenant_id()}
+
+
+class TenantPartitioned:
+    """Mixin for the models whose table has RLS and is HASH partitioned by tenant_id.
+
+    See _add_tenant_predicate.
+    """
+
+    # with_loader_criteria reads this attribute when it analyzes the criteria.
+    # Each model declares its own tenant_id, which replaces this one.
+    tenant_id: Mapped[str] = mapped_column(TEXT)
+
+
 # Association table for many-to-many relationship between sessions and peers
 session_peers_table = Table(
     "session_peers",
     Base.metadata,
+    # ai: tenant_id leads the all-natural-key PK and is the HASH partition key.
+    Column(
+        "tenant_id",
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        primary_key=True,
+        nullable=False,
+        default=_default_tenant_id,
+    ),
     Column(
         "workspace_name",
         TEXT,
-        ForeignKey("workspaces.name"),
         primary_key=True,
         nullable=False,
     ),
@@ -80,34 +186,104 @@ session_peers_table = Table(
         DateTime(timezone=True),
         nullable=True,
     ),
+    # Composite foreign key constraint for workspaces
+    ForeignKeyConstraint(
+        ["workspace_name", "tenant_id"],
+        ["workspaces.name", "workspaces.tenant_id"],
+        name="fk_session_peers_ws_tenant_workspaces",
+    ),
     # Composite foreign key constraint for sessions
     ForeignKeyConstraint(
-        ["session_name", "workspace_name"],
-        ["sessions.name", "sessions.workspace_name"],
+        ["session_name", "workspace_name", "tenant_id"],
+        ["sessions.name", "sessions.workspace_name", "sessions.tenant_id"],
+        name="fk_session_peers_session_ws_tenant_sessions",
     ),
     # Composite foreign key constraint for peers
     ForeignKeyConstraint(
-        ["peer_name", "workspace_name"],
-        ["peers.name", "peers.workspace_name"],
+        ["peer_name", "workspace_name", "tenant_id"],
+        ["peers.name", "peers.workspace_name", "peers.tenant_id"],
+        name="fk_session_peers_peer_ws_tenant_peers",
     ),
-    # Lets the peer-sessions list start from the peer's rows instead of walking every session
+    # This index serves the sessions of one peer. tenant_id is first, so the scan
+    # stays in one tenant (revision b3c890d417d1).
     Index(
-        "ix_session_peers_workspace_peer",
+        "ix_session_peers_tenant_workspace_peer",
+        "tenant_id",
         "workspace_name",
         "peer_name",
         "session_name",
     ),
+    postgresql_partition_by="HASH (tenant_id)",
 )
 
 
 @final
-class Workspace(Base):
+class Tenant(Base):
+    """One row per tenant; the FK target for every tenant-scoped table's ``tenant_id``."""
+
+    # region ai
+    # Home for per-tenant facts with nowhere else to live:
+    #   - vector_correlation_id: the tenant's external vector-store namespace key,
+    #     preserved so the namespace stays stable if the tenant's app name changes
+    #     (existing vectors resolve without a full, paid re-embed).
+    #   - tier: which backend deployment class serves this tenant.
+    # endregion
+    __tablename__: str = "tenants"
+    tenant_id: Mapped[str] = mapped_column(TEXT, primary_key=True)
+    vector_correlation_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    tier: Mapped[str] = mapped_column(TEXT, nullable=False, server_default="dedicated")
+    # region ai
+    # The effect, not the reason: "do not claim this tenant's work". The control
+    # plane decides WHY (billing, a noisy-neighbour kill switch, a maintenance
+    # freeze)
+    # and mirrors the result here through the registry's PATCH; the deriver
+    # reads it in SQL wherever it takes work (crud.deriver.not_paused_clause).
+    # Never consulted to decide whether to pause — only whether to claim.
+    # endregion
+    derivation_paused: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        # ai: the claim's NOT EXISTS probe and the paused-tenant list read only the
+        # paused subset; the partial index keeps both small however large tenants grows.
+        Index(
+            "ix_tenants_derivation_paused",
+            "tenant_id",
+            postgresql_where=text("derivation_paused"),
+        ),
+        # ai: the key names the tenant's vector-store namespaces, so two tenants
+        # holding one would share them; NULL (not yet set) is exempt.
+        Index(
+            "uq_tenants_vector_correlation_id",
+            "vector_correlation_id",
+            unique=True,
+            postgresql_where=text("vector_correlation_id IS NOT NULL"),
+        ),
+    )
+
+
+@final
+class Workspace(Base, TenantPartitioned):
     __tablename__: str = "workspaces"
+    # region ai
+    # tenant_id is the HASH partition key and leads the composite PK, so it is
+    # declared first. It FKs to the local tenants mirror (see Tenant).
+    # endregion
+    tenant_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
+    )
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
+    name: Mapped[str] = mapped_column(TEXT)
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
-    name: Mapped[str] = mapped_column(TEXT, unique=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
@@ -134,19 +310,33 @@ class Workspace(Base):
     webhook_endpoints = relationship("WebhookEndpoint", back_populates="workspace")
 
     __table_args__ = (
+        # region ai
+        # Partitioned by HASH(tenant_id): Postgres requires the partition key in
+        # the PK and in every UNIQUE. `name` is unique WITHIN a tenant, not
+        # globally — many tenants share the SDK-default "default" workspace.
+        # endregion
+        PrimaryKeyConstraint("tenant_id", "id"),
+        UniqueConstraint("tenant_id", "name"),
         CheckConstraint("length(id) = 21", name="id_length"),
-        CheckConstraint("length(name) <= 512", name="name_length"),
+        CheckConstraint("length(name) <= 512", name=conv("ck_apps_name_length")),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
     )
 
 
 @final
-class Peer(Base):
+class Peer(Base, TenantPartitioned):
     __tablename__: str = "peers"
+    tenant_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
+    )
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, nullable=False)
     h_metadata: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
@@ -155,11 +345,13 @@ class Peer(Base):
         "internal_metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), index=True
+        DateTime(timezone=True), server_default=func.now()
     )
-    workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), nullable=False, index=True
-    )
+    # region ai
+    # workspace_name's FK to workspaces is now the composite (below), since
+    # workspaces.name is only unique within a tenant.
+    # endregion
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
     configuration: Mapped[dict[str, Any]] = mapped_column(
         JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
@@ -170,23 +362,44 @@ class Peer(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("name", "workspace_name"),
+        PrimaryKeyConstraint("tenant_id", "id"),
+        UniqueConstraint("tenant_id", "name", "workspace_name"),
+        ForeignKeyConstraint(
+            ["workspace_name", "tenant_id"],
+            ["workspaces.name", "workspaces.tenant_id"],
+            name="fk_peers_ws_tenant_workspaces",
+        ),
+        # This index serves the peer list of one workspace, in the order of the list.
+        Index(
+            "ix_peers_tenant_workspace_created",
+            "tenant_id",
+            "workspace_name",
+            "created_at",
+            "id",
+        ),
         CheckConstraint("length(id) = 21", name="id_length"),
-        CheckConstraint("length(name) <= 512", name="name_length"),
+        CheckConstraint("length(name) <= 512", name=conv("ck_users_name_length")),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
     )
 
     def __repr__(self) -> str:
-        return f"Peer(id={self.id}, name={self.name}, workspace_name={self.workspace_name}, created_at={self.created_at}, h_metadata={self.h_metadata}, configuration={self.configuration})"
+        return f"Peer(tenant_id={self.tenant_id}, id={self.id}, name={self.name}, workspace_name={self.workspace_name}, created_at={self.created_at}, h_metadata={self.h_metadata}, configuration={self.configuration})"
 
 
 @final
-class Session(Base):
+class Session(Base, TenantPartitioned):
     __tablename__: str = "sessions"
+    tenant_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
+    )
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    id: Mapped[str] = mapped_column(TEXT, primary_key=True, default=generate_nanoid)
     name: Mapped[str] = mapped_column(TEXT)
     is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
     h_metadata: Mapped[dict[str, Any]] = mapped_column(
@@ -196,11 +409,9 @@ class Session(Base):
         "internal_metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), index=True
+        DateTime(timezone=True), server_default=func.now()
     )
-    workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), nullable=False, index=True
-    )
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
     configuration: Mapped[dict[str, Any]] = mapped_column(
         JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
@@ -216,30 +427,45 @@ class Session(Base):
     messages = relationship("Message", back_populates="session")
 
     __table_args__ = (
-        UniqueConstraint("name", "workspace_name"),
+        PrimaryKeyConstraint("tenant_id", "id"),
+        UniqueConstraint("tenant_id", "name", "workspace_name"),
+        ForeignKeyConstraint(
+            ["workspace_name", "tenant_id"],
+            ["workspaces.name", "workspaces.tenant_id"],
+            name="fk_sessions_ws_tenant_workspaces",
+        ),
+        # This index serves the session list of one workspace, in the order of the list.
+        Index(
+            "ix_sessions_tenant_workspace_created",
+            "tenant_id",
+            "workspace_name",
+            "created_at",
+            "id",
+        ),
         CheckConstraint("length(name) <= 512", name="name_length"),
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
     )
 
     def __repr__(self) -> str:
-        return f"Session(id={self.id}, name={self.name}, workspace_name={self.workspace_name}, is_active={self.is_active}, created_at={self.created_at}, h_metadata={self.h_metadata})"
+        return f"Session(tenant_id={self.tenant_id}, id={self.id}, name={self.name}, workspace_name={self.workspace_name}, is_active={self.is_active}, created_at={self.created_at}, h_metadata={self.h_metadata})"
 
 
 @final
-class Message(Base):
+class Message(Base, TenantPartitioned):
     __tablename__: str = "messages"
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    id: Mapped[int] = mapped_column(
-        BigInteger, Identity(), primary_key=True, autoincrement=True
-    )
-    public_id: Mapped[str] = mapped_column(
+    tenant_id: Mapped[str] = mapped_column(
         TEXT,
-        unique=True,
-        default=generate_nanoid,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
     )
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), autoincrement=True)
+    public_id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
     # NOTE: Messages in Honcho 2.0 could historically be stored outside of a session.
     # We have since assigned all of these messages to a default session.
     session_name: Mapped[str] = mapped_column(TEXT, nullable=False)
@@ -257,82 +483,167 @@ class Message(Base):
         DateTime(timezone=True), server_default=func.now(), index=True
     )
     # Note: Foreign key relationships established via composite ForeignKeyConstraint below
-    peer_name: Mapped[str] = mapped_column(TEXT, index=True)
-    workspace_name: Mapped[str] = mapped_column(TEXT, index=True)
+    peer_name: Mapped[str] = mapped_column(TEXT)
+    workspace_name: Mapped[str] = mapped_column(TEXT)
 
     session = relationship("Session", back_populates="messages")
 
     __table_args__ = (
+        PrimaryKeyConstraint("tenant_id", "id"),
+        # ai: (tenant_id, public_id) is the unique that message_embeddings' FK targets.
+        UniqueConstraint("tenant_id", "public_id"),
         CheckConstraint("length(public_id) = 21", name="public_id_length"),
         CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
         CheckConstraint("length(content) <= 65535", name="content_length"),
         # Composite foreign key constraint for sessions
         ForeignKeyConstraint(
-            ["session_name", "workspace_name"],
-            ["sessions.name", "sessions.workspace_name"],
+            ["session_name", "workspace_name", "tenant_id"],
+            ["sessions.name", "sessions.workspace_name", "sessions.tenant_id"],
+            name="fk_messages_session_ws_tenant_sessions",
         ),
         # Composite foreign key constraint for peers
         ForeignKeyConstraint(
-            ["peer_name", "workspace_name"],
-            ["peers.name", "peers.workspace_name"],
+            ["peer_name", "workspace_name", "tenant_id"],
+            ["peers.name", "peers.workspace_name", "peers.tenant_id"],
+            name="fk_messages_peer_ws_tenant_peers",
         ),
+        # This index holds the messages of one session in id order, with created_at
+        # and token_count. Session context and the deriver batch get the token_count
+        # sum from the index only. It replaces ix_messages_session_lookup (revision
+        # a3f9c2e81d47).
         Index(
-            "ix_messages_session_lookup",
+            "ix_messages_session_tokens",
+            "tenant_id",
+            "workspace_name",
             "session_name",
             "id",
-            postgresql_include=["id", "created_at"],
+            postgresql_include=["created_at", "token_count"],
+        ),
+        Index(
+            "ix_messages_peer_lookup",
+            "tenant_id",
+            "workspace_name",
+            "peer_name",
+            "created_at",
         ),
         UniqueConstraint(
+            "tenant_id",
             "workspace_name",
             "session_name",
             "seq_in_session",
+            name="uq_messages_tenant_id_ws_session_seq",
         ),
-        # Full text search index on content column
         Index(
-            "ix_messages_content_gin",
+            "ix_messages_tenant_content_fts",
+            "tenant_id",
+            "workspace_name",
             text("to_tsvector('english', content)"),
             postgresql_using="gin",
         ),
         # Trigram index so content ILIKE '%q%' in message search can use an index.
-        # Declared unconditionally, but migration 3e7a1c9d5b20 skips it when
-        # pg_trgm is missing, so autogenerate against such a database will keep
-        # proposing it; drop that op from the generated revision.
         Index(
-            "ix_messages_content_trgm",
+            "ix_messages_tenant_content_trgm",
+            "tenant_id",
+            "workspace_name",
             "content",
             postgresql_using="gin",
             postgresql_ops={"content": "gin_trgm_ops"},
         ),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
     )
 
     @override
     def __repr__(self) -> str:
-        return f"Message(id={self.id}, session_name={self.session_name}, peer_name={self.peer_name}, content={self.content})"
+        return f"Message(tenant_id={self.tenant_id}, id={self.id}, session_name={self.session_name}, peer_name={self.peer_name}, content={self.content})"
+
+
+MESSAGE_TEXT_MATCHES = "message_text_matches_page"
+MESSAGE_TEXT_MATCHES_ARGS = (
+    "(text, text, text, text, boolean, double precision,"
+    + " timestamp with time zone, bigint, integer)"
+)
+
+
+def message_text_matches_ddl(schema: str) -> tuple[str, ...]:
+    """Creates a paginated ILIKE equivalent function `message_text_matches`
+    using the SECURITY DEFINER feature.
+
+    The row-level security we use for multi-tenant features defers using ILIKE/@@
+    with index until after the security checks because it might expose secrets
+    in its error messages (unless defined in a LEAKPROOF postgres function). But
+    that makes it much slower.
+
+    `message_text_matches` is a specific function that runs as an escalated
+    user to bypass the RLS checks to use ILIKE specifically in certain cases.
+    If we don't use this, postgres will convert ILIKE into simpler row scan
+    instead of pre-filtering with an index.
+    """
+    name = f'"{schema}".{MESSAGE_TEXT_MATCHES}'
+    create = f"""
+CREATE OR REPLACE FUNCTION {name}(
+    p_tenant text, p_workspace text, p_query text, p_pattern text, p_use_fts boolean,
+    p_after_rank double precision, p_after_created_at timestamp with time zone,
+    p_after_id bigint,
+    p_limit integer
+) RETURNS TABLE (id bigint, created_at timestamp with time zone, rank double precision)
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+    match text := 'm.content ILIKE $2 ESCAPE ' || quote_literal('\\');
+    rank_expr text := '0::double precision';
+    after text := '';
+BEGIN
+    IF p_tenant IS NULL OR p_tenant IS DISTINCT FROM current_setting('app.tenant', true)
+    THEN
+        RETURN;
+    END IF;
+    IF p_use_fts THEN
+        match := 'to_tsvector(''english'', m.content)'
+            || ' @@ plainto_tsquery(''english'', $3) OR ' || match;
+        rank_expr := 'coalesce(ts_rank(to_tsvector(''english'', m.content),'
+            || ' plainto_tsquery(''english'', $3)), 0)::double precision';
+    END IF;
+    IF p_after_id IS NOT NULL THEN
+        after := ' AND (' || rank_expr || ', m.created_at, m.id) < ($4, $5, $6)';
+    END IF;
+    RETURN QUERY EXECUTE 'SELECT m.id, m.created_at, ' || rank_expr
+        || ' FROM "{schema}".messages AS m'
+        || ' WHERE m.tenant_id = ' || quote_literal(p_tenant)
+        || ' AND m.workspace_name = $1 AND (' || match || ')' || after
+        || ' ORDER BY 3 DESC, m.created_at DESC, m.id DESC LIMIT $7'
+        USING p_workspace, p_pattern, p_query, p_after_rank, p_after_created_at,
+            p_after_id, p_limit;
+END
+$$
+"""  # nosec B608
+    revoke = f"REVOKE ALL ON FUNCTION {name}{MESSAGE_TEXT_MATCHES_ARGS} FROM PUBLIC"
+    return (create, revoke)
 
 
 @final
-class MessageEmbedding(Base):
+class MessageEmbedding(Base, TenantPartitioned):
     __tablename__: str = "message_embeddings"
 
-    id: Mapped[int] = mapped_column(
-        BigInteger, Identity(), primary_key=True, autoincrement=True
+    tenant_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
     )
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), autoincrement=True)
     content: Mapped[str] = mapped_column(TEXT)
     embedding: MappedColumn[Any] = mapped_column(Vector(_VECTOR_DIM), nullable=True)
-    message_id: Mapped[str] = mapped_column(
-        ForeignKey("messages.public_id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), nullable=False, index=True
-    )
-    session_name: Mapped[str] = mapped_column(TEXT, nullable=False, index=True)
-    peer_name: Mapped[str] = mapped_column(TEXT, nullable=False, index=True)
+    message_id: Mapped[str] = mapped_column(TEXT, nullable=False)
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    session_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    peer_name: Mapped[str] = mapped_column(TEXT, nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), index=True
+        DateTime(timezone=True), server_default=func.now()
     )
     # Vector sync state tracking
     sync_state: Mapped[VectorSyncState] = mapped_column(
-        TEXT, nullable=False, server_default="pending", index=True
+        TEXT, nullable=False, server_default="pending"
     )
     last_sync_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -342,16 +653,48 @@ class MessageEmbedding(Base):
     )
 
     __table_args__ = (
-        # Compound foreign key constraints
+        PrimaryKeyConstraint("tenant_id", "id"),
+        # region ai
+        # message_id → messages.public_id is now composite: messages' unique is
+        # (tenant_id, public_id) under partitioning.
+        # endregion
         ForeignKeyConstraint(
-            ["session_name", "workspace_name"],
-            ["sessions.name", "sessions.workspace_name"],
+            ["tenant_id", "message_id"],
+            ["messages.tenant_id", "messages.public_id"],
+            ondelete="CASCADE",
+            name="fk_msg_emb_tenant_message_messages",
+        ),
+        # region ai
+        # Composite FK to workspaces, for parity with the other tenant-scoped
+        # tables (workspace_name is only unique within a tenant).
+        # endregion
+        ForeignKeyConstraint(
+            ["workspace_name", "tenant_id"],
+            ["workspaces.name", "workspaces.tenant_id"],
+            name="fk_msg_emb_ws_tenant_workspaces",
         ),
         ForeignKeyConstraint(
-            ["peer_name", "workspace_name"],
-            ["peers.name", "peers.workspace_name"],
+            ["session_name", "workspace_name", "tenant_id"],
+            ["sessions.name", "sessions.workspace_name", "sessions.tenant_id"],
+            name="fk_msg_emb_session_ws_tenant_sessions",
         ),
-        # HNSW index on embedding column for efficient similarity search
+        ForeignKeyConstraint(
+            ["peer_name", "workspace_name", "tenant_id"],
+            ["peers.name", "peers.workspace_name", "peers.tenant_id"],
+            name="fk_msg_emb_peer_ws_tenant_peers",
+        ),
+        # region ai
+        # message_id-leading: the reconciler's lookups on message_id are
+        # cross-tenant (it sweeps every tenant and filters by message_id with no
+        # tenant_id in scope), so a tenant_id prefix would force a scan of all
+        # partitions. embed_now is NOT one of those callers — it is per-request
+        # and tenant-bound — but the reconciler alone settles the column order.
+        # endregion
+        Index("ix_message_embeddings_message_tenant", "message_id", "tenant_id"),
+        # region ai
+        # HNSW is a single-column vector index (can't lead with tenant_id); it
+        # becomes per-partition automatically under HASH(tenant_id).
+        # endregion
         Index(
             "ix_message_embeddings_embedding_hnsw",
             "embedding",
@@ -359,22 +702,41 @@ class MessageEmbedding(Base):
             postgresql_with={"m": 16, "ef_construction": 64},
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
-        # Composite index for efficient reconciliation queries
+        # This index holds only the pending rows, for the cross-tenant reads of the
+        # reconciler. Thus it has no tenant_id prefix. Every sync_state predicate is
+        # 'pending', so a full index only adds an entry for each sync (see revision
+        # a3f9c2e81d47).
         Index(
-            "ix_message_embeddings_sync_state_last_sync_at",
-            "sync_state",
-            "last_sync_at",
+            "ix_message_embeddings_pending_claim",
+            text("last_sync_at NULLS FIRST"),
+            postgresql_where=text("sync_state = 'pending'"),
         ),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
     )
 
 
+DREAM_DOCUMENTS_SINCE_SQL = (
+    "explicit_count - COALESCE("
+    + "((internal_metadata -> 'dream') ->> 'last_dream_document_count')::integer, 0)"
+)
+DREAM_BACKLOG_SQL = (
+    "COALESCE(((internal_metadata -> 'dream') ->> 'work_list_backlog')::integer, 0)"
+)
+
+
 @final
-class Collection(Base):
+class Collection(Base, TenantPartitioned):
     __tablename__: str = "collections"
 
-    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
-    observer: Mapped[str] = mapped_column(TEXT, index=True)
-    observed: Mapped[str] = mapped_column(TEXT, index=True)
+    tenant_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
+    )
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
+    observer: Mapped[str] = mapped_column(TEXT)
+    observed: Mapped[str] = mapped_column(TEXT)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
@@ -387,8 +749,12 @@ class Collection(Base):
     documents = relationship(
         "Document", back_populates="collection", cascade="all, delete, delete-orphan"
     )
-    workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), nullable=False, index=True
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    explicit_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    newest_explicit_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     # Generation counter for the deletion lifecycle barrier
     deletion_generation: Mapped[int] = mapped_column(
@@ -396,23 +762,44 @@ class Collection(Base):
     )
 
     __table_args__ = (
+        PrimaryKeyConstraint("tenant_id", "id"),
         UniqueConstraint(
+            "tenant_id",
             "observer",
             "observed",
             "workspace_name",
+            name="uq_collections_tenant_id_observer_observed_ws",
+        ),
+        Index(
+            "ix_collections_dream_due",
+            text(f"({DREAM_DOCUMENTS_SINCE_SQL})"),
+            "newest_explicit_at",
+        ),
+        Index(
+            "ix_collections_dream_backlog",
+            "newest_explicit_at",
+            postgresql_where=text(f"{DREAM_BACKLOG_SQL} > 0"),
         ),
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
+        ForeignKeyConstraint(
+            ["workspace_name", "tenant_id"],
+            ["workspaces.name", "workspaces.tenant_id"],
+            name="fk_collections_ws_tenant_workspaces",
+        ),
         # Composite foreign key constraint for observer peer
         ForeignKeyConstraint(
-            ["observer", "workspace_name"],
-            ["peers.name", "peers.workspace_name"],
+            ["observer", "workspace_name", "tenant_id"],
+            ["peers.name", "peers.workspace_name", "peers.tenant_id"],
+            name="fk_collections_observer_ws_tenant_peers",
         ),
         # Composite foreign key constraint for observed peer
         ForeignKeyConstraint(
-            ["observed", "workspace_name"],
-            ["peers.name", "peers.workspace_name"],
+            ["observed", "workspace_name", "tenant_id"],
+            ["peers.name", "peers.workspace_name", "peers.tenant_id"],
+            name="fk_collections_observed_ws_tenant_peers",
         ),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
     )
 
 
@@ -421,9 +808,15 @@ SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{21}$")
 
 
 @final
-class Document(Base):
+class Document(Base, TenantPartitioned):
     __tablename__: str = "documents"
-    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
+    )
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
         "internal_metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
@@ -436,22 +829,21 @@ class Document(Base):
     )
     embedding: MappedColumn[Any] = mapped_column(Vector(_VECTOR_DIM), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), index=True
+        DateTime(timezone=True), server_default=func.now()
     )
 
-    observer: Mapped[str] = mapped_column(TEXT, index=True)
-    observed: Mapped[str] = mapped_column(TEXT, index=True)
-    workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), nullable=False, index=True
-    )
-    session_name: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
+    observer: Mapped[str] = mapped_column(TEXT)
+    observed: Mapped[str] = mapped_column(TEXT)
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    session_name: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    # ix_documents_deleted_at in __table_args__ indexes this column. It is partial.
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, index=True, default=None
+        DateTime(timezone=True), nullable=True, default=None
     )
 
     # Vector sync state tracking
     sync_state: Mapped[VectorSyncState] = mapped_column(
-        TEXT, nullable=False, server_default="pending", index=True
+        TEXT, nullable=False, server_default="pending"
     )
     last_sync_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -540,34 +932,96 @@ class Document(Base):
         ]
 
     __table_args__ = (
+        PrimaryKeyConstraint("tenant_id", "id"),
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("length(content) <= 65535", name="content_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
+        # Composite foreign key constraint for workspaces
+        ForeignKeyConstraint(
+            ["workspace_name", "tenant_id"],
+            ["workspaces.name", "workspaces.tenant_id"],
+            name="fk_documents_ws_tenant_workspaces",
+        ),
         # Composite foreign key constraint for collections
         ForeignKeyConstraint(
-            ["observer", "observed", "workspace_name"],
+            ["observer", "observed", "workspace_name", "tenant_id"],
             [
                 "collections.observer",
                 "collections.observed",
                 "collections.workspace_name",
+                "collections.tenant_id",
             ],
+            name="fk_documents_collection_tenant_collections",
         ),
         # Composite foreign key constraint for observer peer
         ForeignKeyConstraint(
-            ["observer", "workspace_name"],
-            ["peers.name", "peers.workspace_name"],
+            ["observer", "workspace_name", "tenant_id"],
+            ["peers.name", "peers.workspace_name", "peers.tenant_id"],
+            name="fk_documents_observer_ws_tenant_peers",
         ),
         # Composite foreign key constraint for observed peer
         ForeignKeyConstraint(
-            ["observed", "workspace_name"],
-            ["peers.name", "peers.workspace_name"],
+            ["observed", "workspace_name", "tenant_id"],
+            ["peers.name", "peers.workspace_name", "peers.tenant_id"],
+            name="fk_documents_observed_ws_tenant_peers",
         ),
         # Composite foreign key constraint for sessions
         ForeignKeyConstraint(
-            ["session_name", "workspace_name"],
-            ["sessions.name", "sessions.workspace_name"],
+            ["session_name", "workspace_name", "tenant_id"],
+            ["sessions.name", "sessions.workspace_name", "sessions.tenant_id"],
+            name="fk_documents_session_ws_tenant_sessions",
         ),
-        # HNSW index on embedding column
+        # This index serves the reads of one collection in created_at order: the
+        # collection list, the recent documents and the dreams. It replaces
+        # ix_documents_tenant_collection. It keeps that column order for the
+        # lookups that use it.
+        Index(
+            "ix_documents_tenant_collection_created",
+            "tenant_id",
+            "observer",
+            "observed",
+            "workspace_name",
+            "created_at",
+        ),
+        # This index serves the reads of the documents of one session: session
+        # delete and scope backfill.
+        Index(
+            "ix_documents_tenant_session",
+            "tenant_id",
+            "workspace_name",
+            "session_name",
+        ),
+        # This index holds only the soft-deleted documents, for the cleanup. Most
+        # rows are not deleted. Thus a full index holds mostly NULL values.
+        Index(
+            "ix_documents_deleted_at",
+            "deleted_at",
+            postgresql_where=text("deleted_at IS NOT NULL"),
+        ),
+        # conclusions/list: a workspace's live documents by recency, and their count.
+        # ai: rationale in migration 647b773f05ac
+        Index(
+            "ix_documents_workspace_recent",
+            "tenant_id",
+            "workspace_name",
+            "created_at",
+            "id",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # A collection's most-derived live documents: peer context and representation.
+        # ai: rationale in migration 647b773f05ac
+        Index(
+            "ix_documents_collection_derived",
+            "tenant_id",
+            "workspace_name",
+            "observer",
+            "observed",
+            text("times_derived DESC"),
+            text("created_at DESC"),
+            "id",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # ai: HNSW is a single-column vector index (per-partition under HASH(tenant_id))
         Index(
             "ix_documents_embedding_hnsw",
             "embedding",
@@ -577,11 +1031,14 @@ class Document(Base):
                 "embedding": "vector_cosine_ops"
             },  # Cosine distance operator
         ),
-        # Composite index for efficient reconciliation queries
+        # This index holds only the pending rows, in the order of the reconciler
+        # claim (last_sync_at NULLS FIRST). Thus the LIMIT of the claim stops early.
+        # The claim is cross-tenant, so the index has no tenant_id prefix (see
+        # revision a3f9c2e81d47).
         Index(
-            "ix_documents_sync_state_last_sync_at",
-            "sync_state",
-            "last_sync_at",
+            "ix_documents_pending_claim",
+            text("last_sync_at NULLS FIRST"),
+            postgresql_where=text("sync_state = 'pending'"),
         ),
         # Serves reverse traversal on undrained legacy rows; dropped with the
         # column in the follow-up migration.
@@ -590,70 +1047,120 @@ class Document(Base):
             "source_ids",
             postgresql_using="gin",
         ),
-        # Rows the reconciler still has to drain; empty once the drain
-        # finishes. Dropped with the column in the follow-up migration.
+        # This index holds the rows that the reconciler must still drain, in the
+        # (tenant_id, id) order of the backfill. It is empty when the drain is
+        # complete. The follow-up migration drops it with the column.
         Index(
-            "ix_documents_legacy_sources_pending",
+            "ix_documents_legacy_sources_tenant",
+            "tenant_id",
             "id",
             postgresql_where=text(
                 "source_ids IS NOT NULL OR internal_metadata ?| ARRAY['source_ids', 'premise_ids']"  # noqa: E501
             ),
         ),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
     )
 
 
 @final
-class DocumentSource(Base):
+class DocumentSource(Base, TenantPartitioned):
     """One reasoning-tree edge: derived_id was concluded from source_id."""
 
     __tablename__: str = "document_sources"
 
-    derived_id: Mapped[str] = mapped_column(
-        ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
+    tenant_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
     )
+    derived_id: Mapped[str] = mapped_column(TEXT, nullable=False)
     # Deliberately not an FK: the dreamer can emit IDs that never resolve,
     # and sources may be deleted independently of their children.
-    source_id: Mapped[str] = mapped_column(TEXT, primary_key=True)
+    source_id: Mapped[str] = mapped_column(TEXT, nullable=False)
     position: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
-    workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), nullable=False
-    )
+    # Note: Foreign key relationships established via composite ForeignKeyConstraint below
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
 
     __table_args__ = (
+        # ai: tenant_id leads the all-natural-key PK and is the HASH partition key.
+        PrimaryKeyConstraint("tenant_id", "derived_id", "source_id"),
+        # Composite foreign key constraint for the derived document. A partitioned
+        # parent cannot be referenced by `id` alone: every unique key on it must
+        # include the partition key.
+        ForeignKeyConstraint(
+            ["derived_id", "tenant_id"],
+            ["documents.id", "documents.tenant_id"],
+            ondelete="CASCADE",
+            name="fk_document_sources_derived_tenant_documents",
+        ),
+        # Composite foreign key constraint for workspaces
+        ForeignKeyConstraint(
+            ["workspace_name", "tenant_id"],
+            ["workspaces.name", "workspaces.tenant_id"],
+            name="fk_document_sources_ws_tenant_workspaces",
+        ),
         # Reverse traversal ("who derived from me?") — replaces the old GIN index
         Index("ix_document_sources_source_id", "source_id", "workspace_name"),
         CheckConstraint("length(source_id) = 21", name="source_id_length"),
         CheckConstraint("source_id ~ '^[A-Za-z0-9_-]+$'", name="source_id_format"),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
     )
 
 
 @final
-class ConclusionSourceMessage(Base):
+class ConclusionSourceMessage(Base, TenantPartitioned):
     """One evidence edge: conclusion_id cites message_id as evidence."""
 
     __tablename__: str = "conclusion_source_messages"
 
-    conclusion_id: Mapped[str] = mapped_column(
-        ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
+    tenant_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
     )
-    message_id: Mapped[str] = mapped_column(
-        ForeignKey("messages.public_id", ondelete="CASCADE"), primary_key=True
-    )
+    conclusion_id: Mapped[str] = mapped_column(TEXT, nullable=False)
+    message_id: Mapped[str] = mapped_column(TEXT, nullable=False)
     position: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
-    workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), nullable=False
-    )
+    # Note: Foreign key relationships established via composite ForeignKeyConstraint below
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
 
     __table_args__ = (
+        # ai: tenant_id leads the all-natural-key PK and is the HASH partition key.
+        PrimaryKeyConstraint("tenant_id", "conclusion_id", "message_id"),
+        # Composite foreign key constraint for the citing document. A partitioned
+        # parent cannot be referenced by `id` alone: every unique key on it must
+        # include the partition key.
+        ForeignKeyConstraint(
+            ["conclusion_id", "tenant_id"],
+            ["documents.id", "documents.tenant_id"],
+            ondelete="CASCADE",
+            name="fk_conclusion_source_messages_conclusion_tenant_documents",
+        ),
+        # Composite foreign key constraint for the cited message
+        ForeignKeyConstraint(
+            ["message_id", "tenant_id"],
+            ["messages.public_id", "messages.tenant_id"],
+            ondelete="CASCADE",
+            name="fk_conclusion_source_messages_message_tenant_messages",
+        ),
+        # Composite foreign key constraint for workspaces
+        ForeignKeyConstraint(
+            ["workspace_name", "tenant_id"],
+            ["workspaces.name", "workspaces.tenant_id"],
+            name="fk_conclusion_source_messages_ws_tenant_workspaces",
+        ),
         Index(
             "ix_conclusion_source_messages_message_id", "message_id", "workspace_name"
         ),
         CheckConstraint("length(message_id) = 21", name="message_id_length"),
         CheckConstraint("message_id ~ '^[A-Za-z0-9_-]+$'", name="message_id_format"),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
     )
 
 
@@ -663,9 +1170,15 @@ class QueueItem(Base):
     id: Mapped[int] = mapped_column(
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
-    session_id: Mapped[str | None] = mapped_column(
-        ForeignKey("sessions.id"), nullable=True, index=True
-    )
+    # region ai
+    # Service table (unpartitioned), so it keeps a sole-id PK. tenant_id is a plain
+    # attribution / fair-scheduling column — no FK, no RLS — and the queue carries no
+    # FKs to sessions / messages / workspaces: the app manages queue lifecycle and
+    # already tolerates missing referents.
+    # endregion
+    # ix_queue_tenant_workspace in __table_args__ indexes this column.
+    tenant_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    session_id: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
     work_unit_key: Mapped[str] = mapped_column(TEXT, nullable=False)
 
     task_type: Mapped[TaskType] = mapped_column(TEXT, nullable=False)
@@ -677,19 +1190,29 @@ class QueueItem(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
-    workspace_name: Mapped[str | None] = mapped_column(
-        ForeignKey("workspaces.name"), nullable=True, index=True
-    )
-    message_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("messages.id"), nullable=True
-    )
+    workspace_name: Mapped[str | None] = mapped_column(TEXT, nullable=True, index=True)
+    message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     __table_args__ = (
+        # Mirrors the queue_workspace_reconciler_check migration: NULL
+        # workspace_name means the tenant-less reconciler lane and nothing else.
+        # Named bare because the `ck` naming convention prepends `ck_%(table_name)s_`;
+        # spelling the prefix here too renders ck_queue_ck_queue_... and silently
+        # diverges the model's metadata from the constraint the migration creates.
+        CheckConstraint(
+            "(workspace_name IS NULL) = (task_type = 'reconciler')",
+            name="workspace_null_iff_reconciler",
+        ),
         Index(
             "ix_queue_message_id_not_null",
             "message_id",
             postgresql_where=text("message_id IS NOT NULL"),
         ),
+        # This index serves the queue rows of one tenant, or of one workspace of a
+        # tenant: queue status and workspace delete. It replaces the single-column
+        # tenant_id index. ix_queue_workspace_name stays, because those reads have
+        # no tenant_id predicate when MULTI_TENANT is off.
+        Index("ix_queue_tenant_workspace", "tenant_id", "workspace_name"),
         Index(
             "ix_queue_work_unit_key_processed_id",
             "work_unit_key",
@@ -735,7 +1258,7 @@ class QueueItem(Base):
     )
 
     def __repr__(self) -> str:
-        return f"QueueItem(id={self.id}, session_id={self.session_id}, work_unit_key={self.work_unit_key}, task_type={self.task_type}, payload={self.payload}, processed={self.processed}, workspace_name={self.workspace_name}, message_id={self.message_id})"
+        return f"QueueItem(id={self.id}, tenant_id={self.tenant_id}, session_id={self.session_id}, work_unit_key={self.work_unit_key}, task_type={self.task_type}, payload={self.payload}, processed={self.processed}, workspace_name={self.workspace_name}, message_id={self.message_id})"
 
 
 @final
@@ -743,6 +1266,9 @@ class ActiveQueueSession(Base):
     __tablename__: str = "active_queue_sessions"
 
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
+
+    # ai: Service table (unpartitioned): tenant_id is plain attribution, no FK / RLS.
+    tenant_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
 
     work_unit_key: Mapped[str] = mapped_column(TEXT, unique=True)
 
@@ -752,12 +1278,95 @@ class ActiveQueueSession(Base):
 
 
 @final
-class WebhookEndpoint(Base):
-    __tablename__: str = "webhook_endpoints"
-    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
-    workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), nullable=False, index=True
+class QueueItemBatch(Base):
+    """One pending work unit's queue items, aggregated for the deriver claim.
+
+    This table is updated via **database triggers,** not python. Alembic
+    revision ``b7d2f4a81c39`` installs the triggers and their helper functions:
+
+    - ``trg_queue_item_batches_insert``
+    - ``trg_queue_item_batches_update``
+    - ``trg_queue_item_batches_delete``
+    - ``_queue_item_batches_recompute(key)``
+    - ``_queue_item_batches_drain(key, drained_tokens)``
+    - ``_queue_item_token_count(tenant_id, message_id, task_type)``
+
+    The ``validate_queue_item_batches`` boot validator will crash the app
+    at launch if the table or any of the three triggers is missing or disabled.
+    """
+
+    __tablename__: str = "queue_item_batches"
+
+    # region ai
+    # The claim path reads THIS table instead of re-aggregating the queue: the
+    # queue's two GROUP BYs plus messages join are ~O(depth²) per poll on a
+    # shared queue, while this stays one indexed row per pending work unit. Rows
+    # are written ONLY by the triggers installed in the queue_item_batches
+    # migration (insert = fast increment; completion = subtract the completed
+    # rows' tokens and recount what is left; delete = exact recompute over the
+    # unit's remaining unprocessed rows; a unit with nothing pending
+    # has NO row — existence, not pending_count, is what the delete guard keys
+    # on, so a live unit never loses its row to a racing recompute). Application
+    # code must never write it. pending_count is bookkeeping, not a claim
+    # input; the claim gate reads task_type/total_tokens/oldest_created_at and
+    # claims by row existence.
+    # endregion
+    # region ai
+    # work_unit_key alone is the primary key, not (tenant_id, work_unit_key):
+    # under MULTI_TENANT, construct_work_unit_key (src/utils/work_unit.py)
+    # prefixes every tenant-scoped key with its tenant_id, so the key is
+    # already tenant-scoped by construction and a composite key would be
+    # redundant. tenant_id below is a derived attribution column, not part of
+    # identity — it stays nullable because it is NULL both for the
+    # tenant-less reconciler lane (task_type "reconciler", which scans across
+    # tenants and never gets a tenant prefix) and for every row when
+    # MULTI_TENANT is off (src/deriver/enqueue.py's _stamp_tenant_id, which
+    # derives this column from the key prefix at every insert site).
+    # endregion
+    work_unit_key: Mapped[str] = mapped_column(TEXT, primary_key=True)
+    # ai: Service table: tenant_id is plain attribution, no FK / RLS.
+    tenant_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    task_type: Mapped[TaskType] = mapped_column(TEXT, nullable=False)
+    pending_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
     )
+    oldest_created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        # Feeds the fair claim's PARTITION BY tenant_id ORDER BY
+        # (oldest_created_at, work_unit_key) window with pre-sorted input.
+        Index(
+            "ix_queue_item_batches_tenant_oldest_key",
+            "tenant_id",
+            "oldest_created_at",
+            "work_unit_key",
+        ),
+        # Serves the plain oldest-first candidate scan and the metrics min().
+        Index(
+            "ix_queue_item_batches_oldest_created_at_key",
+            "oldest_created_at",
+            "work_unit_key",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"QueueItemBatch(work_unit_key={self.work_unit_key}, tenant_id={self.tenant_id}, task_type={self.task_type}, pending_count={self.pending_count}, total_tokens={self.total_tokens}, oldest_created_at={self.oldest_created_at})"
+
+
+@final
+class WebhookEndpoint(Base, TenantPartitioned):
+    __tablename__: str = "webhook_endpoints"
+    tenant_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
+    )
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
     url: Mapped[str] = mapped_column(TEXT, nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -765,17 +1374,31 @@ class WebhookEndpoint(Base):
 
     workspace = relationship("Workspace", back_populates="webhook_endpoints")
 
-    __table_args__ = (CheckConstraint("length(url) <= 2048", name="url_length"),)
+    __table_args__ = (
+        PrimaryKeyConstraint("tenant_id", "id"),
+        ForeignKeyConstraint(
+            ["workspace_name", "tenant_id"],
+            ["workspaces.name", "workspaces.tenant_id"],
+            name="fk_webhook_ws_tenant_workspaces",
+        ),
+        Index("ix_webhook_endpoints_tenant_workspace", "tenant_id", "workspace_name"),
+        CheckConstraint(
+            "length(url) <= 2048",
+            name=conv("ck_webhook_endpoints_webhook_endpoint_url_length"),
+        ),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
+    )
 
     def __repr__(self) -> str:
-        return f"WebhookEndpoint(id={self.id}, workspace_name={self.workspace_name}, url={self.url})"
+        return f"WebhookEndpoint(tenant_id={self.tenant_id}, id={self.id}, workspace_name={self.workspace_name}, url={self.url})"
 
 
 @final
-class SessionPeer(Base):
+class SessionPeer(Base, TenantPartitioned):
     __table__: Table = session_peers_table
 
     # Type annotations for the columns
+    tenant_id: Mapped[str]
     workspace_name: Mapped[str]
     session_name: Mapped[str]
     peer_name: Mapped[str]
@@ -783,3 +1406,47 @@ class SessionPeer(Base):
     internal_metadata: Mapped[dict[str, Any]]
     joined_at: Mapped[datetime.datetime]
     left_at: Mapped[datetime.datetime | None]
+
+
+@event.listens_for(OrmSession, "do_orm_execute")
+def _add_tenant_predicate(state: ORMExecuteState) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Add tenant_id = <bound tenant> for each TenantPartitioned model of a statement.
+
+    The RLS predicate compares tenant_id to current_setting(), which is not a
+    constant. Postgres prunes partitions with it only at executor startup, thus
+    the planner opens and locks each partition and each partition index. With a
+    bound value, the planner prunes at plan time. The value is the tenant that
+    the checkout hook in src/db.py sets in app.tenant, thus the rows that a
+    statement sees do not change.
+
+    The option applies to a model in the column list, in select_from or in a
+    join. It does not apply to a model that is only in a WHERE clause, as in
+    select(literal(1)).where(...) or exists().where(...). Core statements on
+    Table objects and text() statements also do not get it.
+    """
+    if not settings.MULTI_TENANT or state.session.info.get(CROSS_TENANT):
+        return
+    # A relationship load selects by a foreign key, and a column load (a
+    # refresh) by the primary key. Each of these keys includes tenant_id.
+    if state.is_column_load or state.is_relationship_load:
+        return
+    if not (state.is_select or state.is_update or state.is_delete):
+        return
+    tenant = tenant_context.get()
+    if not tenant:
+        return
+
+    def criteria(cls: Any) -> ColumnElement[bool]:
+        return cls.tenant_id == tenant
+
+    # propagate_to_loaders=False: the loaded objects do not keep the option.
+    # Pickle does not serialize the local criteria function, and a later lazy
+    # load would use the tenant of the first load.
+    state.statement = state.statement.options(
+        with_loader_criteria(
+            TenantPartitioned,
+            criteria,
+            include_aliases=True,
+            propagate_to_loaders=False,
+        )
+    )

@@ -16,7 +16,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
-from src.dependencies import tracked_db
+from src.dependencies import service_db
 from src.reconciler.backfill_document_sources import (
     BACKFILL_BATCH_SIZE,
     count_pending_document_sources,
@@ -111,13 +111,17 @@ async def run_backfill_cycle(backfill: Backfill) -> BackfillCycleResult:
     """Run batches until the backfill drains or its time budget is spent.
 
     Each batch commits in its own short-lived session.
+
+    Backfills drain every tenant's rows, so they run on the RLS-bypass service
+    session like the other reconciler tasks; tracked_db would fail closed here
+    with no tenant in scope under MULTI_TENANT.
     """
     start = time.monotonic()
     deadline = start + backfill.time_budget_seconds
     rows_touched = 0
     batches = 0
     while time.monotonic() < deadline:
-        async with tracked_db(f"backfill_{backfill.name}") as db:
+        async with service_db(f"backfill_{backfill.name}") as db:
             count = await backfill.run_batch(db, backfill.batch_size)
             await db.commit()
         batches += 1
@@ -127,7 +131,7 @@ async def run_backfill_cycle(backfill: Backfill) -> BackfillCycleResult:
         if backfill.pause_seconds > 0:
             await asyncio.sleep(backfill.pause_seconds)
 
-    async with tracked_db(f"backfill_{backfill.name}_check", read_only=True) as db:
+    async with service_db(f"backfill_{backfill.name}_check", read_only=True) as db:
         still_pending = await backfill.has_pending(db)
 
     if rows_touched:
@@ -146,7 +150,7 @@ async def record_backfill_pending() -> None:
         return
     for backfill in BACKFILLS.values():
         try:
-            async with tracked_db("backfill_pending_count", read_only=True) as db:
+            async with service_db("backfill_pending_count", read_only=True) as db:
                 count = await backfill.count_pending(db)
             prometheus_metrics.set_backfill_pending(task=backfill.name, count=count)
         except Exception:
