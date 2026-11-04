@@ -417,18 +417,9 @@ async def erase_conclusion_history(
         models.DreamRunChange.kind == "removed",
         models.DreamRunChange.conclusion_id == conclusion_id,
     )
-    # The copies' runs first, in id order: workspace deletion and the prune lock
-    # runs before the changes that cascade from them.
-    await db.execute(
-        select(models.DreamRun.id)
-        .where(
-            models.DreamRun.tenant_id == tenant_id,
-            models.DreamRun.id.in_(select(models.DreamRunChange.run_id).where(*copies)),
-        )
-        .order_by(models.DreamRun.id)
-        .with_for_update()
-    )
-    # Then the copies in id order, as session deletion and the prune take them.
+    # Changes are locked in id order on every path that deletes them (session and
+    # workspace deletion, the prune). No run lock: a running dream updates its
+    # run while it holds locks on the conclusions and session it is writing.
     result = cast(
         CursorResult[Any],
         await db.execute(
@@ -447,23 +438,40 @@ async def erase_conclusion_history(
 
 
 async def delete_workspace_history(db: AsyncSession, workspace_name: str) -> None:
-    """Delete every run in a workspace; their changes cascade. The caller commits.
+    """Delete every run in a workspace and its changes. The caller commits.
 
-    Runs are locked in id order, the same order the retention prune takes them.
+    Runs are locked in id order, then their changes are deleted in id order,
+    the order the prune takes them. Changes are not left to the cascade, whose
+    order follows the runs and would not match session deletion's id order.
     """
     tenant_id = models.scoped_tenant_id()
     await db.execute(
-        delete(models.DreamRun).where(
+        select(models.DreamRun.id)
+        .where(
             models.DreamRun.tenant_id == tenant_id,
-            models.DreamRun.id.in_(
-                select(models.DreamRun.id)
+            models.DreamRun.workspace_name == workspace_name,
+        )
+        .order_by(models.DreamRun.id)
+        .with_for_update()
+    )
+    await db.execute(
+        delete(models.DreamRunChange).where(
+            models.DreamRunChange.tenant_id == tenant_id,
+            models.DreamRunChange.id.in_(
+                select(models.DreamRunChange.id)
                 .where(
-                    models.DreamRun.tenant_id == tenant_id,
-                    models.DreamRun.workspace_name == workspace_name,
+                    models.DreamRunChange.tenant_id == tenant_id,
+                    models.DreamRunChange.workspace_name == workspace_name,
                 )
-                .order_by(models.DreamRun.id)
+                .order_by(models.DreamRunChange.id)
                 .with_for_update()
             ),
+        )
+    )
+    await db.execute(
+        delete(models.DreamRun).where(
+            models.DreamRun.tenant_id == tenant_id,
+            models.DreamRun.workspace_name == workspace_name,
         )
     )
 
