@@ -1167,10 +1167,12 @@ async def get_session_peer_configuration(
         .join(
             models.SessionPeer,
             and_(
+                models.Peer.tenant_id == models.SessionPeer.tenant_id,
                 models.Peer.name == models.SessionPeer.peer_name,
                 models.Peer.workspace_name == models.SessionPeer.workspace_name,
             ),
         )
+        .where(live_session_peer_row())
         .where(models.SessionPeer.session_name == session_name)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
