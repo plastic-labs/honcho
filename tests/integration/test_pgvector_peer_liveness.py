@@ -28,9 +28,7 @@ from src.config import settings
 from src.crud.lifecycle import live_document_row
 from src.db import CROSS_TENANT, tenant_context
 from src.utils.scopes import scope_peer_name
-from tests.integration.test_lifecycle_tenants import lifecycle_engine
-
-__all__ = ["lifecycle_engine"]
+from tests.integration.lifecycle_fixtures import migrated_lifecycle_engine
 
 QUERY = [1.0] + [0.0] * (settings.EMBEDDING.VECTOR_DIMENSIONS - 1)
 FAR = [0.0, 1.0] + [0.0] * (settings.EMBEDDING.VECTOR_DIMENSIONS - 2)
@@ -39,10 +37,17 @@ SCOPE_PEER = scope_peer_name("team")
 
 
 @pytest.fixture
-async def pair_db(lifecycle_engine: Engine) -> AsyncIterator[AsyncSession]:
-    """Use an owner transaction on an existing UUID-scoped throwaway database."""
+def pair_engine(worker_id: str) -> Iterator[Engine]:
+    """Give each correctness graph a fresh migrated database and HNSW index."""
+    with migrated_lifecycle_engine(worker_id) as engine:
+        yield engine
+
+
+@pytest.fixture
+async def pair_db(pair_engine: Engine) -> AsyncIterator[AsyncSession]:
+    """Use an owner transaction on this test's UUID-scoped throwaway database."""
     engine = create_async_engine(
-        lifecycle_engine.url, connect_args={"prepare_threshold": None}
+        pair_engine.url, connect_args={"prepare_threshold": None}
     )
     try:
         async with AsyncSession(engine, info={CROSS_TENANT: True}) as db:
@@ -52,18 +57,18 @@ async def pair_db(lifecycle_engine: Engine) -> AsyncIterator[AsyncSession]:
         await engine.dispose()
 
 
-@pytest.fixture(scope="session")
-def pair_app_role(lifecycle_engine: Engine) -> Iterator[str]:
+@pytest.fixture
+def pair_app_role(pair_engine: Engine) -> Iterator[str]:
     """Grant an owned non-superuser/non-bypass role the fixture's read surface."""
     role = "pair_app_" + uuid4().hex
-    with lifecycle_engine.begin() as conn:
+    with pair_engine.begin() as conn:
         conn.execute(text(f"CREATE ROLE {role} NOLOGIN NOSUPERUSER NOBYPASSRLS"))
         conn.execute(text(f"GRANT USAGE ON SCHEMA public TO {role}"))
         conn.execute(text(f"GRANT SELECT ON ALL TABLES IN SCHEMA public TO {role}"))
     try:
         yield role
     finally:
-        with lifecycle_engine.begin() as conn:
+        with pair_engine.begin() as conn:
             conn.execute(text(f"DROP OWNED BY {role}"))
             conn.execute(text(f"DROP ROLE {role}"))
 
@@ -508,15 +513,15 @@ async def test_unbound_and_conflicting_rls_tenant_fail_closed(
 
 
 async def test_committed_parent_deletion_is_seen_on_next_read(
-    lifecycle_engine: Engine, monkeypatch: pytest.MonkeyPatch
+    pair_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A separate writer commit cannot leave a cached guard on the next statement."""
     tenant_a, tenant_b = "committed-a-" + uuid4().hex, "committed-b-" + uuid4().hex
     write_engine = create_async_engine(
-        lifecycle_engine.url, connect_args={"prepare_threshold": None}
+        pair_engine.url, connect_args={"prepare_threshold": None}
     )
     read_engine = create_async_engine(
-        lifecycle_engine.url,
+        pair_engine.url,
         isolation_level="AUTOCOMMIT",
         connect_args={"prepare_threshold": None},
     )
