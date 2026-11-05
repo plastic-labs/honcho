@@ -79,6 +79,7 @@ def lifecycle_engine(worker_id: str) -> Iterator[Engine]:
 
 @pytest.fixture(scope="session")
 def lifecycle_service_role(lifecycle_engine: Engine) -> Iterator[str]:
+    """Provide a non-superuser BYPASSRLS role for tenant-collision probes."""
     role = "lifecycle_service_" + uuid4().hex
     with lifecycle_engine.begin() as conn:
         conn.execute(text(f"CREATE ROLE {role} NOLOGIN NOSUPERUSER BYPASSRLS"))
@@ -96,6 +97,7 @@ def lifecycle_service_role(lifecycle_engine: Engine) -> Iterator[str]:
 async def lifecycle_service_db(
     lifecycle_engine: Engine,
 ) -> AsyncIterator[AsyncSession]:
+    """Yield an isolated session for explicit cross-tenant service probes."""
     engine = create_async_engine(lifecycle_engine.url)
     try:
         async with AsyncSession(engine, info={CROSS_TENANT: True}) as db:
@@ -110,6 +112,7 @@ async def _seed_graphs(
 ) -> tuple[
     dict[PrimitiveKind, PrimitiveIdentity], dict[PrimitiveKind, PrimitiveIdentity]
 ]:
+    """Seed two tenants with colliding names and stable primitive identifiers."""
     ids = {
         kind: generate_nanoid() for kind in ("workspace", "peer", "session", "message")
     }
@@ -187,6 +190,7 @@ async def test_same_names_and_ids_stay_in_their_tenant_on_service_role(
     hidden: set[str],
     use_alias: bool,
 ) -> None:
+    """Keep colliding identities isolated when real service reads bypass RLS."""
     db = lifecycle_service_db
     target, other = await _seed_graphs(db)
     primitive_models = {
@@ -254,6 +258,7 @@ async def test_same_names_and_ids_stay_in_their_tenant_on_service_role(
 async def test_liveness_exists_uses_tenant_led_parent_indexes(
     lifecycle_service_db: AsyncSession, lifecycle_service_role: str
 ) -> None:
+    """Retain positive tenant-led parent lookups in liveness execution plans."""
     db = lifecycle_service_db
     await _seed_graphs(db)
     db.add_all(
