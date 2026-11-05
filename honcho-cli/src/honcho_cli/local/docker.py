@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import NoReturn
 
 from honcho_cli.local import STACK_SERVICES
 from honcho_cli.local.profile import LocalProfile
@@ -38,7 +39,7 @@ class DockerError(Exception):
         self.message = message
         self.details = details or {}
 
-    def exit(self) -> None:
+    def exit(self) -> NoReturn:
         print_error(self.code, self.message, self.details or None)
         raise SystemExit(1)
 
@@ -177,6 +178,8 @@ def compose_up(
     profile: LocalProfile,
     *,
     recreate: tuple[str, ...] = (),
+    services: tuple[str, ...] = (),
+    wait: bool = False,
 ) -> None:
     """``docker compose up -d``. Compose output goes to stderr.
 
@@ -186,6 +189,9 @@ def compose_up(
     args = ["up", "-d"]
     if recreate:
         args.extend(["--force-recreate", *recreate])
+    if wait:
+        args.extend(["--wait", "--wait-timeout", "90"])
+    args.extend(services)
     _run_compose(profile, args)
 
 
