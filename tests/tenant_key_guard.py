@@ -8,8 +8,8 @@ service session, and on any session it cannot seek the primary key, so it
 probes every partition.
 
 The guard watches every ORM-session statement the test suite runs from src/.
-A WHERE clause that compares a guarded column but never compares the same
-table's tenant_id is a violation. Every session counts: the tests drive
+A WHERE or JOIN ON clause that compares a guarded column, where the statement
+never compares the same table's tenant_id, is a violation. Every session counts: the tests drive
 service-session code with plain sessions, so the session a statement runs on
 here says nothing about the one it runs on in production. text() statements
 are opaque to it.
@@ -31,6 +31,7 @@ from sqlalchemy import Column, Delete, Select, Table, Update
 from sqlalchemy.orm import ORMExecuteState
 from sqlalchemy.sql import visitors
 from sqlalchemy.sql.elements import BinaryExpression, ClauseList, Grouping
+from sqlalchemy.sql.selectable import Join
 
 from src.db import Base
 
@@ -70,6 +71,16 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("utils/search.py", "matching_messages"): (
         "tenant session only, and the id page comes from"
         " message_text_matches_page(scoped_tenant_id(), ...)"
+    ),
+    ("crud/deriver.py", "get_queue_status"): (
+        "the request's read session only, joining sessions by id: the hook adds"
+        " tenant_id for Session, and queue_item_tenant_match() pins the queue rows"
+    ),
+    ("crud/message.py", "_search_messages_pgvector"): (
+        _TENANT_SESSION + "; joins messages to message_embeddings on public_id"
+    ),
+    ("utils/search.py", "_semantic_search_pgvector"): (
+        _TENANT_SESSION + "; joins messages to message_embeddings on public_id"
     ),
     ("deriver/queue_manager.py", "get_queue_item_batch"): (
         "service session, but tenant_clause binds Message.tenant_id to the work"
@@ -181,12 +192,28 @@ def _call_site() -> tuple[str, int, str] | None:
     return None
 
 
+def _join_conditions(statement: Any) -> list[Any]:
+    """The ON clause of every join in a SELECT's FROM list, nested ones included."""
+    if not isinstance(statement, Select):
+        return []
+    conditions: list[Any] = []
+    for from_ in statement.get_final_froms():
+        for element in visitors.iterate(from_):
+            if isinstance(element, Join) and element.onclause is not None:
+                conditions.append(element.onclause)
+    return conditions
+
+
 def find_violations(state: ORMExecuteState) -> list[Violation]:
     statement = state.statement
     if not isinstance(statement, (Select, Update, Delete)):
         return []
+    compared = _compared_columns(statement.whereclause)
+    for onclause in _join_conditions(statement):
+        for table, columns in _compared_columns(onclause).items():
+            compared.setdefault(table, set()).update(columns)
     found: list[tuple[str, tuple[str, ...]]] = []
-    for table, columns in _compared_columns(statement.whereclause).items():
+    for table, columns in compared.items():
         keys = GUARDED.get(table, frozenset()) & columns
         if keys and "tenant_id" not in columns:
             found.append((table, tuple(sorted(keys))))
