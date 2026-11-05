@@ -40,7 +40,6 @@ export {
   saveGrant,
   updateConfigFile,
   withConfigLock,
-  HARNESS_CLIENT_ID,
   OAuthError,
   OAUTH_DEVICE_URL,
   OAUTH_SCOPE,

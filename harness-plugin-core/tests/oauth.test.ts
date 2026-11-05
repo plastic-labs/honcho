@@ -11,13 +11,13 @@ import {
   requestDeviceCode,
   saveGrant,
   withConfigLock,
-  HARNESS_CLIENT_ID,
   OAuthError,
   type OAuthTokens,
 } from '../src/oauth.js'
 
 const now = () => Math.floor(Date.now() / 1000)
 const fast = { sleep: async () => {} }
+const CLIENT_ID = 'test-plugin'
 
 /** Scripted fetch: returns the queued responses in order and records each request's form body. */
 function scripted(...responses: Array<[number, unknown]>) {
@@ -40,7 +40,7 @@ function tmpConfig(data: unknown): string {
   return path
 }
 const read = (p: string) => JSON.parse(readFileSync(p, 'utf-8'))
-const grant = (access: string, expiresAt: number, clientId = HARNESS_CLIENT_ID): OAuthTokens => ({
+const grant = (access: string, expiresAt: number, clientId = CLIENT_ID): OAuthTokens => ({
   accessToken: access,
   refreshToken: `${access}-r`,
   accessExpiresAt: expiresAt,
@@ -56,16 +56,16 @@ describe('device sign-in', () => {
       [400, { error: 'slow_down' }],
       [200, tokenBody('hch-at-1', 'hch-rt-1')]
     )
-    const d = await requestDeviceCode({ source: 'claude-code', fetch: s.fetch })
-    expect(s.calls[0].get('client_id')).toBe(HARNESS_CLIENT_ID)
+    const d = await requestDeviceCode({ clientId: CLIENT_ID, source: 'claude-code', fetch: s.fetch })
+    expect(s.calls[0].get('client_id')).toBe(CLIENT_ID)
     expect(s.calls[0].get('scope')).toBe('write')
     expect(s.calls[0].get('source')).toBe('claude-code')
 
     const waits: number[] = []
-    const tokens = await pollForToken(d, { fetch: s.fetch, sleep: async (ms) => void waits.push(ms) })
+    const tokens = await pollForToken(d, { clientId: CLIENT_ID, fetch: s.fetch, sleep: async (ms) => void waits.push(ms) })
     expect(waits).toEqual([5000, 5000, 10000])
     expect(s.calls[1].get('device_code')).toBe('dev')
-    expect(tokens).toMatchObject({ accessToken: 'hch-at-1', refreshToken: 'hch-rt-1', clientId: HARNESS_CLIENT_ID })
+    expect(tokens).toMatchObject({ accessToken: 'hch-at-1', refreshToken: 'hch-rt-1', clientId: CLIENT_ID })
     expect(tokens.accessExpiresAt).toBeGreaterThan(now() + 3000)
   })
 
@@ -73,7 +73,7 @@ describe('device sign-in', () => {
     const s = scripted([400, { error: 'access_denied' }])
     const err = await pollForToken(
       { deviceCode: 'dev', userCode: 'X', verificationUri: '', verificationUriComplete: '', expiresIn: 600, interval: 1 },
-      { fetch: s.fetch, ...fast }
+      { clientId: CLIENT_ID, fetch: s.fetch, ...fast }
     ).catch((e) => e)
     expect(err).toBeInstanceOf(OAuthError)
     expect(err.code).toBe('access_denied')
@@ -118,7 +118,7 @@ describe('ensureFreshCredential', () => {
     expect(cred).toMatchObject({ token: 'hch-at-new', source: 'oauth' })
     expect(s.calls[0].get('grant_type')).toBe('refresh_token')
     expect(s.calls[0].get('refresh_token')).toBe(old.refreshToken)
-    expect(s.calls[0].get('client_id')).toBe(HARNESS_CLIENT_ID)
+    expect(s.calls[0].get('client_id')).toBe(CLIENT_ID)
 
     const f = read(path)
     expect(f.hosts.claude_code.oauth).toMatchObject({ accessToken: 'hch-at-new', refreshToken: 'hch-rt-new' })

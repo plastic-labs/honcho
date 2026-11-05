@@ -73,15 +73,15 @@ setTelemetryHeaders(honcho.http.defaultHeaders, { model: 'claude-opus-4' })
 
 ## OAuth (Honcho cloud)
 
-Device sign-in. Self-hosted Honcho has no OAuth server; there the API key is used and OAuth is skipped.
+Device sign-in. Each plugin passes its own `clientId`, registered as a first-party client in Honcho cloud, so the approval screen names the tool asking. Self-hosted Honcho has no OAuth server; there the API key is used and OAuth is skipped.
 
 ```ts
 import { configPath, ensureFreshCredential, pollForToken, requestDeviceCode, saveGrant } from '@honcho-ai/harness-plugin-core'
 
 // sign in once
-const device = await requestDeviceCode({ source: 'harness' })
+const device = await requestDeviceCode({ clientId: 'harness-honcho', source: 'harness' })
 console.log(`Open ${device.verificationUriComplete} and confirm ${device.userCode}`)
-const tokens = await pollForToken(device)
+const tokens = await pollForToken(device, { clientId: 'harness-honcho' })
 await saveGrant(configPath(), 'harness', tokens)
 
 // before each batch of requests

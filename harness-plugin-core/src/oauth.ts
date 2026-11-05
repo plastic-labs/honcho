@@ -9,8 +9,6 @@ import { DEFAULT_BASE_URL, normalizeBaseUrl, type Env } from './config.js'
 
 export const OAUTH_DEVICE_URL = 'https://api.honcho.dev/oauth/device_authorization'
 export const OAUTH_TOKEN_URL = 'https://api.honcho.dev/oauth/token'
-/** One client for every harness plugin; each passes its own `source`. */
-export const HARNESS_CLIENT_ID = 'honcho-plugin'
 export const OAUTH_SCOPE = 'write'
 
 const DEVICE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:device_code'
@@ -106,11 +104,11 @@ function tokensFrom(body: any, clientId: string, prev?: OAuthTokens): OAuthToken
 }
 
 export async function requestDeviceCode(
-  opts: { source: string; clientId?: string } & OAuthTransport
+  opts: { clientId: string; source: string } & OAuthTransport
 ): Promise<DeviceCode> {
   const r = await post(
     opts.deviceUrl ?? OAUTH_DEVICE_URL,
-    { client_id: opts.clientId ?? HARNESS_CLIENT_ID, scope: OAUTH_SCOPE, source: opts.source },
+    { client_id: opts.clientId, scope: OAUTH_SCOPE, source: opts.source },
     opts
   )
   if (r.status !== 200) throw errorOf(r)
@@ -131,9 +129,9 @@ export async function requestDeviceCode(
 /** Polls until the user approves. Throws OAuthError `access_denied` / `expired_token` on the terminal outcomes. */
 export async function pollForToken(
   device: DeviceCode,
-  opts: { clientId?: string; sleep?: (ms: number) => Promise<void> } & OAuthTransport = {}
+  opts: { clientId: string; sleep?: (ms: number) => Promise<void> } & OAuthTransport
 ): Promise<OAuthTokens> {
-  const clientId = opts.clientId ?? HARNESS_CLIENT_ID
+  const clientId = opts.clientId
   const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)))
   const deadline = Date.now() + device.expiresIn * 1000
   let interval = device.interval

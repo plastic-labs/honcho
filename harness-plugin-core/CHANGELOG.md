@@ -13,7 +13,7 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ### Added
 
-- OAuth device sign-in for Honcho cloud (`requestDeviceCode`, `pollForToken`, `refreshAccessToken`). Client id `honcho-plugin` for every plugin; each passes its own `source`. Cloud only: off `api.honcho.dev` OAuth is skipped and the API key is used.
+- OAuth device sign-in for Honcho cloud (`requestDeviceCode`, `pollForToken`, `refreshAccessToken`). Each plugin passes its own `clientId` (a first-party client registered in Honcho cloud) and `source`. Cloud only: off `api.honcho.dev` OAuth is skipped and the API key is used.
 - `pickCredential` / `ensureFreshCredential`: token resolution, highest wins: `HONCHO_API_KEY` env → the plugin's own grant (`hosts.<host>.oauth`) → `apiKey` → that grant expired. One grant per plugin; a root `oauth` block or another host's grant is never used, so each plugin keeps the tenant it signed in to. `ensureFreshCredential` refreshes a grant within 60s of expiry under a cross-process lock and re-reads the file first, so concurrent processes refresh once.
 - `saveGrant`, `readGrant`, `updateConfigFile`, `withConfigLock`: locked, atomic (temp + rename, mode 0600) writes that touch only the block they change.
 
