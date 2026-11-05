@@ -27,7 +27,39 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v3.5.0 (Current)">
+        <Update label="v3.6.0 (Current)">
+        ### Added
+
+        - Multi-tenancy: one deployment can serve many tenants, behind `MULTI_TENANT` (default off). Every tenant-scoped table now carries a `tenant_id` that leads its primary key, unique constraints and foreign keys. With the flag on, Postgres row-level security scopes every read and write to the tenant named by the caller's JWT, which must carry a tenant claim (`tn`); an admin key is admin only within its own tenant. Each tenant's vectors live under their own namespace, keyed by the tenant's `vector_correlation_id`, and a tenant without one is refused rather than given an empty namespace. With the flag off nothing changes: Honcho runs single-tenant on plain Postgres, and the optional `TENANT_ID` names the instance's tenant (default `default`). It is fixed for the life of the database, and boot is refused if the rows carry another tenant (#1264, #1546)
+        - Tenant registry at `/v3/tenants`, for a control plane that provisions tenants: create (idempotent; the same id with different fields is a 409), get, list, delete, and `PATCH` for `derivation_paused` and a set-once `vector_correlation_id`. It authenticates with `TENANT_API_SECRET`, not a JWT, and is disabled unless both that secret and `MULTI_TENANT` are set (#1264)
+        - The deriver claims work round-robin across tenants, so one tenant's backlog cannot starve another's, and skips the billable work of a tenant with `derivation_paused` set. Deletion, webhooks and other maintenance keep running, and paused work stays queued and is reported on its own per-tenant gauges. `DERIVER_TENANT_FAIRNESS_METRICS` (default off) adds per-tenant claim counts, claim wait and in-flight units. Under `MULTI_TENANT`, CloudEvents carry a `tenantid` attribute, the attribution counters a `tenant_id` label, and Sentry a `tenant_id` tag (#1264)
+        - Startup refuses to boot under `MULTI_TENANT` when isolation cannot hold: a transaction-mode pooler (`DB_POOLER_MODE`), RLS not enforced, no RLS-bypassing service role (`DB_SERVICE_CONNECTION_URI`), auth disabled on an API instance, or a tenant role that can read a partition directly. Every deployment, single-tenant included, also refuses to boot when the deriver's `queue_item_batches` table or its triggers are missing (#1264, #1552)
+        - Representation History: each dream is recorded as a run, readable through `POST /dreams/list` (newest first, filtered by `observed_id` and optionally `observer_id`) and `GET /dreams/{run_id}`. A run lists the conclusions the dream created, each with the conclusions it was derived from; the conclusions it removed, as they read when removed, including ones a near-duplicate from the same dream replaced (`replaced_by`); and the peer card before and after. Each change is recorded in the transaction that makes it, so failed and interrupted runs show what they committed. Created conclusions and their sources are resolved when the run is read: `current`, `removed` (with the text it had and `removed_in_run`), or `unavailable` once deleted. Only removed conclusions' text is copied; deleting their session deletes the copies, and deleting a conclusion through the API deletes its copy, including one a dream already removed; deleting a workspace deletes its history. Changes are kept for `DREAM_HISTORY_RETENTION_DAYS` (default 30); after that a run keeps only the created conclusions that still exist and gets `pruned_at`, and a run with nothing left is deleted. Recording can be turned off with `DREAM_HISTORY_ENABLED=false`. Workspace and admin keys only. DDL-only migration `a7e3c1d9f2b4` adds `dream_runs` and `dream_run_changes` (#1542)
+        - `INSTALL_SURPRISAL` Docker build argument (default `false`) installs the scikit-learn dependencies for surprisal-based dream sampling, independently of `INSTALL_LANCEDB`. Both example Compose services pass it through. Any value other than `true` or `false` fails the build (#1522)
+
+        ### Changed
+
+        - Upgrading runs 13 migrations. `e5fe7f8bcf62` adds `tenant_id` to every tenant-scoped table and rebuilds their primary keys, unique constraints and foreign keys with `tenant_id` first. Adding the column is catalog-only, but the key rebuilds block writes to each table while they run, and take longer the bigger the table is. Each statement runs under the migrations' 5-minute `statement_timeout`, so plan a window for a large database. An upgraded database keeps its tables unpartitioned. The new and replaced indexes (conclusion lists, peer context, session context, session peers, the reconciler claim, message text search) build without a long write lock; to build them ahead of the upgrade, run the steps in `migrations.utils.create_index_online` by hand under the same names, and the revisions find them done. Releases from 3.2.2 on run against the new schema, so they stay safe rollback targets (#1264)
+        - The deriver claims from `queue_item_batches`, a one-row-per-work-unit aggregate that triggers on `queue` keep current, instead of aggregating the queue on every poll. The migration backfills it from unprocessed items, so an instance upgraded mid-backlog claims exactly what was pending (#1264)
+        - Message search indexes lead with `tenant_id` and `workspace_name`, so a search narrows to the workspace before reading the heap. They need `btree_gin`, which the migrations create; where the migration role can't create it, the old indexes stay and search works as before (#1264)
+        - The dream-due scan reads per-collection counters of explicit conclusions, which the document writers keep current, instead of grouping every explicit conclusion on each pass (#1264)
+        - Offset-paginated list totals are counted up to `PAGINATION_COUNT_LIMIT` (default 100,000) and reported as that limit plus one when there are more, so a list call on a large workspace no longer counts every row on every page. Pages still reach the end of the list, and cursor pagination is unchanged (#1500)
+        - Under `DERIVER_SCHEDULER=api`, one API replica measures the deriver backlog, enqueues due dreams and cleans up stale claims for the fleet, under a lease in Redis, and the others serve its snapshot. Before, every replica ran the same cross-tenant counts. Without Redis, or on any Redis error, each replica measures for itself as before (#1557)
+        - The reconciler's pending-document gauge counts up to 100,000 instead of running an uncapped count on every pass (#1552)
+
+        ### Fixed
+
+        - A Redis error no longer fails a request that reads a cached workspace, peer, session or collection: the read falls back to the database and logs a warning. `CACHE_MAX_CONNECTIONS` (default 50) sets the Redis pool size per process, or per node with `CACHE_CLUSTER`; before, the cache library's default of 10 applied. When a Redis Cluster client cannot initialize (for example, no startup node answers), the error is now raised as a `ConnectionError`: startup retries and then falls back to the in-memory cache, and a request reads the database. Before, the client was left with no nodes, and its next command raised `IndexError` (#1550)
+        - `GET /workspaces/{id}/queue/status` counts with one row per session instead of one row per queue item, so a large backlog no longer makes it slow. The response is unchanged (#1550)
+        - Each process runs at most a quarter of its DB pool (`DB_POOL_SIZE` + `DB_MAX_OVERFLOW`) of message enqueue writes at once, so a burst of enqueues cannot take every connection from request handlers (#1550)
+        - A tool loop on the Anthropic transport no longer fails with a 400 (`thinking.signature: Input should be a valid string`) after a proxy serves one of its rounds from a non-Anthropic fallback. That round's thinking block has no signature, and Anthropic rejects any request that replays one. When a request holds an unsigned thinking block, the Anthropic backend removes every thinking block from it and keeps the text and tool calls; budget-thinking models (Claude 4.5 and earlier) run that call with thinking off, and adaptive models keep their thinking settings. Requests whose thinking blocks are all signed are unchanged (#1529)
+        - A tool loop whose fallback model on another provider answered a round no longer fails when the next round goes back to the primary (Anthropic: `Unexpected role "tool"`; OpenAI: rejected Anthropic content blocks). History is kept as typed messages and rendered for each attempt's provider (#1501)
+        - Message and conclusion creation no longer returns 422 when content quotes a tokenizer special token such as `<|endoftext|>`. The string is tokenized as ordinary text everywhere content is counted or embedded, including the token estimators, which used to fall back silently to a length guess (#1517)
+        - A queue item with a malformed work-unit key no longer stops the deriver. Before, it leaked the worker's slot, so a one-worker deriver stopped claiming for good. Its pending rows are now marked processed with a sanitized error, and the worker's slot is released even if cleanup fails (#1507)
+        - A structured-output attempt that fails is recorded in LLM telemetry and Langfuse with the model's raw output, and an attempt whose response the deriver rejects (an empty, truncated, filtered or refused representation) is recorded as an error instead of a success. Langfuse generations carry `outcome` and `error_class` metadata so failed ones can be filtered (#1498)
+        </Update>
+
+        <Update label="v3.5.0">
         ### Added
 
         - The workspace session list can report and filter by scope membership. `?include_scopes=true` gives each session a `scopes` list of the scopes it is in (`[]` for none), fetched in one query per page; without it the response is unchanged. Body `scope` lists only that scope's sessions (404 if the scope doesn't exist) and `in_no_scope: true` lists only sessions in no scope; both combine with `filters` and pagination, and `total` counts the filtered result. Clients no longer need to list every scope's members to show which scopes a session is in (#1477)
@@ -988,7 +1020,12 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
-        <Update label="v2.8.0 (Current)">
+        <Update label="v2.9.0 (Current)">
+            ### Added
+
+            - `honcho.dreams()` and `honcho.get_dream()` (sync and async) read Representation History: the dream runs over a workspace's representations, newest first and filterable by `observed` and `observer`, and one run's created conclusions with their sources, removed conclusions, and peer-card change. `pruned_at` marks a run that retention cut down to the created conclusions that still exist. New response types `DreamRunResponse` and `DreamRunDetailResponse`. Requires Honcho v3.6.0+ (#1542)
+        </Update>
+        <Update label="v2.8.0">
             ### Added
 
             - `honcho.sessions()` takes `scope`, `in_no_scope` and `include_scopes` (sync and async). `scope` lists only that scope's sessions, `in_no_scope=True` only sessions in no scope, and `include_scopes=True` sets `Session.scopes` (and `SessionResponse.scopes`) to the names of the scopes each listed session is in. Requires Honcho v3.5.0+ (#1477)
@@ -1215,7 +1252,12 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
-        <Update label="v2.8.0 (Current)">
+        <Update label="v2.9.0 (Current)">
+            ### Added
+
+            - `honcho.dreams()` and `honcho.getDream()` read Representation History: the dream runs over a workspace's representations, newest first and filterable by `observed` and `observer`, and one run's created conclusions with their sources, removed conclusions, and peer-card change. `pruned_at` marks a run that retention cut down to the created conclusions that still exist. New types `DreamRun` and `DreamRunDetail`. Requires Honcho v3.6.0+ (#1542)
+        </Update>
+        <Update label="v2.8.0">
             ### Added
 
             - `honcho.sessions()` takes `scope`, `inNoScope` and `includeScopes`. `scope` lists only that scope's sessions, `inNoScope: true` only sessions in no scope, and `includeScopes: true` sets `Session.scopes` (and `SessionResponse.scopes`) to the names of the scopes each listed session is in. Requires Honcho v3.5.0+ (#1477)
@@ -1460,7 +1502,21 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
     </Tab>
     <Tab title="Honcho CLI">
         [Honcho CLI](https://pypi.org/project/honcho-cli/)
-        <Update label="v0.4.0 (Current)">
+        <Update label="v0.5.0 (Current)">
+        ### Added
+
+        - `honcho dream list` and `honcho dream inspect <id>` (Representation History): list the dreams in a workspace, newest first, or the dreams about one peer with `-p`, and see what a dream changed. `inspect` shows the conclusions it created, each with the conclusions it was derived from and where those stand now (current, removed and by which dream, or unavailable once deleted or removed longer ago than history is kept); the conclusions it removed, as they read when removed; and the peer card before and after. A dream past the retention window shows when it was pruned and keeps only the conclusions it created that still exist. Needs a workspace or admin key, and Honcho v3.6.0+ (#1542)
+
+        ### Changed
+
+        - Requires `honcho-ai` 2.9.0 or newer, the first Python SDK with `dreams()` and `get_dream()`
+
+        ### Fixed
+
+        - `HONCHO_API_KEY` wins over a saved OAuth grant, as the documented flag > env > file order says. Before, `HONCHO_API_KEY=<key> honcho workspace list` quietly ran as the saved OAuth identity. A run with an env key no longer refreshes or writes `~/.honcho/config.json`, and an OAuth refresh under `HONCHO_API_KEY` or `HONCHO_BASE_URL` no longer writes those values into it, which had switched every other tool sharing the file to that key's org. A refreshed grant records the host it was refreshed against, and `honcho doctor` names the env key as the credential in use (#1518)
+        </Update>
+
+        <Update label="v0.4.0">
         ### Added
 
         - `source_message_ids` on conclusion output: the messages an explicit conclusion cites as evidence (Honcho v3.5.0+; a count in table mode, the full list in JSON). `conclusion list --cites <message_id>` narrows to the conclusions that cite a message. Null in JSON on servers or SDKs that predate the field (#935)

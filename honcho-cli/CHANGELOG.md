@@ -5,11 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [Unreleased]
+## [0.5.0] - 2026-11-05
 
 ### Added
 
-- `honcho dream list` and `honcho dream inspect <id>` (Representation History): list the dreams in a workspace, newest first, or the dreams about one peer with `-p`, and see what a dream changed. `inspect` shows the conclusions it created, each with the conclusions it was derived from and where those stand now (current, removed and by which dream, or unavailable once deleted or removed longer ago than history is kept); the conclusions it removed, as they read when removed; and the peer card before and after. A dream past the retention window shows when it was pruned and keeps only the conclusions it created that still exist. Needs a workspace or admin key (DEV-3249)
+- `honcho dream list` and `honcho dream inspect <id>` (Representation History): list the dreams in a workspace, newest first, or the dreams about one peer with `-p`, and see what a dream changed. `inspect` shows the conclusions it created, each with the conclusions it was derived from and where those stand now (current, removed and by which dream, or unavailable once deleted or removed longer ago than history is kept); the conclusions it removed, as they read when removed; and the peer card before and after. A dream past the retention window shows when it was pruned and keeps only the conclusions it created that still exist. Needs a workspace or admin key, and Honcho v3.6.0+ (#1542)
+
+### Changed
+
+- Requires `honcho-ai` 2.9.0 or newer, the first Python SDK with `dreams()` and `get_dream()`
+
+### Fixed
+
+- `HONCHO_API_KEY` wins over a saved OAuth grant, as the documented flag > env > file order says. Before, `HONCHO_API_KEY=<key> honcho workspace list` quietly ran as the saved OAuth identity. A run with an env key no longer refreshes or writes `~/.honcho/config.json`, and an OAuth refresh under `HONCHO_API_KEY` or `HONCHO_BASE_URL` no longer writes those values into it, which had switched every other tool sharing the file to that key's org. A refreshed grant records the host it was refreshed against, and `honcho doctor` names the env key as the credential in use (#1518)
 
 ## [0.4.0] - 2026-10-29
 
