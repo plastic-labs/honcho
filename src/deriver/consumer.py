@@ -1,5 +1,7 @@
+import contextlib
 import logging
 import time
+from collections.abc import Generator
 
 import sentry_sdk
 from opentelemetry.trace import SpanKind
@@ -52,12 +54,17 @@ logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 
-async def process_item(queue_item: models.QueueItem) -> None:
-    """Process a single item from the queue."""
+@contextlib.contextmanager
+def queue_item_span(queue_item: models.QueueItem) -> Generator[None]:
+    """Span for processing one queue item, error handling included.
+
+    The queue manager opens it around `process_item` and its error handling, so
+    the outcome it records (retry, failed) lands on the item's span.
+    """
     if not tracing_enabled() or queue_item.task_type == "reconciler":
         # The reconciler polls on a fixed interval and usually finds no work; a
         # root span per poll would be noise.
-        await _process_item(queue_item)
+        yield
         return
     payload = queue_item.payload or {}
     with start_span(
@@ -76,10 +83,11 @@ async def process_item(queue_item: models.QueueItem) -> None:
         },
         links=queue_links([payload]),
     ):
-        await _process_item(queue_item)
+        yield
 
 
-async def _process_item(queue_item: models.QueueItem) -> None:
+async def process_item(queue_item: models.QueueItem) -> None:
+    """Process a single item from the queue."""
     task_type = queue_item.task_type
     # Drop the work-unit retry counter and the producer's trace context before
     # payload validation: every payload model sets extra="forbid", so leaving

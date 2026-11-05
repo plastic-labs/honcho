@@ -38,6 +38,7 @@ from src.dependencies import service_db
 from src.deriver.consumer import (
     process_item,
     process_representation_batch,
+    queue_item_span,
 )
 from src.dreamer.dream_scheduler import (
     DreamScheduler,
@@ -57,6 +58,7 @@ from src.telemetry.otel import (
     mark_span_error,
     queue_links,
     queue_wait_ms,
+    record_span_exception,
     set_span_attributes,
     start_span,
 )
@@ -715,7 +717,7 @@ class QueueManager:
                 attempts = await self._get_work_unit_retry_attempts(work_unit_key) + 1
                 if attempts < MAX_RETRYABLE_ATTEMPTS:
                     await self._set_work_unit_retry_attempts(work_unit_key, attempts)
-                    mark_span_error(type(error).__name__)
+                    mark_span_error(error)
                     set_span_attributes(
                         {
                             "honcho.queue.outcome": "retry",
@@ -739,8 +741,7 @@ class QueueManager:
                 )
                 return True
 
-        mark_span_error(type(error).__name__)
-        set_span_attributes({"honcho.queue.outcome": "failed"})
+        mark_span_error(error)
         error_msg = f"{error.__class__.__name__}: {str(error)}"
         try:
             if items:
@@ -755,9 +756,15 @@ class QueueManager:
                 f"Failed to mark queue items as errored for work unit {work_unit_key}: {mark_error}",
                 exc_info=True,
             )
+            record_span_exception(mark_error)
             mark_failed = True
         else:
             mark_failed = False
+        # Set after the mark: "failed" means the item is recorded as errored and
+        # will not run again; "mark_failed" means it is still unprocessed.
+        set_span_attributes(
+            {"honcho.queue.outcome": "mark_failed" if mark_failed else "failed"}
+        )
 
         logger.error(
             f"Error {context} for work unit {work_unit_key}: {error}",
@@ -958,26 +965,29 @@ class QueueManager:
                                 drained = await self._is_drained(work_unit_key)
                                 break
 
-                            try:
-                                await process_item(queue_item)
-                                await self.mark_queue_items_as_processed(
-                                    [queue_item], work_unit_key
-                                )
-                                queue_item_count += 1
-                                last_traceparent = (queue_item.payload or {}).get(
-                                    QUEUE_TRACEPARENT_KEY
-                                )
-                            except Exception as e:
-                                if await self._handle_processing_error(
-                                    e,
-                                    [queue_item],
-                                    work_unit_key,
-                                    "processing queue item",
-                                ):
-                                    await asyncio.sleep(
-                                        self._jitter(RETRY_BACKOFF_SECONDS)
+                            release = False
+                            # Error handling runs inside the item's span so its
+                            # outcome lands there; the backoff sleep stays outside.
+                            with queue_item_span(queue_item):
+                                try:
+                                    await process_item(queue_item)
+                                    await self.mark_queue_items_as_processed(
+                                        [queue_item], work_unit_key
                                     )
-                                    break
+                                    queue_item_count += 1
+                                    last_traceparent = (queue_item.payload or {}).get(
+                                        QUEUE_TRACEPARENT_KEY
+                                    )
+                                except Exception as e:
+                                    release = await self._handle_processing_error(
+                                        e,
+                                        [queue_item],
+                                        work_unit_key,
+                                        "processing queue item",
+                                    )
+                            if release:
+                                await asyncio.sleep(self._jitter(RETRY_BACKOFF_SECONDS))
+                                break
 
                     except Exception as e:
                         logger.error(

@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from opentelemetry import trace
 from opentelemetry.context import Context
+from opentelemetry.exporter.otlp.proto.common.trace_encoder import encode_spans
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
@@ -27,12 +28,14 @@ from opentelemetry.trace import (
     NonRecordingSpan,
     SpanContext,
     SpanKind,
+    Status,
     StatusCode,
     TraceFlags,
 )
 
 from src import models
 from src.deriver import consumer
+from src.deriver.queue_manager import QueueManager
 from src.llm import executor, registry
 from src.llm.backend import StreamChunk
 from src.llm.runtime import AttemptPlan
@@ -198,6 +201,23 @@ class TestSpans:
         assert span.attributes is not None
         assert span.attributes["honcho.outcome"] == "cancelled"
 
+    def test_handled_error_keeps_its_exception(
+        self, spans: InMemorySpanExporter
+    ) -> None:
+        with otel.start_span("honcho.handled"):
+            try:
+                raise ValueError("boom")
+            except ValueError as e:
+                otel.mark_span_error(e)
+        span = _by_name(spans, "honcho.handled")
+        assert span.status.status_code == StatusCode.ERROR
+        assert span.attributes is not None
+        assert span.attributes["error.type"] == "ValueError"
+        [event] = span.events
+        assert event.name == "exception"
+        assert event.attributes is not None
+        assert event.attributes["exception.message"] == "boom"
+
     def test_none_attributes_are_dropped(self, spans: InMemorySpanExporter) -> None:
         with otel.start_span("honcho.attrs", attributes={"a": None, "b": "x"}):
             otel.set_span_attributes({"c": None, "d": 1})
@@ -257,7 +277,10 @@ class TestQueueContext:
             payload=record["payload"],
             created_at=datetime.datetime.now(datetime.UTC),
         )
-        with patch.object(consumer, "process_deletion", new=AsyncMock()) as deleted:
+        with (
+            patch.object(consumer, "process_deletion", new=AsyncMock()) as deleted,
+            consumer.queue_item_span(item),
+        ):
             await consumer.process_item(item)
         deleted.assert_awaited_once()
 
@@ -295,9 +318,12 @@ class TestQueueContext:
 
         item.id = 9
         item.created_at = datetime.datetime.now(datetime.UTC)
-        with patch(
-            "src.webhooks.webhook_delivery.deliver_webhook", new=AsyncMock()
-        ) as delivered:
+        with (
+            patch(
+                "src.webhooks.webhook_delivery.deliver_webhook", new=AsyncMock()
+            ) as delivered,
+            consumer.queue_item_span(item),
+        ):
             await consumer.process_item(item)
         delivered.assert_awaited_once()
         worker = _by_name(spans, "honcho.queue.process_item")
@@ -457,3 +483,92 @@ class TestTracedStream:
         closed = _by_name(spans, "honcho.closed")
         assert closed.attributes is not None
         assert closed.attributes["honcho.outcome"] == "cancelled"
+
+
+class TestQueueOutcome:
+    """The worker span says what happened to the item, after error handling."""
+
+    @staticmethod
+    def _item() -> models.QueueItem:
+        return models.QueueItem(
+            id=3,
+            task_type="summary",
+            work_unit_key="summary:ws:s1",
+            workspace_name="ws",
+            payload={"session_name": "s1"},
+            created_at=datetime.datetime.now(datetime.UTC),
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("mark_error", "outcome", "released"),
+        [
+            (None, "failed", False),
+            (RuntimeError("UPDATE rejected"), "mark_failed", True),
+        ],
+    )
+    async def test_terminal_error_outcome(
+        self,
+        spans: InMemorySpanExporter,
+        mark_error: Exception | None,
+        outcome: str,
+        released: bool,
+    ) -> None:
+        """#1492: a terminal error whose errored-mark fails leaves the item
+        unprocessed; the span must not claim it failed for good."""
+        qm = QueueManager.__new__(QueueManager)
+        item = self._item()
+        with (
+            patch.object(
+                qm, "mark_queue_item_as_errored", new=AsyncMock(side_effect=mark_error)
+            ),
+            patch.object(qm, "_clear_work_unit_retry_attempts", new=AsyncMock()),
+            consumer.queue_item_span(item),
+        ):
+            release = await qm._handle_processing_error(  # pyright: ignore[reportPrivateUsage]
+                ValueError("bad value"), [item], item.work_unit_key, "processing item"
+            )
+        assert release is released
+        span = _by_name(spans, "honcho.queue.process_item")
+        assert span.attributes is not None
+        assert span.attributes["honcho.queue.outcome"] == outcome
+        assert span.attributes["error.type"] == "ValueError"
+        messages = [(e.attributes or {}).get("exception.message") for e in span.events]
+        assert messages == ["bad value", *([str(mark_error)] if mark_error else [])]
+
+
+class TestEncodableExport:
+    def test_unencodable_strings_are_escaped_not_dropped(self) -> None:
+        """#1492: an exception echoing a lone surrogate must keep its message;
+        the OTLP encoder would otherwise drop the attribute and log an error."""
+        sink = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(
+            SimpleSpanProcessor(otel.EncodableSpanExporter(sink))
+        )
+        tracer = provider.get_tracer("test")
+        bad = "bad value 'a\x00b' and '\ud83d'"
+        with tracer.start_as_current_span("dirty") as span:
+            span.record_exception(ValueError(bad))
+            span.set_attribute("honcho.note", bad)
+            span.set_status(Status(StatusCode.ERROR, bad))
+        with tracer.start_as_current_span("clean"):
+            pass
+
+        dirty, clean = sink.get_finished_spans()
+        escaped = "bad value 'a\\x00b' and '\\ud83d'"
+        assert dirty.attributes is not None
+        assert dirty.attributes["honcho.note"] == escaped
+        assert dirty.status.description == escaped
+        [event] = dirty.events
+        assert event.attributes is not None
+        assert event.attributes["exception.message"] == escaped
+        assert "\\ud83d" in str(event.attributes["exception.stacktrace"])
+        # Encodes in full: no attribute is dropped.
+        encoded = encode_spans([dirty])
+        [span_proto] = encoded.resource_spans[0].scope_spans[0].spans
+        assert {a.key for a in span_proto.events[0].attributes} >= {
+            "exception.message",
+            "exception.stacktrace",
+        }
+        assert clean.name == "clean" and clean.events == ()

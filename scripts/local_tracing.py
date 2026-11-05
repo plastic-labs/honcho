@@ -140,6 +140,9 @@ def main() -> int:
             mock_port = None
             env = dict(os.environ)
         env |= _tracing_env(args.otlp_port)
+        # Poll right away: the default startup jitter delays the first worker
+        # trace by up to 30s.
+        env["DERIVER_POLLING_STARTUP_JITTER_SECONDS"] = "0"
 
         subprocess.run(
             [sys.executable, "-m", "src.migrate"], cwd=PROJECT_ROOT, env=env, check=True

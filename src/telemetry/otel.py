@@ -40,15 +40,19 @@ import re
 import socket
 from collections.abc import AsyncGenerator, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import contextmanager
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from opentelemetry import trace
 from opentelemetry.context import Context
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace import Event, ReadableSpan, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace import Span as SDKSpan
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.trace.export import (
+    BatchSpanProcessor,
+    SpanExporter,
+    SpanExportResult,
+)
 from opentelemetry.sdk.trace.sampling import (
     Decision,
     Sampler,
@@ -62,6 +66,7 @@ from opentelemetry.util.types import Attributes
 from src._version import HONCHO_VERSION
 from src.config import settings
 from src.telemetry.tenant import current_tenant_id
+from src.utils.sanitization import escape_unstorable
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +167,86 @@ class _TenantSpanProcessor(SpanProcessor):
         pass
 
 
+def _encodable(value: Any) -> Any:
+    if isinstance(value, str):
+        escaped = escape_unstorable(value)
+        return value if escaped == value else escaped
+    if isinstance(value, (tuple, list)):
+        items = cast(Sequence[Any], value)
+        cleaned: tuple[Any, ...] = tuple(_encodable(item) for item in items)
+        unchanged = all(a is b for a, b in zip(cleaned, items, strict=True))
+        return items if unchanged else cleaned
+    return value
+
+
+def _encodable_attributes(attributes: Attributes) -> Attributes:
+    if not attributes:
+        return attributes
+    cleaned = {key: _encodable(value) for key, value in attributes.items()}
+    return (
+        attributes
+        if all(cleaned[key] is value for key, value in attributes.items())
+        else cleaned
+    )
+
+
+def _encodable_span(span: ReadableSpan) -> ReadableSpan:
+    attributes = _encodable_attributes(span.attributes)
+    events = [
+        Event(e.name, a, e.timestamp)
+        if (a := _encodable_attributes(e.attributes)) is not e.attributes
+        else e
+        for e in span.events
+    ]
+    status = span.status
+    if status.description and (d := _encodable(status.description)) is not (
+        status.description
+    ):
+        status = Status(status.status_code, d)
+    if (
+        attributes is span.attributes
+        and status is span.status
+        and all(a is b for a, b in zip(events, span.events, strict=True))
+    ):
+        return span
+    return ReadableSpan(
+        name=_encodable(span.name),
+        context=span.context,
+        parent=span.parent,
+        resource=span.resource,
+        attributes=attributes,
+        events=events,
+        links=span.links,
+        kind=span.kind,
+        status=status,
+        start_time=span.start_time,
+        end_time=span.end_time,
+        instrumentation_scope=span.instrumentation_scope,
+    )
+
+
+class EncodableSpanExporter(SpanExporter):
+    """Escape strings OTLP cannot encode before handing spans to `inner`.
+
+    Protobuf rejects lone surrogates. The OTLP encoder then drops the whole
+    attribute and logs an error for each one, so an exception that echoes bad
+    input (#1492) loses its message and stack trace. Escaping them (and NUL),
+    as `\\ud83d`, keeps that evidence. Spans without such strings pass through.
+    """
+
+    def __init__(self, inner: SpanExporter) -> None:
+        self._inner: SpanExporter = inner
+
+    def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        return self._inner.export([_encodable_span(span) for span in spans])
+
+    def shutdown(self) -> None:
+        self._inner.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        return self._inner.force_flush(timeout_millis)
+
+
 def _exporter_target() -> tuple[str, dict[str, str] | None]:
     if settings.TRACING.EXPORTER == "sentry":
         from sentry_sdk.consts import VERSION, EndpointType
@@ -217,7 +302,9 @@ def initialize_tracing(
             provider.add_span_processor(_TenantSpanProcessor())
             provider.add_span_processor(
                 BatchSpanProcessor(
-                    OTLPSpanExporter(endpoint=endpoint, headers=headers, timeout=5)
+                    EncodableSpanExporter(
+                        OTLPSpanExporter(endpoint=endpoint, headers=headers, timeout=5)
+                    )
                 )
             )
             trace.set_tracer_provider(provider)
@@ -410,12 +497,28 @@ def add_span_event(name: str, attributes: Mapping[str, Any] | None = None) -> No
         trace.get_current_span().add_event(name, _clean(attributes))
 
 
-def mark_span_error(error_type: str) -> None:
-    """Mark the current span failed when an error is handled rather than raised."""
+def mark_span_error(error: BaseException | str) -> None:
+    """Mark the current span failed when an error is handled rather than raised.
+
+    Pass the exception itself where there is one: it is recorded as an
+    exception event, as for an error that propagates out of `start_span`, so a
+    caught error keeps its message and stack. A string is just the error type.
+    """
+    if _provider is None:
+        return
+    span = trace.get_current_span()
+    if isinstance(error, BaseException):
+        span.set_attribute("error.type", type(error).__name__)
+        span.record_exception(error)
+    else:
+        span.set_attribute("error.type", error)
+    span.set_status(Status(StatusCode.ERROR))
+
+
+def record_span_exception(error: BaseException) -> None:
+    """Record a secondary exception on the current span without changing its status."""
     if _provider is not None:
-        span = trace.get_current_span()
-        span.set_attribute("error.type", error_type)
-        span.set_status(Status(StatusCode.ERROR))
+        trace.get_current_span().record_exception(error)
 
 
 def current_trace_id(*, sampled_only: bool = False) -> str | None:

@@ -110,7 +110,7 @@ async def _enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> N
             # Reached only after _insert_queue_records has exhausted its
             # transient-error retries; enqueue stays fire-and-forget by
             # contract, so the failure surfaces here rather than to a caller.
-            mark_span_error(type(e).__name__)
+            mark_span_error(e)
             logger.exception("Failed to enqueue message(s)!")
             if settings.SENTRY.ENABLED:
                 import sentry_sdk
