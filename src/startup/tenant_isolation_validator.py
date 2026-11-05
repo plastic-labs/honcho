@@ -148,6 +148,8 @@ async def validate_tenant_isolation(
         _assert_service_role_bypasses_rls(*service_role)
     search_function = await _introspect_search_function_with_retry(engine, s.DB.SCHEMA)
     _assert_search_function_bypasses_rls(search_function, schema=s.DB.SCHEMA)
+    readable = await _introspect_readable_partitions_with_retry(engine, s.DB.SCHEMA)
+    _assert_no_partition_access(readable, schema=s.DB.SCHEMA)
 
 
 def _assert_tenant_id_unset(s: AppSettings) -> None:
@@ -537,6 +539,70 @@ def _assert_search_function_bypasses_rls(
             + " grant it to the app role:"
             + f" `GRANT EXECUTE ON FUNCTION {name}{MESSAGE_TEXT_MATCHES_ARGS}"
             + " TO <the DB_CONNECTION_URI role>`."
+        )
+
+
+async def _introspect_readable_partitions_with_retry(
+    engine: AsyncEngine, schema: str
+) -> list[str]:
+    """Partitions of the RLS tables that the TENANT engine's role can SELECT from."""
+    try:
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(_RETRY_ATTEMPTS),
+            wait=wait_fixed(_RETRY_BACKOFF_SECONDS),
+            retry=retry_if_exception_type(SQLAlchemyError),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=False,
+        ):
+            with attempt:
+                return await _introspect_readable_partitions_once(engine, schema)
+    except RetryError as e:
+        underlying = e.last_attempt.exception()
+        raise StartupValidationError(
+            f"could not validate partition privileges: {underlying}"
+        ) from underlying
+    raise StartupValidationError("partition privilege introspection did not run")
+
+
+async def _introspect_readable_partitions_once(
+    engine: AsyncEngine, schema: str
+) -> list[str]:
+    query = text(
+        """
+        SELECT child.relname
+        FROM pg_inherits i
+        JOIN pg_class parent ON parent.oid = i.inhparent
+        JOIN pg_namespace n ON n.oid = parent.relnamespace
+        JOIN pg_class child ON child.oid = i.inhrelid
+        WHERE n.nspname = :schema
+          AND parent.relname = ANY(:tables)
+          AND has_table_privilege(current_user, child.oid, 'SELECT')
+        ORDER BY child.relname
+        """
+    )
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            query, {"schema": schema, "tables": list(_RLS_REQUIRED_TABLES)}
+        )
+        return [row.relname for row in result]
+
+
+def _assert_no_partition_access(readable: list[str], *, schema: str) -> None:
+    # region ai
+    # Postgres applies a partitioned table's RLS policies only when the parent is
+    # queried: a statement that names a partition directly reads every tenant's
+    # rows in it. The app only ever queries the parents, so the TENANT role must
+    # hold no privilege on the partitions, which turns a direct query into an
+    # error instead of a cross-tenant read.
+    # endregion
+    if readable:
+        listing = ", ".join(f"{schema}.{name}" for name in readable[:10])
+        more = f" and {len(readable) - 10} more" if len(readable) > 10 else ""
+        raise StartupValidationError(
+            "MULTI_TENANT is on but the TENANT engine's role can read partitions"
+            + f" directly, which skips row-level security: {listing}{more}."
+            + " Revoke its privileges on every partition of the tenant tables:"
+            + " `REVOKE ALL ON <partition> FROM <the DB_CONNECTION_URI role>`."
         )
 
 

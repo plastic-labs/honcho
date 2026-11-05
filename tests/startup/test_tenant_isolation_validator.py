@@ -23,6 +23,7 @@ from src.startup import StartupValidationError, validate_tenant_isolation
 from src.startup.tenant_isolation_validator import (
     _RLS_REQUIRED_TABLES,  # pyright: ignore[reportPrivateUsage]
     SearchFunction,
+    _assert_no_partition_access,  # pyright: ignore[reportPrivateUsage]
     _assert_search_function_bypasses_rls,  # pyright: ignore[reportPrivateUsage]
     _assert_service_role_bypasses_rls,  # pyright: ignore[reportPrivateUsage]
     _assert_tenant_role_cannot_bypass_rls,  # pyright: ignore[reportPrivateUsage]
@@ -107,6 +108,15 @@ def _fake_search_function(
     )
 
 
+def _fake_readable_partitions(
+    monkeypatch: pytest.MonkeyPatch, readable: list[str] | None = None
+) -> None:
+    monkeypatch.setattr(
+        "src.startup.tenant_isolation_validator._introspect_readable_partitions_with_retry",
+        AsyncMock(return_value=readable or []),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Flag off: the single-tenant default
 # ---------------------------------------------------------------------------
@@ -171,6 +181,7 @@ async def test_deriver_instance_skips_the_auth_check(
     _fake_enforced_rls(monkeypatch)
     _fake_tenant_role(monkeypatch, "honcho_app", False, False)
     _fake_search_function(monkeypatch, _OWNED_BY_BYPASSRLS)
+    _fake_readable_partitions(monkeypatch)
     s = _flag_on_settings()
     s.AUTH.USE_AUTH = False
     await validate_tenant_isolation(_NO_ENGINE, instance_type="deriver", app_settings=s)
@@ -372,6 +383,7 @@ async def test_boots_when_the_tenant_role_cannot_bypass_rls(
     _fake_enforced_rls(monkeypatch)
     _fake_tenant_role(monkeypatch, "honcho_app", False, False)
     _fake_search_function(monkeypatch, _OWNED_BY_BYPASSRLS)
+    _fake_readable_partitions(monkeypatch)
 
     await validate_tenant_isolation(
         _NO_ENGINE, instance_type="api", app_settings=_flag_on_settings()
@@ -410,6 +422,7 @@ async def test_refuses_boot_when_the_service_role_is_under_rls(
     _fake_tenant_role(monkeypatch, "honcho_app", False, False)
     _fake_service_role(monkeypatch, "honcho_app", False, False)
     _fake_search_function(monkeypatch, _OWNED_BY_BYPASSRLS)
+    _fake_readable_partitions(monkeypatch)
 
     with pytest.raises(StartupValidationError, match="read zero rows"):
         await validate_tenant_isolation(
@@ -428,6 +441,7 @@ async def test_boots_when_the_service_role_bypasses_rls(
     _fake_tenant_role(monkeypatch, "honcho_app", False, False)
     _fake_service_role(monkeypatch, "honcho_service", False, True)
     _fake_search_function(monkeypatch, _OWNED_BY_BYPASSRLS)
+    _fake_readable_partitions(monkeypatch)
 
     await validate_tenant_isolation(
         _NO_ENGINE,
@@ -518,3 +532,32 @@ async def test_the_migrated_search_function_passes_on_the_real_schema(
     await validate_tenant_isolation(
         db_engine, instance_type="api", app_settings=_flag_on_settings()
     )
+
+
+# ---------------------------------------------------------------------------
+# Flag on: the TENANT role cannot read partitions directly
+# ---------------------------------------------------------------------------
+
+
+def test_assert_no_partition_access_passes_with_none_readable() -> None:
+    _assert_no_partition_access([], schema="public")
+
+
+def test_assert_no_partition_access_names_the_partitions() -> None:
+    with pytest.raises(StartupValidationError, match=r"public\.messages_p0"):
+        _assert_no_partition_access(["messages_p0", "messages_p1"], schema="public")
+
+
+@pytest.mark.asyncio
+async def test_refuses_boot_when_the_tenant_role_can_read_a_partition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_enforced_rls(monkeypatch)
+    _fake_tenant_role(monkeypatch, "honcho_app", False, False)
+    _fake_search_function(monkeypatch, _OWNED_BY_BYPASSRLS)
+    _fake_readable_partitions(monkeypatch, ["documents_p3"])
+
+    with pytest.raises(StartupValidationError, match="skips row-level security"):
+        await validate_tenant_isolation(
+            _NO_ENGINE, instance_type="api", app_settings=_flag_on_settings()
+        )
