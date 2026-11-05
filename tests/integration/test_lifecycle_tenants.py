@@ -96,6 +96,7 @@ def lifecycle_engine(worker_id: str) -> Iterator[Engine]:
 
 @pytest.fixture(scope="session")
 def lifecycle_service_role(lifecycle_engine: Engine) -> Iterator[str]:
+    """Provide a non-superuser BYPASSRLS role for tenant-collision probes."""
     role = "lifecycle_service_" + uuid4().hex
     with lifecycle_engine.begin() as conn:
         conn.execute(text(f"CREATE ROLE {role} NOLOGIN NOSUPERUSER BYPASSRLS"))
@@ -114,6 +115,7 @@ def lifecycle_service_role(lifecycle_engine: Engine) -> Iterator[str]:
 async def lifecycle_service_db(
     lifecycle_engine: Engine,
 ) -> AsyncIterator[AsyncSession]:
+    """Yield an isolated session for explicit cross-tenant service probes."""
     engine = create_async_engine(lifecycle_engine.url)
     try:
         async with AsyncSession(engine, info={CROSS_TENANT: True}) as db:
@@ -128,6 +130,7 @@ async def _seed_graphs(
 ) -> tuple[
     dict[PrimitiveKind, PrimitiveIdentity], dict[PrimitiveKind, PrimitiveIdentity]
 ]:
+    """Seed two tenants with colliding names and stable primitive identifiers."""
     ids = {
         kind: generate_nanoid() for kind in ("workspace", "peer", "session", "message")
     }
@@ -205,6 +208,7 @@ async def test_same_names_and_ids_stay_in_their_tenant_on_service_role(
     hidden: set[str],
     use_alias: bool,
 ) -> None:
+    """Keep colliding identities isolated when real service reads bypass RLS."""
     db = lifecycle_service_db
     target, other = await _seed_graphs(db)
     primitive_models = {
@@ -272,6 +276,7 @@ async def test_same_names_and_ids_stay_in_their_tenant_on_service_role(
 async def test_liveness_exists_uses_tenant_led_parent_indexes(
     lifecycle_service_db: AsyncSession, lifecycle_service_role: str
 ) -> None:
+    """Retain positive tenant-led parent lookups in liveness execution plans."""
     db = lifecycle_service_db
     await _seed_graphs(db)
     db.add_all(
@@ -318,6 +323,7 @@ async def test_liveness_exists_uses_tenant_led_parent_indexes(
 
 
 async def _seed_conclusions(db: AsyncSession) -> dict[str, str]:
+    """Create colliding conclusion IDs in both directions for two tenants."""
     await _seed_graphs(db)
     ids = {kind: generate_nanoid() for kind in ("session", "sessionless")}
     for tenant in ("lifecycle-a", "lifecycle-b"):
@@ -366,6 +372,7 @@ async def test_conclusion_liveness_and_reads_pin_tombstone_sets_to_tenant(
     parent: str,
     use_alias: bool,
 ) -> None:
+    """Pin conclusion tombstone sets to the target tenant on BYPASSRLS reads."""
     db = lifecycle_service_db
     ids = await _seed_conclusions(db)
     if parent != "none":
@@ -471,6 +478,7 @@ async def test_conclusion_liveness_and_reads_pin_tombstone_sets_to_tenant(
 async def test_conclusion_tombstone_subplans_are_uncorrelated_and_tenant_pinned(
     lifecycle_service_db: AsyncSession, lifecycle_service_role: str
 ) -> None:
+    """Keep conclusion tombstone subplans uncorrelated and tenant-qualified."""
     db = lifecycle_service_db
     await _seed_conclusions(db)
     await db.execute(text(f"SET LOCAL ROLE {lifecycle_service_role}"))
@@ -496,6 +504,7 @@ async def test_observation_context_neighbours_cannot_cross_service_tenants(
     lifecycle_service_role: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Prevent same-name co-tenant messages from becoming context neighbours."""
     db = lifecycle_service_db
     await _seed_graphs(db)
     target_id = generate_nanoid()
@@ -535,6 +544,7 @@ async def test_semantic_message_join_cannot_use_another_tenants_embedding(
     lifecycle_service_role: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Keep message-embedding joins tenant-qualified on real service reads."""
     db = lifecycle_service_db
     target, _ = await _seed_graphs(db)
     embedding = [1.0] + [0.0] * (settings.EMBEDDING.VECTOR_DIMENSIONS - 1)

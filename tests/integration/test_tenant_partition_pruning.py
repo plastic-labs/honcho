@@ -372,6 +372,7 @@ async def test_hot_statements_lock_few_relations_at_any_partition_count(
     async_engines: dict[int, AsyncEngine],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Keep hot-statement lock counts bounded as tenant partitions increase."""
     counts: dict[tuple[str, bool, int], int] = {}
     monkeypatch.setattr(settings, "MULTI_TENANT", True)
     for hook in (False, True):
@@ -412,6 +413,7 @@ async def test_hook_does_not_change_the_rows(
     async_engines: dict[int, AsyncEngine],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Preserve query results and delete targeting when tenant predicates change."""
     monkeypatch.setattr(settings, "MULTI_TENANT", True)
     for name, case in _CASES.items():
         results: list[list[Any]] = []

@@ -42,6 +42,7 @@ class Graph:
 
 
 async def _seed(db: AsyncSession) -> Graph:
+    """Create a committed two-author graph with deterministic message embeddings."""
     workspace = str(generate_nanoid())
     db.add(models.Workspace(name=workspace))
     await db.flush()
@@ -93,6 +94,7 @@ async def _seed(db: AsyncSession) -> Graph:
 
 
 async def _tombstone(db: AsyncSession, graph: Graph, target: Target) -> None:
+    """Commit only the selected fixture tombstone, not a public DELETE call."""
     now = datetime.now(UTC)
     match target:
         case "none":
@@ -120,6 +122,7 @@ async def _tombstone(db: AsyncSession, graph: Graph, target: Target) -> None:
 
 
 def _expected(graph: Graph, target: Target) -> set[str]:
+    """Map each direct tombstone fixture to the messages that remain visible."""
     expected: dict[Target, set[str]] = {
         "none": {graph.authored, graph.replied},
         "message": {graph.replied},
@@ -133,6 +136,7 @@ def _expected(graph: Graph, target: Target) -> set[str]:
 def _snippet_ids(
     snippets: list[tuple[list[models.Message], list[models.Message]]],
 ) -> tuple[set[str], set[str]]:
+    """Separate matched message identities from their surviving snippet context."""
     matched = {m.public_id for matches, _ in snippets for m in matches}
     context = {m.public_id for _, ctx in snippets for m in ctx}
     return matched, context
@@ -143,6 +147,7 @@ TARGETS: list[Target] = ["none", "message", "author", "session", "workspace"]
 
 @pytest.mark.parametrize("target", TARGETS)
 async def test_message_reads_hide_tombstones(db_session: AsyncSession, target: Target):
+    """Apply direct-parent liveness consistently across message read paths."""
     graph = await _seed(db_session)
     await _tombstone(db_session, graph, target)
     expected = _expected(graph, target)
@@ -239,6 +244,7 @@ async def test_observation_context_skips_neighbours_of_a_tombstoned_target(
 
 
 async def test_clone_copies_only_live_messages(db_session: AsyncSession):
+    """Exclude tombstoned messages and reject hidden cutoffs when cloning."""
     graph = await _seed(db_session)
     await _tombstone(db_session, graph, "message")
 
@@ -256,6 +262,7 @@ async def test_clone_copies_only_live_messages(db_session: AsyncSession):
 
 
 async def _seed_conclusions(db: AsyncSession, graph: Graph) -> tuple[str, str]:
+    """Seed session-stamped and sessionless conclusions for read probes."""
     db.add(
         models.Collection(
             workspace_name=graph.workspace, observer="author", observed="author"
@@ -301,6 +308,7 @@ async def _seed_conclusions(db: AsyncSession, graph: Graph) -> tuple[str, str]:
 async def test_conclusion_reads_hide_tombstoned_parents(
     db_session: AsyncSession, target: Target, visible: set[str]
 ):
+    """Hide conclusions through their own direct parents across recall paths."""
     graph = await _seed(db_session)
     in_session, sessionless = await _seed_conclusions(db_session, graph)
     await _tombstone(db_session, graph, target)
@@ -319,6 +327,7 @@ async def test_conclusion_reads_hide_tombstoned_parents(
     ids = [in_session, sessionless]
 
     def seen(docs: Sequence[models.Document]) -> set[str]:
+        """Translate fetched document IDs into deterministic fixture labels."""
         return {names[d.id] for d in docs}
 
     assert seen(await crud.get_documents_by_ids(db_session, ws, ids)) == visible
@@ -418,6 +427,7 @@ async def test_conclusion_reads_hide_either_tombstoned_peer(db_session: AsyncSes
     await db_session.commit()
 
     def visible(docs: Sequence[models.Document]) -> set[str]:
+        """Translate cross-peer conclusions into their fixture direction labels."""
         return {ids[d.id] for d in docs}
 
     by_id = await crud.get_documents_by_ids(db_session, ws, list(ids))
@@ -433,6 +443,7 @@ async def test_conclusion_reads_hide_either_tombstoned_peer(db_session: AsyncSes
 async def test_summary_fallback_skips_tombstoned_source_and_parents(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, target: Target
 ) -> None:
+    """Skip summary fallback for a tombstoned source or direct parent."""
     graph = await _seed(db_session)
     message = await db_session.scalar(
         select(models.Message).where(models.Message.public_id == graph.authored)
