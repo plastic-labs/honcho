@@ -70,3 +70,25 @@ const honcho = new Honcho({
 
 setTelemetryHeaders(honcho.http.defaultHeaders, { model: 'claude-opus-4' })
 ```
+
+## OAuth (Honcho cloud)
+
+Device sign-in. Self-hosted Honcho has no OAuth server; there the API key is used and OAuth is skipped.
+
+```ts
+import { configPath, ensureFreshCredential, pollForToken, requestDeviceCode, saveGrant } from '@honcho-ai/harness-plugin-core'
+
+// sign in once
+const device = await requestDeviceCode({ source: 'harness' })
+console.log(`Open ${device.verificationUriComplete} and confirm ${device.userCode}`)
+const tokens = await pollForToken(device)
+await saveGrant(configPath(), { host: 'harness' }, tokens)
+
+// before each batch of requests
+const cred = await ensureFreshCredential({ path: configPath(), host: 'harness', baseUrl })
+if (cred?.reauthRequired) console.warn('Honcho sign-in expired; sign in again')
+```
+
+Resolution, highest wins: `HONCHO_API_KEY` env → `hosts.<host>.oauth` → the shared root `oauth` → `apiKey` → an expired grant.
+
+Every refresh supersedes the grant's previous access token (the API gateway may keep accepting it for up to 5 minutes from its cache, then rejects it), so a long-running process must call `ensureFreshCredential` before each batch of requests and update its SDK client's key in place rather than cache a token or build a new client.

@@ -27,3 +27,24 @@ export {
 } from './telemetry.js'
 
 export type { TelemetryIdentity } from './telemetry.js'
+
+export {
+  accessValid,
+  ensureFreshCredential,
+  isCloud,
+  pickCredential,
+  pollForToken,
+  readGrant,
+  refreshAccessToken,
+  requestDeviceCode,
+  saveGrant,
+  updateConfigFile,
+  withConfigLock,
+  HARNESS_CLIENT_ID,
+  OAuthError,
+  OAUTH_DEVICE_URL,
+  OAUTH_SCOPE,
+  OAUTH_TOKEN_URL,
+} from './oauth.js'
+
+export type { Credential, CredentialSource, DeviceCode, GrantLocation, OAuthTokens, OAuthTransport } from './oauth.js'
