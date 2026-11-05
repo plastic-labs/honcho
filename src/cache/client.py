@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import socket
-from collections.abc import Iterable
-from typing import Any, cast
+from collections.abc import Awaitable, Callable, Iterable
+from functools import wraps
+from typing import Any, ParamSpec, TypeVar, cast
 from urllib.parse import urlparse, urlunparse
 
 import sentry_sdk
 from cashews import cache
 from cashews.backends.redis.client import SafeRedisCluster
 from cashews.commands import PATTERN_CMDS, Command
+from cashews.exceptions import CacheBackendInteractionError
 from cashews.picklers import PicklerType
 from redis import exceptions as redis_exc
 from redis.asyncio import RedisCluster
@@ -62,17 +65,24 @@ _cache_lock = asyncio.Lock()
 async def _safe_cluster_initialize(
     self: SafeRedisCluster, *args: Any, **kwargs: Any
 ) -> SafeRedisCluster:
-    """Forward whatever redis-py passes, keeping cashews' degrade-on-error intent."""
+    """Forward whatever redis-py passes; report any init failure as ConnectionError."""
     try:
         return await RedisCluster.initialize(self, *args, **kwargs)  # pyright: ignore[reportReturnType]
     except (
         redis_exc.RedisError,
+        # Not a RedisError subclass; raised when no startup node answers.
+        redis_exc.RedisClusterException,
         socket.gaierror,
         OSError,
         TimeoutError,
-    ):
+    ) as exc:
+        # Do not return the client: a failed init leaves it with no default
+        # node (and no nodes at all if none answered), so its next command
+        # raises IndexError or AttributeError, which nothing catches.
+        # ConnectionError is what init_cache() retries and falls back on, and
+        # what the safe client and fallback_on_cache_error handle.
         logger.error("redis: can not initialize cache", exc_info=True)
-        return self
+        raise redis_exc.ConnectionError("Redis Cluster initialization failed") from exc
 
 
 # cashews evaluates `__aenter__ = initialize` at class-definition time, so the
@@ -400,6 +410,9 @@ async def init_cache() -> None:
                 settings.CACHE.URL,
                 pickle_type=PicklerType.SQLALCHEMY,
                 cluster=settings.CACHE.CLUSTER,
+                # cashews passes this to the redis-py pool: per process for a
+                # standalone client, per node for a cluster client.
+                max_connections=settings.CACHE.MAX_CONNECTIONS,
                 socket_connect_timeout=settings.CACHE.CONNECT_TIMEOUT_SECONDS,
                 retry=Retry(
                     ExponentialBackoff(cap=0.5, base=0.1),
@@ -520,6 +533,44 @@ async def safe_cache_delete(key: str) -> None:
         logger.warning("Cache delete failed for key %s", key, exc_info=True)
 
 
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+# Errors that only the cache layer raises. A fetcher's own DB code never raises
+# these, so catching them cannot hide a DB error.
+_CACHE_FAILURES = (
+    redis_exc.RedisError,
+    redis_exc.RedisClusterException,
+    CacheBackendInteractionError,
+)
+
+
+def fallback_on_cache_error(
+    cached: Callable[_P, Awaitable[_R]],
+) -> Callable[_P, Awaitable[_R]]:
+    """Run a @cache / @cache.locked fetcher without the cache if the cache fails.
+
+    Put it above the cashews decorators. cashews' suppress mode does not catch
+    every Redis error (for example RedisClusterException, which is not a
+    RedisError), and an error that gets through would fail the request.
+    """
+    uncached = inspect.unwrap(cached)
+
+    @wraps(uncached)
+    async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        try:
+            return await cached(*args, **kwargs)
+        except _CACHE_FAILURES as e:
+            logger.warning(
+                "Cache failed for %s, running it without the cache: %r",
+                uncached.__qualname__,
+                e,
+            )
+            return await uncached(*args, **kwargs)
+
+    return wrapper
+
+
 async def close_cache() -> None:
     await cache.close()
 
@@ -530,6 +581,7 @@ __all__ = [
     "cache",
     "cache_key_namespace",
     "cache_prefix_namespace",
+    "fallback_on_cache_error",
     "safe_cache_delete",
     "safe_cache_get",
     "safe_cache_set",
