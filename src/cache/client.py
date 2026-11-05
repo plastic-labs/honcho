@@ -366,6 +366,10 @@ async def _setup_fleet_cache(*, redis: bool) -> None:
     fleet_cache.setup(
         settings.CACHE.URL,
         cluster=settings.CACHE.CLUSTER,
+        # Raise Redis errors (the URL may say suppress=true) so the poller's
+        # fallback runs: suppressed, a failed set_lock reads as another replica
+        # holding the lease, and no replica would clean up stale claims.
+        suppress=False,
         # One snapshot read or write per poll interval: a couple of connections.
         max_connections=2,
         socket_connect_timeout=settings.CACHE.CONNECT_TIMEOUT_SECONDS,

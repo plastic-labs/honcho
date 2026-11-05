@@ -527,3 +527,29 @@ class TestFleetCoordination:
 
         set_lock.assert_not_awaited()
         assert measure.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_the_fleet_cache_raises_redis_errors(monkeypatch: pytest.MonkeyPatch):
+    """The shared pool's CACHE_URL says suppress=true; the fleet client overrides it.
+
+    Suppressed, a failed set_lock returns False, which the poller reads as another
+    replica holding the lease, so no replica would clean up stale claims.
+    """
+    from src.cache import client
+
+    setup_kwargs: dict[str, Any] = {}
+
+    def capture(_url: str, **kwargs: Any) -> None:
+        setup_kwargs.update(kwargs)
+
+    monkeypatch.setattr(
+        settings.CACHE, "URL", "redis://localhost:6379?suppress=true&socket_timeout=5"
+    )
+    monkeypatch.setattr(client.fleet_cache, "setup", capture)
+    monkeypatch.setattr(client.fleet_cache, "close", AsyncMock())
+    monkeypatch.setattr(client.fleet_cache, "enable", lambda: None)
+
+    await client._setup_fleet_cache(redis=True)  # pyright: ignore[reportPrivateUsage]
+
+    assert setup_kwargs["suppress"] is False
