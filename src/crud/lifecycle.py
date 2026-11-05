@@ -280,6 +280,7 @@ def live_document_row(
     document: type[models.Document] | AliasedClass[models.Document] = models.Document,
     *,
     tenant_id: str | None = None,
+    peer_pair: tuple[str, str] | None = None,
 ) -> ColumnElement[bool]:
     """Row-wise filter: the conclusion, its workspace, observer and observed are live.
 
@@ -304,6 +305,12 @@ def live_document_row(
     foreign keys guarantee every parent exists, so this does not need the
     semi-joins' fail-closed check for a missing parent; the workspace is still
     checked positively.
+
+    ``peer_pair`` is for pair-pinned vector reads only: it adds matching outer
+    observer/observed equalities and replaces both peer sets with constant,
+    positive EXISTS checks. This preserves index-ordered plans without a
+    separate probe or snapshot; a missing peer fails closed. The default still
+    checks every row's own peers, including when ``document`` is an alias.
     """
     target_tenant = tenant_id if tenant_id is not None else models.scoped_tenant_id()
     if not target_tenant:
@@ -311,15 +318,39 @@ def live_document_row(
     workspace = aliased(models.Workspace)
     peer = aliased(models.Peer)
     session = aliased(models.Session)
-    tombstoned_peers = (
-        select(peer.name)
-        .where(
-            peer.tenant_id == target_tenant,
-            peer.workspace_name == workspace_name,
-            peer.deleted_at.is_not(None),
+    peer_liveness: tuple[ColumnElement[bool], ...]
+    if peer_pair is None:
+        tombstoned_peers = (
+            select(peer.name)
+            .where(
+                peer.tenant_id == target_tenant,
+                peer.workspace_name == workspace_name,
+                peer.deleted_at.is_not(None),
+            )
+            .correlate(None)
         )
-        .correlate(None)
-    )
+        peer_liveness = (
+            document.observer.not_in(tombstoned_peers),
+            document.observed.not_in(tombstoned_peers),
+        )
+    else:
+        observer, observed = peer_pair
+        peer_liveness = (
+            document.observer == observer,
+            document.observed == observed,
+            *(
+                select(peer.name)
+                .where(
+                    peer.tenant_id == target_tenant,
+                    peer.workspace_name == workspace_name,
+                    peer.name == name,
+                    peer.deleted_at.is_(None),
+                )
+                .correlate(None)
+                .exists()
+                for name in peer_pair
+            ),
+        )
     tombstoned_sessions = (
         select(session.name)
         .where(
@@ -341,8 +372,7 @@ def live_document_row(
         )
         .correlate(None)
         .exists(),
-        document.observer.not_in(tombstoned_peers),
-        document.observed.not_in(tombstoned_peers),
+        *peer_liveness,
         or_(
             document.session_name.is_(None),
             document.session_name.not_in(tombstoned_sessions),

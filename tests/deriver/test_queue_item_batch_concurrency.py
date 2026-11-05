@@ -23,11 +23,13 @@ fire-and-forget catch-all and silently never derived.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+import importlib
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import asynccontextmanager
 from typing import Any, cast
 
 import pytest
-from sqlalchemy import insert, update
+from sqlalchemy import insert, select, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -42,6 +44,9 @@ from tests.deriver.conftest import (
     independent_sessions,
     read_batch_row,
 )
+
+# src.deriver re-exports the enqueue function under the module's name.
+enqueue_module = importlib.import_module("src.deriver.enqueue")
 
 # How long the blocked statement is given to prove it is really blocked, and how
 # long it is then given to finish once the block is lifted. Both bound a hang
@@ -372,3 +377,83 @@ class TestTheEnqueueRetriesADeadlockedBatch:
         assert [
             record["work_unit_key"] for record in recording_session.executed_batches[0]
         ] == sorted(unsorted_keys)
+
+
+# Longer than any lock_timeout an enqueue might be tempted to use (2 s, with
+# three attempts, gave up after about 6 s).
+LONG_LOCK_HOLD_SECONDS = 8.0
+
+
+@pytest.mark.asyncio
+async def test_an_enqueue_blocked_by_a_long_lock_still_commits(
+    db_engine: AsyncEngine,
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+    seed_work_unit: SeedWorkUnit,
+    single_tenant_enqueue: None,  # noqa: ARG001  # pyright: ignore[reportUnusedParameter]
+) -> None:
+    """The message is already committed, so the queue insert must wait, not give up."""
+    workspace, _peer = sample_data
+    work_unit_key = "representation:long-lock"
+    await seed_work_unit(work_unit_key, token_counts=(5,))
+    message_id = await _committed_message_priced_at(
+        seed_work_unit, unit_name="long-lock", token_count=3
+    )
+    record: dict[str, Any] = {
+        "work_unit_key": work_unit_key,
+        "task_type": "representation",
+        "payload": {},
+        "session_id": None,
+        "workspace_name": workspace.name,
+        "message_id": message_id,
+    }
+
+    sessions = independent_sessions(db_engine)
+    async with sessions() as holder, sessions() as enqueuing:
+        await holder.execute(
+            select(models.QueueItemBatch.work_unit_key)
+            .where(models.QueueItemBatch.work_unit_key == work_unit_key)
+            .with_for_update()
+        )
+        insert_task = asyncio.create_task(_insert_queue_records(enqueuing, [record]))
+        await asyncio.sleep(LONG_LOCK_HOLD_SECONDS)
+        still_waiting = not insert_task.done()
+
+        await holder.commit()
+        await asyncio.wait_for(insert_task, UNBLOCKED_COMPLETION_TIMEOUT_SECONDS)
+
+    assert still_waiting, "the insert must wait on the lock, not give up"
+    row = await read_batch_row(db_session, work_unit_key)
+    assert row is not None
+    assert row.pending_count == 2, "the seeded item plus the blocked insert"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_caps_concurrent_db_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent enqueues never hold more DB sessions than the semaphore allows."""
+    in_flight = peak = 0
+
+    @asynccontextmanager
+    async def fake_tracked_db(*_args: Any, **_kwargs: Any) -> AsyncGenerator[None]:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        try:
+            await asyncio.sleep(0.01)
+            yield None
+        finally:
+            in_flight -= 1
+
+    async def no_records(*_args: Any) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(enqueue_module, "tracked_db", fake_tracked_db)
+    monkeypatch.setattr(enqueue_module, "handle_session", no_records)
+    monkeypatch.setattr(enqueue_module, "_ENQUEUE_DB_SLOTS", asyncio.Semaphore(3))
+
+    payload = [{"workspace_name": "w", "session_name": "s"}]
+    await asyncio.gather(
+        *(enqueue_module.enqueue(payload, tenant_id=None) for _ in range(12))
+    )
+
+    assert peak == 3

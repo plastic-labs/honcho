@@ -361,6 +361,91 @@ class TestDeriverStatusEndpoint:
         # Check consistency
         assert all(r == responses[0] for r in responses)  # pyright: ignore
 
+    async def test_get_queue_status_mixed_backlog_counts(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Completed, in-progress and pending items across sessions, plus a session-less dream."""
+        workspace, _peer = sample_data
+        s1 = models.Session(workspace_name=workspace.name, name="mixed_1")
+        s2 = models.Session(workspace_name=workspace.name, name="mixed_2")
+        db_session.add_all([s1, s2])
+        await db_session.commit()
+
+        def item(
+            key: str, session_id: str | None, task_type: str, processed: bool
+        ) -> models.QueueItem:
+            return models.QueueItem(
+                session_id=session_id,
+                task_type=task_type,
+                work_unit_key=f"{task_type}:{workspace.name}:{key}",
+                payload={},
+                processed=processed,
+                workspace_name=workspace.name,
+            )
+
+        db_session.add_all(
+            [
+                item("s1-done-a", s1.id, "representation", True),
+                item("s1-done-b", s1.id, "summary", True),
+                item("s1-running", s1.id, "representation", False),
+                item("s1-wait-a", s1.id, "representation", False),
+                item("s1-wait-b", s1.id, "representation", False),
+                item("s1-wait-c", s1.id, "summary", False),
+                item("s2-done", s2.id, "representation", True),
+                item("s2-wait-a", s2.id, "representation", False),
+                item("s2-wait-b", s2.id, "summary", False),
+                item("dream", None, "dream", False),
+                item("internal", None, "deletion", False),
+            ]
+        )
+        db_session.add(
+            models.ActiveQueueSession(
+                work_unit_key=f"representation:{workspace.name}:s1-running"
+            )
+        )
+        await db_session.commit()
+
+        response = client.get(f"/v3/workspaces/{workspace.name}/queue/status")
+        assert response.status_code == 200
+        assert response.json() == {
+            "total_work_units": 10,
+            "completed_work_units": 3,
+            "in_progress_work_units": 1,
+            "pending_work_units": 6,
+            "sessions": {
+                s1.id: {
+                    "session_id": s1.id,
+                    "total_work_units": 6,
+                    "completed_work_units": 2,
+                    "in_progress_work_units": 1,
+                    "pending_work_units": 3,
+                },
+                s2.id: {
+                    "session_id": s2.id,
+                    "total_work_units": 3,
+                    "completed_work_units": 1,
+                    "in_progress_work_units": 0,
+                    "pending_work_units": 2,
+                },
+            },
+        }
+
+        response = client.get(
+            f"/v3/workspaces/{workspace.name}/queue/status",
+            params={"session_id": s1.name},
+        )
+        assert response.status_code == 200
+        assert response.json() == {
+            "total_work_units": 6,
+            "completed_work_units": 2,
+            "in_progress_work_units": 1,
+            "pending_work_units": 3,
+            "sessions": None,
+        }
+
 
 @pytest.mark.asyncio
 async def test_queue_status_counts_only_the_bound_tenant(

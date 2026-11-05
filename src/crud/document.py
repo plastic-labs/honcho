@@ -495,7 +495,7 @@ async def _query_documents_pgvector(
         .where(models.Document.observer == observer)
         .where(models.Document.observed == observed)
         .where(models.Document.embedding.isnot(None))
-        .where(live_document_row(workspace_name))
+        .where(live_document_row(workspace_name, peer_pair=(observer, observed)))
     )
 
     if max_distance is not None:

@@ -28,6 +28,12 @@ from src.utils.work_unit import (
 
 logger = logging.getLogger(__name__)
 
+# Caps the queue writes one process runs at once, so a burst of enqueues
+# cannot take every pooled DB connection from request handlers.
+_ENQUEUE_DB_SLOTS = asyncio.Semaphore(
+    max(1, (settings.DB.POOL_SIZE + settings.DB.MAX_OVERFLOW) // 4)
+)
+
 
 async def enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> None:
     """
@@ -69,7 +75,10 @@ async def enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> No
     # binding is still in place by then is a FastAPI ordering detail. The queue
     # table has no RLS, so the insert is fine on this session too.
     # endregion
-    async with tracked_db("message_enqueue", tenant_id=tenant_id) as db_session:
+    async with (
+        _ENQUEUE_DB_SLOTS,
+        tracked_db("message_enqueue", tenant_id=tenant_id) as db_session,
+    ):
         try:
             # Determine if batch or single processing
             if not payload:  # Empty list check
@@ -115,6 +124,8 @@ async def _insert_queue_records(
         _stamp_tenant_id(queue_records), key=lambda record: record["work_unit_key"]
     )
     stmt = insert(QueueItem).returning(QueueItem)
+    # No lock_timeout here: the message is already committed, so giving up
+    # loses its derivation. A time limit needs a durable retry first.
     last_attempt = 2
     for attempt in range(last_attempt + 1):
         try:
