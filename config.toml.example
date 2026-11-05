@@ -75,6 +75,33 @@ OPENAI_API_KEY = "your-api-key-here"
 # ANTHROPIC_API_KEY = "your-api-key"
 # GEMINI_API_KEY = "your-api-key"
 
+# Model catalog (optional): define a model once, then point any feature or
+# fallback at it with model_ref instead of repeating its settings. Names are
+# lowercase letters, digits and underscores. A feature that sets model_ref
+# can't also set model or transport; any other field it sets wins over the
+# entry. Every request to an entry's transport and model uses its capabilities.
+# [models.haiku]
+# transport = "anthropic"
+# model = "claude-haiku-4-5"
+#
+# [models.nano]
+# transport = "openai"
+# model = "gpt-5-nano"
+# thinking_effort = "minimal"
+# context_window = 272000  # optional; checked against the input budgets at startup
+#
+# [models.summarizer]  # a proxy alias: name the model behind it
+# transport = "openai"
+# model = "summarizer"
+# overrides = { base_url = "https://proxy.example/v1" }
+# capabilities = { infer_from = "claude-haiku-5-5" }
+#
+# Then, in a feature section:
+# [deriver.model_config]
+# model_ref = "haiku"
+# [deriver.model_config.fallback]
+# model_ref = "nano"
+
 # Embedding settings
 [embedding]
 VECTOR_DIMENSIONS = 1536
