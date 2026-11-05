@@ -268,6 +268,9 @@ async def health_check():
 
 
 # Global exception handlers
+TRACE_ID_HEADER = "X-Honcho-Trace-Id"
+
+
 @app.exception_handler(HonchoException)
 async def honcho_exception_handler(_request: Request, exc: HonchoException):
     """Handle all Honcho-specific exceptions."""
@@ -351,9 +354,26 @@ async def global_exception_handler(_request: Request, exc: Exception):
 
     if SENTRY_ENABLED:
         sentry_sdk.capture_exception(exc)
+    # This response is built outside track_request, so the trace header is
+    # added here; a 500 is when the caller most needs an id to report.
+    trace_id = current_trace_id()
     return JSONResponse(
         status_code=500,
         content={"detail": "An unexpected error occurred"},
+        headers={TRACE_ID_HEADER: trace_id} if trace_id else None,
+    )
+
+
+def _tag_request_span(request: Request) -> None:
+    """Tag the request span with the resource ids routing resolved, so a trace
+    can be found by workspace/peer/session. Runs on success and on error."""
+    path_params = request.path_params
+    set_span_attributes(
+        {
+            "honcho.workspace_id": path_params.get("workspace_id"),
+            "honcho.peer_id": path_params.get("peer_id"),
+            "honcho.session_id": path_params.get("session_id"),
+        }
     )
 
 
@@ -379,21 +399,15 @@ async def track_request(
 
     try:
         start_time = time.perf_counter()
-        response = await call_next(request)
-
-        # Routing has filled path_params by now; tag the request span with the
-        # resource ids so a trace can be found by workspace/peer/session, and
-        # hand the caller the trace id to quote when reporting a problem.
-        path_params = request.path_params
-        set_span_attributes(
-            {
-                "honcho.workspace_id": path_params.get("workspace_id"),
-                "honcho.peer_id": path_params.get("peer_id"),
-                "honcho.session_id": path_params.get("session_id"),
-            }
-        )
+        try:
+            response = await call_next(request)
+        finally:
+            # Routing has filled path_params by now, whether or not the
+            # handler raised (an unhandled error becomes a 500 further out).
+            _tag_request_span(request)
+        # Hand the caller the trace id to quote when reporting a problem.
         if (trace_id := current_trace_id()) is not None:
-            response.headers["X-Honcho-Trace-Id"] = trace_id
+            response.headers[TRACE_ID_HEADER] = trace_id
 
         # Track metrics if enabled
         if settings.METRICS.ENABLED:

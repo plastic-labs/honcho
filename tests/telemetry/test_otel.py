@@ -33,12 +33,13 @@ from opentelemetry.trace import (
     TraceFlags,
 )
 
-from src import models
+from src import main, models
 from src.deriver import consumer
 from src.deriver.queue_manager import QueueManager
 from src.llm import executor, registry
 from src.llm.backend import StreamChunk
 from src.llm.runtime import AttemptPlan
+from src.llm.structured_output import StructuredOutputError
 from src.telemetry import otel
 from src.telemetry.otel import HonchoSampler
 from src.utils.queue_payload import create_deletion_payload
@@ -572,3 +573,47 @@ class TestEncodableExport:
             "exception.stacktrace",
         }
         assert clean.name == "clean" and clean.events == ()
+
+
+class TestErrorShape:
+    """Spans carry what an agent needs to diagnose production errors."""
+
+    @pytest.mark.asyncio
+    async def test_structured_output_failure_keeps_finish_reason_and_usage(
+        self, spans: InMemorySpanExporter
+    ) -> None:
+        """HONCHO-50W: a failed structured answer must say whether it was cut
+        off (finish_reason=length) or answered in the wrong shape."""
+        error = StructuredOutputError("structured output failed", raw_content="{")
+        error.finish_reason, error.input_tokens, error.output_tokens = "length", 9, 64
+        with (
+            patch.object(registry, "CLIENTS", {"openai": object()}),
+            patch.object(executor, "backend_for_provider", return_value=object()),
+            patch.object(
+                executor, "execute_completion", new=AsyncMock(side_effect=error)
+            ),
+            patch("src.telemetry.events.emit"),
+            pytest.raises(StructuredOutputError),
+        ):
+            await executor.honcho_llm_call_inner(
+                "openai", "gpt-test", "hello", max_tokens=64, plan=_plan()
+            )
+        span = _by_name(spans, "honcho.llm.completion")
+        assert span.attributes is not None
+        assert span.attributes["gen_ai.response.finish_reasons"] == ("length",)
+        assert span.attributes["gen_ai.usage.output_tokens"] == 64
+        assert span.attributes["gen_ai.usage.input_tokens"] == 9
+        assert span.attributes["error.type"] == "StructuredOutputError"
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("spans")
+    async def test_unhandled_500_returns_trace_id(self) -> None:
+        """HONCHO-96: a 500 is when a caller most needs an id to report."""
+        with otel.start_span("POST /v3/workspaces/{workspace_id}/search"):
+            trace_id = otel.current_trace_id()
+            response = await main.global_exception_handler(
+                cast(Any, None), RuntimeError("boom")
+            )
+        assert response.status_code == 500
+        assert trace_id is not None
+        assert response.headers[main.TRACE_ID_HEADER] == trace_id

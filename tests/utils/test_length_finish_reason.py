@@ -185,7 +185,7 @@ class TestOpenAILengthFinishReasonRepair:
 
         with (
             patch.dict(CLIENTS, {"openai": mock_client}),
-            pytest.raises(StructuredOutputError),
+            pytest.raises(StructuredOutputError) as excinfo,
         ):
             await honcho_llm_call_inner(
                 provider="openai",
@@ -195,6 +195,12 @@ class TestOpenAILengthFinishReasonRepair:
                 response_model=PromptRepresentation,
                 json_mode=True,
             )
+        # Telemetry can tell truncation from a wrong-shape answer.
+        assert excinfo.value.finish_reason == "length"
+        assert (excinfo.value.input_tokens, excinfo.value.output_tokens) == (
+            1000,
+            2000,
+        )
 
     async def test_empty_truncated_content_raises_safe_error(self) -> None:
         mock_client = AsyncMock(spec=AsyncOpenAI)
@@ -312,7 +318,7 @@ class TestAnthropicJsonRepair:
 
         with (
             patch.dict(CLIENTS, {"anthropic": mock_client}),
-            pytest.raises(StructuredOutputError),
+            pytest.raises(StructuredOutputError) as excinfo,
         ):
             await honcho_llm_call_inner(
                 provider="anthropic",
@@ -322,6 +328,8 @@ class TestAnthropicJsonRepair:
                 response_model=PromptRepresentation,
                 json_mode=True,
             )
+        assert excinfo.value.finish_reason == "max_tokens"
+        assert (excinfo.value.input_tokens, excinfo.value.output_tokens) == (100, 50)
 
     async def test_non_prompt_representation_reraises(self) -> None:
         """Non-PromptRepresentation with broken JSON should raise."""
@@ -387,7 +395,7 @@ class TestGeminiJsonRepair:
 
         with (
             patch.dict(CLIENTS, {"gemini": mock_client}),
-            pytest.raises(StructuredOutputError),
+            pytest.raises(StructuredOutputError) as excinfo,
         ):
             await honcho_llm_call_inner(
                 provider="gemini",
@@ -397,6 +405,8 @@ class TestGeminiJsonRepair:
                 response_model=PromptRepresentation,
                 json_mode=True,
             )
+        assert excinfo.value.finish_reason == "MAX_TOKENS"
+        assert (excinfo.value.input_tokens, excinfo.value.output_tokens) == (200, 100)
 
 
 # ---------------------------------------------------------------------------

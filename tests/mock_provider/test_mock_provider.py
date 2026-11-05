@@ -559,6 +559,23 @@ def test_malformed_body_returns_an_openai_error_envelope(client: TestClient) -> 
     assert set(error) == {"message", "type", "param", "code"}
 
 
+@pytest.mark.parametrize(("raw", "param"), [("", "input"), (["ok", ""], "input[1]")])
+def test_empty_string_input_is_rejected_like_the_real_api(
+    client: TestClient, raw: str | list[str], param: str
+) -> None:
+    """OpenAI answers an empty input with a 400; a mock that embeds it would
+    hide production failures such as HONCHO-96 from a local repro."""
+    response = client.post("/v1/embeddings", json={"input": raw})
+
+    assert response.status_code == 400
+    assert response.json()["error"] == {
+        "message": f"Invalid '{param}': input cannot be an empty string.",
+        "type": "invalid_request_error",
+        "param": None,
+        "code": None,
+    }
+
+
 def test_boolean_dimensions_is_rejected_not_silently_coerced(
     client: TestClient,
 ) -> None:

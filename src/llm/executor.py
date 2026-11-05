@@ -145,6 +145,17 @@ def _llm_usage_attributes(
     return {k: v for k, v in attrs.items() if v is not None}
 
 
+def _structured_output_error_attributes(exc: StructuredOutputError) -> dict[str, Any]:
+    attrs: dict[str, Any] = {
+        "gen_ai.usage.input_tokens": exc.input_tokens,
+        "gen_ai.usage.output_tokens": exc.output_tokens,
+        "gen_ai.response.finish_reasons": (
+            [exc.finish_reason] if exc.finish_reason else None
+        ),
+    }
+    return {k: v for k, v in attrs.items() if v is not None}
+
+
 def _emit_llm_call_completed(
     *,
     plan: AttemptPlan | None,
@@ -628,17 +639,23 @@ async def honcho_llm_call_inner(
                 telemetry=telemetry,
             ),
         ) as llm_span:
-            backend_result = await execute_completion(
-                backend,
-                effective_config,
-                messages=wire_messages,
-                max_tokens=max_tokens,
-                tools=tools,
-                tool_choice=tool_choice,
-                response_format=response_model,
-                cache_policy=effective_config.cache_policy,
-                extra_params=call_extras,
-            )
+            try:
+                backend_result = await execute_completion(
+                    backend,
+                    effective_config,
+                    messages=wire_messages,
+                    max_tokens=max_tokens,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    response_format=response_model,
+                    cache_policy=effective_config.cache_policy,
+                    extra_params=call_extras,
+                )
+            except StructuredOutputError as exc:
+                # finish_reason and usage tell truncation from a wrong-shape
+                # answer; the backend raised before building a result.
+                otel.set_span_attributes(_structured_output_error_attributes(exc))
+                raise
             if llm_span.is_recording():
                 llm_span.set_attributes(_llm_usage_attributes(backend_result))
         origin = ModelOrigin(
@@ -655,7 +672,12 @@ async def honcho_llm_call_inner(
         if isinstance(exc, StructuredOutputError) and exc.raw_content is not None:
             # The backend raised before building a result, so this is the only
             # copy of what the model said; record it as the attempt's output.
-            backend_result = BackendCompletionResult(content=exc.raw_content)
+            backend_result = BackendCompletionResult(
+                content=exc.raw_content,
+                input_tokens=exc.input_tokens or 0,
+                output_tokens=exc.output_tokens or 0,
+                finish_reason=exc.finish_reason,
+            )
         raise
     finally:
         _emit_call_telemetry(

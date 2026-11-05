@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Generator
+from contextlib import contextmanager
 from hashlib import sha256
 from typing import cast
 
@@ -22,6 +24,33 @@ class StructuredOutputError(ValueError):
     def __init__(self, message: str, *, raw_content: str | None = None) -> None:
         super().__init__(message)
         self.raw_content: str | None = raw_content
+        # What the provider reported for the failed response, when the raising
+        # backend had one: a "length" finish with output at max_tokens means
+        # truncation, a "stop" finish means the model answered the wrong shape.
+        self.finish_reason: str | None = None
+        self.input_tokens: int | None = None
+        self.output_tokens: int | None = None
+
+
+@contextmanager
+def response_details_on_error(
+    *,
+    finish_reason: str | None,
+    input_tokens: int | None,
+    output_tokens: int | None,
+) -> Generator[None]:
+    """Attach the provider response's finish reason and usage to a
+    StructuredOutputError raised inside, for telemetry; the backend raises
+    before it builds a CompletionResult, so this is the only record of them."""
+    try:
+        yield
+    except StructuredOutputError as exc:
+        exc.finish_reason = exc.finish_reason or finish_reason
+        if exc.input_tokens is None:
+            exc.input_tokens = input_tokens
+        if exc.output_tokens is None:
+            exc.output_tokens = output_tokens
+        raise
 
 
 def schema_instruction(response_format: type[BaseModel], *, tools_present: bool) -> str:

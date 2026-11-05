@@ -8,6 +8,7 @@ import struct
 from typing import Any
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 from src.mock_provider.schemas import EmbeddingsRequest
 
@@ -66,8 +67,42 @@ def _normalize_input(
     return texts
 
 
+def _empty_input_error(
+    raw: str | list[str] | list[int] | list[list[int]] | None,
+) -> JSONResponse | None:
+    """The real API's 400 for an empty string input, or None.
+
+    Accepting it would make a local run succeed where production fails
+    (HONCHO-96: an empty search query reaching the embedding call), so a
+    repro against the mock would never show the bug.
+    """
+    if raw == "":
+        param = "input"
+    elif (
+        isinstance(raw, list)
+        and (empty := next((i for i, item in enumerate(raw) if item == ""), None))
+        is not None
+    ):
+        param = f"input[{empty}]"
+    else:
+        return None
+    return JSONResponse(
+        status_code=400,
+        content={
+            "error": {
+                "message": f"Invalid '{param}': input cannot be an empty string.",
+                "type": "invalid_request_error",
+                "param": None,
+                "code": None,
+            }
+        },
+    )
+
+
 @router.post("/embeddings")
 async def embeddings(body: EmbeddingsRequest) -> Any:
+    if (error := _empty_input_error(body.input)) is not None:
+        return error
     texts = _normalize_input(body.input)
     # A non-positive width is rejected by the request model, so absent is the
     # only case left to fill in.
