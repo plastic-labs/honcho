@@ -76,6 +76,7 @@ _GRANDFATHERED: dict[str, str] = {
         "3e7a1c9d5b20",
         "556a16564f50",
         "564ba40505c5",
+        "88b0fb10906f",
         "a7c3e9f1b2d4",
         "b8d2f4a6c9e1",
         "baa22cad81e2",
@@ -97,6 +98,15 @@ def _string_of(node: ast.AST) -> str:
             elif isinstance(value, ast.FormattedValue):
                 parts.append("{" + ast.unparse(value.value) + "}")
         return "".join(parts)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _string_of(node.left) + _string_of(node.right)
+    if isinstance(node, ast.Call) and isinstance(node.func, (ast.Attribute, ast.Name)):
+        name = node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        # sa.text("...").bindparams(...): the SQL is the text() call it wraps.
+        if name == "bindparams" and isinstance(node.func, ast.Attribute):
+            return _string_of(node.func.value)
+        if name == "text" and node.args:
+            return _string_of(node.args[0])
     return ""
 
 
@@ -236,8 +246,31 @@ def upgrade():
             'def upgrade():\n    op.create_index("ix", "documents", ["id"])\n',
             "op.create_index on partitioned documents",
         ),
+        (
+            'def upgrade():\n    op.execute(sa.text("CREATE INDEX CONCURRENTLY ix ON messages (id)"))\n',
+            "hand-written INDEX CONCURRENTLY",
+        ),
+        (
+            "def upgrade():\n    op.execute(\n"
+            + '        sa.text("CREATE INDEX CONCURRENTLY ix ON messages (id) WHERE id > :n")'
+            + ".bindparams(n=1)\n    )\n",
+            "hand-written INDEX CONCURRENTLY",
+        ),
+        (
+            "def upgrade():\n"
+            + '    op.execute("CREATE TRIGGER t AFTER INSERT ON " + "queue FOR EACH ROW EXECUTE FUNCTION f()")\n'
+            + '    op.execute("INSERT INTO queue_item_batches " + "SELECT * FROM queue")\n',
+            "backfill in the same transaction as CREATE TRIGGER queue",
+        ),
     ],
-    ids=["backfill-under-lock", "hand-concurrently", "plain-index-on-partitioned"],
+    ids=[
+        "backfill-under-lock",
+        "hand-concurrently",
+        "plain-index-on-partitioned",
+        "text-wrapped",
+        "bindparams-wrapped",
+        "concatenated",
+    ],
 )
 def test_the_lint_flags_each_shape(source: str, problem: str) -> None:
     assert any(problem in found for found in lint_revision(source))
