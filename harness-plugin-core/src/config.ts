@@ -7,7 +7,14 @@ export type Env = Record<string, string | undefined>
 
 export interface AuthConfig {
   apiKey?: string
-  oauth?: { accessToken?: string; refreshToken?: string; expiresAt?: string }
+  /** See `OAuthTokens` in oauth.ts. */
+  oauth?: {
+    accessToken?: string
+    refreshToken?: string
+    accessExpiresAt?: number
+    clientId?: string
+    scope?: string
+  }
 }
 
 /** Identity + connection + kill switch. Valid at root and as a host override. */
@@ -180,9 +187,13 @@ export function resolveConfig(
     enabled: true,
     workspace: host,
   }
-  acc = merge(acc, pickRoot(raw))
-  acc = merge(acc, pickHost(hosts, host))
-  acc = merge(acc, pickRoot(opts.overlay))
+  const root = pickRoot(raw)
+  if (root.auth) delete root.auth.oauth // grants are per plugin: hosts.<host>.oauth only
+  const layers = [root, pickHost(hosts, host), pickRoot(opts.overlay)]
+  acc = layers.reduce((a, l) => merge(a, l), acc)
+  // a grant is taken whole from one layer, never merged field by field
+  const grant = [...layers].reverse().find((l) => l.auth?.oauth)?.auth?.oauth
+  if (grant) acc.auth = { ...acc.auth, oauth: grant }
 
   if (env.HONCHO_API_KEY) {
     if (acc.auth?.apiKey) warnings.push('HONCHO_API_KEY shadows auth.apiKey')
