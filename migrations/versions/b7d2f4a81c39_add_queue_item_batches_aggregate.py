@@ -32,6 +32,12 @@ schema = get_schema()
 
 instance_tenant = instance_tenant_id()
 
+LOCK_LINT_EXEMPT = (
+    "the backfill runs under the trigger install's SHARE ROW EXCLUSIVE on queue"
+    " on purpose, so no enqueue interleaves with it; it reads only unprocessed"
+    " rows, so the lock lasts as long as the pending backlog takes to aggregate"
+)
+
 # region ai
 # Trigger design notes the SQL below encodes:
 # - INSERT is the hot direction and takes a row-level fast path: +1 / +tokens /

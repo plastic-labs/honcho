@@ -97,12 +97,20 @@ async def has_pending_document_sources(db: AsyncSession) -> bool:
     return row.first() is not None
 
 
-async def count_pending_document_sources(db: AsyncSession) -> int:
-    """Number of documents still carrying legacy JSONB linkage."""
+# ai: the gauge only needs "how much is left, roughly": past this it reads as the cap, so the count stays bounded on a database that arrives with millions of undrained rows
+PENDING_COUNT_CAP = 100_000
+
+
+async def count_pending_document_sources(
+    db: AsyncSession, cap: int = PENDING_COUNT_CAP
+) -> int:
+    """Number of documents still carrying legacy JSONB linkage, up to ``cap``."""
     count = await db.scalar(
         text(
-            f"SELECT count(*) FROM {_qualified('documents')} WHERE {_PENDING_PREDICATE}"  # nosec B608
-        )
+            f"SELECT count(*) FROM (SELECT 1 FROM {_qualified('documents')}"  # nosec B608
+            + f" WHERE {_PENDING_PREDICATE} LIMIT :cap) pending"
+        ),
+        {"cap": cap},
     )
     return count or 0
 

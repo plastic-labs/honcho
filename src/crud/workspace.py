@@ -458,9 +458,9 @@ async def delete_workspace(
 
         # Also delete any queue items that reference messages in this workspace
         # (handles race condition where deriver creates new queue items).
-        # messages is under RLS so this subquery is already tenant-scoped, and
-        # message ids are drawn from one global sequence, but pin tenant_id
-        # here too for defense in depth.
+        # messages is under RLS, so this subquery is already tenant-scoped. But
+        # message ids are unique only within a tenant and queue is not under
+        # RLS, so queue_item_match pins the deleted rows to the tenant too.
         message_ids_subquery = select(models.Message.id).where(
             models.Message.workspace_name == workspace_name
         )
