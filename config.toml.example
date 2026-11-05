@@ -88,7 +88,7 @@ OPENAI_API_KEY = "your-api-key-here"
 # transport = "openai"
 # model = "gpt-5-nano"
 # thinking_effort = "minimal"
-# max_output_tokens = 8000
+# context_window = 272000  # optional; checked against the input budgets at startup
 #
 # [models.summarizer]  # a proxy alias: name the model behind it
 # transport = "openai"

@@ -99,6 +99,11 @@ ThinkingMode = Literal["budget", "adaptive"]
 # - "rejected": a 400 whether or not thinking is on
 ForcedToolChoice = Literal["conflicts_with_thinking", "skips_thinking", "rejected"]
 
+# Which request field carries the output token cap on the OpenAI transport.
+# OpenAI's reasoning models reject `max_tokens` and take
+# `max_completion_tokens`.
+MaxTokensParam = Literal["max_tokens", "max_completion_tokens"]
+
 
 PROVIDER_TIMEOUT_ERROR_TEXT = (
     "provider_params.timeout must be a positive number of seconds"
@@ -265,7 +270,16 @@ class FallbackModelSettings(BaseModel):
 
     structured_output_mode: StructuredOutputMode | None = None
 
+    # The request doesn't read this field; each feature picks the cap it
+    # sends, and sends the same cap to the fallback. The deriver and the dream
+    # specialists send their primary's value (the dream specialists only when
+    # it is above 0), the summarizer only requires it to be at least its short
+    # and long caps, and the dialectic doesn't read it. A fallback's own value
+    # is never read.
     max_output_tokens: int | None = None
+    # Input plus output tokens this model accepts in one request. Optional and
+    # only checked at startup: see `AppSettings._check_budgets_fit_context_windows`.
+    context_window: Annotated[int, Field(gt=0)] | None = None
     stop_sequences: list[str] | None = None
 
     cache_policy: PromptCachePolicy | None = None
@@ -315,7 +329,16 @@ class ConfiguredModelSettings(BaseModel):
 
     structured_output_mode: StructuredOutputMode | None = None
 
+    # The request doesn't read this field; each feature picks the cap it
+    # sends, and sends the same cap to the fallback. The deriver and the dream
+    # specialists send their primary's value (the dream specialists only when
+    # it is above 0), the summarizer only requires it to be at least its short
+    # and long caps, and the dialectic doesn't read it. A fallback's own value
+    # is never read.
     max_output_tokens: int | None = None
+    # Input plus output tokens this model accepts in one request. Optional and
+    # only checked at startup: see `AppSettings._check_budgets_fit_context_windows`.
+    context_window: Annotated[int, Field(gt=0)] | None = None
     stop_sequences: list[str] | None = None
 
     cache_policy: PromptCachePolicy | None = None
@@ -358,6 +381,7 @@ class ModelCapabilitySettings(BaseModel):
     forced_tool_choice: ForcedToolChoice | None = None
     preserved_thinking: bool | None = None
     user_after_tool: bool | None = None
+    max_tokens_param: MaxTokensParam | None = None
 
 
 class ModelCatalogEntry(FallbackModelSettings):
@@ -470,6 +494,9 @@ def _has_model_ref(data: Mapping[str, Any]) -> bool:
     )
 
 
+_CREDENTIAL_KEYS = frozenset({"api_key", "api_key_env"})
+
+
 def _expand_model_ref(data: Any) -> Any:
     """Replace `model_ref` with the catalog entry it names.
 
@@ -478,7 +505,9 @@ def _expand_model_ref(data: Any) -> Any:
     entry out. `overrides` merges key by key, and so does
     `overrides.provider_params`; a nested value such as `extra_body` is
     replaced whole. The slot can't also set `model` or `transport`: the entry
-    is the model. A null or empty `model_ref` is the same as none.
+    is the model. A null or empty `model_ref` is the same as none. A slot
+    that sets `api_key` or `api_key_env` replaces the entry's credential
+    (both fields), so the slot's choice is the one used.
     """
     if not isinstance(data, dict):
         return data
@@ -527,6 +556,17 @@ def _expand_model_ref(data: Any) -> Any:
     if isinstance(slot_overrides, dict):
         slot_over = cast(dict[str, Any], slot_overrides)
         entry_over: dict[str, Any] = dict(expanded.get("overrides", {}))
+        if any(
+            key.lower() in _CREDENTIAL_KEYS and value is not None
+            for key, value in slot_over.items()
+        ):
+            # A key and its env var name are one setting: a literal key is
+            # read first, so an entry's key would beat the slot's env var.
+            entry_over = {
+                key: value
+                for key, value in entry_over.items()
+                if key.lower() not in _CREDENTIAL_KEYS
+            }
         merged_over = {**entry_over, **slot_over}
         entry_params = entry_over.get("provider_params")
         slot_params = slot_over.get("provider_params")
@@ -2068,6 +2108,66 @@ class AppSettings(HonchoSettings):
             return handler(data)
         finally:
             _ACTIVE_MODEL_CATALOG.reset(token)
+
+    @model_validator(mode="after")
+    def _check_budgets_fit_context_windows(self) -> "AppSettings":
+        """Each feature's input budget plus the output cap it sends must fit
+        the `context_window` of its model and of its fallback, where declared.
+
+        The fallback is sent the same caps as the primary. The dream
+        specialists have no input budget, so their slots aren't checked.
+        """
+        deriver_output = (
+            self.DERIVER.MODEL_CONFIG.max_output_tokens or self.LLM.DEFAULT_MAX_TOKENS
+        )
+        checks: list[tuple[str, ConfiguredModelSettings, int, int]] = [
+            (
+                "DERIVER.MODEL_CONFIG",
+                self.DERIVER.MODEL_CONFIG,
+                self.DERIVER.MAX_INPUT_TOKENS,
+                deriver_output,
+            ),
+            (
+                "SUMMARY.MODEL_CONFIG",
+                self.SUMMARY.MODEL_CONFIG,
+                self.SUMMARY.MAX_INPUT_TOKENS,
+                max(self.SUMMARY.MAX_TOKENS_SHORT, self.SUMMARY.MAX_TOKENS_LONG),
+            ),
+        ]
+        for level, level_settings in self.DIALECTIC.LEVELS.items():
+            output = (
+                level_settings.MAX_OUTPUT_TOKENS
+                if level_settings.MAX_OUTPUT_TOKENS is not None
+                else self.DIALECTIC.MAX_OUTPUT_TOKENS
+            )
+            checks.append(
+                (
+                    f"DIALECTIC.LEVELS.{level}.MODEL_CONFIG",
+                    level_settings.MODEL_CONFIG,
+                    self.DIALECTIC.MAX_INPUT_TOKENS,
+                    output,
+                )
+            )
+
+        problems: list[str] = []
+        for where, slot, input_budget, output_cap in checks:
+            models: list[tuple[str, ConfiguredModelSettings | FallbackModelSettings]]
+            models = [(where, slot)]
+            if slot.fallback is not None:
+                models.append((f"{where}.fallback", slot.fallback))
+            for path, model in models:
+                window = model.context_window
+                needed = input_budget + output_cap
+                if window is None or needed <= window:
+                    continue
+                problems.append(
+                    f"{path}: {model.transport}/{model.model} has a context_window "
+                    + f"of {window}, but the input budget ({input_budget}) plus the "
+                    + f"output cap ({output_cap}) is {needed}"
+                )
+        if problems:
+            raise ValueError("; ".join(problems))
+        return self
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:

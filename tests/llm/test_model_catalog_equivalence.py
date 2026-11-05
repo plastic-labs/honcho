@@ -403,6 +403,35 @@ model_ref = "summarizer"
 """
         },
     ),
+    # A context window and a declared token field come along with the entry.
+    "context_window_and_token_field_with_and_without_ref": (
+        {
+            "toml": """
+[models.astra]
+transport = "openai"
+model = "astra"
+context_window = 400000
+capabilities = { infer_from = "gpt-6-astra" }
+
+[summary.model_config]
+transport = "openai"
+model = "astra"
+context_window = 400000
+"""
+        },
+        {
+            "toml": """
+[models.astra]
+transport = "openai"
+model = "astra"
+context_window = 400000
+capabilities = { infer_from = "gpt-6-astra" }
+
+[summary.model_config]
+model_ref = "astra"
+"""
+        },
+    ),
 }
 
 
@@ -431,6 +460,7 @@ def test_pairs_exercise_what_they_claim() -> None:
         "tiered": PAIRS["toml_tiered_all_slots"][1],
         "fallback": PAIRS["env_cross_family_fallback"][1],
         "profile": PAIRS["declared_profile_with_and_without_ref"][1],
+        "window": PAIRS["context_window_and_token_field_with_and_without_ref"][1],
     }
     results = run_all(cases)
 
@@ -451,3 +481,7 @@ def test_pairs_exercise_what_they_claim() -> None:
     assert caps["thinking"] == "adaptive"
     assert caps["preserved_thinking"] is True
     assert caps["forced_tool_choice"] == "rejected"
+
+    window = results["window"]["slots"]["summary"]
+    assert window["configured"]["context_window"] == 400000
+    assert window["capabilities"]["max_tokens_param"] == "max_completion_tokens"

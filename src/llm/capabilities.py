@@ -2,8 +2,8 @@
 
 Model generations differ in which request shapes they accept: how thinking is
 configured, whether an assistant prefill is allowed, whether a forced
-tool_choice is accepted, and whether replayed thinking blocks are bound to the
-conversation that produced them. Backends and the tool loop read those
+tool_choice is accepted, whether replayed thinking blocks are bound to the
+conversation that produced them, and which field carries the output token cap. Backends and the tool loop read those
 differences from here instead of matching model names inline.
 
 A model in the `MODELS` catalog gets its profile from its entry, for every
@@ -20,6 +20,7 @@ from dataclasses import dataclass, replace
 from src import config
 from src.config import (
     ForcedToolChoice,
+    MaxTokensParam,
     ModelCatalogEntry,
     ModelTransport,
     ThinkingMode,
@@ -45,6 +46,10 @@ class ModelCapabilities:
     models are trained only on tool results followed by an assistant turn or
     another result, and their servers reject a request that has a user turn
     there or that ends on an assistant turn."""
+    max_tokens_param: MaxTokensParam = "max_tokens"
+    """The request field the OpenAI transport puts the output token cap in.
+    OpenAI's reasoning models reject `max_tokens` with a 400 and take
+    `max_completion_tokens`."""
 
 
 # Claude 3 and other models this table doesn't recognize.
@@ -132,17 +137,44 @@ _MISTRAL_MODEL = re.compile(
 _STRICT_TOOL_ROLE_ORDER = replace(_LEGACY, user_after_tool=False)
 
 
+def _takes_max_completion_tokens(model: str) -> bool:
+    """Whether the id names an OpenAI reasoning model.
+
+    Matches gpt-5 and gpt-6 with any `-` or `.` suffix (gpt-5.4-mini,
+    gpt-6-astra) and the o1, o3 and o4 families. Anything else (gpt-4.x,
+    gpt-4o, a proxy alias) is not recognized.
+    """
+    m = model.lower()
+    for base in ("gpt-5", "gpt-6"):
+        if m == base or m.startswith(base + "-") or m.startswith(base + "."):
+            return True
+    for prefix in ("o1", "o3", "o4"):
+        if m == prefix or m.startswith(prefix + "-"):
+            return True
+    return False
+
+
+def _with_max_tokens_param(row: ModelCapabilities, model: str) -> ModelCapabilities:
+    if _takes_max_completion_tokens(model):
+        return replace(row, max_tokens_param="max_completion_tokens")
+    return row
+
+
+def _row_for_model_id(model: str) -> ModelCapabilities:
+    if _CLAUDE_MODEL.search(model):
+        return anthropic_capabilities(model)
+    if _MISTRAL_MODEL.search(model):
+        return _STRICT_TOOL_ROLE_ORDER
+    return _LEGACY
+
+
 def model_capabilities(model: str) -> ModelCapabilities:
     """Capabilities inferred from a model id alone, whatever the transport.
 
     A Claude model gets its generation's row whether it is reached directly or
     through an OpenAI-compatible proxy.
     """
-    if _CLAUDE_MODEL.search(model):
-        return anthropic_capabilities(model)
-    if _MISTRAL_MODEL.search(model):
-        return _STRICT_TOOL_ROLE_ORDER
-    return _LEGACY
+    return _with_max_tokens_param(_row_for_model_id(model), model)
 
 
 def catalog_entry_capabilities(entry: ModelCatalogEntry) -> ModelCapabilities:
@@ -181,20 +213,24 @@ def capabilities_for(transport: ModelTransport, model: str) -> ModelCapabilities
     A `MODELS` catalog entry for this transport and model decides. Otherwise
     the Anthropic transport has a row per Claude generation, and other
     transports get the legacy row, except Mistral models, which need strict
-    role order after tool results.
+    role order after tool results. On any transport, an OpenAI reasoning
+    model id takes `max_completion_tokens`.
     """
     declared = _catalog_capabilities().get((transport, model))
     if declared is not None:
         return declared
     if transport == "anthropic":
-        return anthropic_capabilities(model)
-    if _MISTRAL_MODEL.search(model):
-        return _STRICT_TOOL_ROLE_ORDER
-    return _LEGACY
+        row = anthropic_capabilities(model)
+    elif _MISTRAL_MODEL.search(model):
+        row = _STRICT_TOOL_ROLE_ORDER
+    else:
+        row = _LEGACY
+    return _with_max_tokens_param(row, model)
 
 
 __all__ = [
     "ForcedToolChoice",
+    "MaxTokensParam",
     "ModelCapabilities",
     "ThinkingMode",
     "anthropic_capabilities",

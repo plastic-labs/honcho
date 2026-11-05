@@ -6,6 +6,7 @@ by `test_model_config_snapshot.py` and `test_model_catalog_equivalence.py`.
 
 import os
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import ValidationError
@@ -24,6 +25,7 @@ from src.config import (
 )
 from src.llm.backend import CompletionResult
 from src.llm.backends.anthropic import AnthropicBackend
+from src.llm.backends.openai import OpenAIBackend
 from src.llm.capabilities import (
     anthropic_capabilities,
     capabilities_for,
@@ -35,6 +37,11 @@ from src.llm.profiles import profile_for
 from tests.llm.test_backends.test_anthropic import (
     SEARCH_TOOL,
     _client_with_text_response,  # pyright: ignore[reportPrivateUsage]
+)
+from tests.llm.test_backends.test_openai import (
+    _conflict_client,  # pyright: ignore[reportPrivateUsage]
+    _empty_stream,  # pyright: ignore[reportPrivateUsage]
+    _sent_kwargs,  # pyright: ignore[reportPrivateUsage]
 )
 from tests.llm.test_codecs import (
     CALLS,
@@ -294,6 +301,44 @@ def test_entry_does_not_leak_into_the_slot_fallback() -> None:
     assert slot.fallback.overrides.base_url is None
 
 
+@pytest.mark.parametrize(
+    ("entry_cred", "slot_cred", "expected"),
+    [
+        ({"api_key": "entry-key"}, {"api_key_env": "SLOT_KEY_VAR"}, "slot-env-key"),
+        ({"api_key_env": "ENTRY_KEY_VAR"}, {"api_key": "slot-key"}, "slot-key"),
+        ({"api_key": "entry-key"}, {"api_key": "slot-key"}, "slot-key"),
+        # A slot that sets no credential keeps the entry's.
+        ({"api_key": "entry-key"}, {"base_url": "https://slot.example"}, "entry-key"),
+    ],
+)
+@pytest.mark.parametrize("role", ["primary", "fallback"])
+def test_slot_credential_replaces_the_entry_credential(
+    monkeypatch: pytest.MonkeyPatch,
+    entry_cred: dict[str, str],
+    slot_cred: dict[str, str],
+    expected: str,
+    role: str,
+) -> None:
+    monkeypatch.setenv("SLOT_KEY_VAR", "slot-env-key")
+    monkeypatch.setenv("ENTRY_KEY_VAR", "entry-env-key")
+    entry = _entry(model="m", transport="openai", overrides=entry_cred)
+    slot = {"model_ref": "e", "overrides": slot_cred}
+    with using_model_catalog({"e": entry}):
+        if role == "primary":
+            resolved = config.resolve_model_config(
+                ConfiguredModelSettings.model_validate(slot)
+            )
+            assert resolved.api_key == expected
+        else:
+            resolved = config.resolve_model_config(
+                ConfiguredModelSettings.model_validate(
+                    {"model": "p", "transport": "openai", "fallback": slot}
+                )
+            )
+            assert resolved.fallback is not None
+            assert resolved.fallback.api_key == expected
+
+
 def test_fallback_can_name_an_entry() -> None:
     with using_model_catalog(CATALOG):
         slot = ConfiguredModelSettings.model_validate(
@@ -522,7 +567,9 @@ def test_entry_without_a_profile_for_an_unknown_model_gets_the_default_row() -> 
 
 @pytest.fixture
 def declared_alias(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`summarizer` on openai and `claude-proxy` on anthropic, both declared."""
+    """Declared aliases: `summarizer` (Haiku 5.5), `opus-proxy` (Opus 5.5) and
+    `astra` (gpt-6-astra) on openai, `claude-proxy` on anthropic, and
+    `gpt-5.4-pinned`, a GPT-5 entry declared to take `max_tokens`."""
     monkeypatch.setattr(
         config.settings,
         "MODELS",
@@ -539,6 +586,21 @@ def declared_alias(monkeypatch: pytest.MonkeyPatch) -> None:
                 model="claude-proxy",
                 transport="anthropic",
                 capabilities={"infer_from": "claude-opus-5-5"},
+            ),
+            "opus_proxy": _entry(
+                model="opus-proxy",
+                transport="openai",
+                capabilities={"infer_from": "claude-opus-5-5"},
+            ),
+            "astra": _entry(
+                model="astra",
+                transport="openai",
+                capabilities={"infer_from": "gpt-6-astra"},
+            ),
+            "gpt5_pinned": _entry(
+                model="gpt-5.4-pinned",
+                transport="openai",
+                capabilities={"max_tokens_param": "max_tokens"},
             ),
         },
     )
@@ -565,7 +627,7 @@ def test_models_outside_the_catalog_are_unaffected() -> None:
     )
     # Claude over the openai transport keeps the default row unless declared.
     assert capabilities_for("openai", "claude-opus-5-5") == capabilities_for(
-        "openai", "gpt-5"
+        "openai", "gpt-4.1"
     )
 
 
@@ -623,3 +685,219 @@ def test_openai_codec_reads_the_declared_role_order() -> None:
     result = CompletionResult(content=None, tool_calls=CALLS)
     assert _render(_round(result, alias), alias)[-1]["role"] == "tool"
     assert _render(_round(result, plain), plain)[-1]["role"] == "user"
+
+
+async def _openai_request(
+    model: str, *, tool_choice: str | dict[str, Any] | None = None, stream: bool = False
+) -> dict[str, Any]:
+    """The kwargs the OpenAI backend sends for one request with a tool."""
+    client = _conflict_client()
+    backend = OpenAIBackend(client)
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": [{"role": "user", "content": "Hello"}],
+        "max_tokens": 1000,
+        "tools": [SEARCH_TOOL],
+        "tool_choice": tool_choice,
+    }
+    if stream:
+        client.chat.completions.create = AsyncMock(return_value=_empty_stream())
+        async for _ in backend.stream(**kwargs):
+            pass
+    else:
+        await backend.complete(**kwargs)
+    return _sent_kwargs(client)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("declared_alias")
+@pytest.mark.parametrize("stream", [False, True], ids=["complete", "stream"])
+@pytest.mark.parametrize("tool_choice", ["required", "any", {"name": "search"}])
+async def test_openai_backend_relaxes_forced_tool_choice_for_a_declared_alias(
+    tool_choice: str | dict[str, Any],
+    stream: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("WARNING", logger="src.llm.backends.openai"):
+        sent = await _openai_request(
+            "opus-proxy", tool_choice=tool_choice, stream=stream
+        )
+    assert sent["tool_choice"] == "auto"
+    assert "opus-proxy rejects forced tool use" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("declared_alias")
+@pytest.mark.parametrize(
+    "model",
+    [
+        # Declared, but Haiku 5.5 accepts a forced tool choice.
+        "summarizer",
+        # Not in the catalog: Claude over the openai transport keeps the
+        # default row, as before the catalog existed.
+        "claude-opus-5-5",
+        "anthropic/claude-sonnet-5-5",
+    ],
+)
+async def test_openai_backend_keeps_forced_tool_choice_otherwise(model: str) -> None:
+    sent = await _openai_request(model, tool_choice="required")
+    assert sent["tool_choice"] == "required"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("declared_alias")
+async def test_openai_backend_leaves_an_unforced_tool_choice_alone() -> None:
+    assert (await _openai_request("opus-proxy", tool_choice="auto"))[
+        "tool_choice"
+    ] == "auto"
+    assert "tool_choice" not in await _openai_request("opus-proxy")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("declared_alias")
+@pytest.mark.parametrize(
+    ("model", "field"),
+    [
+        # An alias inferred from an OpenAI reasoning model.
+        ("astra", "max_completion_tokens"),
+        # A declared field beats the inference from the id.
+        ("gpt-5.4-pinned", "max_tokens"),
+        # Not in the catalog: decided by the id, as before.
+        ("gpt-5-mini", "max_completion_tokens"),
+        ("o3-mini", "max_completion_tokens"),
+        ("gpt-4.1", "max_tokens"),
+        ("summarizer", "max_tokens"),
+    ],
+)
+async def test_openai_backend_puts_the_cap_in_the_declared_field(
+    model: str, field: str
+) -> None:
+    sent = await _openai_request(model)
+    assert sent[field] == 1000
+    other = {"max_tokens", "max_completion_tokens"} - {field}
+    assert not other & set(sent)
+
+
+def test_entry_max_tokens_param_is_inferred_and_overridable() -> None:
+    assert (
+        catalog_entry_capabilities(
+            _entry(model="o3", transport="openai")
+        ).max_tokens_param
+        == "max_completion_tokens"
+    )
+    assert (
+        catalog_entry_capabilities(
+            _entry(
+                model="reasoner",
+                transport="openai",
+                capabilities={"max_tokens_param": "max_completion_tokens"},
+            )
+        ).max_tokens_param
+        == "max_completion_tokens"
+    )
+    with pytest.raises(ValidationError, match="max_tokens_param"):
+        _entry(
+            model="x", transport="openai", capabilities={"max_tokens_param": "tokens"}
+        )
+
+
+# --- context windows ----------------------------------------------------------
+
+
+def test_no_context_window_means_no_check() -> None:
+    loaded = AppSettings()
+    assert loaded.DERIVER.MODEL_CONFIG.context_window is None
+
+
+@pytest.mark.parametrize(
+    ("env", "fits"),
+    [
+        # Deriver: input budget 25000 + LLM_DEFAULT_MAX_TOKENS 2500.
+        ({"DERIVER_MODEL_CONFIG__CONTEXT_WINDOW": "27500"}, True),
+        ({"DERIVER_MODEL_CONFIG__CONTEXT_WINDOW": "27499"}, False),
+        # The deriver sends its primary's max_output_tokens instead.
+        (
+            {
+                "DERIVER_MODEL_CONFIG__CONTEXT_WINDOW": "26000",
+                "DERIVER_MODEL_CONFIG__MAX_OUTPUT_TOKENS": "1000",
+            },
+            True,
+        ),
+        # Summary: input budget 100000 + the larger summary cap, 6000.
+        ({"SUMMARY_MODEL_CONFIG__CONTEXT_WINDOW": "106000"}, True),
+        ({"SUMMARY_MODEL_CONFIG__CONTEXT_WINDOW": "105999"}, False),
+        # Dialectic: input budget 100000 + the level's cap (minimal: 250)...
+        ({"DIALECTIC_LEVELS__minimal__MODEL_CONFIG__CONTEXT_WINDOW": "100250"}, True),
+        ({"DIALECTIC_LEVELS__minimal__MODEL_CONFIG__CONTEXT_WINDOW": "100249"}, False),
+        # ...or DIALECTIC_MAX_OUTPUT_TOKENS (8192) for a level without one.
+        ({"DIALECTIC_LEVELS__high__MODEL_CONFIG__CONTEXT_WINDOW": "108192"}, True),
+        ({"DIALECTIC_LEVELS__high__MODEL_CONFIG__CONTEXT_WINDOW": "108191"}, False),
+        # The dream specialists have no input budget to check.
+        ({"DREAM_DEDUCTION_MODEL_CONFIG__CONTEXT_WINDOW": "1"}, True),
+    ],
+)
+def test_context_window_must_fit_the_input_budget_and_output_cap(
+    monkeypatch: pytest.MonkeyPatch, env: dict[str, str], fits: bool
+) -> None:
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    if fits:
+        AppSettings()
+    else:
+        with pytest.raises(ValidationError, match="has a context_window of"):
+            AppSettings()
+
+
+def test_context_window_checks_the_fallback_with_the_primary_caps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SUMMARY_MODEL_CONFIG__FALLBACK__TRANSPORT", "openai")
+    monkeypatch.setenv("SUMMARY_MODEL_CONFIG__FALLBACK__MODEL", "gpt-5-nano")
+    monkeypatch.setenv("SUMMARY_MODEL_CONFIG__FALLBACK__CONTEXT_WINDOW", "100000")
+    # The fallback's own max_output_tokens isn't sent, so it doesn't count.
+    monkeypatch.setenv("SUMMARY_MODEL_CONFIG__FALLBACK__MAX_OUTPUT_TOKENS", "100")
+    with pytest.raises(ValidationError) as excinfo:
+        AppSettings()
+    message = str(excinfo.value)
+    assert (
+        "SUMMARY.MODEL_CONFIG.fallback: openai/gpt-5-nano has a context_window of "
+        + "100000, but the input budget (100000) plus the output cap (6000) is "
+        + "106000"
+    ) in message
+
+
+def test_context_window_reports_every_slot_that_does_not_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DERIVER_MODEL_CONFIG__CONTEXT_WINDOW", "1000")
+    monkeypatch.setenv("DIALECTIC_LEVELS__low__MODEL_CONFIG__CONTEXT_WINDOW", "1000")
+    with pytest.raises(ValidationError) as excinfo:
+        AppSettings()
+    message = str(excinfo.value)
+    assert "DERIVER.MODEL_CONFIG:" in message
+    assert "DIALECTIC.LEVELS.low.MODEL_CONFIG:" in message
+
+
+def test_context_window_of_an_entry_applies_where_it_is_named(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    small = {**NANO.model_dump(exclude_none=True), "context_window": 50000}
+    monkeypatch.setenv("DERIVER_MODEL_CONFIG__MODEL_REF", "nano")
+    # Deriver: 25000 + the entry's max_output_tokens (8000) fits in 50000.
+    loaded = AppSettings(MODELS={"nano": small})  # pyright: ignore[reportArgumentType]
+    assert loaded.DERIVER.MODEL_CONFIG.context_window == 50000
+
+    monkeypatch.setenv("SUMMARY_MODEL_CONFIG__MODEL_REF", "nano")
+    with pytest.raises(
+        ValidationError, match="SUMMARY.MODEL_CONFIG: openai/gpt-5-nano"
+    ):
+        AppSettings(MODELS={"nano": small})  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize("value", ["0", "-5"])
+def test_context_window_must_be_positive(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("DERIVER_MODEL_CONFIG__CONTEXT_WINDOW", value)
+    with pytest.raises(ValidationError, match="greater than 0"):
+        AppSettings()
