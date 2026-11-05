@@ -826,4 +826,9 @@ async def search_peer(
     filters = body.filters or {}
     filters["workspace_id"] = workspace_id
     filters["peer_id"] = peer_id
-    return await search(body.query, filters=filters, limit=body.limit)
+    return await search(
+        body.query,
+        filters=filters,
+        limit=body.limit,
+        max_distance=body.max_distance,
+    )

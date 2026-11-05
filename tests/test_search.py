@@ -1,6 +1,7 @@
 """Tests for search functionality including peer knowledge search."""
 
 import datetime
+from typing import Any
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -767,3 +768,206 @@ async def test_peer_perspective_search_after_active_readd(
         limit=10,
     )
     assert msg_old.public_id not in [m.public_id for m in results]
+
+
+def _axis_vector(axis: int, sign: float = 1.0) -> list[float]:
+    from src.config import settings
+
+    vector = [0.0] * settings.EMBEDDING.VECTOR_DIMENSIONS
+    vector[axis] = sign
+    return vector
+
+
+async def _messages_with_embeddings(
+    db_session: AsyncSession, contents_and_vectors: list[tuple[str, list[float]]]
+) -> tuple[str, list[models.Message]]:
+    workspace = models.Workspace(name=generate_nanoid())
+    db_session.add(workspace)
+    await db_session.flush()
+    peer = models.Peer(name="author", workspace_name=workspace.name)
+    session = models.Session(name="s1", workspace_name=workspace.name)
+    db_session.add_all([peer, session])
+    await db_session.flush()
+
+    messages = [
+        models.Message(
+            content=content,
+            session_name=session.name,
+            peer_name=peer.name,
+            workspace_name=workspace.name,
+            seq_in_session=seq,
+        )
+        for seq, (content, _) in enumerate(contents_and_vectors, 1)
+    ]
+    db_session.add_all(messages)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            models.MessageEmbedding(
+                content=message.content,
+                message_id=message.public_id,
+                workspace_name=workspace.name,
+                session_name=session.name,
+                peer_name=peer.name,
+                sync_state="synced",
+                embedding=vector,
+            )
+            for message, (_, vector) in zip(messages, contents_and_vectors, strict=True)
+        ]
+    )
+    await db_session.commit()
+    return workspace.name, messages
+
+
+@pytest.mark.asyncio
+async def test_max_distance_drops_semantic_hits_beyond_the_floor(
+    db_session: AsyncSession, mock_openai_embeddings: dict[str, Any]
+):
+    """A semantic hit farther than max_distance is not returned (#1177)."""
+    workspace_name, (near, far) = await _messages_with_embeddings(
+        db_session,
+        [("lunch plans", _axis_vector(0)), ("tax forms", _axis_vector(0, -1.0))],
+    )
+    mock_openai_embeddings["embed"].side_effect = lambda _q: _axis_vector(0)  # pyright: ignore[reportUnknownLambdaType]
+    filters = {"workspace_id": workspace_name}
+
+    unbounded = await search("zzqx", filters=filters, limit=10)
+    bounded = await search("zzqx", filters=filters, limit=10, max_distance=0.5)
+
+    assert {m.public_id for m in unbounded} == {near.public_id, far.public_id}
+    assert [m.public_id for m in bounded] == [near.public_id]
+
+
+@pytest.mark.asyncio
+async def test_max_distance_returns_nothing_when_no_hit_clears_it(
+    db_session: AsyncSession, mock_openai_embeddings: dict[str, Any]
+):
+    """An unrelated query returns [] instead of `limit` arbitrary messages (#1177)."""
+    workspace_name, _ = await _messages_with_embeddings(
+        db_session,
+        [("lunch plans", _axis_vector(0)), ("tax forms", _axis_vector(1))],
+    )
+    mock_openai_embeddings["embed"].side_effect = lambda _q: _axis_vector(2)  # pyright: ignore[reportUnknownLambdaType]
+
+    results = await search(
+        "flumbex zorplat quibnar",
+        filters={"workspace_id": workspace_name},
+        limit=5,
+        max_distance=0.5,
+    )
+
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_max_distance_keeps_full_text_matches(
+    db_session: AsyncSession, mock_openai_embeddings: dict[str, Any]
+):
+    """The floor applies to the semantic leg only; a lexical match is still returned."""
+    workspace_name, (_, far) = await _messages_with_embeddings(
+        db_session,
+        [("lunch plans", _axis_vector(0)), ("tax forms", _axis_vector(0, -1.0))],
+    )
+    mock_openai_embeddings["embed"].side_effect = lambda _q: _axis_vector(0)  # pyright: ignore[reportUnknownLambdaType]
+
+    results = await search(
+        "tax", filters={"workspace_id": workspace_name}, limit=10, max_distance=0.5
+    )
+
+    assert far.public_id in {m.public_id for m in results}
+
+
+@pytest.mark.parametrize("max_distance", [-0.1, 2.1])
+def test_max_distance_outside_cosine_range_is_rejected(max_distance: float):
+    with pytest.raises(ValueError):
+        schemas.MessageSearchOptions(query="q", max_distance=max_distance)
+
+
+@pytest.mark.asyncio
+async def test_max_distance_is_forwarded_to_the_external_vector_store(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from src.utils import search as search_module
+    from src.vector_store import VectorQueryResult
+
+    received: dict[str, Any] = {}
+
+    class _RecordingStore:
+        def get_vector_namespace(self, kind: str, workspace_name: str) -> str:
+            return f"{kind}:{workspace_name}"
+
+        async def query(
+            self, _namespace: str, _embedding: list[float], **kwargs: Any
+        ) -> list[VectorQueryResult]:
+            received.update(kwargs)
+            return [
+                VectorQueryResult(
+                    id="chunk-1", score=0.1, metadata={"message_id": "m1"}
+                )
+            ]
+
+    monkeypatch.setattr(
+        search_module, "get_external_vector_store", lambda: _RecordingStore()
+    )
+
+    ids = await search_module.query_external_vector_message_ids(
+        workspace_name="ws", embedding_query=[0.0], limit=5, max_distance=0.4
+    )
+
+    assert ids == ["m1"]
+    assert received["max_distance"] == 0.4
+
+
+class _DistanceStore:
+    """External vector store stand-in that ranks fixed per-message distances."""
+
+    def __init__(self, distances: dict[str, float]) -> None:
+        self.distances: dict[str, float] = distances
+
+    def get_vector_namespace(self, kind: str, workspace_name: str) -> str:
+        return f"{kind}:{workspace_name}"
+
+    async def query(
+        self, _namespace: str, _embedding: list[float], **kwargs: Any
+    ) -> list[Any]:
+        from src.vector_store import VectorQueryResult
+
+        max_distance: float | None = kwargs.get("max_distance")
+        return [
+            VectorQueryResult(
+                id=f"chunk-{message_id}",
+                score=distance,
+                metadata={"message_id": message_id},
+            )
+            for message_id, distance in sorted(
+                self.distances.items(), key=lambda item: item[1]
+            )
+            if max_distance is None or distance <= max_distance
+        ]
+
+
+@pytest.mark.asyncio
+async def test_max_distance_on_the_external_vector_store_path(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    """Omitted, a relevant hit kept, an unrelated query empty: the external-store path (#1177)."""
+    from src.utils import search as search_module
+
+    workspace_name, (near, far) = await _messages_with_embeddings(
+        db_session,
+        [("lunch plans", _axis_vector(0)), ("tax forms", _axis_vector(1))],
+    )
+    monkeypatch.setattr(search_module, "_uses_pgvector_message_search", lambda: False)
+    filters = {"workspace_id": workspace_name}
+
+    store = _DistanceStore({near.public_id: 0.2, far.public_id: 0.9})
+    monkeypatch.setattr(search_module, "get_external_vector_store", lambda: store)
+    omitted = await search("zzqx", filters=filters, limit=10)
+    bounded = await search("zzqx", filters=filters, limit=10, max_distance=0.5)
+
+    store.distances = {near.public_id: 0.95, far.public_id: 0.9}
+    unrelated = await search("zzqx", filters=filters, limit=10, max_distance=0.5)
+
+    assert {m.public_id for m in omitted} == {near.public_id, far.public_id}
+    assert [m.public_id for m in bounded] == [near.public_id]
+    assert unrelated == []
