@@ -179,8 +179,8 @@ def queue_item_tenant_match() -> ColumnElement[bool] | None:
     # region ai
     # tenant_id is the authoritative tenant-scoped column for queue rows, not
     # workspace_name or message_id: workspace_name is only unique per tenant
-    # (every tenant has a "default" workspace) and message ids are drawn from
-    # one global sequence, so either can collide across tenants. tenant_id
+    # (every tenant has a "default" workspace) and message ids are unique
+    # only within a tenant, so either can collide across tenants. tenant_id
     # does not. No migration backfills it (e5fe7f8bcf62 adds the column
     # nullable, unfilled); it holds because every tenant-bound writer
     # (src/deriver/enqueue.py's _stamp_tenant_id, the reconciler scheduler,
