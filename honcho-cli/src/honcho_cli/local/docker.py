@@ -196,9 +196,11 @@ def compose_down(profile: LocalProfile, *, wipe: bool = False) -> None:
     _run_compose(profile, args, capture=False)
 
 
-def compose_ps(profile: LocalProfile) -> list[dict]:
+def compose_ps(profile: LocalProfile, *, timeout: float | None = None) -> list[dict]:
     """Parsed ``docker compose ps --format json`` (array or NDJSON)."""
-    proc = _run_compose(profile, ["ps", "--format", "json"], capture=True, check=False)
+    proc = _run_compose(
+        profile, ["ps", "--format", "json"], capture=True, check=False, timeout=timeout
+    )
     if proc.returncode != 0:
         return []
     return _parse_ps(proc.stdout or "")
@@ -250,6 +252,76 @@ def stack_containers_up(ps: list[dict]) -> bool:
     return True
 
 
+def list_honcho_containers(*, timeout: float | None = None) -> list[dict]:
+    """Every running container built from a Honcho image, from ``docker ps``.
+
+    Catches stacks the CLI did not start — a repo compose project, a dev
+    image — so a diagnostic report shows every Honcho running on the host.
+    Matches on the image only: a container merely named after a Honcho
+    project (a test database, say) is not a Honcho.
+    """
+    proc = _run_docker(["ps", "--format", "json"], check=False, timeout=timeout)
+    if proc.returncode != 0:
+        return []
+    out: list[dict] = []
+    for row in _parse_ps(proc.stdout or ""):
+        image = str(row.get("Image") or "")
+        name = str(row.get("Names") or "")
+        if "honcho" not in image.lower():
+            continue
+        labels = str(row.get("Labels") or "")
+        project = next(
+            (
+                item.partition("=")[2]
+                for item in labels.split(",")
+                if item.startswith("com.docker.compose.project=")
+            ),
+            None,
+        )
+        out.append(
+            {
+                "name": name,
+                "image": image,
+                "state": row.get("State"),
+                "status": row.get("Status"),
+                "ports": row.get("Ports"),
+                "compose_project": project,
+            }
+        )
+    versions = image_versions([c["name"] for c in out], timeout=timeout)
+    for container in out:
+        container["image_version"] = versions.get(container["name"])
+    return out
+
+
+_OCI_FIELDS = ("version", "revision", "created")
+
+
+def image_versions(
+    names: list[str], *, timeout: float | None = None
+) -> dict[str, dict[str, str] | None]:
+    """OCI image labels (version, revision, created) per container, one call.
+
+    Honcho's published images carry the git revision and build date even when
+    the tag is just ``latest`` — the only reliable "which build is this".
+    """
+    if not names:
+        return {}
+    fmt = "{{.Name}}\t" + "\t".join(
+        f'{{{{index .Config.Labels "org.opencontainers.image.{f}"}}}}' for f in _OCI_FIELDS
+    )
+    proc = _run_docker(["inspect", "--format", fmt, *names], check=False, timeout=timeout)
+    out: dict[str, dict[str, str] | None] = dict.fromkeys(names)
+    for line in (proc.stdout or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) != len(_OCI_FIELDS) + 1:
+            continue
+        name = parts[0].lstrip("/")
+        labels = {f: v for f, v in zip(_OCI_FIELDS, parts[1:], strict=True) if v}
+        out[name] = labels or None
+    return out
+
+
 def _unavailable(proc: subprocess.CompletedProcess[str]) -> DockerError | None:
     """Map a failed docker/compose process to a user-facing error, if obvious."""
     text = f"{proc.stderr or ''}{proc.stdout or ''}"
@@ -282,11 +354,14 @@ def _run_compose(
     *,
     capture: bool = False,
     check: bool = True,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     cmd = compose_argv(profile) + args
     cwd: Path = profile.dir()
     try:
-        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        raise _timed_out(timeout) from e
     except FileNotFoundError as e:
         raise DockerError(
             "DOCKER_NOT_INSTALLED",
@@ -313,17 +388,28 @@ def _run_compose(
     return proc
 
 
+def _timed_out(timeout: float | None) -> DockerError:
+    return DockerError(
+        "DOCKER_TIMEOUT",
+        f"Docker did not respond within {timeout:g}s. Is the daemon starting up?",
+    )
+
+
 def _run_docker(
     args: list[str],
     *,
     check: bool = False,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     try:
         proc = subprocess.run(
             ["docker", *args],
             capture_output=True,
             text=True,
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired as e:
+        raise _timed_out(timeout) from e
     except FileNotFoundError as e:
         raise DockerError(
             "DOCKER_NOT_INSTALLED",
