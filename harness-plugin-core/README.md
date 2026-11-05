@@ -82,13 +82,13 @@ import { configPath, ensureFreshCredential, pollForToken, requestDeviceCode, sav
 const device = await requestDeviceCode({ source: 'harness' })
 console.log(`Open ${device.verificationUriComplete} and confirm ${device.userCode}`)
 const tokens = await pollForToken(device)
-await saveGrant(configPath(), { host: 'harness' }, tokens)
+await saveGrant(configPath(), 'harness', tokens)
 
 // before each batch of requests
 const cred = await ensureFreshCredential({ path: configPath(), host: 'harness', baseUrl })
 if (cred?.reauthRequired) console.warn('Honcho sign-in expired; sign in again')
 ```
 
-Resolution, highest wins: `HONCHO_API_KEY` env → `hosts.<host>.oauth` → the shared root `oauth` → `apiKey` → an expired grant.
+Resolution, highest wins: `HONCHO_API_KEY` env → `hosts.<host>.oauth` → `apiKey` → that grant expired. Each plugin has one grant, in its own host block, and never uses another plugin's, so plugins signed in to different tenants stay separate.
 
 Every refresh supersedes the grant's previous access token (the API gateway may keep accepting it for up to 5 minutes from its cache, then rejects it), so a long-running process must call `ensureFreshCredential` before each batch of requests and update its SDK client's key in place rather than cache a token or build a new client.

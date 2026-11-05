@@ -81,37 +81,37 @@ describe('device sign-in', () => {
 })
 
 describe('pickCredential', () => {
-  const live = (tok: string) => grant(tok, now() + 600)
-  const dead = (tok: string) => grant(tok, now() - 10)
-  const file = (own?: OAuthTokens, root?: OAuthTokens, apiKey?: string) => ({
+  const file = (own?: OAuthTokens, apiKey?: string) => ({
     ...(apiKey ? { apiKey } : {}),
-    ...(root ? { oauth: root } : {}),
     hosts: { claude_code: own ? { oauth: own } : {} },
   })
   const pick = (f: unknown, env: Record<string, string> = {}, baseUrl?: string) =>
     pickCredential(f, { host: 'claude_code', env, baseUrl })
 
   test('HONCHO_API_KEY env beats everything', () => {
-    expect(pick(file(live('own')), { HONCHO_API_KEY: 'envkey' })).toMatchObject({ token: 'envkey', source: 'env' })
+    expect(pick(file(grant('own', now() + 600)), { HONCHO_API_KEY: 'envkey' })).toMatchObject({ token: 'envkey', source: 'env' })
   })
-  test('own grant, then the shared root grant, then apiKey, then an expired grant', () => {
-    expect(pick(file(live('own'), live('root'), 'k'))).toMatchObject({ token: 'own', source: 'oauth' })
-    expect(pick(file(dead('own'), live('root'), 'k'))).toMatchObject({ token: 'root', source: 'root-oauth' })
-    expect(pick(file(dead('own'), dead('root'), 'k'))).toMatchObject({ token: 'k', source: 'apiKey' })
-    expect(pick(file(dead('own')))).toMatchObject({ token: 'own', source: 'oauth', expired: true })
+  test('own live grant, then apiKey, then the expired grant', () => {
+    expect(pick(file(grant('own', now() + 600), 'k'))).toMatchObject({ token: 'own', source: 'oauth' })
+    expect(pick(file(grant('own', now() - 10), 'k'))).toMatchObject({ token: 'k', source: 'apiKey' })
+    expect(pick(file(grant('own', now() - 10)))).toMatchObject({ token: 'own', source: 'oauth', expired: true })
     expect(pick({})).toBeNull()
   })
+  test("another plugin's grant and a root grant are never used", () => {
+    const f = { oauth: grant('root', now() + 600), hosts: { hermes: { oauth: grant('hermes', now() + 600) } } }
+    expect(pick(f)).toBeNull()
+  })
   test('OAuth is ignored off Honcho cloud', () => {
-    expect(pick(file(live('own'), undefined, 'k'), {}, 'http://localhost:8000')).toMatchObject({ source: 'apiKey' })
-    expect(pick(file(live('own')), {}, 'https://api.honcho.dev/')).toMatchObject({ source: 'oauth' })
+    expect(pick(file(grant('own', now() + 600), 'k'), {}, 'http://localhost:8000')).toMatchObject({ source: 'apiKey' })
+    expect(pick(file(grant('own', now() + 600)), {}, 'https://api.honcho.dev/')).toMatchObject({ source: 'oauth' })
   })
 })
 
 describe('ensureFreshCredential', () => {
   test('refreshes an expired own grant and rewrites only that block', async () => {
     const old = grant('hch-at-old', now() - 5)
-    const root = { ...grant('hch-at-root', now() + 600, 'other-client'), host: 'https://api.honcho.dev' }
-    const path = tmpConfig({ apiKey: 'shared', oauth: root, hosts: { claude_code: { workspace: 'w', oauth: old }, other: { x: 1 } } })
+    const hermes = grant('hch-at-hermes', now() + 600, 'hermes-agent')
+    const path = tmpConfig({ apiKey: 'shared', hosts: { claude_code: { workspace: 'w', oauth: old }, hermes: { oauth: hermes } } })
     const s = scripted([200, tokenBody('hch-at-new', 'hch-rt-new')])
 
     const cred = await ensureFreshCredential({ path, host: 'claude_code', env: {}, fetch: s.fetch })
@@ -123,21 +123,9 @@ describe('ensureFreshCredential', () => {
     const f = read(path)
     expect(f.hosts.claude_code.oauth).toMatchObject({ accessToken: 'hch-at-new', refreshToken: 'hch-rt-new' })
     expect(f.hosts.claude_code.workspace).toBe('w')
-    expect(f.hosts.other).toEqual({ x: 1 })
-    expect(f.oauth).toEqual(root)
+    expect(f.hosts.hermes).toEqual({ oauth: hermes })
     expect(f.apiKey).toBe('shared')
     expect(statSync(path).mode & 0o777).toBe(0o600)
-  })
-
-  test('refreshes the shared root grant with its own client id and keeps its host field', async () => {
-    const path = tmpConfig({ oauth: { ...grant('hch-at-root', now() - 5, 'other-client'), host: 'https://api.honcho.dev' } })
-    const s = scripted([200, tokenBody('hch-at-new', 'hch-rt-new')])
-    const cred = await ensureFreshCredential({ path, host: 'claude_code', env: {}, fetch: s.fetch })
-    expect(cred).toMatchObject({ token: 'hch-at-new', source: 'root-oauth' })
-    expect(s.calls[0].get('client_id')).toBe('other-client')
-    const f = read(path)
-    expect(f.oauth).toMatchObject({ accessToken: 'hch-at-new', clientId: 'other-client', host: 'https://api.honcho.dev' })
-    expect(f.hosts).toBeUndefined()
   })
 
   test('a live grant is returned without a network call', async () => {
@@ -184,26 +172,25 @@ describe('saveGrant / readGrant', () => {
   test('stores and removes a host grant without touching other keys', async () => {
     const path = tmpConfig({ apiKey: 'k', hosts: { claude_code: { peerName: 'p' } } })
     const g = grant('a', 1)
-    await saveGrant(path, { host: 'claude_code' }, g)
-    expect(readGrant(read(path), { host: 'claude_code' })).toEqual(g)
-    await saveGrant(path, { host: 'claude_code' }, null)
+    await saveGrant(path, 'claude_code', g)
+    expect(readGrant(read(path), 'claude_code')).toEqual(g)
+    await saveGrant(path, 'claude_code', null)
     expect(read(path)).toEqual({ apiKey: 'k', hosts: { claude_code: { peerName: 'p' } } })
   })
 
   test('refuses to overwrite a config file it cannot parse', async () => {
     const path = tmpConfig({})
     writeFileSync(path, '{ not json')
-    await expect(saveGrant(path, { host: 'h' }, grant('a', 1))).rejects.toThrow()
+    await expect(saveGrant(path, 'h', grant('a', 1))).rejects.toThrow()
     expect(readFileSync(path, 'utf-8')).toBe('{ not json')
   })
 })
 
 describe('resolveConfig', () => {
-  test('an OAuth grant comes whole from one layer, never mixed across root and host', () => {
-    const r = resolveConfig(
-      { oauth: { accessToken: 'root', refreshToken: 'root-r', clientId: 'other-client' }, hosts: { h: { oauth: { accessToken: 'own' } } } },
-      { host: 'h', env: {} }
-    )
-    expect(r.auth.oauth).toEqual({ accessToken: 'own' })
+  test('a grant is read only from the host block, never from the root', () => {
+    const f = { oauth: { accessToken: 'root', refreshToken: 'root-r', clientId: 'other-client' } }
+    expect(resolveConfig(f, { host: 'h', env: {} }).auth.oauth).toBeUndefined()
+    const g = { ...f, hosts: { h: { oauth: { accessToken: 'own' } } } }
+    expect(resolveConfig(g, { host: 'h', env: {} }).auth.oauth).toEqual({ accessToken: 'own' })
   })
 })

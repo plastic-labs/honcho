@@ -22,7 +22,7 @@ const LOCK_WAIT_MS = 15_000
 // a retry can never fix these; the grant is dead and the user must sign in again
 const PERMANENT_ERRORS = new Set(['invalid_grant', 'invalid_client', 'unauthorized_client'])
 
-/** Stored grant, in a `hosts.<host>.oauth` or the root `oauth` block. */
+/** Stored grant, in `hosts.<host>.oauth`: one per plugin. */
 export interface OAuthTokens {
   accessToken: string
   refreshToken: string
@@ -31,9 +31,6 @@ export interface OAuthTokens {
   clientId: string
   scope: string
 }
-
-/** Where a grant lives: `hosts.<host>.oauth` (a plugin's own) or the shared root `oauth`. */
-export type GrantLocation = { host: string } | 'root'
 
 export interface DeviceCode {
   deviceCode: string
@@ -193,10 +190,9 @@ function readFile(path: string): Record<string, any> {
   return isObj(parsed) ? parsed : {}
 }
 
-export function readGrant(file: unknown, loc: GrantLocation): OAuthTokens | undefined {
+export function readGrant(file: unknown, host: string): OAuthTokens | undefined {
   if (!isObj(file)) return undefined
-  if (loc === 'root') return asTokens(file.oauth)
-  return asTokens(isObj(file.hosts) ? file.hosts[loc.host]?.oauth : undefined)
+  return asTokens(isObj(file.hosts) ? file.hosts[host]?.oauth : undefined)
 }
 
 /** Cross-process lock: `<config>.lock` created with O_EXCL; broken when older than 30s. */
@@ -244,26 +240,21 @@ export async function updateConfigFile(path: string, mutate: (file: Record<strin
   })
 }
 
-function setGrant(file: Record<string, any>, loc: GrantLocation, tokens: OAuthTokens | null): void {
-  if (loc === 'root') {
-    if (tokens) file.oauth = { ...(isObj(file.oauth) ? file.oauth : {}), ...tokens }
-    else delete file.oauth
-    return
-  }
+function setGrant(file: Record<string, any>, host: string, tokens: OAuthTokens | null): void {
   if (!isObj(file.hosts)) file.hosts = {}
-  const block = isObj(file.hosts[loc.host]) ? file.hosts[loc.host] : (file.hosts[loc.host] = {})
+  const block = isObj(file.hosts[host]) ? file.hosts[host] : (file.hosts[host] = {})
   if (tokens) block.oauth = tokens
   else delete block.oauth
 }
 
 /** Store (or with `null`, remove) a grant. Touches only that block. */
-export async function saveGrant(path: string, loc: GrantLocation, tokens: OAuthTokens | null): Promise<void> {
-  await updateConfigFile(path, (file) => setGrant(file, loc, tokens))
+export async function saveGrant(path: string, host: string, tokens: OAuthTokens | null): Promise<void> {
+  await updateConfigFile(path, (file) => setGrant(file, host, tokens))
 }
 
 // ── resolution + refresh ──────────────────────────────────────────────────────
 
-export type CredentialSource = 'env' | 'oauth' | 'root-oauth' | 'apiKey'
+export type CredentialSource = 'env' | 'oauth' | 'apiKey'
 
 export interface Credential {
   token: string
@@ -284,32 +275,20 @@ function apiKeyOf(file: Record<string, any>, host: string): string | undefined {
   return typeof k === 'string' && k ? k : undefined
 }
 
-function grants(file: Record<string, any>, host: string): Array<[GrantLocation, OAuthTokens, CredentialSource]> {
-  const out: Array<[GrantLocation, OAuthTokens, CredentialSource]> = []
-  const own = readGrant(file, { host })
-  if (own) out.push([{ host }, own, 'oauth'])
-  const root = readGrant(file, 'root')
-  if (root) out.push(['root', root, 'root-oauth'])
-  return out
-}
-
 /**
- * The token to send, highest wins: HONCHO_API_KEY env → a live OAuth grant (the
- * plugin's own `hosts.<host>.oauth`, then the shared root `oauth`) → apiKey → an
- * expired grant. OAuth is skipped unless `baseUrl` is Honcho cloud. No network.
+ * The token to send, highest wins: HONCHO_API_KEY env → the plugin's live OAuth
+ * grant (`hosts.<host>.oauth`) → apiKey → its expired grant. OAuth is skipped
+ * unless `baseUrl` is Honcho cloud. No network.
  */
 export function pickCredential(file: unknown, opts: { host: string; baseUrl?: string; env?: Env }): Credential | null {
   const env = opts.env ?? process.env
   if (env.HONCHO_API_KEY) return { token: env.HONCHO_API_KEY, source: 'env' }
   const f = isObj(file) ? file : {}
-  const gs = isCloud(opts.baseUrl) ? grants(f, opts.host) : []
-  for (const [, t, source] of gs) {
-    if (accessValid(t, 0)) return { token: t.accessToken, source, expiresAt: t.accessExpiresAt }
-  }
+  const g = isCloud(opts.baseUrl) ? readGrant(f, opts.host) : undefined
+  if (g && accessValid(g, 0)) return { token: g.accessToken, source: 'oauth', expiresAt: g.accessExpiresAt }
   const key = apiKeyOf(f, opts.host)
   if (key) return { token: key, source: 'apiKey' }
-  const [, t, source] = gs[0] ?? []
-  if (t && source) return { token: t.accessToken, source, expiresAt: t.accessExpiresAt, expired: true }
+  if (g) return { token: g.accessToken, source: 'oauth', expiresAt: g.accessExpiresAt, expired: true }
   return null
 }
 
@@ -334,38 +313,29 @@ export async function ensureFreshCredential(
   } catch {
     file = {}
   }
-  if (!isCloud(opts.baseUrl)) return pickCredential(file, opts)
+  const g = isCloud(opts.baseUrl) ? readGrant(file, opts.host) : undefined
+  if (!g || accessValid(g) || !g.refreshToken) return pickCredential(file, opts)
 
-  const gs = grants(file, opts.host)
-  for (const [loc, t] of gs) {
-    if (accessValid(t)) break
-    if (!t.refreshToken) continue
-    let error: string | undefined
-    try {
-      await withConfigLock(opts.path, async () => {
-        const current = readGrant(readFile(opts.path), loc)
-        if (!current || accessValid(current)) return // another process already refreshed
-        const next = await refreshAccessToken(current, opts)
-        const latest = readFile(opts.path)
-        setGrant(latest, loc, next)
-        writeFileAtomic(opts.path, latest)
-      })
-    } catch (e) {
-      error = e instanceof OAuthError ? e.code : (e as Error).message
-    }
-    try {
-      file = readFile(opts.path)
-    } catch {}
-    const after = readGrant(file, loc)
-    if (accessValid(after, 0)) {
-      return { token: after!.accessToken, source: loc === 'root' ? 'root-oauth' : 'oauth', expiresAt: after!.accessExpiresAt }
-    }
-    const fallback = pickCredential(file, opts)
-    if (fallback && error) {
-      fallback.error = error
-      if (PERMANENT_ERRORS.has(error)) fallback.reauthRequired = true
-    }
-    return fallback
+  let error: string | undefined
+  try {
+    await withConfigLock(opts.path, async () => {
+      const current = readGrant(readFile(opts.path), opts.host)
+      if (!current || accessValid(current)) return // another process already refreshed
+      const next = await refreshAccessToken(current, opts)
+      const latest = readFile(opts.path)
+      setGrant(latest, opts.host, next)
+      writeFileAtomic(opts.path, latest)
+    })
+  } catch (e) {
+    error = e instanceof OAuthError ? e.code : (e as Error).message
   }
-  return pickCredential(file, opts)
+  try {
+    file = readFile(opts.path)
+  } catch {}
+  const cred = pickCredential(file, opts)
+  if (cred && error) {
+    cred.error = error
+    if (PERMANENT_ERRORS.has(error)) cred.reauthRequired = true
+  }
+  return cred
 }

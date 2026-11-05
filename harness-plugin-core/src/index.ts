@@ -47,4 +47,4 @@ export {
   OAUTH_TOKEN_URL,
 } from './oauth.js'
 
-export type { Credential, CredentialSource, DeviceCode, GrantLocation, OAuthTokens, OAuthTransport } from './oauth.js'
+export type { Credential, CredentialSource, DeviceCode, OAuthTokens, OAuthTransport } from './oauth.js'

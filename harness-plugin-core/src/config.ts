@@ -187,7 +187,9 @@ export function resolveConfig(
     enabled: true,
     workspace: host,
   }
-  const layers = [pickRoot(raw), pickHost(hosts, host), pickRoot(opts.overlay)]
+  const root = pickRoot(raw)
+  if (root.auth) delete root.auth.oauth // grants are per plugin: hosts.<host>.oauth only
+  const layers = [root, pickHost(hosts, host), pickRoot(opts.overlay)]
   acc = layers.reduce((a, l) => merge(a, l), acc)
   // a grant is taken whole from one layer, never merged field by field
   const grant = [...layers].reverse().find((l) => l.auth?.oauth)?.auth?.oauth
