@@ -348,13 +348,12 @@ thinking_budget_tokens = 2048
     "error_fallback_missing_model": {
         "env": {"DERIVER_MODEL_CONFIG__FALLBACK__TRANSPORT": "openai"}
     },
-    "error_unknown_transport": {
-        "env": {"SUMMARY_MODEL_CONFIG__TRANSPORT": "bedrock"}
-    },
+    "error_unknown_transport": {"env": {"SUMMARY_MODEL_CONFIG__TRANSPORT": "bedrock"}},
 }
 
 
-def _run_case(name: str, case: dict[str, Any]) -> dict[str, Any]:
+def run_case(name: str, case: dict[str, Any]) -> dict[str, Any]:
+    """Boot config for one case in a fresh interpreter and return the probe's output."""
     with tempfile.TemporaryDirectory() as cwd:
         toml = case.get("toml")
         if toml is not None:
@@ -377,11 +376,30 @@ def _run_case(name: str, case: dict[str, Any]) -> dict[str, Any]:
     return json.loads(result.stdout)
 
 
-def run_all() -> dict[str, Any]:
+def run_all(cases: dict[str, dict[str, Any]] = CASES) -> dict[str, Any]:
     """Run every case, each in its own interpreter."""
     with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = {name: pool.submit(_run_case, name, c) for name, c in CASES.items()}
+        futures = {name: pool.submit(run_case, name, c) for name, c in cases.items()}
         return {name: future.result() for name, future in futures.items()}
+
+
+def differences(path: str, old: Any, new: Any) -> list[str]:
+    """Every leaf where `new` differs from `old`, as `path.to.leaf: old -> new`."""
+    if isinstance(old, dict) and isinstance(new, dict):
+        old_d: dict[str, Any] = old  # pyright: ignore[reportUnknownVariableType]
+        new_d: dict[str, Any] = new  # pyright: ignore[reportUnknownVariableType]
+        found: list[str] = []
+        for key in sorted(set(old_d) | set(new_d)):
+            if key not in new_d:
+                found.append(f"{path}.{key}: removed (was {old_d[key]!r})")
+            elif key not in old_d:
+                found.append(f"{path}.{key}: added ({new_d[key]!r})")
+            else:
+                found.extend(differences(f"{path}.{key}", old_d[key], new_d[key]))
+        return found
+    if old != new:
+        return [f"{path}: {old!r} -> {new!r}"]
+    return []
 
 
 def main() -> None:

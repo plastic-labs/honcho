@@ -102,6 +102,83 @@ DREAM_INDUCTION_MODEL_CONFIG__TRANSPORT=openai
 DREAM_INDUCTION_MODEL_CONFIG__MODEL=anthropic/claude-haiku-4-5
 ```
 
+### Model Catalog
+
+Settings that belong to a model, not a feature (its route, JSON mode, thinking settings, proxy workarounds), otherwise have to be repeated on every feature and fallback that uses it. The `MODELS` catalog defines each model once; features and fallbacks name an entry with `MODEL_REF`:
+
+```toml config.toml
+[models.light]
+transport = "openai"
+model = "google/gemini-2.5-flash-lite"
+structured_output_mode = "json_object"
+overrides = { base_url = "https://openrouter.ai/api/v1" }
+
+[models.nano]
+transport = "openai"
+model = "gpt-5-nano"
+thinking_effort = "minimal"
+max_output_tokens = 8000
+
+[deriver.model_config]
+model_ref = "light"
+
+[deriver.model_config.fallback]
+model_ref = "nano"
+
+[dialectic.levels.max.model_config]
+model_ref = "light"
+max_output_tokens = 4000
+```
+
+The same in environment variables:
+
+```bash
+MODELS__light__TRANSPORT=openai
+MODELS__light__MODEL=google/gemini-2.5-flash-lite
+MODELS__light__STRUCTURED_OUTPUT_MODE=json_object
+MODELS__light__OVERRIDES__BASE_URL=https://openrouter.ai/api/v1
+MODELS__nano__TRANSPORT=openai
+MODELS__nano__MODEL=gpt-5-nano
+MODELS__nano__THINKING_EFFORT=minimal
+MODELS__nano__MAX_OUTPUT_TOKENS=8000
+DERIVER_MODEL_CONFIG__MODEL_REF=light
+DERIVER_MODEL_CONFIG__FALLBACK__MODEL_REF=nano
+```
+
+- An entry takes the same fields as a fallback model config, plus `capabilities` (below). A misspelled field is an error.
+- Entry names are lowercase letters, digits and underscores (`gpt5_nano`, not `gpt-5-nano`), so each has one environment-variable spelling.
+- A feature that sets `MODEL_REF` gets every field of the entry. Any other field it sets wins, for example `max_output_tokens` or a dialectic level's `thinking_budget_tokens`. It can't also set `MODEL` or `TRANSPORT`.
+- `overrides` merges key by key, and so does `overrides.provider_params`. A nested value such as `extra_body` is replaced whole.
+- A feature that sets `MODEL_REF` gets none of the feature's built-in defaults. A blank `MODEL_REF` counts as unset.
+- An unknown name, or an invalid entry, fails at startup with the reason.
+- Features without `MODEL_REF` load exactly as before, even when a catalog is defined.
+
+#### Capabilities
+
+Honcho shapes some requests by what the model accepts: how thinking is configured, whether a forced `tool_choice` or an assistant prefill is allowed, and how replayed thinking and tool results are ordered. It works this out from the model id, which a proxy alias such as `summarizer` hides. An entry fixes that by naming the model behind the alias:
+
+```toml config.toml
+[models.summarizer]
+transport = "openai"
+model = "summarizer"
+overrides = { base_url = "https://proxy.example/v1" }
+capabilities = { infer_from = "claude-haiku-5-5" }
+```
+
+An entry's capabilities apply to every request to that transport and model, whether or not the feature names the entry. They are read from `infer_from`, or from the entry's `model`, the same way on every transport. Without an entry, only the `anthropic` transport reads Claude model ids. Individual fields override what's inferred. Two entries for the same transport and model must declare the same capabilities.
+
+Not every transport uses every field yet:
+
+| Field | Values | Used on |
+|---|---|---|
+| `thinking` | `budget`, `adaptive` | `anthropic` |
+| `supports_prefill` | `true`, `false` | `anthropic` |
+| `forced_tool_choice` | `conflicts_with_thinking`, `skips_thinking`, `rejected` | `anthropic` |
+| `preserved_thinking` | `true`, `false` | `anthropic` |
+| `user_after_tool` | `true`, `false` | `openai` |
+
+So on the `openai` transport, a profile only changes whether a user message may follow a tool result (`false` for Mistral models). A Claude model behind an OpenAI-compatible proxy still gets a forced `tool_choice` sent as is, and its replayed reasoning is not stripped when history changes.
+
 ### Direct Vendor Keys
 
 Instead of an OpenAI-compatible proxy, you can use vendor APIs directly. Each transport picks up its own `LLM_{TRANSPORT}_API_KEY`.

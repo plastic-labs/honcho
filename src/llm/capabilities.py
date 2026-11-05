@@ -5,23 +5,25 @@ configured, whether an assistant prefill is allowed, whether a forced
 tool_choice is accepted, and whether replayed thinking blocks are bound to the
 conversation that produced them. Backends and the tool loop read those
 differences from here instead of matching model names inline.
+
+A model in the `MODELS` catalog gets its profile from its entry, for every
+request to that transport and model. Any other model's profile is inferred
+from its name and transport.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Literal
 
-from src.config import ModelTransport
-
-ThinkingMode = Literal["budget", "adaptive"]
-
-# How a model treats a forced tool_choice ({"type": "any"} / {"type": "tool"}):
-# - "conflicts_with_thinking": accepted, but not alongside extended thinking
-# - "skips_thinking": accepted with thinking on; that turn simply skips thinking
-# - "rejected": a 400 whether or not thinking is on
-ForcedToolChoice = Literal["conflicts_with_thinking", "skips_thinking", "rejected"]
+from src import config
+from src.config import (
+    ForcedToolChoice,
+    ModelCatalogEntry,
+    ModelTransport,
+    ThinkingMode,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,13 +132,60 @@ _MISTRAL_MODEL = re.compile(
 _STRICT_TOOL_ROLE_ORDER = replace(_LEGACY, user_after_tool=False)
 
 
+def model_capabilities(model: str) -> ModelCapabilities:
+    """Capabilities inferred from a model id alone, whatever the transport.
+
+    A Claude model gets its generation's row whether it is reached directly or
+    through an OpenAI-compatible proxy.
+    """
+    if _CLAUDE_MODEL.search(model):
+        return anthropic_capabilities(model)
+    if _MISTRAL_MODEL.search(model):
+        return _STRICT_TOOL_ROLE_ORDER
+    return _LEGACY
+
+
+def catalog_entry_capabilities(entry: ModelCatalogEntry) -> ModelCapabilities:
+    """The profile a `MODELS` entry declares: inferred, then overridden."""
+    profile = entry.capabilities
+    inferred = model_capabilities(profile.infer_from or entry.model)
+    return replace(
+        inferred, **profile.model_dump(exclude={"infer_from"}, exclude_none=True)
+    )
+
+
+_catalog_index_cache: (
+    tuple[Mapping[str, ModelCatalogEntry], dict[tuple[str, str], ModelCapabilities]]
+    | None
+) = None
+
+
+def _catalog_capabilities() -> dict[tuple[str, str], ModelCapabilities]:
+    """Declared profiles by (transport, model), rebuilt when the catalog changes."""
+    global _catalog_index_cache
+    catalog = config.settings.MODELS
+    cached = _catalog_index_cache
+    if cached is not None and cached[0] is catalog:
+        return cached[1]
+    index = {
+        (entry.transport, entry.model): catalog_entry_capabilities(entry)
+        for entry in catalog.values()
+    }
+    _catalog_index_cache = (catalog, index)
+    return index
+
+
 def capabilities_for(transport: ModelTransport, model: str) -> ModelCapabilities:
     """Capabilities of `model` on `transport`.
 
-    The Anthropic transport has a row per Claude generation. Other transports
-    get the legacy row, except Mistral models, which need strict role order
-    after tool results.
+    A `MODELS` catalog entry for this transport and model decides. Otherwise
+    the Anthropic transport has a row per Claude generation, and other
+    transports get the legacy row, except Mistral models, which need strict
+    role order after tool results.
     """
+    declared = _catalog_capabilities().get((transport, model))
+    if declared is not None:
+        return declared
     if transport == "anthropic":
         return anthropic_capabilities(model)
     if _MISTRAL_MODEL.search(model):
@@ -150,4 +199,6 @@ __all__ = [
     "ThinkingMode",
     "anthropic_capabilities",
     "capabilities_for",
+    "catalog_entry_capabilities",
+    "model_capabilities",
 ]
