@@ -65,7 +65,7 @@ _cache_lock = asyncio.Lock()
 async def _safe_cluster_initialize(
     self: SafeRedisCluster, *args: Any, **kwargs: Any
 ) -> SafeRedisCluster:
-    """Forward whatever redis-py passes, keeping cashews' degrade-on-error intent."""
+    """Forward whatever redis-py passes; report any init failure as ConnectionError."""
     try:
         return await RedisCluster.initialize(self, *args, **kwargs)  # pyright: ignore[reportReturnType]
     except (
@@ -75,9 +75,14 @@ async def _safe_cluster_initialize(
         socket.gaierror,
         OSError,
         TimeoutError,
-    ):
+    ) as exc:
+        # Do not return the client: a failed init leaves it with no default
+        # node (and no nodes at all if none answered), so its next command
+        # raises IndexError or AttributeError, which nothing catches.
+        # ConnectionError is what init_cache() retries and falls back on, and
+        # what the safe client and fallback_on_cache_error handle.
         logger.error("redis: can not initialize cache", exc_info=True)
-        return self
+        raise redis_exc.ConnectionError("Redis Cluster initialization failed") from exc
 
 
 # cashews evaluates `__aenter__ = initialize` at class-definition time, so the
