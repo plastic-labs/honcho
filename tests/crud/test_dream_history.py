@@ -754,3 +754,73 @@ async def test_a_tombstoned_workspace_hides_its_runs(
     assert (await db_session.scalars(crud.list_runs_stmt(workspace.name))).all() == []
     with pytest.raises(ResourceNotFoundException):
         await crud.get_run_detail(db_session, workspace.name, target.run_id)
+
+
+async def test_a_removed_copy_from_a_hidden_run_is_unavailable(
+    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    workspace, peer = sample_data
+    workspace_name, ann = workspace.name, peer.name
+    assistant = "assistant-" + str(generate_nanoid())
+    db_session.add(models.Peer(name=assistant, workspace_name=workspace_name))
+    await db_session.flush()
+    await _session(db_session, workspace_name, ann)  # ann's self-collection
+    db_session.add(
+        models.Collection(
+            workspace_name=workspace_name, observer=assistant, observed=ann
+        )
+    )
+    source_id = str(generate_nanoid())
+    db_session.add(
+        models.Document(
+            id=source_id,
+            workspace_name=workspace_name,
+            observer=assistant,
+            observed=ann,
+            content="Ann mentioned a night shift",
+            level="explicit",
+            session_name=None,
+            embedding=[0.3] * 1536,
+        )
+    )
+    await db_session.commit()
+
+    # A run on ann's own representation cites a source from another pair.
+    cites = await _open(workspace_name, ann)
+    await crud.create_documents(
+        db_session,
+        [_deductive("Ann works nights", [source_id])],
+        workspace_name,
+        observer=ann,
+        observed=ann,
+        history=cites,
+    )
+    removal = await crud.open_run(
+        run_id=generate_nanoid(),
+        workspace_name=workspace_name,
+        observer=assistant,
+        observed=ann,
+        dream_type="omni",
+        trigger_reason="manual",
+    )
+    assert removal is not None
+    await crud.delete_documents(
+        db_session,
+        workspace_name,
+        [source_id],
+        observer=assistant,
+        observed=ann,
+        history=DreamHistoryTarget(run_id=removal.run_id, specialist="deduction"),
+    )
+
+    db_session.expire_all()
+    detail = await crud.get_run_detail(db_session, workspace_name, cites.run_id)
+    [source] = detail.created[0].sources
+    assert (source.status, source.content) == ("removed", "Ann mentioned a night shift")
+
+    await _tombstone(db_session, models.Peer, workspace_name, assistant)
+
+    db_session.expire_all()
+    detail = await crud.get_run_detail(db_session, workspace_name, cites.run_id)
+    [source] = detail.created[0].sources
+    assert (source.status, source.content) == ("unavailable", None)

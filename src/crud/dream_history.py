@@ -363,12 +363,22 @@ async def _resolve_conclusions(
                 models.DreamRunChange.level,
                 models.DreamRunChange.run_id,
             )
+            # The copy's own run must be live too: a source can come from
+            # another peer pair, whose runs may be hidden.
+            .join(
+                models.DreamRun,
+                and_(
+                    models.DreamRun.tenant_id == models.DreamRunChange.tenant_id,
+                    models.DreamRun.id == models.DreamRunChange.run_id,
+                ),
+            )
             .where(
                 models.DreamRunChange.tenant_id == models.scoped_tenant_id(),
                 models.DreamRunChange.workspace_name == workspace_name,
                 models.DreamRunChange.kind == "removed",
                 models.DreamRunChange.conclusion_id.in_(missing),
                 live_dream_run_change_row(),
+                live_dream_run_row(),
             )
             .order_by(models.DreamRunChange.id)
         )
