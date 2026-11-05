@@ -173,7 +173,11 @@ class DeriverMetricsPoller:
         try:
             if await fleet_cache.set_lock(key, self._holder, expire=ttl):
                 return True
-            if await fleet_cache.get(key) == self._holder:
+            # ai: set_lock stores the holder raw, and get() would unpickle it (None on Redis), so read it raw
+            held = await fleet_cache.get_raw(key)
+            if isinstance(held, bytes):
+                held = held.decode()
+            if held == self._holder:
                 await fleet_cache.expire(key, ttl)
                 return True
             return False

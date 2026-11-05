@@ -466,6 +466,26 @@ class TestFleetCoordination:
 
         assert measure.await_count == 2  # both by the leader
 
+    async def test_the_holder_recognises_its_lease_as_redis_returns_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Redis hands set_lock's value back raw (bytes), and get() can't unpickle it."""
+        from src.cache.client import fleet_cache
+
+        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
+        poller = DeriverMetricsPoller()
+        holder = poller._holder  # pyright: ignore[reportPrivateUsage]
+        expire = AsyncMock()
+        monkeypatch.setattr(fleet_cache, "set_lock", AsyncMock(return_value=False))
+        monkeypatch.setattr(fleet_cache, "get", AsyncMock(return_value=None))
+        monkeypatch.setattr(
+            fleet_cache, "get_raw", AsyncMock(return_value=holder.encode())
+        )
+        monkeypatch.setattr(fleet_cache, "expire", expire)
+
+        assert await poller._hold_lease()  # pyright: ignore[reportPrivateUsage]
+        expire.assert_awaited_once()
+
     async def test_another_replica_takes_over_when_the_lease_is_gone(
         self, shared_fleet: Any
     ):
