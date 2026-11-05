@@ -50,6 +50,8 @@ async def test_list_filters_by_peer_newest_first(
 ):
     workspace, peer = sample_data
     workspace_name, maya = workspace.name, peer.name
+    db_session.add(models.Peer(name="assistant", workspace_name=workspace_name))
+    await db_session.commit()
     older = await _run(
         db_session, workspace_name, observer=maya, observed=maya, started_minutes_ago=10
     )
