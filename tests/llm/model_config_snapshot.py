@@ -385,6 +385,38 @@ thinking_budget_tokens = 2048
             "SUMMARY_MODEL_CONFIG__MODEL": "gpt-5",
         },
     },
+    # Two spellings of one setting from different sources, in slots that
+    # don't use the catalog. Both keys survive the merge and the validator
+    # picks one by spelling, not by source, so env doesn't always win.
+    "toml_and_env_effort_spellings": {
+        "toml": """
+[deriver.model_config]
+transport = "openai"
+model = "gpt-5-nano"
+thinking_effort = "low"
+""",
+        "env": {"DERIVER_MODEL_CONFIG__REASONING_EFFORT": "high"},
+    },
+    "toml_transport_env_model_shorthand": {
+        "toml": """
+[summary.model_config]
+transport = "gemini"
+model = "gemini-2.5-flash"
+""",
+        "env": {"SUMMARY_MODEL_CONFIG__MODEL": "openai/gpt-5.4-mini"},
+    },
+    "toml_api_key_env_api_key_env": {
+        "toml": """
+[deriver.model_config]
+transport = "openai"
+model = "gpt-5-nano"
+overrides = { api_key = "sk-toml" }
+""",
+        "env": {
+            "DERIVER_MODEL_CONFIG__OVERRIDES__API_KEY_ENV": "DERIVER_KEY",
+            "DERIVER_KEY": "sk-env",
+        },
+    },
     "error_structured_output_on_anthropic": {
         "env": {
             "DERIVER_MODEL_CONFIG__TRANSPORT": "anthropic",

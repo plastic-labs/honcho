@@ -485,3 +485,312 @@ def test_pairs_exercise_what_they_claim() -> None:
     window = results["window"]["slots"]["summary"]
     assert window["configured"]["context_window"] == 400000
     assert window["capabilities"]["max_tokens_param"] == "max_completion_tokens"
+
+
+# Config split across env and `config.toml`, against the same config from one
+# source with env's values. Sources merge key by key, so two spellings of one
+# setting both survive the merge; where the catalog is used, the env spelling
+# must still win. (Slots that don't use the catalog keep merging side by side:
+# see the `toml_and_env_*` cases in `model_config_snapshot.py`.)
+_NANO_TOML = """
+[models.nano]
+transport = "openai"
+model = "gpt-5-nano"
+"""
+
+MIXED_SOURCE_PAIRS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
+    "entry_effort_alias_in_env": (
+        {
+            "toml": _NANO_TOML
+            + """thinking_effort = "high"
+[deriver.model_config]
+model_ref = "nano"
+"""
+        },
+        {
+            "toml": _NANO_TOML
+            + """thinking_effort = "low"
+[deriver.model_config]
+model_ref = "nano"
+""",
+            "env": {"MODELS__nano__REASONING_EFFORT": "high"},
+        },
+    ),
+    "entry_effort_alias_in_toml": (
+        {
+            "toml": _NANO_TOML
+            + """thinking_effort = "high"
+[deriver.model_config]
+model_ref = "nano"
+"""
+        },
+        {
+            "toml": _NANO_TOML
+            + """reasoning_effort = "low"
+[deriver.model_config]
+model_ref = "nano"
+""",
+            "env": {"MODELS__nano__THINKING_EFFORT": "high"},
+        },
+    ),
+    "referencing_slot_effort_alias": (
+        {
+            "toml": _NANO_TOML
+            + """[deriver.model_config]
+model_ref = "nano"
+thinking_effort = "high"
+"""
+        },
+        {
+            "toml": _NANO_TOML
+            + """[deriver.model_config]
+model_ref = "nano"
+thinking_effort = "low"
+""",
+            "env": {"DERIVER_MODEL_CONFIG__REASONING_EFFORT": "high"},
+        },
+    ),
+    "env_model_ref_over_toml_model": (
+        {
+            "toml": _NANO_TOML
+            + """[deriver.model_config]
+model_ref = "nano"
+"""
+        },
+        {
+            "toml": _NANO_TOML
+            + """[deriver.model_config]
+transport = "gemini"
+model = "gemini-2.5-flash"
+""",
+            "env": {"DERIVER_MODEL_CONFIG__MODEL_REF": "nano"},
+        },
+    ),
+    "env_model_over_toml_model_ref": (
+        {
+            "toml": _NANO_TOML,
+            "env": {"DERIVER_MODEL_CONFIG__MODEL": "gpt-4.1"},
+        },
+        {
+            "toml": _NANO_TOML
+            + """[deriver.model_config]
+model_ref = "nano"
+""",
+            "env": {"DERIVER_MODEL_CONFIG__MODEL": "gpt-4.1"},
+        },
+    ),
+    "env_fallback_model_ref_over_toml_fallback": (
+        {
+            "toml": _NANO_TOML
+            + """[deriver.model_config]
+transport = "openai"
+model = "gpt-4.1"
+fallback = { model_ref = "nano" }
+"""
+        },
+        {
+            "toml": _NANO_TOML
+            + """[deriver.model_config]
+transport = "openai"
+model = "gpt-4.1"
+fallback = { transport = "gemini", model = "gemini-2.5-flash" }
+""",
+            "env": {"DERIVER_MODEL_CONFIG__FALLBACK__MODEL_REF": "nano"},
+        },
+    ),
+    "env_dialectic_level_model_ref_over_toml_model": (
+        {
+            "toml": _NANO_TOML
+            + """[dialectic.levels.minimal.model_config]
+model_ref = "nano"
+"""
+        },
+        {
+            "toml": _NANO_TOML
+            + """[dialectic.levels.minimal.model_config]
+transport = "gemini"
+model = "gemini-2.5-flash"
+""",
+            "env": {"DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL_REF": "nano"},
+        },
+    ),
+    "referencing_slot_key_env_over_toml_key": (
+        {
+            "toml": _NANO_TOML
+            + """[deriver.model_config]
+model_ref = "nano"
+overrides = { api_key_env = "DERIVER_KEY" }
+""",
+            "env": {"DERIVER_KEY": "sk-env"},
+        },
+        {
+            "toml": _NANO_TOML
+            + """[deriver.model_config]
+model_ref = "nano"
+overrides = { api_key = "sk-toml" }
+""",
+            "env": {
+                "DERIVER_MODEL_CONFIG__OVERRIDES__API_KEY_ENV": "DERIVER_KEY",
+                "DERIVER_KEY": "sk-env",
+            },
+        },
+    ),
+    "entry_key_env_over_toml_key": (
+        {
+            "toml": _NANO_TOML
+            + """overrides = { api_key_env = "NANO_KEY" }
+[deriver.model_config]
+model_ref = "nano"
+""",
+            "env": {"NANO_KEY": "sk-env"},
+        },
+        {
+            "toml": _NANO_TOML
+            + """overrides = { api_key = "sk-toml" }
+[deriver.model_config]
+model_ref = "nano"
+""",
+            "env": {
+                "MODELS__nano__OVERRIDES__API_KEY_ENV": "NANO_KEY",
+                "NANO_KEY": "sk-env",
+            },
+        },
+    ),
+}
+
+
+def test_env_beats_toml_where_the_catalog_is_used() -> None:
+    cases = {
+        f"{name}:{side}": case
+        for name, pair in MIXED_SOURCE_PAIRS.items()
+        for side, case in zip(("one_source", "mixed"), pair, strict=True)
+    }
+    results = run_all(cases)
+
+    problems: list[str] = []
+    for name in sorted(MIXED_SOURCE_PAIRS):
+        one, mixed = results[f"{name}:one_source"], results[f"{name}:mixed"]
+        if "load_error" in one:
+            problems.append(f"{name}: the one-source side failed: {one['load_error']}")
+        if "load_error" in mixed:
+            problems.append(f"{name}: the mixed side failed: {mixed['load_error']}")
+        problems.extend(differences(name, one, mixed))
+    assert not problems, "\n".join(problems)
+
+    # The pairs agree on env's value, not on a default.
+    def deriver(name: str) -> dict[str, Any]:
+        return results[f"{name}:mixed"]["slots"]["deriver"]["resolved"]
+
+    assert deriver("entry_effort_alias_in_env")["thinking_effort"] == "high"
+    assert deriver("entry_effort_alias_in_toml")["thinking_effort"] == "high"
+    assert deriver("referencing_slot_effort_alias")["thinking_effort"] == "high"
+    assert deriver("env_model_ref_over_toml_model")["model"] == "gpt-5-nano"
+    assert deriver("env_model_over_toml_model_ref")["model"] == "gpt-4.1"
+    fallback = deriver("env_fallback_model_ref_over_toml_fallback")["fallback"]
+    assert fallback["model"] == "gpt-5-nano"
+    level = results["env_dialectic_level_model_ref_over_toml_model:mixed"]["slots"]
+    assert level["dialectic.minimal"]["resolved"]["model"] == "gpt-5-nano"
+    assert deriver("referencing_slot_key_env_over_toml_key")["api_key"] == "sk-env"
+    assert deriver("entry_key_env_over_toml_key")["api_key"] == "sk-env"
+
+
+def test_one_source_setting_both_spellings_is_still_rejected() -> None:
+    results = run_all(
+        {
+            "selector": {
+                "toml": _NANO_TOML
+                + """[deriver.model_config]
+model_ref = "nano"
+model = "gpt-4.1"
+"""
+            },
+            "effort": {
+                "toml": _NANO_TOML
+                + """thinking_effort = "low"
+reasoning_effort = "high"
+"""
+            },
+        }
+    )
+    assert "already sets the model" in str(results["selector"]["load_error"])
+    assert "reasoning_effort" in str(results["effort"]["load_error"])
+
+
+def test_entry_names_that_match_setting_names_merge_like_any_other() -> None:
+    """`MODELS` keys are entry names, not settings, so no key is dropped there."""
+    results = run_all(
+        {
+            "mixed": {
+                "toml": """
+[models.model_ref]
+transport = "openai"
+model = "gpt-5-nano"
+
+[models.model]
+transport = "openai"
+model = "gpt-4.1"
+
+[deriver.model_config]
+model_ref = "model_ref"
+fallback = { model_ref = "model" }
+""",
+                "env": {
+                    "MODELS__model_ref__THINKING_EFFORT": "high",
+                    "MODELS__model__TEMPERATURE": "0.5",
+                },
+            }
+        }
+    )
+    mixed = results["mixed"]
+    assert "load_error" not in mixed, mixed.get("load_error")
+    deriver = mixed["slots"]["deriver"]["resolved"]
+    assert deriver["model"] == "gpt-5-nano"
+    assert deriver["thinking_effort"] == "high"
+    assert deriver["fallback"]["model"] == "gpt-4.1"
+    assert deriver["fallback"]["temperature"] == 0.5
+
+
+def test_provider_payloads_merge_like_any_other() -> None:
+    """Keys inside `provider_params` are provider payload, not model settings."""
+    schema_toml = """
+[deriver.model_config.overrides.provider_params.extra_body.schema.properties]
+model = { type = "string" }
+model_ref = { type = "string" }
+"""
+    env = {
+        "DERIVER_MODEL_CONFIG__OVERRIDES__PROVIDER_PARAMS__EXTRA_BODY__SCHEMA"
+        + "__PROPERTIES__MODEL_REF__DESCRIPTION": "from env"
+    }
+    results = run_all(
+        {
+            "inline": {
+                "toml": """
+[deriver.model_config]
+transport = "openai"
+model = "gpt-4.1"
+"""
+                + schema_toml,
+                "env": env,
+            },
+            "referencing": {
+                "toml": _NANO_TOML
+                + """
+[deriver.model_config]
+model_ref = "nano"
+"""
+                + schema_toml,
+                "env": env,
+            },
+        }
+    )
+    for name in ("inline", "referencing"):
+        case = results[name]
+        assert "load_error" not in case, (name, case.get("load_error"))
+        configured = case["slots"]["deriver"]["configured"]
+        properties = configured["overrides"]["provider_params"]["extra_body"]["schema"][
+            "properties"
+        ]
+        assert properties == {
+            "model": {"type": "string"},
+            "model_ref": {"type": "string", "description": "from env"},
+        }, name

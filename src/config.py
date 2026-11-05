@@ -582,6 +582,150 @@ def _expand_model_ref(data: Any) -> Any:
     return {**expanded, **raw}
 
 
+_EFFORT_KEYS = frozenset({"thinking_effort", "reasoning_effort"})
+_MODEL_SELECTOR_KEYS = frozenset({"model_ref", "model", "transport"})
+
+
+def _without_keys(data: Mapping[str, Any], names: frozenset[str]) -> dict[str, Any]:
+    return {key: value for key, value in data.items() if str(key).lower() not in names}
+
+
+def _sets_any(data: Mapping[str, Any], names: frozenset[str]) -> bool:
+    return any(str(key).lower() in names for key in data)
+
+
+def _matching_mapping(higher: Mapping[str, Any], key: str) -> dict[str, Any]:
+    """`higher`'s mapping under `key`, in whatever key case (merged if several)."""
+    found: dict[str, Any] = {}
+    for higher_key, value in higher.items():
+        if str(higher_key).lower() == key.lower() and isinstance(value, Mapping):
+            found.update(cast(Mapping[str, Any], value))
+    return found
+
+
+def _yield_model_config(
+    lower: Mapping[str, Any],
+    higher: Mapping[str, Any],
+    *,
+    catalog_entry: bool = False,
+) -> dict[str, Any]:
+    """One model config (a slot, a fallback or a catalog entry) from `lower`,
+    minus what `higher` sets another way. See `_yield_to_higher_source`."""
+    result = dict(lower)
+    if _has_model_ref(higher):
+        result = _without_keys(result, _MODEL_SELECTOR_KEYS)
+    elif _sets_any(higher, frozenset({"model_ref", "model"})):
+        result = _without_keys(result, frozenset({"model_ref"}))
+
+    uses_catalog = catalog_entry or _has_model_ref(higher) or _has_model_ref(result)
+    if uses_catalog and _sets_any(higher, _EFFORT_KEYS):
+        result = _without_keys(result, _EFFORT_KEYS)
+
+    for key, value in list(result.items()):
+        if not isinstance(value, Mapping):
+            continue
+        higher_value = _matching_mapping(higher, str(key))
+        if not higher_value:
+            continue
+        lower_value = cast(Mapping[str, Any], value)
+        if str(key).lower() == "fallback":
+            result[key] = _yield_model_config(lower_value, higher_value)
+        elif (
+            str(key).lower() == "overrides"
+            and uses_catalog
+            and _sets_any(higher_value, _CREDENTIAL_KEYS)
+        ):
+            # Only the credential keys; `provider_params` is provider payload.
+            result[key] = _without_keys(lower_value, _CREDENTIAL_KEYS)
+    return result
+
+
+def _yield_to_higher_source(
+    lower: Mapping[str, Any], higher: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Drop what `lower` sets that a higher-precedence source sets another way.
+
+    Settings sources are merged key by key before validation, so two spellings
+    of one setting from different sources both survive the merge, and the
+    validator can no longer tell which came from the higher source. Where a
+    model config uses the catalog, this removes the lower source's spelling
+    first:
+
+    * `model_ref` against `model`/`transport`: a higher `model_ref` replaces
+      the lower `model`, `transport` and `model_ref`; a higher `model`
+      replaces a lower `model_ref`.
+    * In a catalog entry, or a slot that names one: `thinking_effort` and its
+      alias `reasoning_effort` are one setting, and so are `overrides.api_key`
+      and `overrides.api_key_env`.
+
+    Only model configs are touched: `*MODEL_CONFIG` fields (at any depth, so
+    dialectic levels too), their `fallback`, and the entries of `MODELS`.
+    Entry names and provider payloads such as `provider_params` are left
+    alone. A config that doesn't use the catalog is returned unchanged; its
+    different spellings still merge side by side, and the field validators
+    then pick one in their own order, whichever source it came from.
+    """
+    result = dict(lower)
+    for key, value in list(result.items()):
+        if not isinstance(value, Mapping):
+            continue
+        higher_value = _matching_mapping(higher, str(key))
+        if not higher_value:
+            continue
+        lower_value = cast(Mapping[str, Any], value)
+        name = str(key).lower()
+        if name == "models":
+            result[key] = {
+                entry_name: (
+                    _yield_model_config(
+                        cast(Mapping[str, Any], entry),
+                        _matching_mapping(higher_value, str(entry_name)),
+                        catalog_entry=True,
+                    )
+                    if isinstance(entry, Mapping)
+                    else entry
+                )
+                for entry_name, entry in lower_value.items()
+            }
+        elif name.endswith("model_config"):
+            result[key] = _yield_model_config(lower_value, higher_value)
+        else:
+            result[key] = _yield_to_higher_source(lower_value, higher_value)
+    return result
+
+
+class _YieldToHigherSources(PydanticBaseSettingsSource):
+    """A settings source minus what a higher-precedence source sets another way.
+
+    pydantic-settings calls sources from highest precedence down and hands
+    each one the merged values of the sources above it, so this is the last
+    point where it's known which source a key came from. See
+    `_yield_to_higher_source` for what's dropped.
+    """
+
+    def __init__(self, source: PydanticBaseSettingsSource) -> None:
+        super().__init__(source.settings_cls)
+        self._source: PydanticBaseSettingsSource = source
+        # pydantic-settings records each source's values under this name.
+        self.__name__: str = getattr(source, "__name__", type(source).__name__)
+
+    def _set_current_state(self, state: dict[str, Any]) -> None:
+        super()._set_current_state(state)
+        self._source._set_current_state(state)
+
+    def _set_settings_sources_data(self, states: dict[str, dict[str, Any]]) -> None:
+        super()._set_settings_sources_data(states)
+        self._source._set_settings_sources_data(states)
+
+    def get_field_value(
+        self, field: FieldInfo, field_name: str
+    ) -> tuple[Any, str, bool]:
+        return self._source.get_field_value(field, field_name)
+
+    def __call__(self) -> dict[str, Any]:
+        return _yield_to_higher_source(self._source(), self.current_state)
+
+
 class ResolvedFallbackConfig(BaseModel):
     """Runtime-resolved fallback config with credentials already resolved."""
 
@@ -1010,10 +1154,10 @@ class HonchoSettings(BaseSettings):
         # Correct precedence: init > env > .env > toml > secrets > defaults
         return (
             init_settings,
-            env_settings,
-            dotenv_settings,
-            TomlConfigSettingsSource(settings_cls),
-            file_secret_settings,
+            _YieldToHigherSources(env_settings),
+            _YieldToHigherSources(dotenv_settings),
+            _YieldToHigherSources(TomlConfigSettingsSource(settings_cls)),
+            _YieldToHigherSources(file_secret_settings),
         )
 
 
