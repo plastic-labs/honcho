@@ -10,7 +10,7 @@ preflight check before a protected write.
 from dataclasses import dataclass, field
 from typing import Literal
 
-from sqlalchemy import ColumnElement, and_, exists, select
+from sqlalchemy import ColumnElement, and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import QueryableAttribute, aliased
 from sqlalchemy.orm.util import AliasedClass
@@ -197,7 +197,7 @@ def _peer_live(
 def _session_live(
     tenant_id: QueryableAttribute[str],
     workspace_name: QueryableAttribute[str],
-    session_name: QueryableAttribute[str],
+    session_name: QueryableAttribute[str] | QueryableAttribute[str | None],
 ) -> ColumnElement[bool]:
     session = aliased(models.Session)
     return exists().where(
@@ -271,5 +271,110 @@ def live_session_peer_row(
         ),
         _peer_live(
             session_peer.tenant_id, session_peer.workspace_name, session_peer.peer_name
+        ),
+    )
+
+
+def live_document_row(
+    workspace_name: str,
+    document: type[models.Document] | AliasedClass[models.Document] = models.Document,
+    *,
+    tenant_id: str | None = None,
+    peer_pair: tuple[str, str] | None = None,
+) -> ColumnElement[bool]:
+    """Row-wise filter: the conclusion, its workspace, observer and observed are live.
+
+    A conclusion with a ``session_name`` is also hidden once that session is
+    tombstoned; one without a session (manual or cross-session) depends only on
+    its peers. This hides conclusions under erased parents; it does not decide
+    which surviving conclusions were derived from erased messages. Also
+    restricts rows to ``workspace_name`` and the supplied tenant, defaulting to
+    the caller's bound or instance tenant. Service readers must supply the target
+    tenant explicitly when no tenant is bound.
+
+    Conclusion reads scan whole collections, so this does not use the
+    correlated semi-joins above. ``session_name IS NULL OR EXISTS (...)``
+    cannot become a semi-join, and Postgres instead hashes every live session
+    in the database on each read. Here each parent is checked against the
+    tenant/workspace's *tombstoned* rows with uncorrelated ``NOT IN`` subqueries, each
+    hashed once per query and empty until deletion is enabled. Without a
+    partial index on tombstoned peers and sessions, building those hashes
+    still reads every peer and session in the workspace. Do not rewrite
+    them as ``NOT EXISTS``: the pinned workspace makes Postgres estimate the
+    anti-join at about one row, which loses index-ordered plans. The composite
+    foreign keys guarantee every parent exists, so this does not need the
+    semi-joins' fail-closed check for a missing parent; the workspace is still
+    checked positively.
+
+    ``peer_pair`` is for pair-pinned vector reads only: it adds matching outer
+    observer/observed equalities and replaces both peer sets with constant,
+    positive EXISTS checks. This preserves index-ordered plans without a
+    separate probe or snapshot; a missing peer fails closed. The default still
+    checks every row's own peers, including when ``document`` is an alias.
+    """
+    target_tenant = tenant_id if tenant_id is not None else models.scoped_tenant_id()
+    if not target_tenant:
+        raise ValueError("Conclusion liveness requires a tenant_id")
+    workspace = aliased(models.Workspace)
+    peer = aliased(models.Peer)
+    session = aliased(models.Session)
+    peer_liveness: tuple[ColumnElement[bool], ...]
+    if peer_pair is None:
+        tombstoned_peers = (
+            select(peer.name)
+            .where(
+                peer.tenant_id == target_tenant,
+                peer.workspace_name == workspace_name,
+                peer.deleted_at.is_not(None),
+            )
+            .correlate(None)
+        )
+        peer_liveness = (
+            document.observer.not_in(tombstoned_peers),
+            document.observed.not_in(tombstoned_peers),
+        )
+    else:
+        observer, observed = peer_pair
+        peer_liveness = (
+            document.observer == observer,
+            document.observed == observed,
+            *(
+                select(peer.name)
+                .where(
+                    peer.tenant_id == target_tenant,
+                    peer.workspace_name == workspace_name,
+                    peer.name == name,
+                    peer.deleted_at.is_(None),
+                )
+                .correlate(None)
+                .exists()
+                for name in peer_pair
+            ),
+        )
+    tombstoned_sessions = (
+        select(session.name)
+        .where(
+            session.tenant_id == target_tenant,
+            session.workspace_name == workspace_name,
+            session.deleted_at.is_not(None),
+        )
+        .correlate(None)
+    )
+    return and_(
+        document.tenant_id == target_tenant,
+        document.workspace_name == workspace_name,
+        document.deleted_at.is_(None),
+        select(workspace.name)
+        .where(
+            workspace.tenant_id == target_tenant,
+            workspace.name == workspace_name,
+            workspace.deleted_at.is_(None),
+        )
+        .correlate(None)
+        .exists(),
+        *peer_liveness,
+        or_(
+            document.session_name.is_(None),
+            document.session_name.not_in(tombstoned_sessions),
         ),
     )

@@ -141,10 +141,14 @@ async def fetch_messages_by_ids(
     filters: dict[str, Any] | None = None,
 ) -> list[models.Message]:
     """Fetch messages by ID and preserve the input ordering."""
+    from src.crud.lifecycle import live_message_row
+
     if not message_ids:
         return []
 
-    stmt = select(models.Message).where(models.Message.public_id.in_(message_ids))
+    stmt = select(models.Message).where(
+        models.Message.public_id.in_(message_ids), live_message_row()
+    )
     stmt = apply_filter(stmt, models.Message, filters)
 
     result = await db.execute(stmt)
@@ -173,16 +177,23 @@ async def _semantic_search_pgvector(
     Returns:
         list of messages ordered by semantic similarity
     """
+    from src.crud.lifecycle import live_message_row
+
     distance_expr = models.MessageEmbedding.embedding.cosine_distance(embedding_query)
 
     stmt = (
         select(models.Message)
         .join(
             models.MessageEmbedding,
-            models.Message.public_id == models.MessageEmbedding.message_id,
+            and_(
+                models.Message.tenant_id == models.MessageEmbedding.tenant_id,
+                models.Message.workspace_name == models.MessageEmbedding.workspace_name,
+                models.Message.public_id == models.MessageEmbedding.message_id,
+            ),
         )
         .where(models.MessageEmbedding.embedding.isnot(None))
         .where(models.MessageEmbedding.workspace_name == workspace_name)
+        .where(live_message_row())
     )
 
     if filters:
@@ -226,12 +237,15 @@ async def _filter_by_peer_perspective(
     Returns:
         Filtered list of messages
     """
+    from src.crud.lifecycle import live_session_peer_row
+
     if not messages:
         return []
 
     # Get all session memberships for this peer in this workspace
     session_memberships_query = (
         select(session_peers_table)
+        .where(live_session_peer_row())
         .where(session_peers_table.c.tenant_id == models.scoped_tenant_id())
         .where(session_peers_table.c.workspace_name == workspace_name)
         .where(session_peers_table.c.peer_name == peer_name)
@@ -240,21 +254,26 @@ async def _filter_by_peer_perspective(
     memberships = result.all()
 
     # Build a lookup of session -> time windows
-    session_windows: dict[str, list[tuple[Any, Any]]] = {}
+    session_windows: dict[tuple[str, str, str], list[tuple[Any, Any]]] = {}
     for membership in memberships:
-        session_name = membership.session_name
-        if session_name not in session_windows:
-            session_windows[session_name] = []
-        session_windows[session_name].append((membership.joined_at, membership.left_at))
+        session_key = (
+            membership.tenant_id,
+            membership.workspace_name,
+            membership.session_name,
+        )
+        if session_key not in session_windows:
+            session_windows[session_key] = []
+        session_windows[session_key].append((membership.joined_at, membership.left_at))
 
     # Filter messages
     filtered_messages: list[models.Message] = []
     for msg in messages:
-        if msg.session_name not in session_windows:
+        session_key = (msg.tenant_id, msg.workspace_name, msg.session_name)
+        if session_key not in session_windows:
             continue
 
         # Check if message was created during any of the peer's active windows in this session
-        for joined_at, left_at in session_windows[msg.session_name]:
+        for joined_at, left_at in session_windows[session_key]:
             if msg.created_at >= joined_at and (
                 left_at is None or msg.created_at <= left_at
             ):
@@ -434,8 +453,10 @@ async def search(
     Raises:
         ValidationException: If query exceeds maximum token limit for embeddings
     """
+    from src.crud.lifecycle import live_message_row, live_session_peer_row
+
     # Base query conditions
-    stmt = select(models.Message)
+    stmt = select(models.Message).where(live_message_row())
 
     # Handle special peer_perspective filter
     peer_perspective_name: str | None = None
@@ -456,6 +477,7 @@ async def search(
         stmt = stmt.join(
             session_peers_table,
             and_(
+                models.Message.tenant_id == session_peers_table.c.tenant_id,
                 models.Message.session_name == session_peers_table.c.session_name,
                 models.Message.workspace_name == session_peers_table.c.workspace_name,
                 models.Message.created_at >= session_peers_table.c.joined_at,
@@ -467,6 +489,7 @@ async def search(
         ).where(
             session_peers_table.c.tenant_id == models.scoped_tenant_id(),
             session_peers_table.c.peer_name == peer_perspective_name,
+            live_session_peer_row(),
         )
 
     stmt = apply_filter(stmt, models.Message, filters)
