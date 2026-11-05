@@ -30,6 +30,7 @@ class Graph:
     message: models.Message
 
     def identity(self, kind: PrimitiveKind) -> PrimitiveIdentity:
+        """Use tenant-qualified stable IDs, including public IDs for messages."""
         row = getattr(self, kind)
         uid = row.public_id if kind == "message" else row.id
         return PrimitiveIdentity(kind, self.workspace.id, uid, self.workspace.tenant_id)
@@ -61,6 +62,7 @@ async def _seed_graph(
 async def test_direct_tombstone_and_live_schema_contract(
     db_session: AsyncSession, kind: PrimitiveKind
 ) -> None:
+    """Hide direct tombstones without exposing lifecycle state in public schemas."""
     graph = await _seed_graph(db_session, "direct")
     context = TenantContext(db_session)
     identity = graph.identity(kind)
@@ -93,6 +95,7 @@ async def test_direct_tombstone_and_live_schema_contract(
 async def test_parent_tombstones_and_workspace_isolation(
     db_session: AsyncSession, parent: PrimitiveKind, hidden: set[str]
 ) -> None:
+    """Hide only direct dependents of a tombstoned parent within its workspace."""
     target = await _seed_graph(db_session, "target")
     other = await _seed_graph(db_session, "other")
     context = TenantContext(db_session)
@@ -133,6 +136,7 @@ async def test_parent_tombstones_and_workspace_isolation(
 async def test_archive_and_membership_state_are_not_tombstones(
     db_session: AsyncSession,
 ) -> None:
+    """Keep archival and membership departure independent of primitive liveness."""
     graph = await _seed_graph(db_session, "archived")
     graph.session.is_active = False
     db_session.add(
@@ -151,6 +155,7 @@ async def test_archive_and_membership_state_are_not_tombstones(
 async def test_stable_identity_not_names_or_numeric_message_ids(
     db_session: AsyncSession,
 ) -> None:
+    """Keep stable identities distinct from reused names and numeric message IDs."""
     graph = await _seed_graph(db_session, "identities")
     other = await _seed_graph(db_session, "other-identities")
     context = TenantContext(db_session)
@@ -233,6 +238,7 @@ async def test_identity_clause_does_not_correlate_with_outer_tables(
 async def test_caller_owns_flush_commit_rollback_and_snapshot(
     db_session: AsyncSession, db_engine: AsyncEngine
 ) -> None:
+    """Keep authoritative liveness reads inside the caller's transaction contract."""
     graph = await _seed_graph(db_session, "transactions")
     await db_session.commit()
     identity = graph.identity("message")
@@ -273,6 +279,7 @@ async def test_caller_owns_flush_commit_rollback_and_snapshot(
 
 
 def test_workspace_identity_cannot_contradict_its_scope() -> None:
+    """Reject a workspace identity that contradicts its stable workspace scope."""
     with pytest.raises(ValueError, match="must match workspace_uid"):
         PrimitiveIdentity("workspace", "workspace-a", "workspace-b", "default")
 
@@ -281,6 +288,7 @@ def test_workspace_identity_cannot_contradict_its_scope() -> None:
 async def test_dedicated_context_defaults_to_instance_tenant(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, tenant_id: str | None
 ) -> None:
+    """Use the instance tenant rather than an unrelated ambient tenant."""
     monkeypatch.setattr(settings, "MULTI_TENANT", False)
     monkeypatch.setattr(settings, "TENANT_ID", tenant_id)
     token = tenant_context.set("unrelated-ambient-tenant")
@@ -295,6 +303,7 @@ async def test_dedicated_context_defaults_to_instance_tenant(
 async def test_shared_context_captures_bound_tenant_and_fails_closed(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Capture the bound tenant and refuse tenant-less shared-storage contexts."""
     monkeypatch.setattr(settings, "MULTI_TENANT", True)
     token = tenant_context.set(None)
     try:
@@ -315,6 +324,7 @@ async def test_shared_context_captures_bound_tenant_and_fails_closed(
 async def test_context_identity_mismatch_does_not_touch_transaction(
     db_session: AsyncSession,
 ) -> None:
+    """Reject tenant mismatches without touching the caller's transaction."""
     context = TenantContext(db_session, "tenant-a")
     identity = PrimitiveIdentity("message", "workspace", "message", "tenant-b")
     transaction = db_session.get_transaction()
@@ -326,6 +336,7 @@ async def test_context_identity_mismatch_does_not_touch_transaction(
 async def test_empty_tenant_identity_and_context_are_rejected(
     db_session: AsyncSession,
 ) -> None:
+    """Reject empty tenant IDs before any scoped liveness check can run."""
     with pytest.raises(ValueError, match="requires a tenant_id"):
         TenantContext(db_session, "")
     with pytest.raises(ValueError, match="requires a tenant_id"):
