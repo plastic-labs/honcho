@@ -1,6 +1,8 @@
 """Tests for the outstanding-work value, the poller and the JSON route."""
 
+import asyncio
 import time
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -405,3 +407,123 @@ class TestLifespanScheduler:
 
         assert scheduler.start.await_count == 0
         assert scheduler.shutdown.await_count == 0
+
+
+@pytest.fixture
+async def shared_fleet(monkeypatch: pytest.MonkeyPatch):
+    """A process-local store standing in for Redis: shared by every poller here."""
+    from src.cache.client import fleet_cache
+
+    monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
+    await fleet_cache.close()
+    fleet_cache.setup("mem://?check_interval=0")
+    try:
+        yield fleet_cache
+    finally:
+        await fleet_cache.close()
+
+
+@pytest.mark.asyncio
+class TestFleetCoordination:
+    """Under DERIVER_SCHEDULER=api one replica measures and the others serve its result."""
+
+    @staticmethod
+    def _patches(measure: AsyncMock, enqueue: AsyncMock) -> tuple[Any, ...]:
+        return (
+            patch("src.backlog.crud.get_deriver_metrics", measure),
+            patch(
+                "src.backlog.list_due_dreams", AsyncMock(return_value=_due_dreams(2))
+            ),
+            patch("src.backlog.enqueue_dream", enqueue),
+        )
+
+    @pytest.mark.usefixtures("shared_fleet")
+    async def test_one_replica_measures_and_the_other_serves_its_snapshot(self):
+        measure = AsyncMock(return_value=schemas.DeriverMetrics(eligible_work_units=7))
+        enqueue = AsyncMock()
+        leader, follower = DeriverMetricsPoller(), DeriverMetricsPoller()
+        first, second, third = self._patches(measure, enqueue)
+        with first, second, third:
+            await leader.refresh()
+            await follower.refresh()
+
+        assert measure.await_count == 1
+        assert enqueue.await_count == 2  # the leader's due dreams, once
+        assert follower.snapshot.stats.eligible_work_units == 7
+        assert follower.snapshot.dreams_due == leader.snapshot.dreams_due == 2
+        assert follower.snapshot.measured_at == leader.snapshot.measured_at
+
+    @pytest.mark.usefixtures("shared_fleet")
+    async def test_the_leaseholder_keeps_the_lease(self):
+        measure = AsyncMock(return_value=schemas.DeriverMetrics())
+        leader, follower = DeriverMetricsPoller(), DeriverMetricsPoller()
+        first, second, third = self._patches(measure, AsyncMock())
+        with first, second, third:
+            await leader.refresh()
+            await follower.refresh()
+            await leader.refresh()
+            await follower.refresh()
+
+        assert measure.await_count == 2  # both by the leader
+
+    async def test_another_replica_takes_over_when_the_lease_is_gone(
+        self, shared_fleet: Any
+    ):
+        from src.cache.client import fleet_key
+
+        measure = AsyncMock(return_value=schemas.DeriverMetrics())
+        leader, follower = DeriverMetricsPoller(), DeriverMetricsPoller()
+        first, second, third = self._patches(measure, AsyncMock())
+        with first, second, third:
+            await leader.refresh()
+            await shared_fleet.delete(fleet_key("deriver_metrics_lease"))
+            await follower.refresh()
+
+        assert measure.await_count == 2
+        assert follower._leading  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.usefixtures("shared_fleet")
+    async def test_shutdown_hands_the_lease_over(self):
+        measure = AsyncMock(return_value=schemas.DeriverMetrics())
+        leader, follower = DeriverMetricsPoller(), DeriverMetricsPoller()
+        first, second, third = self._patches(measure, AsyncMock())
+        with first, second, third:
+            await leader.start()
+            await asyncio.sleep(0.05)
+            await leader.shutdown()
+            await follower.refresh()
+
+        assert follower._leading  # pyright: ignore[reportPrivateUsage]
+
+    async def test_without_coordination_every_replica_measures(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        from src.cache.client import fleet_cache
+
+        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "api")
+        monkeypatch.setattr(
+            fleet_cache, "set_lock", AsyncMock(side_effect=ConnectionError("down"))
+        )
+        measure = AsyncMock(return_value=schemas.DeriverMetrics())
+        first, second, third = self._patches(measure, AsyncMock())
+        with first, second, third:
+            await DeriverMetricsPoller().refresh()
+            await DeriverMetricsPoller().refresh()
+
+        assert measure.await_count == 2
+
+    async def test_the_deriver_scheduler_never_coordinates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        from src.cache.client import fleet_cache
+
+        monkeypatch.setattr(settings.DERIVER, "SCHEDULER", "deriver")
+        set_lock = AsyncMock()
+        monkeypatch.setattr(fleet_cache, "set_lock", set_lock)
+        measure = AsyncMock(return_value=schemas.DeriverMetrics())
+        first, second, third = self._patches(measure, AsyncMock())
+        with first, second, third:
+            await DeriverMetricsPoller().refresh()
+
+        set_lock.assert_not_awaited()
+        assert measure.await_count == 1

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import os
 import re
@@ -750,6 +751,23 @@ async def sample_data(
     await db_session.commit()
 
     yield test_workspace, test_peer
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _reset_fleet_cache():  # pyright: ignore[reportUnusedFunction]
+    """Drop the fleet coordination keys around each test.
+
+    Once an app startup has run init_cache, fleet_cache is a process-local store
+    that outlives the test. A poller lease left by one test (it lasts three poll
+    intervals) would make the next test's poller a follower that never measures.
+    """
+    from src.cache.client import fleet_cache
+
+    with contextlib.suppress(Exception):
+        await fleet_cache.clear()
+    yield
+    with contextlib.suppress(Exception):
+        await fleet_cache.clear()
 
 
 @pytest.fixture(autouse=True)
