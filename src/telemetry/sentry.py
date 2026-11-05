@@ -185,18 +185,40 @@ def initialize_sentry(
         before_send: Event filter override. Defaults to ``default_before_send`` so
             every entrypoint gets the shared filters; pass ``None`` to opt out.
     """
-    sentry_sdk.init(
-        dsn=settings.SENTRY.DSN,
-        enable_tracing=True,
-        release=settings.SENTRY.RELEASE,
-        environment=settings.SENTRY.ENVIRONMENT,
-        # traces_sampler supersedes traces_sample_rate; it returns the configured
-        # rate for real traffic and 0.0 for infra/scrape endpoints (see above).
-        traces_sampler=traces_sampler,
-        profiles_sample_rate=settings.SENTRY.PROFILES_SAMPLE_RATE,
-        before_send=before_send,
-        integrations=integrations,
-    )
+    if settings.TRACING.ENABLED:
+        # OpenTelemetry (src/telemetry/otel.py) owns tracing. Sentry's own
+        # transactions stay off so spans are not sent and billed twice; the OTLP
+        # integration only stamps errors with the active OTel trace id. It must
+        # not install an exporter or propagator: otel.py configures both.
+        from sentry_sdk.integrations.otlp import OTLPIntegration
+
+        sentry_sdk.init(
+            dsn=settings.SENTRY.DSN,
+            release=settings.SENTRY.RELEASE,
+            environment=settings.SENTRY.ENVIRONMENT,
+            traces_sample_rate=None,
+            before_send=before_send,
+            integrations=[
+                *integrations,
+                OTLPIntegration(
+                    setup_otlp_traces_exporter=False, setup_propagator=False
+                ),
+            ],
+        )
+    else:
+        sentry_sdk.init(
+            dsn=settings.SENTRY.DSN,
+            enable_tracing=True,
+            release=settings.SENTRY.RELEASE,
+            environment=settings.SENTRY.ENVIRONMENT,
+            # traces_sampler supersedes traces_sample_rate; it returns the
+            # configured rate for real traffic and 0.0 for infra/scrape
+            # endpoints (see above).
+            traces_sampler=traces_sampler,
+            profiles_sample_rate=settings.SENTRY.PROFILES_SAMPLE_RATE,
+            before_send=before_send,
+            integrations=integrations,
+        )
 
     # Tag every event with the configured namespace so errors can be filtered by
     # instance. Set on the global scope so it applies regardless of the current

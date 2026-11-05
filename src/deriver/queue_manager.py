@@ -13,6 +13,7 @@ from typing import Any, NamedTuple, cast
 import sentry_sdk
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
+from opentelemetry.trace import SpanKind
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sqlalchemy import Text, and_, delete, literal, select, true, update
@@ -51,6 +52,14 @@ from src.reconciler import (
 )
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
+from src.telemetry.otel import (
+    QUEUE_TRACEPARENT_KEY,
+    mark_span_error,
+    queue_links,
+    queue_wait_ms,
+    set_span_attributes,
+    start_span,
+)
 from src.telemetry.sentry import initialize_sentry
 from src.utils.queue_payload import RETRY_ATTEMPTS_PAYLOAD_KEY
 from src.utils.retryable_errors import is_retryable_error
@@ -706,6 +715,13 @@ class QueueManager:
                 attempts = await self._get_work_unit_retry_attempts(work_unit_key) + 1
                 if attempts < MAX_RETRYABLE_ATTEMPTS:
                     await self._set_work_unit_retry_attempts(work_unit_key, attempts)
+                    mark_span_error(type(error).__name__)
+                    set_span_attributes(
+                        {
+                            "honcho.queue.outcome": "retry",
+                            "honcho.queue.attempt": attempts,
+                        }
+                    )
                     logger.warning(
                         "Transient error %s for work unit %s (attempt %d/%d); leaving items unprocessed for retry",
                         context,
@@ -723,6 +739,8 @@ class QueueManager:
                 )
                 return True
 
+        mark_span_error(type(error).__name__)
+        set_span_attributes({"honcho.queue.outcome": "failed"})
         error_msg = f"{error.__class__.__name__}: {str(error)}"
         try:
             if items:
@@ -763,6 +781,8 @@ class QueueManager:
         # lost-ownership break or a pause that suspended the rest.
         # endregion
         drained = False
+        # Trace context of the last item processed, for the queue.empty webhook.
+        last_traceparent: str | None = None
         tenant_token = None
         heartbeat = None
         try:
@@ -843,54 +863,89 @@ class QueueManager:
                                 drained = await self._is_drained(work_unit_key)
                                 break
 
-                            try:
-                                # Extract observers from the payload (handle both old and new format)
-                                payload = items_to_process[0].payload
-                                observers = payload.get("observers")
-                                if observers is None:
-                                    # Legacy format: single observer string
-                                    legacy_observer = payload.get("observer")
-                                    if legacy_observer:
-                                        observers = [legacy_observer]
-                                    else:
-                                        observers = []
-
-                                queue_item_message_ids = [
-                                    item.message_id
-                                    for item in items_to_process
-                                    if item.message_id is not None
-                                ]
-                                await process_representation_batch(
-                                    messages_context,
-                                    message_level_configuration,
-                                    observers=observers,
-                                    observed=work_unit.observed,
-                                    queue_item_message_ids=queue_item_message_ids,
-                                    session_id=items_to_process[0].session_id,
-                                    queue_item_ids=[
-                                        item.id for item in items_to_process
-                                    ],
-                                    hit_batch_token_cap=batch_result.hit_batch_token_cap,
-                                    was_flush_enabled=batch_result.was_flush_enabled,
-                                    batch_max_tokens=batch_result.batch_max_tokens,
-                                )
-                                await self.mark_queue_items_as_processed(
-                                    items_to_process, work_unit_key
-                                )
-                                queue_item_count += len(items_to_process)
-                            except Exception as e:
-                                if await self._handle_processing_error(
-                                    e,
-                                    items_to_process,
-                                    work_unit_key,
-                                    f"processing {work_unit.task_type} batch",
-                                ):
-                                    # Release the work unit (via the finally
-                                    # below) and let a later poll re-claim it.
-                                    await asyncio.sleep(
-                                        self._jitter(RETRY_BACKOFF_SECONDS)
+                            release = False
+                            with start_span(
+                                "honcho.queue.process_batch",
+                                kind=SpanKind.CONSUMER,
+                                attributes={
+                                    "messaging.system": "postgresql",
+                                    "messaging.operation.type": "process",
+                                    "messaging.batch.message_count": len(
+                                        items_to_process
+                                    ),
+                                    "honcho.task_type": work_unit.task_type,
+                                    "honcho.workspace_id": items_to_process[
+                                        0
+                                    ].workspace_name,
+                                    "honcho.session_id": items_to_process[
+                                        0
+                                    ].payload.get("session_name"),
+                                    "honcho.peer_id": work_unit.observed,
+                                    "honcho.queue.work_unit_key": work_unit_key,
+                                    "honcho.queue.attempt": int(
+                                        items_to_process[0].payload.get(
+                                            RETRY_ATTEMPTS_PAYLOAD_KEY, 0
+                                        )
                                     )
-                                    break
+                                    + 1,
+                                    "honcho.queue.wait_ms": queue_wait_ms(
+                                        [item.created_at for item in items_to_process]
+                                    ),
+                                },
+                                links=queue_links(
+                                    [item.payload for item in items_to_process]
+                                ),
+                            ):
+                                try:
+                                    # Extract observers from the payload (handle both old and new format)
+                                    payload = items_to_process[0].payload
+                                    observers = payload.get("observers")
+                                    if observers is None:
+                                        # Legacy format: single observer string
+                                        legacy_observer = payload.get("observer")
+                                        if legacy_observer:
+                                            observers = [legacy_observer]
+                                        else:
+                                            observers = []
+
+                                    queue_item_message_ids = [
+                                        item.message_id
+                                        for item in items_to_process
+                                        if item.message_id is not None
+                                    ]
+                                    await process_representation_batch(
+                                        messages_context,
+                                        message_level_configuration,
+                                        observers=observers,
+                                        observed=work_unit.observed,
+                                        queue_item_message_ids=queue_item_message_ids,
+                                        session_id=items_to_process[0].session_id,
+                                        queue_item_ids=[
+                                            item.id for item in items_to_process
+                                        ],
+                                        hit_batch_token_cap=batch_result.hit_batch_token_cap,
+                                        was_flush_enabled=batch_result.was_flush_enabled,
+                                        batch_max_tokens=batch_result.batch_max_tokens,
+                                    )
+                                    await self.mark_queue_items_as_processed(
+                                        items_to_process, work_unit_key
+                                    )
+                                    queue_item_count += len(items_to_process)
+                                    last_traceparent = items_to_process[-1].payload.get(
+                                        QUEUE_TRACEPARENT_KEY
+                                    )
+                                except Exception as e:
+                                    release = await self._handle_processing_error(
+                                        e,
+                                        items_to_process,
+                                        work_unit_key,
+                                        f"processing {work_unit.task_type} batch",
+                                    )
+                            if release:
+                                # Release the work unit (via the finally
+                                # below) and let a later poll re-claim it.
+                                await asyncio.sleep(self._jitter(RETRY_BACKOFF_SECONDS))
+                                break
 
                         else:
                             queue_item = await self.get_next_queue_item(
@@ -909,6 +964,9 @@ class QueueManager:
                                     [queue_item], work_unit_key
                                 )
                                 queue_item_count += 1
+                                last_traceparent = (queue_item.payload or {}).get(
+                                    QUEUE_TRACEPARENT_KEY
+                                )
                             except Exception as e:
                                 if await self._handle_processing_error(
                                     e,
@@ -990,6 +1048,9 @@ class QueueManager:
                             # tenant_context is already reset above, so pass the
                             # work unit's tenant explicitly (None when flag-off).
                             tenant_id=work_unit.tenant_id,
+                            # Link the webhook to the request that queued the
+                            # last drained item; no span is current here.
+                            traceparent=last_traceparent,
                         )
                 except Exception:
                     logger.exception("Error triggering queue_empty webhook")

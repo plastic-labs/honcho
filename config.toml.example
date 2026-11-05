@@ -293,6 +293,16 @@ MAX_RETRIES = 3
 MAX_BUFFER_SIZE = 10000
 # NAMESPACE = "honcho"  # Inherits from app.NAMESPACE if not set
 
+# OpenTelemetry tracing (API + deriver). Structure and timings only, no content.
+[tracing]
+ENABLED = false
+EXPORTER = "otlp"  # "otlp" (OTLP_ENDPOINT) or "sentry" (the project in sentry.DSN)
+OTLP_ENDPOINT = "http://localhost:4318"  # e.g. a local OTel Desktop Viewer
+# OTLP_HEADERS = '{"Authorization": "Bearer your-token"}'
+SAMPLE_RATE = 1.0  # set low in production; children always follow their parent
+FORCE_SAMPLE_WORKSPACES = []  # always trace these workspaces, whatever SAMPLE_RATE is
+TRUST_INCOMING_TRACEPARENT = false  # let callers force-sample with a traceparent header
+
 # Cache settings
 [cache]
 ENABLED = false

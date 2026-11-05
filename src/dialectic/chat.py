@@ -16,6 +16,7 @@ from src.dependencies import tracked_db
 from src.dialectic.core import DialecticAgent
 from src.dialectic.workspace import WorkspaceDialecticAgent
 from src.exceptions import ValidationException
+from src.telemetry.otel import start_span, traced_stream
 from src.utils.config_helpers import get_configuration
 from src.utils.evidence import EvidenceAccumulator
 from src.utils.scopes import is_scope_peer
@@ -127,7 +128,17 @@ async def agentic_chat(
         instructions=configuration.dialectic,
     )
 
-    return await agent.answer(query, response_model=response_model)
+    with start_span(
+        "honcho.dialectic.chat",
+        attributes={
+            "honcho.workspace_id": workspace_name,
+            "honcho.session_id": session_name,
+            "honcho.peer_id": observed,
+            "honcho.observer_id": observer,
+            "honcho.reasoning_level": reasoning_level,
+        },
+    ):
+        return await agent.answer(query, response_model=response_model)
 
 
 async def agentic_chat_stream(
@@ -212,7 +223,17 @@ async def agentic_chat_stream(
         instructions=configuration.dialectic,
     )
 
-    async for chunk in agent.answer_stream(query, response_model=response_model):
+    async for chunk in traced_stream(
+        "honcho.dialectic.chat_stream",
+        agent.answer_stream(query, response_model=response_model),
+        attributes={
+            "honcho.workspace_id": workspace_name,
+            "honcho.session_id": session_name,
+            "honcho.peer_id": observed,
+            "honcho.observer_id": observer,
+            "honcho.reasoning_level": reasoning_level,
+        },
+    ):
         yield chunk
 
 
@@ -246,7 +267,15 @@ async def workspace_chat(
         evidence=evidence,
         instructions=configuration.dialectic,
     )
-    return await agent.answer(query, response_model=response_model)
+    with start_span(
+        "honcho.dialectic.workspace_chat",
+        attributes={
+            "honcho.workspace_id": workspace_name,
+            "honcho.session_id": session_name,
+            "honcho.reasoning_level": reasoning_level,
+        },
+    ):
+        return await agent.answer(query, response_model=response_model)
 
 
 async def workspace_chat_stream(
@@ -278,5 +307,13 @@ async def workspace_chat_stream(
         evidence=evidence,
         instructions=configuration.dialectic,
     )
-    async for chunk in agent.answer_stream(query, response_model=response_model):
+    async for chunk in traced_stream(
+        "honcho.dialectic.workspace_chat_stream",
+        agent.answer_stream(query, response_model=response_model),
+        attributes={
+            "honcho.workspace_id": workspace_name,
+            "honcho.session_id": session_name,
+            "honcho.reasoning_level": reasoning_level,
+        },
+    ):
         yield chunk

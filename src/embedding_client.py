@@ -51,10 +51,24 @@ async def _emit_embedding_call(
     callers (`_process_batch`) pass the real attempt index so dashboards
     can distinguish exhausted retries from mid-retry failures.
     """
+    # Imported here: src.telemetry's package init reaches back into this module.
+    from src.telemetry.otel import start_span
+
     start = time.perf_counter()
     error: BaseException | None = None
     try:
-        return await fn()
+        with start_span(
+            "honcho.embedding.call",
+            attributes={
+                "gen_ai.operation.name": "embeddings",
+                "gen_ai.provider.name": provider,
+                "gen_ai.request.model": model,
+                "honcho.embedding.input_count": len(texts),
+                "honcho.embedding.input_tokens_estimate": input_tokens_estimate,
+                "honcho.embedding.attempt": attempt,
+            },
+        ):
+            return await fn()
     except BaseException as exc:
         error = exc
         raise

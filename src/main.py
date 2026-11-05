@@ -66,6 +66,12 @@ from src.telemetry.client_context import (
     set_client_context,
 )
 from src.telemetry.logging import get_route_template
+from src.telemetry.otel import (
+    current_trace_id,
+    initialize_tracing,
+    set_span_attributes,
+    shutdown_tracing,
+)
 from src.telemetry.sentry import initialize_sentry
 
 
@@ -199,6 +205,7 @@ async def lifespan(_: FastAPI):
         await engine.dispose()
         # Shutdown telemetry (flush CloudEvents buffer)
         await shutdown_telemetry()
+        shutdown_tracing()
 
 
 app = FastAPI(
@@ -249,6 +256,9 @@ app.include_router(deriver_metrics.router)
 
 # Prometheus metrics endpoint
 app.add_route("/metrics", metrics_endpoint, methods=["GET"])
+
+# OpenTelemetry tracing; a no-op unless TRACING_ENABLED.
+initialize_tracing(instance_type="api", app=app, engines=(engine, service_engine))
 
 
 @app.get("/health")
@@ -370,6 +380,20 @@ async def track_request(
     try:
         start_time = time.perf_counter()
         response = await call_next(request)
+
+        # Routing has filled path_params by now; tag the request span with the
+        # resource ids so a trace can be found by workspace/peer/session, and
+        # hand the caller the trace id to quote when reporting a problem.
+        path_params = request.path_params
+        set_span_attributes(
+            {
+                "honcho.workspace_id": path_params.get("workspace_id"),
+                "honcho.peer_id": path_params.get("peer_id"),
+                "honcho.session_id": path_params.get("session_id"),
+            }
+        )
+        if (trace_id := current_trace_id()) is not None:
+            response.headers["X-Honcho-Trace-Id"] = trace_id
 
         # Track metrics if enabled
         if settings.METRICS.ENABLED:

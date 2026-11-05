@@ -26,6 +26,7 @@ from src.telemetry.events import (
     EmbeddingCallPurpose,
     emit,
 )
+from src.telemetry.otel import mark_span_error, set_span_attributes, start_span
 from src.utils.evidence import EvidenceAccumulator
 from src.utils.formatting import (
     format_datetime_utc,
@@ -2475,6 +2476,18 @@ async def create_tool_executor(
     )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
+        with start_span(
+            "honcho.agent.tool_call",
+            attributes={
+                "gen_ai.operation.name": "execute_tool",
+                "gen_ai.tool.name": tool_name,
+                "honcho.agent_type": ctx.agent_type,
+                "honcho.run_id": ctx.run_id,
+            },
+        ):
+            return await _execute_tool(tool_name, tool_input)
+
+    async def _execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
         """
         Execute a tool and return result for LLM.
 
@@ -2574,6 +2587,16 @@ async def create_tool_executor(
             # Emit in finally so CancelledError (and any other BaseException)
             # still produces an AgentToolCallCompletedEvent before propagating.
             duration_ms = (time.perf_counter() - start) * 1000
+            # Result shape only, never the result text.
+            set_span_attributes(
+                {
+                    "honcho.tool.is_error": is_error,
+                    "honcho.tool.result_chars": len(result_str),
+                    "honcho.tool.results_count": metadata.get("results_count"),
+                }
+            )
+            if is_error:
+                mark_span_error("ToolError")
 
             # Publish ToolResult.metadata for tool_loop to stash on all_tool_calls.
             # Reset to {} (rather than leaving stale metadata) so a non-ToolResult
