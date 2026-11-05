@@ -275,6 +275,37 @@ def live_session_peer_row(
     )
 
 
+def live_dream_run_row(
+    run: type[models.DreamRun] | AliasedClass[models.DreamRun] = models.DreamRun,
+) -> ColumnElement[bool]:
+    """Row-wise filter: the run's workspace, observer and observed are live.
+
+    A run describes one representation, so it is hidden once either peer is
+    tombstoned, as that representation's conclusions are.
+    """
+    return and_(
+        _workspace_live(run.tenant_id, run.workspace_name),
+        _peer_live(run.tenant_id, run.workspace_name, run.observer),
+        _peer_live(run.tenant_id, run.workspace_name, run.observed),
+    )
+
+
+def live_dream_run_change_row(
+    change: type[models.DreamRunChange]
+    | AliasedClass[models.DreamRunChange] = models.DreamRunChange,
+) -> ColumnElement[bool]:
+    """Row-wise filter: the change's session, if it has one, is live.
+
+    Only removed-conclusion copies carry a session. A copy is hidden once its
+    session is tombstoned, as session deletion hard-deletes it. Callers read
+    one run's changes or a few conclusion ids, so the check runs per row.
+    """
+    return or_(
+        change.session_name.is_(None),
+        _session_live(change.tenant_id, change.workspace_name, change.session_name),
+    )
+
+
 def live_document_row(
     workspace_name: str,
     document: type[models.Document] | AliasedClass[models.Document] = models.Document,

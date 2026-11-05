@@ -29,6 +29,11 @@ from sqlalchemy.sql import ColumnElement, func
 
 from src import models, schemas
 from src.config import settings
+from src.crud.lifecycle import (
+    live_document_row,
+    live_dream_run_change_row,
+    live_dream_run_row,
+)
 from src.dependencies import service_db, tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.utils.types import DocumentLevel
@@ -227,6 +232,7 @@ def list_runs_stmt(
     stmt = select(models.DreamRun).where(
         models.DreamRun.tenant_id == models.scoped_tenant_id(),
         models.DreamRun.workspace_name == workspace_name,
+        live_dream_run_row(),
     )
     if observed is not None:
         stmt = stmt.where(models.DreamRun.observed == observed)
@@ -242,12 +248,14 @@ async def get_run_detail(
 
     Created conclusions and sources are looked up live first. One a later
     dream removed resolves from that dream's copy; one deleted through the
-    API, or by deleting its session, resolves to `unavailable`.
+    API, or by deleting its session, resolves to `unavailable`. A run whose
+    workspace, observer or observed peer is deleted is not found.
     """
     run = await db.scalar(
         select(models.DreamRun).where(
             *_run_key(run_id),
             models.DreamRun.workspace_name == workspace_name,
+            live_dream_run_row(),
         )
     )
     if run is None:
@@ -259,6 +267,7 @@ async def get_run_detail(
             .where(
                 models.DreamRunChange.tenant_id == run.tenant_id,
                 models.DreamRunChange.run_id == run_id,
+                live_dream_run_change_row(),
             )
             .order_by(models.DreamRunChange.id)
         )
@@ -333,12 +342,10 @@ async def _resolve_conclusions(
     live = await db.execute(
         select(models.Document.id, models.Document.content, models.Document.level)
         .where(
-            models.Document.tenant_id == models.scoped_tenant_id(),
             models.Document.id.in_(conclusion_ids),
-            models.Document.workspace_name == workspace_name,
             models.Document.observer == observer,
             models.Document.observed == observed,
-            models.Document.deleted_at.is_(None),
+            live_document_row(workspace_name),
         )
         .order_by(models.Document.id)
     )
@@ -361,6 +368,7 @@ async def _resolve_conclusions(
                 models.DreamRunChange.workspace_name == workspace_name,
                 models.DreamRunChange.kind == "removed",
                 models.DreamRunChange.conclusion_id.in_(missing),
+                live_dream_run_change_row(),
             )
             .order_by(models.DreamRunChange.id)
         )
