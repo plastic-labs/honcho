@@ -10,7 +10,7 @@ from sqlalchemy.orm import InstrumentedAttribute
 
 from src import models, schemas
 from src.config import settings
-from src.crud.lifecycle import live_session_peer_row
+from src.crud.lifecycle import live_message_row, live_session_peer_row
 from src.db import tenant_context
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
@@ -32,11 +32,12 @@ def _deduplicate_messages(
     messages: Sequence[models.Message], limit: int
 ) -> list[models.Message]:
     """Deduplicate messages by public_id, preserving input order."""
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     result: list[models.Message] = []
     for msg in messages:
-        if msg.public_id not in seen:
-            seen.add(msg.public_id)
+        identity = (msg.tenant_id, msg.public_id)
+        if identity not in seen:
+            seen.add(identity)
             result.append(msg)
             if len(result) >= limit:
                 break
@@ -339,13 +340,15 @@ async def _build_merged_snippets(
     if not matched_messages:
         return []
 
-    session_matches: dict[str, list[models.Message]] = {}
+    session_matches: dict[tuple[str, str], list[models.Message]] = {}
     for msg in matched_messages:
-        session_matches.setdefault(msg.session_name, []).append(msg)
+        session_matches.setdefault((msg.tenant_id, msg.session_name), []).append(msg)
 
     # Build merged ranges per session, then issue a single batched query
-    session_ranges: dict[str, list[tuple[int, int, list[models.Message]]]] = {}
-    for sess_name, matches in session_matches.items():
+    session_ranges: dict[
+        tuple[str, str], list[tuple[int, int, list[models.Message]]]
+    ] = {}
+    for session_key, matches in session_matches.items():
         matches.sort(key=lambda m: m.seq_in_session)
 
         merged_ranges: list[tuple[int, int, list[models.Message]]] = []
@@ -363,11 +366,12 @@ async def _build_merged_snippets(
             else:
                 merged_ranges.append((start, end, [match]))
 
-        session_ranges[sess_name] = merged_ranges
+        session_ranges[session_key] = merged_ranges
 
     # One OR-of-ANDs predicate covers every (session, range) pair
     session_predicates = [
         and_(
+            models.Message.tenant_id == tenant_id,
             models.Message.session_name == sess_name,
             or_(
                 *(
@@ -376,29 +380,31 @@ async def _build_merged_snippets(
                 )
             ),
         )
-        for sess_name, merged_ranges in session_ranges.items()
+        for (tenant_id, sess_name), merged_ranges in session_ranges.items()
     ]
 
     context_stmt = (
         select(models.Message)
         .where(models.Message.workspace_name == workspace_name)
         .where(or_(*session_predicates))
+        .where(live_message_row())
         .order_by(
+            models.Message.tenant_id.asc(),
             models.Message.session_name.asc(),
             models.Message.seq_in_session.asc(),
         )
     )
 
     context_result = await db.execute(context_stmt)
-    by_session: dict[str, list[models.Message]] = {}
+    by_session: dict[tuple[str, str], list[models.Message]] = {}
     for msg in context_result.scalars().all():
-        by_session.setdefault(msg.session_name, []).append(msg)
+        by_session.setdefault((msg.tenant_id, msg.session_name), []).append(msg)
 
     snippets: list[
         tuple[list[models.Message], list[models.Message]]
     ] = []  # list of tuples, each containing query matches and context messages
-    for sess_name, merged_ranges in session_ranges.items():
-        all_context_messages = by_session.get(sess_name, [])
+    for session_key, merged_ranges in session_ranges.items():
+        all_context_messages = by_session.get(session_key, [])
         for start_seq, end_seq, range_matches in merged_ranges:
             context_messages = [
                 msg
@@ -586,6 +592,7 @@ async def get_messages(
     base_conditions = [
         models.Message.workspace_name == workspace_name,
         models.Message.session_name == session_name,
+        live_message_row(),
     ]
 
     # Apply message count limit
@@ -646,6 +653,7 @@ async def get_messages_id_range(
     base_conditions = [
         models.Message.workspace_name == workspace_name,
         models.Message.session_name == session_name,
+        live_message_row(),
     ]
     if end_id:
         base_conditions.append(
@@ -704,6 +712,7 @@ async def get_messages_by_seq_range(
     base_conditions = [
         models.Message.workspace_name == workspace_name,
         models.Message.session_name == session_name,
+        live_message_row(),
     ]
 
     if end_seq is not None:
@@ -764,6 +773,7 @@ async def get_message(
         .where(models.Message.workspace_name == workspace_name)
         .where(models.Message.session_name == session_name)
         .where(models.Message.public_id == message_id)
+        .where(live_message_row())
     )
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
@@ -868,6 +878,7 @@ async def _fetch_messages_by_ids(
         select(models.Message)
         .where(models.Message.public_id.in_(message_ids))
         .where(models.Message.workspace_name == workspace_name)
+        .where(live_message_row())
     )
     if after_date:
         fetch_stmt = fetch_stmt.where(models.Message.created_at >= after_date)
@@ -901,12 +912,17 @@ async def _search_messages_pgvector(
         select(models.Message)
         .join(
             models.MessageEmbedding,
-            models.Message.public_id == models.MessageEmbedding.message_id,
+            and_(
+                models.Message.tenant_id == models.MessageEmbedding.tenant_id,
+                models.Message.workspace_name == models.MessageEmbedding.workspace_name,
+                models.Message.public_id == models.MessageEmbedding.message_id,
+            ),
         )
         # Exclude pending rows that haven't been embedded yet: their NULL
         # distance sorts last and would pad the window with unranked messages.
         .where(models.MessageEmbedding.embedding.isnot(None))
         .where(models.MessageEmbedding.workspace_name == workspace_name)
+        .where(live_message_row())
         .order_by(models.MessageEmbedding.embedding.cosine_distance(query_embedding))
         .limit(limit * 2)
     )
@@ -1094,7 +1110,8 @@ async def _grep_messages_internal(
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """Internal implementation of exact-text message search."""
     match_stmt = select(models.Message).where(
-        models.Message.workspace_name == workspace_name
+        models.Message.workspace_name == workspace_name,
+        live_message_row(),
     )
     if session_name:
         match_stmt = match_stmt.where(models.Message.session_name == session_name)
@@ -1221,7 +1238,9 @@ async def get_messages_by_date_range(
     if deny:
         return []
 
-    stmt = select(models.Message).where(models.Message.workspace_name == workspace_name)
+    stmt = select(models.Message).where(
+        models.Message.workspace_name == workspace_name, live_message_row()
+    )
 
     if session_name:
         stmt = stmt.where(models.Message.session_name == session_name)

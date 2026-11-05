@@ -39,7 +39,11 @@ from src.cache.client import (
 from src.config import settings
 from src.crud.deriver import active_queue_session_match, queue_item_tenant_match
 from src.crud.dream_history import delete_session_history
-from src.crud.lifecycle import live_session_peer_row, live_session_row
+from src.crud.lifecycle import (
+    live_message_row,
+    live_session_peer_row,
+    live_session_row,
+)
 from src.exceptions import (
     AuthenticationException,
     ConflictException,
@@ -903,6 +907,7 @@ async def clone_session(
             models.Message.workspace_name == workspace_name,
             models.Message.public_id == cutoff_message_id,
             models.Message.session_name == original_session_name,
+            live_message_row(),
         )
         cutoff_message = await db.scalar(stmt)
         if not cutoff_message:
@@ -925,6 +930,7 @@ async def clone_session(
     stmt = select(models.Message).where(
         models.Message.workspace_name == workspace_name,
         models.Message.session_name == original_session_name,
+        live_message_row(),
     )
     if cutoff_message_id is not None and cutoff_message is not None:
         stmt = stmt.where(models.Message.id <= cast(cutoff_message.id, BigInteger))

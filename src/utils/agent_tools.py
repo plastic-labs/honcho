@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.crud.dream_history import DreamHistoryTarget
+from src.crud.lifecycle import live_message_row
 from src.dependencies import tracked_db
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import ResourceNotFoundException
@@ -1147,9 +1148,14 @@ async def get_observation_context(
 
     # Use a CTE to get (session_name, seq_in_session) for target messages
     stmt = (
-        select(models.Message.session_name, models.Message.seq_in_session)
+        select(
+            models.Message.tenant_id,
+            models.Message.session_name,
+            models.Message.seq_in_session,
+        )
         .where(models.Message.workspace_name == workspace_name)
         .where(models.Message.public_id.in_(message_ids))
+        .where(live_message_row())
     )
 
     if session_name:
@@ -1170,8 +1176,10 @@ async def get_observation_context(
     stmt = (
         select(models.Message)
         .where(models.Message.workspace_name == workspace_name)
+        .where(live_message_row())
         .where(
             select(target_seqs_cte.c.seq_in_session)
+            .where(target_seqs_cte.c.tenant_id == models.Message.tenant_id)
             .where(target_seqs_cte.c.session_name == models.Message.session_name)
             .where(
                 models.Message.seq_in_session.between(

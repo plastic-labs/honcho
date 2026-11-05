@@ -24,6 +24,7 @@ from src.crud.dream_history import (
     record_created,
     record_removed,
 )
+from src.crud.lifecycle import live_document_row
 from src.crud.peer import get_peer, reject_scope_observed
 from src.crud.session import get_session
 from src.dependencies import tracked_db
@@ -116,7 +117,7 @@ def get_all_documents(
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.observer == observer)
         .where(models.Document.observed == observed)
-        .where(models.Document.deleted_at.is_(None))  # Exclude soft-deleted
+        .where(live_document_row(workspace_name))
     )
 
     # Apply additional filters if provided
@@ -158,7 +159,7 @@ def get_documents_with_filters(
         select(models.Document)
         .where(models.Document.tenant_id == models.scoped_tenant_id())
         .where(models.Document.workspace_name == workspace_name)
-        .where(models.Document.deleted_at.is_(None))  # Exclude soft-deleted
+        .where(live_document_row(workspace_name))
     )
 
     # Apply additional filters if provided
@@ -204,7 +205,7 @@ async def query_documents_recent(
         models.Document.workspace_name == workspace_name,
         models.Document.observer == observer,
         models.Document.observed == observed,
-        models.Document.deleted_at.is_(None),
+        live_document_row(workspace_name),
     )
 
     if session_name is not None:
@@ -244,7 +245,7 @@ async def summarize_documents_by_level(
             models.Document.workspace_name == workspace_name,
             models.Document.observer == observer,
             models.Document.observed == observed,
-            models.Document.deleted_at.is_(None),
+            live_document_row(workspace_name),
         )
         .group_by(models.Document.level)
     )
@@ -290,7 +291,7 @@ async def query_explicit_documents_after(
         models.Document.observer == observer,
         models.Document.observed == observed,
         models.Document.level == "explicit",
-        models.Document.deleted_at.is_(None),
+        live_document_row(workspace_name),
     ]
     if after is not None:
         conditions.append(
@@ -343,7 +344,7 @@ async def query_documents_most_derived(
             models.Document.workspace_name == workspace_name,
             models.Document.observer == observer,
             models.Document.observed == observed,
-            models.Document.deleted_at.is_(None),
+            live_document_row(workspace_name),
         )
         .order_by(
             models.Document.times_derived.desc(),
@@ -466,7 +467,7 @@ async def fetch_documents_by_ids(
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.observer == observer)
         .where(models.Document.observed == observed)
-        .where(models.Document.deleted_at.is_(None))
+        .where(live_document_row(workspace_name))
         .where(models.Document.id.in_(document_ids))
     )
     stmt = apply_filter(stmt, models.Document, filters)
@@ -494,7 +495,7 @@ async def _query_documents_pgvector(
         .where(models.Document.observer == observer)
         .where(models.Document.observed == observed)
         .where(models.Document.embedding.isnot(None))
-        .where(models.Document.deleted_at.is_(None))
+        .where(live_document_row(workspace_name, peer_pair=(observer, observed)))
     )
 
     if max_distance is not None:
@@ -2104,7 +2105,7 @@ async def get_documents_by_ids(
     stmt = select(models.Document).where(
         models.Document.workspace_name == workspace_name,
         models.Document.id.in_(document_ids),
-        models.Document.deleted_at.is_(None),
+        live_document_row(workspace_name),
     )
     result = await db.execute(stmt)
     return result.scalars().all()
@@ -2152,7 +2153,7 @@ def get_child_observations(
         models.Document.tenant_id == models.scoped_tenant_id(),
         models.Document.workspace_name == workspace_name,
         or_(linked, models.Document.legacy_source_ids.contains([parent_id])),
-        models.Document.deleted_at.is_(None),
+        live_document_row(workspace_name),
     )
     if observer:
         stmt = stmt.where(models.Document.observer == observer)

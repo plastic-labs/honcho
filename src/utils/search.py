@@ -141,10 +141,14 @@ async def fetch_messages_by_ids(
     filters: dict[str, Any] | None = None,
 ) -> list[models.Message]:
     """Fetch messages by ID and preserve the input ordering."""
+    from src.crud.lifecycle import live_message_row
+
     if not message_ids:
         return []
 
-    stmt = select(models.Message).where(models.Message.public_id.in_(message_ids))
+    stmt = select(models.Message).where(
+        models.Message.public_id.in_(message_ids), live_message_row()
+    )
     stmt = apply_filter(stmt, models.Message, filters)
 
     result = await db.execute(stmt)
@@ -173,16 +177,23 @@ async def _semantic_search_pgvector(
     Returns:
         list of messages ordered by semantic similarity
     """
+    from src.crud.lifecycle import live_message_row
+
     distance_expr = models.MessageEmbedding.embedding.cosine_distance(embedding_query)
 
     stmt = (
         select(models.Message)
         .join(
             models.MessageEmbedding,
-            models.Message.public_id == models.MessageEmbedding.message_id,
+            and_(
+                models.Message.tenant_id == models.MessageEmbedding.tenant_id,
+                models.Message.workspace_name == models.MessageEmbedding.workspace_name,
+                models.Message.public_id == models.MessageEmbedding.message_id,
+            ),
         )
         .where(models.MessageEmbedding.embedding.isnot(None))
         .where(models.MessageEmbedding.workspace_name == workspace_name)
+        .where(live_message_row())
     )
 
     if filters:
@@ -434,8 +445,10 @@ async def search(
     Raises:
         ValidationException: If query exceeds maximum token limit for embeddings
     """
+    from src.crud.lifecycle import live_message_row
+
     # Base query conditions
-    stmt = select(models.Message)
+    stmt = select(models.Message).where(live_message_row())
 
     # Handle special peer_perspective filter
     peer_perspective_name: str | None = None
