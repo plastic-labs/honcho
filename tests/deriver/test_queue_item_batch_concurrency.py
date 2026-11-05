@@ -23,11 +23,13 @@ fire-and-forget catch-all and silently never derived.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+import importlib
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import asynccontextmanager
 from typing import Any, cast
 
 import pytest
-from sqlalchemy import insert, update
+from sqlalchemy import insert, select, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -37,11 +39,15 @@ from src.deriver.enqueue import (
     _insert_queue_records,  # pyright: ignore[reportPrivateUsage]
 )
 from src.models import DEFAULT_TENANT_ID
+from src.utils.retryable_errors import is_retryable_error
 from tests.deriver.conftest import (
     SeedWorkUnit,
     independent_sessions,
     read_batch_row,
 )
+
+# src.deriver re-exports the enqueue function under the module's name.
+enqueue_module = importlib.import_module("src.deriver.enqueue")
 
 # How long the blocked statement is given to prove it is really blocked, and how
 # long it is then given to finish once the block is lifted. Both bound a hang
@@ -286,7 +292,9 @@ class _RecordingEnqueueSession:
         self._failures: list[BaseException] = list(failures)
 
     async def execute(self, _statement: Any, parameters: Any = None) -> None:
-        self.executed_batches.append(list(parameters or []))
+        if parameters is None:
+            return  # the SET LOCAL lock_timeout before each insert
+        self.executed_batches.append(list(parameters))
         if self._failures:
             raise self._failures.pop(0)
 
@@ -372,3 +380,96 @@ class TestTheEnqueueRetriesADeadlockedBatch:
         assert [
             record["work_unit_key"] for record in recording_session.executed_batches[0]
         ] == sorted(unsorted_keys)
+
+
+@pytest.mark.asyncio
+async def test_a_lock_timeout_is_retried_and_the_batch_lands(
+    db_engine: AsyncEngine,
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+    seed_work_unit: SeedWorkUnit,
+    single_tenant_enqueue: None,  # noqa: ARG001  # pyright: ignore[reportUnusedParameter]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A queue insert blocked on a batch row lock gives up after lock_timeout, then a retry lands it."""
+    workspace, _peer = sample_data
+    work_unit_key = "representation:lock-timeout"
+    await seed_work_unit(work_unit_key, token_counts=(5,))
+    message_id = await _committed_message_priced_at(
+        seed_work_unit, unit_name="lock-timeout", token_count=3
+    )
+    record: dict[str, Any] = {
+        "work_unit_key": work_unit_key,
+        "task_type": "representation",
+        "payload": {},
+        "session_id": None,
+        "workspace_name": workspace.name,
+        "message_id": message_id,
+    }
+
+    retried: list[BaseException] = []
+
+    def spy(exc: BaseException) -> bool:
+        retried.append(exc)
+        return is_retryable_error(exc)
+
+    monkeypatch.setattr(enqueue_module, "is_retryable_error", spy)
+
+    sessions = independent_sessions(db_engine)
+    async with sessions() as holder, sessions() as enqueuing:
+        await holder.execute(
+            select(models.QueueItemBatch.work_unit_key)
+            .where(models.QueueItemBatch.work_unit_key == work_unit_key)
+            .with_for_update()
+        )
+        insert_task = asyncio.create_task(_insert_queue_records(enqueuing, [record]))
+        for _ in range(100):
+            if retried:
+                break
+            await asyncio.sleep(0.1)
+        retry_waited_on_lock = bool(retried) and not insert_task.done()
+
+        await holder.commit()
+        await asyncio.wait_for(insert_task, UNBLOCKED_COMPLETION_TIMEOUT_SECONDS)
+
+    assert retry_waited_on_lock, (
+        "the first attempt must give up on lock_timeout while the lock is held, "
+        + "and the retry wait on the same lock"
+    )
+    assert len(retried) == 1
+    assert isinstance(retried[0], DBAPIError)
+    assert getattr(retried[0].orig, "sqlstate", None) == "55P03"
+    row = await read_batch_row(db_session, work_unit_key)
+    assert row is not None
+    assert row.pending_count == 2, "the seeded item plus the retried insert"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_caps_concurrent_db_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent enqueues never hold more DB sessions than the semaphore allows."""
+    in_flight = peak = 0
+
+    @asynccontextmanager
+    async def fake_tracked_db(*_args: Any, **_kwargs: Any) -> AsyncGenerator[None]:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        try:
+            await asyncio.sleep(0.01)
+            yield None
+        finally:
+            in_flight -= 1
+
+    async def no_records(*_args: Any) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(enqueue_module, "tracked_db", fake_tracked_db)
+    monkeypatch.setattr(enqueue_module, "handle_session", no_records)
+    monkeypatch.setattr(enqueue_module, "_ENQUEUE_DB_SLOTS", asyncio.Semaphore(3))
+
+    payload = [{"workspace_name": "w", "session_name": "s"}]
+    await asyncio.gather(
+        *(enqueue_module.enqueue(payload, tenant_id=None) for _ in range(12))
+    )
+
+    assert peak == 3
