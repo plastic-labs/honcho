@@ -7,10 +7,13 @@ slot resolves to (the configured settings, the runtime `ModelConfig`, the
 config chosen for the final retry attempt) and the capability row each
 primary and fallback model gets, or the validation errors when config fails
 to load. A capability sweep records `capabilities_for` over a grid of
-transports and model names.
+transports and model names, and the parameters the OpenAI backend builds for
+a grid of models, tool choices and reasoning settings.
 
-`model_config_snapshot.json` holds the output recorded before the model
-catalog existed. `test_model_config_snapshot.py` replays every case and
+`model_config_snapshot.json` holds the output recorded on `main` before the
+model catalog existed. Fields that code without the catalog doesn't have are
+recorded the way that code decides them: the token parameter comes from the
+OpenAI backend's model-name rule, and unset model settings are left out. `test_model_config_snapshot.py` replays every case and
 requires identical output, so a config that doesn't use the catalog resolves
 exactly as it did before. Regenerate the file only for an intended change:
 
@@ -55,6 +58,19 @@ from dataclasses import asdict
 from src.llm.capabilities import capabilities_for
 from src.llm.runtime import select_model_config_for_attempt
 
+
+def caps(transport, model):
+    row = asdict(capabilities_for(transport, model))
+    if "max_tokens_param" not in row:
+        from src.llm.backends.openai import _uses_max_completion_tokens
+
+        row["max_tokens_param"] = (
+            "max_completion_tokens"
+            if _uses_max_completion_tokens(model)
+            else "max_tokens"
+        )
+    return row
+
 s = config.settings
 slots = {
     "deriver": s.DERIVER.MODEL_CONFIG,
@@ -74,14 +90,14 @@ for name, configured in slots.items():
         resolved, attempt=3, retry_attempts=3
     )
     entry = {
-        "configured": configured.model_dump(mode="json"),
+        "configured": configured.model_dump(mode="json", exclude_none=True),
         "resolved": resolved.model_dump(mode="json"),
         "final_attempt": final_attempt.model_dump(mode="json"),
-        "capabilities": asdict(capabilities_for(resolved.transport, resolved.model)),
+        "capabilities": caps(resolved.transport, resolved.model),
     }
     if resolved.fallback is not None:
-        entry["fallback_capabilities"] = asdict(
-            capabilities_for(resolved.fallback.transport, resolved.fallback.model)
+        entry["fallback_capabilities"] = caps(
+            resolved.fallback.transport, resolved.fallback.model
         )
     out["slots"][name] = entry
 for level, level_settings in s.DIALECTIC.LEVELS.items():
@@ -105,6 +121,14 @@ if "--sweep" in sys.argv:
         "us.anthropic.claude-sonnet-5-5-v1:0",
         "gpt-5.4-mini",
         "gpt-5-nano",
+        "gpt-5",
+        "gpt-6-astra",
+        "gpt-4.1",
+        "gpt-4o-mini",
+        "o1",
+        "o3-mini",
+        "o4-preview",
+        "openai/gpt-5-mini",
         "mistral-small-3.2-24b-instruct-2506",
         "mistralai/mistral-small-3.2-24b-instruct",
         "devstral-medium",
@@ -114,10 +138,47 @@ if "--sweep" in sys.argv:
         "dialectic-high",
     ]
     out["capability_sweep"] = {
-        f"{transport}:{model}": asdict(capabilities_for(transport, model))
+        f"{transport}:{model}": caps(transport, model)
         for transport in ("anthropic", "openai", "gemini")
         for model in models
     }
+
+    from src.llm.backends.openai import OpenAIBackend
+
+    backend = OpenAIBackend(client=None)
+    tools = [
+        {
+            "name": "lookup",
+            "description": "Look something up.",
+            "input_schema": {"type": "object", "properties": {}},
+        }
+    ]
+    requests = {}
+    for model in models:
+        for tool_choice in (None, "auto", "any", "required", {"name": "lookup"}):
+            for effort in (None, "low"):
+                for budget in (None, 2048):
+                    params = backend._build_params(
+                        model=model,
+                        messages=[{"role": "user", "content": "hi"}],
+                        max_tokens=1000,
+                        temperature=None,
+                        stop=None,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        thinking_effort=effort,
+                        thinking_budget_tokens=budget,
+                        extra_params={"verbosity": "low"},
+                    )
+                    mode = backend._resolve_thinking_conflict(
+                        params, model, None, None
+                    )
+                    key = f"{model}|{json.dumps(tool_choice)}|{effort}|{budget}"
+                    requests[key] = {
+                        "params": {k: v for k, v in params.items() if k != "tools"},
+                        "structured_output_mode": mode,
+                    }
+    out["openai_requests"] = requests
 
 print(json.dumps(out, sort_keys=True))
 """
