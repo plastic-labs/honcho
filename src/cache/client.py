@@ -10,7 +10,7 @@ from typing import Any, ParamSpec, TypeVar, cast
 from urllib.parse import urlparse, urlunparse
 
 import sentry_sdk
-from cashews import cache
+from cashews import Cache, cache
 from cashews.backends.redis.client import SafeRedisCluster
 from cashews.commands import PATTERN_CMDS, Command
 from cashews.exceptions import CacheBackendInteractionError
@@ -337,6 +337,45 @@ def _tenant_scope_middleware() -> Any:
 # ai: registered once at import; applies to every backend cache.setup() installs.
 cache.add_middleware(_tenant_scope_middleware())
 
+# region ai
+# A second client for fleet-wide coordination keys (the deriver metrics snapshot
+# and the lease on computing it), deliberately without the tenant-scope
+# middleware: those keys belong to no tenant, and the middleware refuses any
+# command without one under MULTI_TENANT. Kept apart from `cache` so the tenant
+# cache stays fail-closed. Its keys come only from fleet_key(), never from tenant
+# input, and carry a `fleet:` segment no tenant key can produce (tenant keys are
+# `t:{tenant}:...`). They hold aggregate counts, never tenant data. It uses the
+# same backend as `cache`: Redis when that connected, else a process-local
+# in-memory store, where coordination degrades to every process for itself.
+# endregion
+fleet_cache = Cache()
+
+
+def fleet_key(name: str) -> str:
+    """A fleet-wide coordination key, hash-tagged to the instance's namespace."""
+    return f"{cache_key_namespace()}:fleet:{name}"
+
+
+async def _setup_fleet_cache(*, redis: bool) -> None:
+    await fleet_cache.close()
+    if not redis:
+        # No expiry task: the two fleet keys are read every pass, which expires
+        # them lazily, and a task bound to one event loop breaks a later one.
+        fleet_cache.setup("mem://?check_interval=0")
+        return
+    fleet_cache.setup(
+        settings.CACHE.URL,
+        cluster=settings.CACHE.CLUSTER,
+        # Raise Redis errors (the URL may say suppress=true) so the poller's
+        # fallback runs: suppressed, a failed set_lock reads as another replica
+        # holding the lease, and no replica would clean up stale claims.
+        suppress=False,
+        # One snapshot read or write per poll interval: a couple of connections.
+        max_connections=2,
+        socket_connect_timeout=settings.CACHE.CONNECT_TIMEOUT_SECONDS,
+    )
+    fleet_cache.enable()
+
 
 async def _release_default_node_connection() -> None:
     """Drop the idle connection the startup PING leaves on the cluster's default node.
@@ -394,6 +433,8 @@ async def init_cache() -> None:
     async with _cache_lock:
         # Close existing backends to force recreation with new ContextVars
         await cache.close()
+        await _setup_fleet_cache(redis=False)
+        connected = False
 
         if not is_cache_enabled():
             # Use in-memory cache when caching is disabled
@@ -455,6 +496,7 @@ async def init_cache() -> None:
                             "Connected to cache at %s",
                             _redact_cache_url(settings.CACHE.URL),
                         )
+                        connected = True
         except (redis_exc.TimeoutError, redis_exc.ConnectionError, TimeoutError) as e:
             logger.error(
                 "Failed to connect to cache at %s: %s. Falling back to a process-local in-memory cache; invalidations will not reach other processes",
@@ -483,6 +525,8 @@ async def init_cache() -> None:
         # than leaving one idle connection behind. A no-op on the fallback
         # path, where there is no cluster client to read.
         await _release_default_node_connection()
+        if connected:
+            await _setup_fleet_cache(redis=True)
 
 
 _TRANSIENT_CACHE_ERRORS = (
@@ -573,6 +617,7 @@ def fallback_on_cache_error(
 
 async def close_cache() -> None:
     await cache.close()
+    await fleet_cache.close()
 
 
 __all__ = [
@@ -581,6 +626,8 @@ __all__ = [
     "cache",
     "cache_key_namespace",
     "cache_prefix_namespace",
+    "fleet_cache",
+    "fleet_key",
     "fallback_on_cache_error",
     "safe_cache_delete",
     "safe_cache_get",
