@@ -769,6 +769,38 @@ def _reset_vector_namespace_cache():  # pyright: ignore[reportUnusedFunction]
 
 
 @pytest.fixture(autouse=True)
+def _tenant_key_guard():  # pyright: ignore[reportUnusedFunction]
+    """Fail a test whose code looked up a tenant row by id without its tenant.
+
+    See tests/tenant_key_guard.py. With TENANT_KEY_GUARD_REPORT set to a path,
+    violations are appended there instead of failing the test.
+    """
+    from sqlalchemy import event
+    from sqlalchemy.orm import ORMExecuteState
+    from sqlalchemy.orm import Session as OrmSession
+
+    from tests.tenant_key_guard import Violation, find_violations
+
+    found: list[Violation] = []
+
+    def _inspect(state: ORMExecuteState) -> None:
+        found.extend(find_violations(state))
+
+    event.listen(OrmSession, "do_orm_execute", _inspect)
+    try:
+        yield
+    finally:
+        event.remove(OrmSession, "do_orm_execute", _inspect)
+    report = os.environ.get("TENANT_KEY_GUARD_REPORT")
+    if report:
+        with open(report, "a") as handle:
+            handle.writelines(f"{violation}\n" for violation in found)
+    elif found:
+        listing = "\n".join(sorted({str(violation) for violation in found}))
+        pytest.fail(f"tenant-key guard:\n{listing}")
+
+
+@pytest.fixture(autouse=True)
 def _reset_sentry_tenant_tag():  # pyright: ignore[reportUnusedFunction]
     """Drop the Sentry tenant_id tag around each test.
 
