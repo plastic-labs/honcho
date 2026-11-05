@@ -19,6 +19,7 @@ import cashews.backends.redis.client as cashews_client
 import pytest
 from cashews.backends.redis.client import SafeRedisCluster
 from redis.asyncio import RedisCluster
+from redis.exceptions import RedisClusterException
 
 # Imported for its side effect: this is what installs the shim.
 import src.cache.client  # noqa: F401  # pyright: ignore[reportUnusedImport]
@@ -61,6 +62,21 @@ def test_shim_is_still_required():
         "SafeRedisCluster patch in src/cache/client.py is likely obsolete -- "
         "verify against the installed cashews and delete it."
     )
+
+
+@pytest.mark.asyncio
+async def test_initialize_swallows_redis_cluster_exception(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """With no reachable node redis-py raises RedisClusterException, not a RedisError."""
+
+    async def no_reachable_node(*_args: object, **_kwargs: object) -> None:
+        raise RedisClusterException("Redis Cluster cannot be connected.")
+
+    monkeypatch.setattr(RedisCluster, "initialize", no_reachable_node)
+    client = object.__new__(SafeRedisCluster)
+
+    assert await SafeRedisCluster.initialize(client) is client
 
 
 def test_upstream_still_passes_the_kwargs_the_shim_forwards():

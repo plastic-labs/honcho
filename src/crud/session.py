@@ -32,6 +32,7 @@ from src.cache.client import (
     cache,
     cache_key_namespace,
     cache_prefix_namespace,
+    fallback_on_cache_error,
     safe_cache_delete,
     safe_cache_set,
 )
@@ -94,6 +95,7 @@ def session_cache_key(workspace_name: str, session_name: str) -> str:
     )
 
 
+@fallback_on_cache_error
 @cache(
     key=SESSION_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",

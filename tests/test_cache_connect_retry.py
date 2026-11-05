@@ -45,9 +45,11 @@ async def test_init_cache_passes_connect_timeout_and_retry(
 ) -> None:
     monkeypatch.setattr(settings.CACHE, "CONNECT_TIMEOUT_SECONDS", 7.0)
     monkeypatch.setattr(settings.CACHE, "CONNECT_RETRIES", 4)
+    monkeypatch.setattr(settings.CACHE, "MAX_CONNECTIONS", 25)
     kwargs = await _capture_setup_kwargs(monkeypatch)
     assert kwargs["socket_connect_timeout"] == 7.0
     assert cast(Retry, kwargs["retry"]).get_retries() == 4
+    assert kwargs["max_connections"] == 25
 
 
 @pytest.mark.asyncio
