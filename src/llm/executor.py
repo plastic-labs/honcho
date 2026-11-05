@@ -21,6 +21,7 @@ from typing import Any, Literal, TypeVar, overload
 from pydantic import BaseModel
 
 from src.config import ModelConfig, ModelTransport
+from src.telemetry import otel
 from src.telemetry.tenant import current_tenant_id
 
 from .backend import CompletionResult as BackendCompletionResult
@@ -97,6 +98,62 @@ def _tool_call_result_to_dict(tool_call: ToolCallResult) -> dict[str, Any]:
     if tool_call.thought_signature is not None:
         result["thought_signature"] = tool_call.thought_signature
     return result
+
+
+def _llm_span_attributes(
+    *,
+    provider: ModelTransport,
+    model: str,
+    max_tokens: int,
+    stream: bool,
+    tools: list[dict[str, Any]] | None,
+    plan: AttemptPlan | None,
+    telemetry: LLMTelemetryContext | None,
+) -> dict[str, Any]:
+    """Call shape for the LLM span: who called, which model, which attempt."""
+    attrs: dict[str, Any] = {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": provider,
+        "gen_ai.request.model": model,
+        "gen_ai.request.max_tokens": max_tokens,
+        "honcho.llm.stream": stream,
+        "honcho.llm.tool_count": len(tools or []),
+    }
+    if plan is not None:
+        attrs["honcho.llm.attempt"] = plan.attempt
+        attrs["honcho.llm.is_fallback"] = plan.is_fallback
+    if telemetry is not None:
+        attrs["honcho.call_purpose"] = telemetry.call_purpose
+        attrs["honcho.parent_category"] = telemetry.parent_category
+        attrs["honcho.run_id"] = telemetry.run_id
+        attrs["honcho.llm.iteration"] = telemetry.iteration
+        attrs["honcho.workspace_id"] = telemetry.workspace_name
+    return {k: v for k, v in attrs.items() if v is not None}
+
+
+def _llm_usage_attributes(
+    result: BackendCompletionResult, *, stream: bool = False
+) -> dict[str, Any]:
+    # Normalized stream chunks carry only output tokens; omit the input counts
+    # rather than report them as 0.
+    attrs: dict[str, Any] = {"gen_ai.usage.output_tokens": result.output_tokens}
+    if not stream:
+        attrs["gen_ai.usage.input_tokens"] = result.input_tokens
+        attrs["gen_ai.usage.cache_read.input_tokens"] = result.cache_read_input_tokens
+    if result.finish_reason:
+        attrs["gen_ai.response.finish_reasons"] = [result.finish_reason]
+    return {k: v for k, v in attrs.items() if v is not None}
+
+
+def _structured_output_error_attributes(exc: StructuredOutputError) -> dict[str, Any]:
+    attrs: dict[str, Any] = {
+        "gen_ai.usage.input_tokens": exc.input_tokens,
+        "gen_ai.usage.output_tokens": exc.output_tokens,
+        "gen_ai.response.finish_reasons": (
+            [exc.finish_reason] if exc.finish_reason else None
+        ),
+    }
+    return {k: v for k, v in attrs.items() if v is not None}
 
 
 def _emit_llm_call_completed(
@@ -459,19 +516,33 @@ async def honcho_llm_call_inner(
         # been sent to the client) and report via the wrapper's finally.
         # Only output token counts are available from normalized stream chunks.
         stream_start = time.perf_counter()
-        try:
-            stream_iter = await execute_stream(
-                backend,
-                effective_config,
-                messages=wire_messages,
+        llm_span = otel.start_detached_span(
+            "honcho.llm.stream",
+            attributes=_llm_span_attributes(
+                provider=provider,
+                model=model,
                 max_tokens=max_tokens,
+                stream=True,
                 tools=tools,
-                tool_choice=tool_choice,
-                response_format=response_model,
-                cache_policy=effective_config.cache_policy,
-                extra_params=call_extras,
-            )
+                plan=plan,
+                telemetry=telemetry,
+            ),
+        )
+        try:
+            with otel.use_span(llm_span):
+                stream_iter = await execute_stream(
+                    backend,
+                    effective_config,
+                    messages=wire_messages,
+                    max_tokens=max_tokens,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    response_format=response_model,
+                    cache_policy=effective_config.cache_policy,
+                    extra_params=call_extras,
+                )
         except BaseException as exc:
+            otel.finish_span(llm_span, exc)
             _emit_call_telemetry(
                 plan=plan,
                 telemetry=telemetry,
@@ -493,9 +564,30 @@ async def honcho_llm_call_inner(
             capture_output = has_exporters()
             parts: list[str] = []
             result = BackendCompletionResult(finish_reason=None)
+            saw_content = False
             try:
                 try:
-                    async for chunk in stream_iter:
+                    chunks = aiter(stream_iter)
+                    while True:
+                        # The span is current only while pulling from the
+                        # provider (so its HTTP span nests under it), never
+                        # across the yield to our consumer.
+                        with otel.use_span(llm_span):
+                            try:
+                                chunk = await anext(chunks)
+                            except StopAsyncIteration:
+                                break
+                        if chunk.content and not saw_content:
+                            saw_content = True
+                            llm_span.add_event(
+                                "honcho.llm.first_token",
+                                {
+                                    "honcho.llm.ttft_ms": (
+                                        time.perf_counter() - stream_start
+                                    )
+                                    * 1000
+                                },
+                            )
                         if capture_output and chunk.content:
                             parts.append(chunk.content)
                         if chunk.output_tokens is not None:
@@ -510,6 +602,9 @@ async def honcho_llm_call_inner(
                 stream_error = exc
                 raise
             finally:
+                if llm_span.is_recording():
+                    llm_span.set_attributes(_llm_usage_attributes(result, stream=True))
+                otel.finish_span(llm_span, stream_error)
                 result.content = "".join(parts)
                 _emit_call_telemetry(
                     plan=plan,
@@ -532,17 +627,37 @@ async def honcho_llm_call_inner(
     backend_result: BackendCompletionResult | None = None
     error: BaseException | None = None
     try:
-        backend_result = await execute_completion(
-            backend,
-            effective_config,
-            messages=wire_messages,
-            max_tokens=max_tokens,
-            tools=tools,
-            tool_choice=tool_choice,
-            response_format=response_model,
-            cache_policy=effective_config.cache_policy,
-            extra_params=call_extras,
-        )
+        with otel.start_span(
+            "honcho.llm.completion",
+            attributes=_llm_span_attributes(
+                provider=provider,
+                model=model,
+                max_tokens=max_tokens,
+                stream=False,
+                tools=tools,
+                plan=plan,
+                telemetry=telemetry,
+            ),
+        ) as llm_span:
+            try:
+                backend_result = await execute_completion(
+                    backend,
+                    effective_config,
+                    messages=wire_messages,
+                    max_tokens=max_tokens,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    response_format=response_model,
+                    cache_policy=effective_config.cache_policy,
+                    extra_params=call_extras,
+                )
+            except StructuredOutputError as exc:
+                # finish_reason and usage tell truncation from a wrong-shape
+                # answer; the backend raised before building a result.
+                otel.set_span_attributes(_structured_output_error_attributes(exc))
+                raise
+            if llm_span.is_recording():
+                llm_span.set_attributes(_llm_usage_attributes(backend_result))
         origin = ModelOrigin(
             transport=provider, model=model, base_url=effective_config.base_url
         )
@@ -557,7 +672,12 @@ async def honcho_llm_call_inner(
         if isinstance(exc, StructuredOutputError) and exc.raw_content is not None:
             # The backend raised before building a result, so this is the only
             # copy of what the model said; record it as the attempt's output.
-            backend_result = BackendCompletionResult(content=exc.raw_content)
+            backend_result = BackendCompletionResult(
+                content=exc.raw_content,
+                input_tokens=exc.input_tokens or 0,
+                output_tokens=exc.output_tokens or 0,
+                finish_reason=exc.finish_reason,
+            )
         raise
     finally:
         _emit_call_telemetry(

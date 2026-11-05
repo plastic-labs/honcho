@@ -25,6 +25,7 @@ from src.llm.request_builder import (
 from src.llm.structured_output import (
     StructuredOutputError,
     repair_response_model_json,
+    response_details_on_error,
     schema_instruction,
     validate_structured_output,
 )
@@ -351,11 +352,16 @@ class AnthropicBackend:
                 ValidationError,
                 ValueError,
             ):
-                content = repair_response_model_json(
-                    raw_content,
-                    response_format,
-                    model_name,
-                )
+                with response_details_on_error(
+                    finish_reason=response.stop_reason,
+                    input_tokens=total_input_tokens,
+                    output_tokens=usage.output_tokens if usage else None,
+                ):
+                    content = repair_response_model_json(
+                        raw_content,
+                        response_format,
+                        model_name,
+                    )
 
         return CompletionResult(
             content=content,

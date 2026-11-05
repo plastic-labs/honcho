@@ -8,6 +8,7 @@ from src.config import settings
 from src.db import tenant_context
 from src.dependencies import tracked_db
 from src.models import QueueItem
+from src.telemetry.otel import stamp_queue_records
 from src.utils.queue_payload import create_webhook_payload
 from src.utils.work_unit import construct_work_unit_key
 
@@ -46,7 +47,10 @@ WebhookEvent = QueueEmptyEvent | TestEvent
 
 
 async def publish_webhook_event(
-    event: WebhookEvent, *, tenant_id: str | None = None
+    event: WebhookEvent,
+    *,
+    tenant_id: str | None = None,
+    traceparent: str | None = None,
 ) -> None:
     """
     Add a webhook event to our DB queue.
@@ -54,6 +58,9 @@ async def publish_webhook_event(
     Args:
         event: The webhook event to publish.
         tenant_id: The tenant this event belongs to. Required under MULTI_TENANT.
+        traceparent: Trace context for the webhook's worker span to link to.
+            Defaults to the current span's; pass one when publishing outside a
+            span (queue.empty fires after the work unit's spans have ended).
     """
     # region ai
     # webhook is a tenant-scoped task type. The deriver's queue-drain caller runs
@@ -81,6 +88,7 @@ async def publish_webhook_event(
             event_type=event.type.value,
             data=event.model_dump(mode="json", exclude={"type"}),
         )
+        stamp_queue_records([{"payload": payload}], traceparent=traceparent)
 
         async with tracked_db("publish_webhook_event", tenant_id=tenant_id) as db:
             queue_item = QueueItem(

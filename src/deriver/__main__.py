@@ -24,6 +24,7 @@ from src.telemetry import (
     register_db_pool_collector,
     shutdown_telemetry,
 )
+from src.telemetry.otel import initialize_tracing, shutdown_tracing
 
 from .queue_manager import main
 
@@ -83,6 +84,7 @@ async def run_deriver():
     """Run the deriver with proper telemetry lifecycle management."""
     # Initialize async telemetry (CloudEvents emitter)
     await initialize_telemetry_async()
+    initialize_tracing(instance_type="deriver", engines=(engine, service_engine))
 
     try:
         # Run the three startup validators before claiming any work — the same
@@ -98,6 +100,7 @@ async def run_deriver():
     finally:
         # Shutdown telemetry (flush CloudEvents buffer)
         await shutdown_telemetry()
+        shutdown_tracing()
 
 
 if __name__ == "__main__":

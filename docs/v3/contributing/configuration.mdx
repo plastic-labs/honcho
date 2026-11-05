@@ -792,6 +792,27 @@ SENTRY_TRACES_SAMPLE_RATE=0.1
 SENTRY_PROFILES_SAMPLE_RATE=0.1
 ```
 
+### OpenTelemetry Tracing
+
+Off by default. When enabled, the API and deriver export OpenTelemetry traces covering requests, queue work, dialectic and agent tool calls, LLM and embedding calls, SQL, outbound HTTP and Redis. Spans carry workspace, peer and session IDs but no message content, prompts or tool results. Every API response includes its trace ID in the `X-Honcho-Trace-Id` header.
+
+```bash
+TRACING_ENABLED=false
+TRACING_EXPORTER=otlp                       # otlp, or sentry to send to the project in SENTRY_DSN
+TRACING_OTLP_ENDPOINT=http://localhost:4318
+TRACING_SAMPLE_RATE=1.0                     # set low in production
+TRACING_FORCE_SAMPLE_WORKSPACES=[]          # always trace these workspaces
+TRACING_TRUST_INCOMING_TRACEPARENT=false    # honor callers' traceparent headers
+```
+
+Work a request queues is traced on the deriver whenever the request's trace is sampled, as a separate trace linked back to it. While tracing is enabled, Sentry's own performance tracing (`SENTRY_TRACES_SAMPLE_RATE`) is off so traces aren't sent twice; Sentry errors still carry the trace ID.
+
+<Warning>
+Deploy every deriver before turning tracing on. Older derivers reject queue items that carry the trace context.
+</Warning>
+
+To run a traced local stack with the [OTel Desktop Viewer](https://github.com/ctrlspice/otel-desktop-viewer): `uv run python -m scripts.local_tracing`.
+
 ## Reference config.toml
 
 A complete config.toml with all defaults. Copy and modify what you need:
@@ -906,6 +927,14 @@ TYPE = "pgvector"
 
 [sentry]
 ENABLED = false
+
+[tracing]
+ENABLED = false
+EXPORTER = "otlp"
+OTLP_ENDPOINT = "http://localhost:4318"
+SAMPLE_RATE = 1.0
+FORCE_SAMPLE_WORKSPACES = []
+TRUST_INCOMING_TRACEPARENT = false
 ```
 
 ## Database Migrations

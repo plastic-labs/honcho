@@ -23,9 +23,21 @@ from src.llm.request_builder import (
 from src.llm.structured_output import (
     StructuredOutputError,
     repair_response_model_json,
+    response_details_on_error,
     schema_instruction,
     validate_structured_output,
 )
+
+
+def _response_details_on_error(response: Any, finish_reason: str | None) -> Any:
+    """`response_details_on_error` for a Gemini response."""
+    usage = getattr(response, "usage_metadata", None)
+    return response_details_on_error(
+        finish_reason=finish_reason,
+        input_tokens=getattr(usage, "prompt_token_count", None),
+        output_tokens=getattr(usage, "candidates_token_count", None),
+    )
+
 
 GEMINI_BLOCKED_FINISH_REASONS = {
     "SAFETY",
@@ -426,11 +438,12 @@ class GeminiBackend:
                             else parsed_response
                         )
                     )
-                    content = repair_response_model_json(
-                        raw_content,
-                        response_format,
-                        model_name,
-                    )
+                    with _response_details_on_error(response, finish_reason):
+                        content = repair_response_model_json(
+                            raw_content,
+                            response_format,
+                            model_name,
+                        )
             else:
                 if finish_reason in GEMINI_BLOCKED_FINISH_REASONS:
                     raise LLMError(
@@ -440,11 +453,12 @@ class GeminiBackend:
                         finish_reason=finish_reason,
                     )
                 raw_text = "".join(text_parts)
-                content = repair_response_model_json(
-                    raw_text,
-                    response_format,
-                    model_name,
-                )
+                with _response_details_on_error(response, finish_reason):
+                    content = repair_response_model_json(
+                        raw_text,
+                        response_format,
+                        model_name,
+                    )
         elif (
             not content
             and not tool_calls

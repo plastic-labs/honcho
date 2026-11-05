@@ -1,7 +1,10 @@
+import contextlib
 import logging
 import time
+from collections.abc import Generator
 
 import sentry_sdk
+from opentelemetry.trace import SpanKind
 from pydantic import ValidationError
 from sqlalchemy import select
 
@@ -27,6 +30,13 @@ from src.telemetry.events import (
     emit,
 )
 from src.telemetry.logging import log_performance_metrics
+from src.telemetry.otel import (
+    QUEUE_TRACEPARENT_KEY,
+    queue_links,
+    queue_wait_ms,
+    start_span,
+    tracing_enabled,
+)
 from src.utils import summarizer
 from src.utils.queue_payload import (
     RETRY_ATTEMPTS_PAYLOAD_KEY,
@@ -44,14 +54,47 @@ logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 
+@contextlib.contextmanager
+def queue_item_span(queue_item: models.QueueItem) -> Generator[None]:
+    """Span for processing one queue item, error handling included.
+
+    The queue manager opens it around `process_item` and its error handling, so
+    the outcome it records (retry, failed) lands on the item's span.
+    """
+    if not tracing_enabled() or queue_item.task_type == "reconciler":
+        # The reconciler polls on a fixed interval and usually finds no work; a
+        # root span per poll would be noise.
+        yield
+        return
+    payload = queue_item.payload or {}
+    with start_span(
+        "honcho.queue.process_item",
+        kind=SpanKind.CONSUMER,
+        attributes={
+            "messaging.system": "postgresql",
+            "messaging.operation.type": "process",
+            "messaging.message.id": str(queue_item.id),
+            "honcho.task_type": queue_item.task_type,
+            "honcho.workspace_id": queue_item.workspace_name,
+            "honcho.session_id": payload.get("session_name"),
+            "honcho.queue.work_unit_key": queue_item.work_unit_key,
+            "honcho.queue.attempt": int(payload.get(RETRY_ATTEMPTS_PAYLOAD_KEY, 0)) + 1,
+            "honcho.queue.wait_ms": queue_wait_ms([queue_item.created_at]),
+        },
+        links=queue_links([payload]),
+    ):
+        yield
+
+
 async def process_item(queue_item: models.QueueItem) -> None:
     """Process a single item from the queue."""
     task_type = queue_item.task_type
-    # Drop the work-unit retry counter before payload validation: every payload
-    # model sets extra="forbid", so leaving it in burns the item as
-    # extra_forbidden on the reclaim that was supposed to retry it.
+    # Drop the work-unit retry counter and the producer's trace context before
+    # payload validation: every payload model sets extra="forbid", so leaving
+    # either in burns the item as extra_forbidden.
     queue_payload = dict(queue_item.payload or {})
     queue_payload.pop(RETRY_ATTEMPTS_PAYLOAD_KEY, None)
+    queue_payload.pop(QUEUE_TRACEPARENT_KEY, None)
     workspace_name = queue_item.workspace_name
 
     # Handle reconciler first - it's the only task type that doesn't require workspace_name

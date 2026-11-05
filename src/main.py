@@ -66,6 +66,12 @@ from src.telemetry.client_context import (
     set_client_context,
 )
 from src.telemetry.logging import get_route_template
+from src.telemetry.otel import (
+    current_trace_id,
+    initialize_tracing,
+    set_span_attributes,
+    shutdown_tracing,
+)
 from src.telemetry.sentry import initialize_sentry
 
 
@@ -199,6 +205,7 @@ async def lifespan(_: FastAPI):
         await engine.dispose()
         # Shutdown telemetry (flush CloudEvents buffer)
         await shutdown_telemetry()
+        shutdown_tracing()
 
 
 app = FastAPI(
@@ -250,6 +257,9 @@ app.include_router(deriver_metrics.router)
 # Prometheus metrics endpoint
 app.add_route("/metrics", metrics_endpoint, methods=["GET"])
 
+# OpenTelemetry tracing; a no-op unless TRACING_ENABLED.
+initialize_tracing(instance_type="api", app=app, engines=(engine, service_engine))
+
 
 @app.get("/health")
 async def health_check():
@@ -258,6 +268,9 @@ async def health_check():
 
 
 # Global exception handlers
+TRACE_ID_HEADER = "X-Honcho-Trace-Id"
+
+
 @app.exception_handler(HonchoException)
 async def honcho_exception_handler(_request: Request, exc: HonchoException):
     """Handle all Honcho-specific exceptions."""
@@ -341,9 +354,26 @@ async def global_exception_handler(_request: Request, exc: Exception):
 
     if SENTRY_ENABLED:
         sentry_sdk.capture_exception(exc)
+    # This response is built outside track_request, so the trace header is
+    # added here; a 500 is when the caller most needs an id to report.
+    trace_id = current_trace_id()
     return JSONResponse(
         status_code=500,
         content={"detail": "An unexpected error occurred"},
+        headers={TRACE_ID_HEADER: trace_id} if trace_id else None,
+    )
+
+
+def _tag_request_span(request: Request) -> None:
+    """Tag the request span with the resource ids routing resolved, so a trace
+    can be found by workspace/peer/session. Runs on success and on error."""
+    path_params = request.path_params
+    set_span_attributes(
+        {
+            "honcho.workspace_id": path_params.get("workspace_id"),
+            "honcho.peer_id": path_params.get("peer_id"),
+            "honcho.session_id": path_params.get("session_id"),
+        }
     )
 
 
@@ -369,7 +399,15 @@ async def track_request(
 
     try:
         start_time = time.perf_counter()
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        finally:
+            # Routing has filled path_params by now, whether or not the
+            # handler raised (an unhandled error becomes a 500 further out).
+            _tag_request_span(request)
+        # Hand the caller the trace id to quote when reporting a problem.
+        if (trace_id := current_trace_id()) is not None:
+            response.headers[TRACE_ID_HEADER] = trace_id
 
         # Track metrics if enabled
         if settings.METRICS.ENABLED:

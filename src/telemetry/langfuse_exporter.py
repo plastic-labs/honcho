@@ -40,6 +40,7 @@ from typing import Any
 from src.config import settings
 from src.llm.capture import CapturedLLMCall, CapturedSpan, CapturedToolCall
 from src.telemetry import langfuse_session
+from src.telemetry.otel import current_trace_id
 from src.telemetry.tenant import current_tenant_id
 
 logger = logging.getLogger(__name__)
@@ -479,6 +480,9 @@ class LangfuseExporter:
         md: dict[str, str] = {"namespace": str(settings.NAMESPACE)}
         if (tenant_id := current_tenant_id()) is not None:
             md["tenant_id"] = tenant_id
+        if (otel_trace_id := current_trace_id(sampled_only=True)) is not None:
+            # Jump from this Langfuse trace to the OTel trace (Sentry/viewer).
+            md["otel_trace_id"] = otel_trace_id
         for key, value in (
             ("workspace_name", call.workspace_name),
             ("call_purpose", call.call_purpose),
@@ -504,6 +508,9 @@ class LangfuseExporter:
         md: dict[str, str] = {"namespace": str(settings.NAMESPACE)}
         if (tenant_id := current_tenant_id()) is not None:
             md["tenant_id"] = tenant_id
+        if (otel_trace_id := current_trace_id(sampled_only=True)) is not None:
+            # Jump from this Langfuse trace to the OTel trace (Sentry/viewer).
+            md["otel_trace_id"] = otel_trace_id
         for key, value in (
             ("workspace_name", call.workspace_name),
             ("trace_id", call.trace_id),

@@ -20,11 +20,24 @@ from src.llm.structured_output import (
     StructuredOutputError,
     empty_structured_output,
     repair_response_model_json,
+    response_details_on_error,
     validate_structured_output,
 )
 from src.utils.representation import PromptRepresentation
 
 logger = logging.getLogger(__name__)
+
+
+def _response_details_on_error(response: Any) -> Any:
+    """`response_details_on_error` for an OpenAI chat completion."""
+    choices = getattr(response, "choices", None) or [None]
+    usage = getattr(response, "usage", None)
+    return response_details_on_error(
+        finish_reason=getattr(choices[0], "finish_reason", None),
+        input_tokens=getattr(usage, "prompt_tokens", None),
+        output_tokens=getattr(usage, "completion_tokens", None),
+    )
+
 
 # extra_body keys that request thinking from an OpenAI-compatible proxy.
 _EXTRA_BODY_THINKING_KEYS = ("reasoning", "reasoning_effort", "thinking")
@@ -252,11 +265,12 @@ class OpenAIBackend:
                 # PromptRepresentation payloads raise a safe, digest-bearing error.
                 truncated = exc.completion
                 raw_content = truncated.choices[0].message.content or ""
-                content = repair_response_model_json(
-                    raw_content,
-                    response_format,
-                    model,
-                )
+                with _response_details_on_error(truncated):
+                    content = repair_response_model_json(
+                        raw_content,
+                        response_format,
+                        model,
+                    )
                 return self._normalize_response(
                     truncated,
                     content_override=content,
@@ -710,8 +724,22 @@ class OpenAIBackend:
             new_messages.insert(0, {"role": "system", "content": instruction})
         return new_messages
 
-    @staticmethod
+    @classmethod
     def _parse_or_repair_structured_content(
+        cls,
+        response: Any,
+        response_format: type[BaseModel],
+        model: str,
+        *,
+        empty_on_missing: bool,
+    ) -> BaseModel | str:
+        with _response_details_on_error(response):
+            return cls._parse_or_repair_structured_content_inner(
+                response, response_format, model, empty_on_missing=empty_on_missing
+            )
+
+    @staticmethod
+    def _parse_or_repair_structured_content_inner(
         response: Any,
         response_format: type[BaseModel],
         model: str,

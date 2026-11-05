@@ -2,6 +2,7 @@ import asyncio
 import logging
 from typing import Any, Literal
 
+from opentelemetry.trace import SpanKind
 from sqlalchemy import exists, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +14,7 @@ from src.dreamer.dream_scheduler import get_dream_scheduler
 from src.exceptions import ValidationException
 from src.models import QueueItem
 from src.schemas import MessageConfiguration, ResolvedConfiguration
+from src.telemetry.otel import mark_span_error, stamp_queue_records, start_span
 from src.utils.config_helpers import get_configuration
 from src.utils.queue_payload import (
     create_deletion_payload,
@@ -46,6 +48,23 @@ async def enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> No
             is off
     """
 
+    with start_span(
+        "honcho.queue.enqueue",
+        kind=SpanKind.PRODUCER,
+        attributes={
+            "messaging.system": "postgresql",
+            "messaging.operation.type": "send",
+            "messaging.batch.message_count": len(payload),
+            "honcho.workspace_id": payload[0].get("workspace_name")
+            if payload
+            else None,
+            "honcho.session_id": payload[0].get("session_name") if payload else None,
+        },
+    ):
+        await _enqueue(payload, tenant_id=tenant_id)
+
+
+async def _enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> None:
     # Cancel any pending dreams for affected collections since user is active again.
     # This cancels dreams for all collections where observed=peer_name, which covers
     # both self-observation and peer-to-peer observation cases.
@@ -100,6 +119,7 @@ async def enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> No
             # Reached only after _insert_queue_records has exhausted its
             # transient-error retries; enqueue stays fire-and-forget by
             # contract, so the failure surfaces here rather than to a caller.
+            mark_span_error(e)
             logger.exception("Failed to enqueue message(s)!")
             if settings.SENTRY.ENABLED:
                 import sentry_sdk
@@ -121,7 +141,8 @@ async def _insert_queue_records(
     # catch-all and the batch was silently never derived.
     # endregion
     records = sorted(
-        _stamp_tenant_id(queue_records), key=lambda record: record["work_unit_key"]
+        stamp_queue_records(_stamp_tenant_id(queue_records)),
+        key=lambda record: record["work_unit_key"],
     )
     stmt = insert(QueueItem).returning(QueueItem)
     # No lock_timeout here: the message is already committed, so giving up
@@ -643,7 +664,9 @@ async def enqueue_dream(
                 return
 
             stmt = insert(QueueItem).returning(QueueItem)
-            await db_session.execute(stmt, _stamp_tenant_id([dream_record]))
+            await db_session.execute(
+                stmt, stamp_queue_records(_stamp_tenant_id([dream_record]))
+            )
             await db_session.commit()
 
             logger.info(
@@ -768,7 +791,8 @@ async def insert_scope_task(
         return False
 
     await db_session.execute(
-        insert(QueueItem).returning(QueueItem), _stamp_tenant_id([record])
+        insert(QueueItem).returning(QueueItem),
+        stamp_queue_records(_stamp_tenant_id([record])),
     )
 
     if task_type == "scope_backfill":
@@ -921,7 +945,9 @@ async def enqueue_deletion(
         )
 
         stmt = insert(QueueItem).returning(QueueItem)
-        await session.execute(stmt, _stamp_tenant_id([deletion_record]))
+        await session.execute(
+            stmt, stamp_queue_records(_stamp_tenant_id([deletion_record]))
+        )
 
         if should_commit:
             await session.commit()

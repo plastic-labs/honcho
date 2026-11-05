@@ -1426,6 +1426,40 @@ class TelemetrySettings(HonchoSettings):
     TRACE_PURPOSES: list[str] = Field(default_factory=list)
 
 
+class TracingSettings(HonchoSettings):
+    """OpenTelemetry distributed tracing (API + deriver).
+
+    Spans carry structure and timings (routes, queue hops, agent/LLM/tool calls,
+    DB and outbound HTTP), never prompts, message bodies or tool results; content
+    stays in Langfuse, linked by run id and OTel trace id. Off by default.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="TRACING_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = False
+
+    # "otlp": OTLP/HTTP to OTLP_ENDPOINT (local OTel Desktop Viewer, a collector).
+    # "sentry": OTLP/HTTP to the Sentry project named by SENTRY_DSN. Sentry's own
+    # performance tracing is turned off while this is enabled so spans are not
+    # sent (and billed) twice; Sentry errors keep their trace id for linking.
+    EXPORTER: Literal["otlp", "sentry"] = "otlp"
+    OTLP_ENDPOINT: str = "http://localhost:4318"
+    OTLP_HEADERS: dict[str, str] | None = None
+
+    # Head sampling for traces that start here (API requests, worker items).
+    # Spans of a sampled trace are all kept; children follow their parent.
+    SAMPLE_RATE: Annotated[float, Field(default=1.0, ge=0.0, le=1.0)] = 1.0
+
+    # Workspaces whose traces are always sampled, whatever SAMPLE_RATE is. For
+    # turning on full tracing while debugging one workspace in production.
+    FORCE_SAMPLE_WORKSPACES: list[str] = Field(default_factory=list)
+
+    # Honor the sampled flag of an incoming `traceparent` header, so a caller can
+    # force one request to be traced. Off by default: any client could raise
+    # tracing volume (and cost) by sending it.
+    TRUST_INCOMING_TRACEPARENT: bool = False
+
+
 class CacheSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")  # pyright: ignore
 
@@ -1778,6 +1812,7 @@ class AppSettings(HonchoSettings):
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
     METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
     TELEMETRY: TelemetrySettings = Field(default_factory=TelemetrySettings)
+    TRACING: TracingSettings = Field(default_factory=TracingSettings)
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
     VECTOR_STORE: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
