@@ -21,6 +21,7 @@ import os
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic import command
@@ -647,3 +648,49 @@ def test_isolation_is_applied_only_at_head(rls_engine: Engine) -> None:
         finally:
             command.upgrade(cfg, "head")
     assert policies() == 1
+
+
+@pytest.mark.asyncio
+async def test_partition_check_sees_write_only_privileges(
+    rls_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A role that can DELETE from a partition, but not SELECT, still bypasses RLS."""
+    from sqlalchemy import event
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from src.startup import tenant_isolation_validator as validator
+
+    with rls_engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS probe_parent"))
+        conn.execute(
+            text(
+                "CREATE TABLE probe_parent (tenant_id text, id int)"
+                + " PARTITION BY HASH (tenant_id)"
+            )
+        )
+        for remainder in (0, 1):
+            conn.execute(
+                text(
+                    f"CREATE TABLE probe_parent_p{remainder} PARTITION OF probe_parent"
+                    + f" FOR VALUES WITH (MODULUS 2, REMAINDER {remainder})"
+                )
+            )
+        conn.execute(text(f"GRANT DELETE ON probe_parent_p1 TO {_RLS_ROLE}"))
+    monkeypatch.setattr(validator, "_RLS_REQUIRED_TABLES", ("probe_parent",))
+    engine = create_async_engine(_RLS_TEST_DB_URL.render_as_string(hide_password=False))
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _as_probe_role(dbapi_connection: Any, _record: Any) -> None:  # pyright: ignore[reportUnusedFunction]
+        cursor = dbapi_connection.cursor()
+        cursor.execute(f"SET ROLE {_RLS_ROLE}")
+        cursor.close()
+
+    try:
+        accessible = await validator._introspect_accessible_partitions_once(  # pyright: ignore[reportPrivateUsage]
+            engine, "public"
+        )
+    finally:
+        await engine.dispose()
+        with rls_engine.begin() as conn:
+            conn.execute(text("DROP TABLE probe_parent"))
+    assert accessible == ["probe_parent_p1"]

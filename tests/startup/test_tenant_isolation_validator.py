@@ -108,12 +108,12 @@ def _fake_search_function(
     )
 
 
-def _fake_readable_partitions(
-    monkeypatch: pytest.MonkeyPatch, readable: list[str] | None = None
+def _fake_accessible_partitions(
+    monkeypatch: pytest.MonkeyPatch, accessible: list[str] | None = None
 ) -> None:
     monkeypatch.setattr(
-        "src.startup.tenant_isolation_validator._introspect_readable_partitions_with_retry",
-        AsyncMock(return_value=readable or []),
+        "src.startup.tenant_isolation_validator._introspect_accessible_partitions_with_retry",
+        AsyncMock(return_value=accessible or []),
     )
 
 
@@ -181,7 +181,7 @@ async def test_deriver_instance_skips_the_auth_check(
     _fake_enforced_rls(monkeypatch)
     _fake_tenant_role(monkeypatch, "honcho_app", False, False)
     _fake_search_function(monkeypatch, _OWNED_BY_BYPASSRLS)
-    _fake_readable_partitions(monkeypatch)
+    _fake_accessible_partitions(monkeypatch)
     s = _flag_on_settings()
     s.AUTH.USE_AUTH = False
     await validate_tenant_isolation(_NO_ENGINE, instance_type="deriver", app_settings=s)
@@ -383,7 +383,7 @@ async def test_boots_when_the_tenant_role_cannot_bypass_rls(
     _fake_enforced_rls(monkeypatch)
     _fake_tenant_role(monkeypatch, "honcho_app", False, False)
     _fake_search_function(monkeypatch, _OWNED_BY_BYPASSRLS)
-    _fake_readable_partitions(monkeypatch)
+    _fake_accessible_partitions(monkeypatch)
 
     await validate_tenant_isolation(
         _NO_ENGINE, instance_type="api", app_settings=_flag_on_settings()
@@ -422,7 +422,7 @@ async def test_refuses_boot_when_the_service_role_is_under_rls(
     _fake_tenant_role(monkeypatch, "honcho_app", False, False)
     _fake_service_role(monkeypatch, "honcho_app", False, False)
     _fake_search_function(monkeypatch, _OWNED_BY_BYPASSRLS)
-    _fake_readable_partitions(monkeypatch)
+    _fake_accessible_partitions(monkeypatch)
 
     with pytest.raises(StartupValidationError, match="read zero rows"):
         await validate_tenant_isolation(
@@ -441,7 +441,7 @@ async def test_boots_when_the_service_role_bypasses_rls(
     _fake_tenant_role(monkeypatch, "honcho_app", False, False)
     _fake_service_role(monkeypatch, "honcho_service", False, True)
     _fake_search_function(monkeypatch, _OWNED_BY_BYPASSRLS)
-    _fake_readable_partitions(monkeypatch)
+    _fake_accessible_partitions(monkeypatch)
 
     await validate_tenant_isolation(
         _NO_ENGINE,
@@ -539,7 +539,7 @@ async def test_the_migrated_search_function_passes_on_the_real_schema(
 # ---------------------------------------------------------------------------
 
 
-def test_assert_no_partition_access_passes_with_none_readable() -> None:
+def test_assert_no_partition_access_passes_with_none_accessible() -> None:
     _assert_no_partition_access([], schema="public")
 
 
@@ -549,13 +549,13 @@ def test_assert_no_partition_access_names_the_partitions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_refuses_boot_when_the_tenant_role_can_read_a_partition(
+async def test_refuses_boot_when_the_tenant_role_holds_a_partition_privilege(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _fake_enforced_rls(monkeypatch)
     _fake_tenant_role(monkeypatch, "honcho_app", False, False)
     _fake_search_function(monkeypatch, _OWNED_BY_BYPASSRLS)
-    _fake_readable_partitions(monkeypatch, ["documents_p3"])
+    _fake_accessible_partitions(monkeypatch, ["documents_p3"])
 
     with pytest.raises(StartupValidationError, match="skips row-level security"):
         await validate_tenant_isolation(
