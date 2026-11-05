@@ -632,3 +632,195 @@ async def test_get_run_detail_is_scoped_to_its_workspace(
 
     with pytest.raises(ResourceNotFoundException):
         await crud.get_run_detail(db_session, other_name, target.run_id)
+
+
+# Nothing sets `deleted_at` on a workspace, peer or session yet, so these
+# tombstone directly. History must read as it would after a hard deletion.
+
+
+async def _tombstone(
+    db_session: AsyncSession,
+    model: type[models.Peer] | type[models.Session],
+    workspace_name: str,
+    name: str,
+) -> None:
+    await db_session.execute(
+        update(model)
+        .where(model.workspace_name == workspace_name, model.name == name)
+        .values(deleted_at=datetime.datetime.now(datetime.UTC))
+    )
+    await db_session.commit()
+
+
+async def test_a_tombstoned_session_hides_its_conclusions_and_copies(
+    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    workspace, peer = sample_data
+    workspace_name, peer_name = workspace.name, peer.name
+    session_name, (coffee_id, nights_id) = await _seed(
+        db_session, workspace_name, peer_name
+    )
+    first = await _open(workspace_name, peer_name)
+    await crud.create_documents(
+        db_session,
+        [_deductive("Ann relies on caffeine to work nights", [coffee_id, nights_id])],
+        workspace_name,
+        observer=peer_name,
+        observed=peer_name,
+        history=first,
+    )
+    second = await _open(workspace_name, peer_name)
+    await crud.delete_documents(
+        db_session,
+        workspace_name,
+        [nights_id],
+        observer=peer_name,
+        observed=peer_name,
+        history=second,
+    )
+
+    db_session.expire_all()
+    detail = await crud.get_run_detail(db_session, workspace_name, first.run_id)
+    assert [s.status for s in detail.created[0].sources] == ["current", "removed"]
+
+    await _tombstone(db_session, models.Session, workspace_name, session_name)
+
+    db_session.expire_all()
+    detail = await crud.get_run_detail(db_session, workspace_name, first.run_id)
+    [created] = detail.created
+    # The deductive conclusion has no session, so the session doesn't hide it.
+    assert created.conclusion.status == "current"
+    assert [(s.id, s.status, s.content) for s in created.sources] == [
+        (coffee_id, "unavailable", None),
+        (nights_id, "unavailable", None),
+    ]
+    removal = await crud.get_run_detail(db_session, workspace_name, second.run_id)
+    assert removal.removed == []
+
+
+@pytest.mark.parametrize("deleted", ["observer", "observed"])
+async def test_a_tombstoned_peer_hides_the_runs_about_it(
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    deleted: str,
+):
+    workspace, peer = sample_data
+    workspace_name = workspace.name
+    observer, other = "observer-" + str(generate_nanoid()), peer.name
+    db_session.add(models.Peer(name=observer, workspace_name=workspace_name))
+    await db_session.commit()
+    target = await crud.open_run(
+        run_id=generate_nanoid(),
+        workspace_name=workspace_name,
+        observer=observer,
+        observed=peer.name,
+        dream_type="omni",
+        trigger_reason="manual",
+    )
+    assert target is not None
+    unrelated = await _open(workspace_name, other) if deleted == "observer" else None
+
+    await _tombstone(
+        db_session,
+        models.Peer,
+        workspace_name,
+        observer if deleted == "observer" else peer.name,
+    )
+
+    listed = {
+        run.id
+        for run in (await db_session.scalars(crud.list_runs_stmt(workspace_name)))
+    }
+    assert target.run_id not in listed
+    if unrelated is not None:
+        assert unrelated.run_id in listed
+    with pytest.raises(ResourceNotFoundException):
+        await crud.get_run_detail(db_session, workspace_name, target.run_id)
+
+
+async def test_a_tombstoned_workspace_hides_its_runs(
+    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    workspace, peer = sample_data
+    target = await _open(workspace.name, peer.name)
+
+    await db_session.execute(
+        update(models.Workspace)
+        .where(models.Workspace.name == workspace.name)
+        .values(deleted_at=datetime.datetime.now(datetime.UTC))
+    )
+    await db_session.commit()
+
+    assert (await db_session.scalars(crud.list_runs_stmt(workspace.name))).all() == []
+    with pytest.raises(ResourceNotFoundException):
+        await crud.get_run_detail(db_session, workspace.name, target.run_id)
+
+
+async def test_a_removed_copy_from_a_hidden_run_is_unavailable(
+    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    workspace, peer = sample_data
+    workspace_name, ann = workspace.name, peer.name
+    assistant = "assistant-" + str(generate_nanoid())
+    db_session.add(models.Peer(name=assistant, workspace_name=workspace_name))
+    await db_session.flush()
+    await _session(db_session, workspace_name, ann)  # ann's self-collection
+    db_session.add(
+        models.Collection(
+            workspace_name=workspace_name, observer=assistant, observed=ann
+        )
+    )
+    source_id = str(generate_nanoid())
+    db_session.add(
+        models.Document(
+            id=source_id,
+            workspace_name=workspace_name,
+            observer=assistant,
+            observed=ann,
+            content="Ann mentioned a night shift",
+            level="explicit",
+            session_name=None,
+            embedding=[0.3] * 1536,
+        )
+    )
+    await db_session.commit()
+
+    # A run on ann's own representation cites a source from another pair.
+    cites = await _open(workspace_name, ann)
+    await crud.create_documents(
+        db_session,
+        [_deductive("Ann works nights", [source_id])],
+        workspace_name,
+        observer=ann,
+        observed=ann,
+        history=cites,
+    )
+    removal = await crud.open_run(
+        run_id=generate_nanoid(),
+        workspace_name=workspace_name,
+        observer=assistant,
+        observed=ann,
+        dream_type="omni",
+        trigger_reason="manual",
+    )
+    assert removal is not None
+    await crud.delete_documents(
+        db_session,
+        workspace_name,
+        [source_id],
+        observer=assistant,
+        observed=ann,
+        history=DreamHistoryTarget(run_id=removal.run_id, specialist="deduction"),
+    )
+
+    db_session.expire_all()
+    detail = await crud.get_run_detail(db_session, workspace_name, cites.run_id)
+    [source] = detail.created[0].sources
+    assert (source.status, source.content) == ("removed", "Ann mentioned a night shift")
+
+    await _tombstone(db_session, models.Peer, workspace_name, assistant)
+
+    db_session.expire_all()
+    detail = await crud.get_run_detail(db_session, workspace_name, cites.run_id)
+    [source] = detail.created[0].sources
+    assert (source.status, source.content) == ("unavailable", None)
