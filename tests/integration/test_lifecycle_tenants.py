@@ -589,6 +589,7 @@ async def test_internal_membership_reads_require_live_parents_on_service_role(
     parent: str,
     left: bool,
 ) -> None:
+    """Preserve tenant-scoped history without trusting tombstoned membership parents."""
     db = lifecycle_service_db
     await _seed_graphs(db)
     instant = datetime(2026, 1, 2, tzinfo=UTC)
@@ -759,6 +760,7 @@ async def test_internal_conclusion_grounding_and_chain_reads_on_service_role(
     monkeypatch: pytest.MonkeyPatch,
     parent: str,
 ) -> None:
+    """Require live parents for grounded sources and fetched reasoning-chain content."""
     db = lifecycle_service_db
     ids = await _seed_conclusions(db)
     timestamp = "2026-01-02T00:00:00Z"
@@ -889,6 +891,7 @@ async def test_named_scope_sql_membership_stays_active_and_live(
     parent: str,
     left: bool,
 ) -> None:
+    """Require live parents and active named-scope membership in SQL and ORM reads."""
     db = lifecycle_service_db
     await _seed_graphs(db)
     for tenant in ("lifecycle-a", "lifecycle-b"):
