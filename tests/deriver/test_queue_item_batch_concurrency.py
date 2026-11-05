@@ -39,7 +39,6 @@ from src.deriver.enqueue import (
     _insert_queue_records,  # pyright: ignore[reportPrivateUsage]
 )
 from src.models import DEFAULT_TENANT_ID
-from src.utils.retryable_errors import is_retryable_error
 from tests.deriver.conftest import (
     SeedWorkUnit,
     independent_sessions,
@@ -292,9 +291,7 @@ class _RecordingEnqueueSession:
         self._failures: list[BaseException] = list(failures)
 
     async def execute(self, _statement: Any, parameters: Any = None) -> None:
-        if parameters is None:
-            return  # the SET LOCAL lock_timeout before each insert
-        self.executed_batches.append(list(parameters))
+        self.executed_batches.append(list(parameters or []))
         if self._failures:
             raise self._failures.pop(0)
 
@@ -382,21 +379,25 @@ class TestTheEnqueueRetriesADeadlockedBatch:
         ] == sorted(unsorted_keys)
 
 
+# Longer than any lock_timeout an enqueue might be tempted to use (2 s, with
+# three attempts, gave up after about 6 s).
+LONG_LOCK_HOLD_SECONDS = 8.0
+
+
 @pytest.mark.asyncio
-async def test_a_lock_timeout_is_retried_and_the_batch_lands(
+async def test_an_enqueue_blocked_by_a_long_lock_still_commits(
     db_engine: AsyncEngine,
     db_session: AsyncSession,
     sample_data: tuple[models.Workspace, models.Peer],
     seed_work_unit: SeedWorkUnit,
     single_tenant_enqueue: None,  # noqa: ARG001  # pyright: ignore[reportUnusedParameter]
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A queue insert blocked on a batch row lock gives up after lock_timeout, then a retry lands it."""
+    """The message is already committed, so the queue insert must wait, not give up."""
     workspace, _peer = sample_data
-    work_unit_key = "representation:lock-timeout"
+    work_unit_key = "representation:long-lock"
     await seed_work_unit(work_unit_key, token_counts=(5,))
     message_id = await _committed_message_priced_at(
-        seed_work_unit, unit_name="lock-timeout", token_count=3
+        seed_work_unit, unit_name="long-lock", token_count=3
     )
     record: dict[str, Any] = {
         "work_unit_key": work_unit_key,
@@ -407,14 +408,6 @@ async def test_a_lock_timeout_is_retried_and_the_batch_lands(
         "message_id": message_id,
     }
 
-    retried: list[BaseException] = []
-
-    def spy(exc: BaseException) -> bool:
-        retried.append(exc)
-        return is_retryable_error(exc)
-
-    monkeypatch.setattr(enqueue_module, "is_retryable_error", spy)
-
     sessions = independent_sessions(db_engine)
     async with sessions() as holder, sessions() as enqueuing:
         await holder.execute(
@@ -423,25 +416,16 @@ async def test_a_lock_timeout_is_retried_and_the_batch_lands(
             .with_for_update()
         )
         insert_task = asyncio.create_task(_insert_queue_records(enqueuing, [record]))
-        for _ in range(100):
-            if retried:
-                break
-            await asyncio.sleep(0.1)
-        retry_waited_on_lock = bool(retried) and not insert_task.done()
+        await asyncio.sleep(LONG_LOCK_HOLD_SECONDS)
+        still_waiting = not insert_task.done()
 
         await holder.commit()
         await asyncio.wait_for(insert_task, UNBLOCKED_COMPLETION_TIMEOUT_SECONDS)
 
-    assert retry_waited_on_lock, (
-        "the first attempt must give up on lock_timeout while the lock is held, "
-        + "and the retry wait on the same lock"
-    )
-    assert len(retried) == 1
-    assert isinstance(retried[0], DBAPIError)
-    assert getattr(retried[0].orig, "sqlstate", None) == "55P03"
+    assert still_waiting, "the insert must wait on the lock, not give up"
     row = await read_batch_row(db_session, work_unit_key)
     assert row is not None
-    assert row.pending_count == 2, "the seeded item plus the retried insert"
+    assert row.pending_count == 2, "the seeded item plus the blocked insert"
 
 
 @pytest.mark.asyncio

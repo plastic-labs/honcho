@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import Any, Literal
 
-from sqlalchemy import exists, insert, select, text
+from sqlalchemy import exists, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,10 +33,6 @@ logger = logging.getLogger(__name__)
 _ENQUEUE_DB_SLOTS = asyncio.Semaphore(
     max(1, (settings.DB.POOL_SIZE + settings.DB.MAX_OVERFLOW) // 4)
 )
-
-# The insert trigger waits on batch row locks that other writers hold. Fail
-# fast and retry instead of holding a connection while it waits.
-_LOCK_TIMEOUT = text("SET LOCAL lock_timeout = '2s'")
 
 
 async def enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> None:
@@ -128,11 +124,11 @@ async def _insert_queue_records(
         _stamp_tenant_id(queue_records), key=lambda record: record["work_unit_key"]
     )
     stmt = insert(QueueItem).returning(QueueItem)
+    # No lock_timeout here: the message is already committed, so giving up
+    # loses its derivation. A time limit needs a durable retry first.
     last_attempt = 2
     for attempt in range(last_attempt + 1):
         try:
-            # SET LOCAL ends with the transaction, so set it on every attempt.
-            await db_session.execute(_LOCK_TIMEOUT)
             await db_session.execute(stmt, records)
             await db_session.commit()
             return
