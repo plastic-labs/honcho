@@ -26,7 +26,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
-from src.crud.lifecycle import live_message_row
 from src.dependencies import tracked_db
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import ValidationException
@@ -142,6 +141,8 @@ async def fetch_messages_by_ids(
     filters: dict[str, Any] | None = None,
 ) -> list[models.Message]:
     """Fetch messages by ID and preserve the input ordering."""
+    from src.crud.lifecycle import live_message_row
+
     if not message_ids:
         return []
 
@@ -176,6 +177,8 @@ async def _semantic_search_pgvector(
     Returns:
         list of messages ordered by semantic similarity
     """
+    from src.crud.lifecycle import live_message_row
+
     distance_expr = models.MessageEmbedding.embedding.cosine_distance(embedding_query)
 
     stmt = (
@@ -442,6 +445,8 @@ async def search(
     Raises:
         ValidationException: If query exceeds maximum token limit for embeddings
     """
+    from src.crud.lifecycle import live_message_row
+
     # Base query conditions
     stmt = select(models.Message).where(live_message_row())
 
