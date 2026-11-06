@@ -30,7 +30,6 @@ INLINE_KEYS = {
 def test_honcho_is_declared():
     assert provider.name == "honcho"
     assert provider.label == "Honcho"
-    # The pinned Hermes has hermes-agent#149330, so the plugin owns the panel's file layout.
     assert provider.storage == STORAGE_PROVIDER
     # Field keys are unique, and the curated inline set is present.
     keys = [field.key for field in provider.fields]

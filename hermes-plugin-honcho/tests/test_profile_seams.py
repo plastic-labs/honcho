@@ -1,5 +1,4 @@
-"""The MemoryProvider seams Hermes calls since hermes-agent#149330: profile create/rename hooks and
-the dashboard panel's read_config_fields / write_config_fields."""
+"""Profile create/rename hooks and the config panel's read_config_fields / write_config_fields."""
 
 import json
 from contextlib import contextmanager

@@ -1,9 +1,8 @@
-"""The Hermes dashboard's Honcho config panel (``storage=STORAGE_PROVIDER``, hermes-agent#149330).
+"""The Honcho config panel in Hermes Desktop and the dashboard (``storage=STORAGE_PROVIDER``).
 
 Hermes owns the panel's rendering, value coercion, write-only secrets and the ``.env`` copy of
 ``apiKey``; this module owns where each field lives in honcho.json. Fields with ``scope="host"`` sit
 in the active profile's host block (falling back to the root on read), ``scope="root"`` at the root.
-Before #149330 Hermes core did this itself, importing ``client`` and ``oauth`` from this plugin.
 """
 
 from __future__ import annotations

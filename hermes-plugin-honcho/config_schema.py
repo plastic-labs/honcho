@@ -6,9 +6,7 @@ from plugins.memory.config_schema import (
     ProviderConfigSchema, ProviderField, ProviderFieldOption,
 )
 
-# Hermes with hermes-agent#149330 hands the panel to read_config_fields / write_config_fields
-# (config_panel.py). Older Hermes has no STORAGE_PROVIDER and reads/writes the host block itself.
-# Neither name is imported directly: each Hermes removes or lacks one of them.
+# Older Hermes has no STORAGE_PROVIDER; newer Hermes has no STORAGE_HONCHO_HOST_BLOCK.
 _STORAGE = getattr(_core_schema, "STORAGE_PROVIDER", None) or _core_schema.STORAGE_HONCHO_HOST_BLOCK
 
 
