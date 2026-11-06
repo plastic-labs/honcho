@@ -344,6 +344,14 @@ Both profiles see the same user (`yourname`) in the same shared environment (`he
 
 Host key is derived from the active Hermes profile: `hermes` (default) or `hermes_<profile>` (e.g. `hermes -p coder` -> host key `hermes_coder`). Older `hermes.<profile>` host blocks are still read for compatibility and are migrated when the CLI writes profile-scoped Honcho config.
 
+The plugin keeps host blocks in step with Hermes profiles:
+
+- **Create:** a new profile whose config selects Honcho (for example `hermes profile create coder --clone`) gets a `hermes_coder` block cloned from the default block, with `aiPeer: coder`.
+- **Rename:** `hermes profile rename coder writer` re-keys `hermes_coder` to `hermes_writer` and keeps `aiPeer: coder`, so the peer and its memory carry over.
+- **Imported profiles**, and profiles created before Honcho was set up, get no block automatically. Run `hermes honcho sync` to create one for each.
+
+On current Hermes the plugin does this itself and also backs the Honcho settings panel in Desktop and the dashboard. On older Hermes, Hermes core does the same work.
+
 ### Dialectic & Reasoning
 
 | Key | Type | Default | Description |
@@ -421,6 +429,18 @@ Presets:
 | `HONCHO_OAUTH_DEVICE_AUTH_URL` | Device-authorization endpoint (default: derived from the token URL) |
 | `HONCHO_OAUTH_CLIENT_ID` | OAuth client (default `hermes-agent`) |
 | `HONCHO_OAUTH_SCOPE` | Requested scope (default `write`) |
+
+## Client Identity Headers
+
+Every request the plugin sends to Honcho carries these headers, so Honcho can tell which integration and model the traffic comes from. None of them hold message content, user, peer, session or workspace names.
+
+| Header | Example | Source |
+|--------|---------|--------|
+| `X-Honcho-Host` | `hermes/0.18.2 (darwin)` | Hermes version and OS |
+| `X-Honcho-Plugin` | `hermes-plugin-honcho/1.2.0` | This plugin's version |
+| `X-Honcho-Agent-Model` | `anthropic/claude-sonnet-4.5` | The model Hermes reports for the current turn (the mixture-of-agents preset name under MoA); sent only on Hermes versions that report the model to memory providers |
+
+Links the plugin prints to the Honcho dashboard or docs carry `utm_source=hermes` parameters for the same purpose.
 
 ## CLI Commands
 
