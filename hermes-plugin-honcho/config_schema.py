@@ -1,9 +1,15 @@
 """Honcho's declared config surface — rendered by the generic desktop panel."""
 
+import plugins.memory.config_schema as _core_schema
 from plugins.memory.config_schema import (
-    KIND_BOOL, KIND_JSON, KIND_NUMBER, KIND_SECRET, KIND_SELECT, KIND_TEXT, STORAGE_HONCHO_HOST_BLOCK,
+    KIND_BOOL, KIND_JSON, KIND_NUMBER, KIND_SECRET, KIND_SELECT, KIND_TEXT,
     ProviderConfigSchema, ProviderField, ProviderFieldOption,
 )
+
+# Hermes with hermes-agent#149330 hands the panel to read_config_fields / write_config_fields
+# (config_panel.py). Older Hermes has no STORAGE_PROVIDER and reads/writes the host block itself.
+# Neither name is imported directly: each Hermes removes or lacks one of them.
+_STORAGE = getattr(_core_schema, "STORAGE_PROVIDER", None) or _core_schema.STORAGE_HONCHO_HOST_BLOCK
 
 
 def _opts(*pairs: tuple[str, str]) -> tuple[ProviderFieldOption, ...]:
@@ -30,7 +36,7 @@ def _field(key, label, kind, description, *, group, **kw) -> ProviderField:
 CONFIG_SCHEMA = ProviderConfigSchema(
     name="honcho",
     label="Honcho",
-    storage=STORAGE_HONCHO_HOST_BLOCK,
+    storage=_STORAGE,
     # Literal, not attribution.attribution_url(): Hermes loads this file on its own (no package, so no
     # relative imports). tests/test_attribution.py keeps it equal to the helper's output.
     docs_url="https://docs.honcho.dev/v3/guides/integrations/hermes?utm_source=hermes&utm_medium=plugin&utm_content=config-panel",
