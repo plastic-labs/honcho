@@ -423,8 +423,9 @@ empty or invalid value. The default is empty (opt-out matching is off).
 
 The plugin matches case-insensitive substrings in the sanitized user message,
 not injected `<memory-context>`. A match marks every user and assistant message
-in that turn with `reasoning.enabled: false`: Honcho still stores the messages
-for replay and search, but excludes them from its reasoning/observation pipeline.
+in that turn with `reasoning.enabled: false`, suppressing each message's own
+reasoning observation enqueue. Honcho still stores the messages for replay and
+search, and may use them as context when reasoning about other messages.
 Non-list config values are ignored with a warning; they do not fall back from a
 host block to the root list.
 
