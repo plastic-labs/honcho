@@ -79,6 +79,23 @@ describe('Honcho Client', () => {
       expect(fetched).toEqual(config)
     })
 
+    test('setConfiguration replaces and clears persisted configuration', async () => {
+      for (const replacement of [{ summary: { enabled: false } }, {}]) {
+        const initial = {
+          reasoning: { enabled: false },
+          summary: { enabled: true },
+        }
+        await client.setConfiguration(initial)
+        expect(await client.getConfiguration()).toEqual(initial)
+
+        await client.setConfiguration(replacement)
+        expect(client.configuration).toEqual(replacement)
+        expect(await client.getConfiguration()).toEqual(replacement)
+        await client.refresh()
+        expect(client.configuration).toEqual(replacement)
+      }
+    })
+
     test('cached metadata is updated after setMetadata', async () => {
       const metadata = testMetadata({ cached: true })
       await client.setMetadata(metadata)

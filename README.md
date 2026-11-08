@@ -8,7 +8,7 @@
 
 ---
 
-![Static Badge](https://img.shields.io/badge/Server-3.4.0-blue)
+![Static Badge](https://img.shields.io/badge/Server-3.6.0-blue)
 [![PyPI version](https://img.shields.io/pypi/v/honcho-ai.svg)](https://pypi.org/project/honcho-ai/)
 [![NPM version](https://img.shields.io/npm/v/@honcho-ai/sdk.svg)](https://npmjs.org/package/@honcho-ai/sdk)
 [![CLI](https://img.shields.io/pypi/v/honcho-cli.svg?label=honcho-cli)](https://pypi.org/project/honcho-cli/)
@@ -468,6 +468,10 @@ uv run python scripts/generate_jwt.py --admin
 # Admin token expiring in 24 hours
 uv run python scripts/generate_jwt.py --admin --expires 24h
 
+# Admin token for a tenant -- required when MULTI_TENANT is enabled, since a
+# token with no tenant claim is rejected for every caller, admin included
+uv run python scripts/generate_jwt.py --admin --tenant acme
+
 # Workspace-scoped token
 uv run python scripts/generate_jwt.py --workspace my-workspace --expires 30d
 
@@ -512,7 +516,45 @@ For verification steps and production notes, see [Self-hosting docs → Manual S
 </details>
 <!-- markdownlint-enable MD033 -->
 
-Contributors: see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for pre-commit setup. Deploying to Fly.io: see [Self-hosting docs → Deploying on Fly.io](https://honcho.dev/docs/v3/contributing/self-hosting#deploying-on-fly-io).
+Contributors: install the git hooks with `uv run pre-commit install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push`. Tests only run at push time, so a clean commit is not a clean push. Deploying to Fly.io: see [Self-hosting docs → Deploying on Fly.io](https://honcho.dev/docs/v3/contributing/self-hosting#deploying-on-fly-io).
+
+### Multi-tenant mode
+
+`MULTI_TENANT=true` makes one Honcho serve many tenants on one database, with
+row-level security scoping every query to the tenant bound on the connection.
+Honcho does not create the roles itself; the startup validator checks them and
+refuses to boot otherwise. The database needs these roles (the first and the
+last may be one role):
+
+- the migration role (`DB_OWNER_CONNECTION_URI`, falling back to
+  `DB_CONNECTION_URI` when unset), which owns the schema and runs
+  `alembic upgrade head`, created `WITH LOGIN BYPASSRLS`. Message search runs
+  through a `SECURITY DEFINER` function owned by this role: the full-text and
+  `ILIKE` operators are not leakproof, so under RLS the content indexes cannot
+  serve them, and the function reads as its owner, pinned to the bound tenant. If the function was
+  created by a role without `BYPASSRLS`, boot fails with the repair:
+  `ALTER FUNCTION message_text_matches_page(...) OWNER TO <the BYPASSRLS role>`
+  (the full signature is in the error);
+- the app role (`DB_CONNECTION_URI`), an ordinary role with no `BYPASSRLS`, which
+  every tenant-scoped query runs as. It needs `GRANT EXECUTE ON FUNCTION
+  message_text_matches_page(...) TO <app role>`, which `alembic upgrade head`
+  grants with the flag on: EXECUTE is revoked from PUBLIC so no other role can
+  reach the function's RLS bypass, and boot fails with the exact statement when
+  the grant is missing;
+- the service role (`DB_SERVICE_CONNECTION_URI`), `WITH LOGIN BYPASSRLS`, for the
+  cross-tenant background work (the deriver claim, the reconciler).
+
+Every tenant table needs `ENABLE` and `FORCE ROW LEVEL SECURITY`, a policy
+`USING (tenant_id = current_setting('app.tenant', true)) WITH CHECK (...)`, and
+`SELECT, INSERT, UPDATE, DELETE` granted to the app and service roles. With the
+flag on, `alembic upgrade head` applies all of that itself after the revisions
+run, so a release that adds a tenant table needs nothing by hand; the roles come
+from `DB_CONNECTION_URI` and `DB_SERVICE_CONNECTION_URI`. The connection must
+not go through a transaction-mode pooler. Self-hosted single-tenant installs
+leave the flag off; none of this applies then.
+
+A single-tenant instance can still name the tenant that owns its data with
+`TENANT_ID`, with the flag off.
 
 ## Configuration
 
@@ -706,7 +748,7 @@ See the [SDK Reference](https://honcho.dev/docs/v3/documentation/reference/sdk) 
 
 ## Contributing
 
-We welcome contributions to Honcho. One thing to know before you start: **pull requests must be linked to an issue carrying the `maintainer-approved` label**, or they are closed automatically. [Browse the approved queue](https://github.com/plastic-labs/honcho/issues?q=is%3Aissue+is%3Aopen+label%3Amaintainer-approved), or make your case in [Discord](http://discord.gg/honcho) — that is where maintainers are most active.
+**Pull requests are limited to maintainers.** If you find a bug or want a change, please [open an issue](https://github.com/plastic-labs/honcho/issues/new/choose) instead. If you think your work is an exception, make the case in [Discord](http://discord.gg/honcho), where maintainers are most active.
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full process, an architecture walkthrough, and a map of where to change what. For vulnerabilities, see [SECURITY.md](./SECURITY.md) — note that Honcho does not operate a bug bounty.
 

@@ -22,6 +22,7 @@ from nanoid import generate as generate_nanoid
 
 from src import crud
 from src.config import ConfiguredModelSettings, settings
+from src.crud.dream_history import DreamHistoryTarget
 from src.dependencies import tracked_db
 from src.dreamer.working_memory import (
     UPDATE_NOTES_TOOL,
@@ -385,6 +386,7 @@ If you update it, send the full deduplicated list and remove stale entries.
         session_id: str | None = None,
         queue_item_id: int | None = None,
         state: DreamState | None = None,
+        history: DreamHistoryTarget | None = None,
     ) -> SpecialistResult:
         """
         Run the specialist agent.
@@ -401,6 +403,8 @@ If you update it, send the full deduplicated list and remove stale entries.
             parent_run_id: Optional run_id from orchestrator for correlation
             state: Working state loaded by the orchestrator (cursor, notes and
                 the since-last-dream work list), when any of it is enabled
+            history: The orchestrator's open Representation History run. Its
+                writes are recorded there under this specialist's name.
 
         Returns:
             SpecialistResult with metrics and content
@@ -567,6 +571,11 @@ If you update it, send the full deduplicated list and remove stale entries.
                 run_id=run_id,
                 agent_type=self.name,
                 parent_category="dream",
+                history=(
+                    DreamHistoryTarget(run_id=history.run_id, specialist=self.name)
+                    if history is not None
+                    else None
+                ),
                 handler_resolver=(
                     _handler_resolver(
                         max_iterations - window + 1 if budget_enabled else None,

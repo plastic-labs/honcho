@@ -202,7 +202,7 @@ class TestDeriverMetrics:
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
-        workspace, _peer = sample_data
+        _workspace, _peer = sample_data
 
         db_session.add(
             models.QueueItem(
@@ -210,7 +210,9 @@ class TestDeriverMetrics:
                 task_type="reconciler",
                 payload={},
                 processed=False,
-                workspace_name=workspace.name,
+                # The reconciler is the tenant-less lane: no workspace (the
+                # queue CHECK enforces it).
+                workspace_name=None,
             )
         )
         await db_session.commit()
@@ -327,6 +329,11 @@ class TestPendingEmbeddings:
 
         assert stats.embeddings_pending == 1
         assert stats.embeddings_pending_due == 1
+
+        skipped = await crud.get_deriver_metrics(db_session, count_embeddings=False)
+
+        assert skipped.embeddings_pending == 0
+        assert skipped.embeddings_pending_due == 0
 
     async def test_row_inside_its_retry_wait_is_pending_but_not_due(
         self,

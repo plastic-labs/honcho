@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import Any, cast
 from unittest.mock import patch
 
@@ -8,9 +7,14 @@ import pytest
 
 from src.config import ModelConfig
 from src.llm import tool_loop
+from src.llm.codecs import RenderTarget
+from src.llm.codecs.openai import OpenAICodec
+from src.llm.errors import llm_retry_condition
+from src.llm.messages import ChatMessage
 from src.llm.runtime import AttemptPlan
 from src.llm.tool_loop import execute_tool_loop
 from src.llm.types import HonchoLLMCallResponse, ProviderClient
+from tests.llm.conftest import with_assistant_turn
 
 
 def _make_plan() -> AttemptPlan:
@@ -30,12 +34,30 @@ def _make_plan() -> AttemptPlan:
     )
 
 
+def _openai_turn(**fields: Any) -> HonchoLLMCallResponse[Any]:
+    return with_assistant_turn(
+        HonchoLLMCallResponse(**fields), "openai", "deepseek-v4-pro"
+    )
+
+
+def _rendered(messages: list[ChatMessage]) -> list[dict[str, Any]]:
+    """The history as the OpenAI backend receives it for the plan's model."""
+    return (
+        OpenAICodec()
+        .render(messages, RenderTarget("openai", "deepseek-v4-pro", None))
+        .messages
+    )
+
+
 @pytest.mark.asyncio
 async def test_tool_loop_replays_reasoning_content_on_continuation() -> None:
+    """The next call replays the assistant turn with its `reasoning_content` and tool
+    calls.
+    """
     calls: list[list[dict[str, Any]]] = []
     responses = iter(
         [
-            HonchoLLMCallResponse(
+            _openai_turn(
                 content="",
                 output_tokens=5,
                 finish_reasons=["tool_calls"],
@@ -58,7 +80,7 @@ async def test_tool_loop_replays_reasoning_content_on_continuation() -> None:
     )
 
     async def fake_call(*_args: Any, **kwargs: Any) -> HonchoLLMCallResponse[Any]:
-        calls.append(deepcopy(kwargs["messages"]))
+        calls.append(_rendered(kwargs["messages"]))
         return next(responses)
 
     async def execute_search(_name: str, _input: dict[str, Any]) -> str:
@@ -89,6 +111,9 @@ async def test_tool_loop_replays_reasoning_content_on_continuation() -> None:
             max_input_tokens=None,
             get_attempt_plan=_make_plan,
             before_retry_callback=lambda _retry_state: None,
+            retry_condition=llm_retry_condition(
+                can_fall_back=False, retry_attempts=1, model="test/model"
+            ),
             stream_final=False,
             telemetry=None,
         )
@@ -106,10 +131,13 @@ async def test_tool_loop_replays_reasoning_content_on_continuation() -> None:
 
 @pytest.mark.asyncio
 async def test_tool_loop_replays_null_assistant_content_on_continuation() -> None:
+    """An assistant turn with null content is replayed with its reasoning details and
+    tool calls.
+    """
     calls: list[list[dict[str, Any]]] = []
     responses = iter(
         [
-            HonchoLLMCallResponse(
+            _openai_turn(
                 content=None,
                 output_tokens=5,
                 finish_reasons=["tool_calls"],
@@ -140,7 +168,7 @@ async def test_tool_loop_replays_null_assistant_content_on_continuation() -> Non
     )
 
     async def fake_call(*_args: Any, **kwargs: Any) -> HonchoLLMCallResponse[Any]:
-        calls.append(deepcopy(kwargs["messages"]))
+        calls.append(_rendered(kwargs["messages"]))
         return next(responses)
 
     async def execute_search(_name: str, _input: dict[str, Any]) -> str:
@@ -171,6 +199,9 @@ async def test_tool_loop_replays_null_assistant_content_on_continuation() -> Non
             max_input_tokens=None,
             get_attempt_plan=_make_plan,
             before_retry_callback=lambda _retry_state: None,
+            retry_condition=llm_retry_condition(
+                can_fall_back=False, retry_attempts=1, model="test/model"
+            ),
             stream_final=False,
             telemetry=None,
         )

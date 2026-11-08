@@ -292,6 +292,14 @@ def _b_peer_config(c: TestClient, ws: str, s: str, p: str):
     )
 
 
+def _b_dreams_observer(c: TestClient, ws: str, _s: str, p: str):
+    return c.post(f"/v3/workspaces/{ws}/dreams/list", json={"observer_id": p})
+
+
+def _b_dreams_observed(c: TestClient, ws: str, _s: str, p: str):
+    return c.post(f"/v3/workspaces/{ws}/dreams/list", json={"observed_id": p})
+
+
 def _b_peer_config_get(c: TestClient, ws: str, s: str, p: str):
     return c.get(f"/v3/workspaces/{ws}/sessions/{s}/peers/{p}/config")
 
@@ -435,6 +443,28 @@ POLICY: tuple[Case, ...] = (
             "existing queue rows rather than creating knowledge about a peer."
         ),
         build=_b_queue_status_sender,
+        allow_status=(200,),
+    ),
+    Case(
+        "POST",
+        f"{_W}/dreams/list",
+        "observer_id",
+        False,
+        reason=_OBSERVER_OK,
+        build=_b_dreams_observer,
+        allow_status=(200,),
+    ),
+    Case(
+        "POST",
+        f"{_W}/dreams/list",
+        "observed_id",
+        False,
+        reason=(
+            "Filter only, on a workspace-key route. It selects recorded dream runs "
+            "and creates no knowledge about a peer; no dream is ever about a scope, "
+            "so the list is empty."
+        ),
+        build=_b_dreams_observed,
         allow_status=(200,),
     ),
     # ---- peer identity / membership mutation: never a scope ----

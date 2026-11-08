@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src import crud, exceptions, models, schemas
 from src.config import settings
+from src.crud.lifecycle import live_document_row
 from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import check_and_schedule_dream
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
@@ -195,6 +196,7 @@ class RepresentationManager:
         documents_to_create: list[schemas.DocumentCreate] = []
         for obs, embedding in zip(all_observations, embeddings, strict=True):
             # NOTE: will add additional levels of reasoning in the future
+            source_message_ids: list[str] | None = None
             if isinstance(obs, DeductiveObservation):
                 obs_level = "deductive"
                 obs_content = obs.conclusion
@@ -203,6 +205,7 @@ class RepresentationManager:
                 obs_level = "explicit"
                 obs_content = obs.content
                 obs_premises = None
+                source_message_ids = obs.source_message_ids or None
 
             metadata: schemas.DocumentMetadata = schemas.DocumentMetadata(
                 message_ids=message_ids,
@@ -217,6 +220,7 @@ class RepresentationManager:
                     level=obs_level,
                     metadata=metadata,
                     embedding=embedding,
+                    source_message_ids=source_message_ids,
                 )
             )
 
@@ -494,10 +498,11 @@ class RepresentationManager:
             select(models.Document)
             .limit(top_k)
             .where(
+                models.Document.tenant_id == models.scoped_tenant_id(),
                 models.Document.workspace_name == self.workspace_name,
                 models.Document.observer == self.observer,
                 models.Document.observed == self.observed,
-                models.Document.deleted_at.is_(None),
+                live_document_row(self.workspace_name),
                 *(
                     [models.Document.id.notin_(excluded_document_ids)]
                     if excluded_document_ids
@@ -530,10 +535,11 @@ class RepresentationManager:
             select(models.Document)
             .limit(top_k)
             .where(
+                models.Document.tenant_id == models.scoped_tenant_id(),
                 models.Document.workspace_name == self.workspace_name,
                 models.Document.observer == self.observer,
                 models.Document.observed == self.observed,
-                models.Document.deleted_at.is_(None),
+                live_document_row(self.workspace_name),
                 *(
                     [
                         models.Document.session_name.in_(session_allowlist),

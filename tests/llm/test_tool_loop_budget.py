@@ -3,16 +3,18 @@
 
 from __future__ import annotations
 
-import copy
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 from src.llm import tool_loop
+from src.llm.errors import llm_retry_condition
+from src.llm.messages import ChatMessage, UserMessage
 from src.llm.runtime import AttemptPlan
 from src.llm.tool_loop import execute_tool_loop
 from src.llm.types import HonchoLLMCallResponse
+from tests.llm.conftest import with_assistant_turn
 
 _TOOLS = [{"name": "look", "description": "look", "input_schema": {"type": "object"}}]
 
@@ -32,17 +34,19 @@ def _make_plan() -> AttemptPlan:
 
 
 def _response(tool_names: list[str]) -> HonchoLLMCallResponse[Any]:
-    return HonchoLLMCallResponse(
-        content="" if tool_names else "done",
-        input_tokens=10,
-        output_tokens=5,
-        cache_creation_input_tokens=0,
-        cache_read_input_tokens=0,
-        finish_reasons=["tool_use" if tool_names else "stop"],
-        tool_calls_made=[
-            {"id": f"t{i}", "name": name, "input": {}}
-            for i, name in enumerate(tool_names)
-        ],
+    return with_assistant_turn(
+        HonchoLLMCallResponse(
+            content="" if tool_names else "done",
+            input_tokens=10,
+            output_tokens=5,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+            finish_reasons=["tool_use" if tool_names else "stop"],
+            tool_calls_made=[
+                {"id": f"t{i}", "name": name, "input": {}}
+                for i, name in enumerate(tool_names)
+            ],
+        )
     )
 
 
@@ -51,10 +55,10 @@ class _ScriptedModel:
 
     def __init__(self, turns: list[list[str]]) -> None:
         self.turns: list[list[str]] = list(turns)
-        self.seen: list[list[dict[str, Any]]] = []
+        self.seen: list[list[ChatMessage]] = []
 
     async def __call__(self, *_args: Any, **kwargs: Any) -> HonchoLLMCallResponse[Any]:
-        self.seen.append(copy.deepcopy(kwargs["messages"]))
+        self.seen.append(list(kwargs["messages"]))
         return _response(self.turns.pop(0) if self.turns else [])
 
 
@@ -63,6 +67,7 @@ async def _echo_executor(name: str, _input: dict[str, Any]) -> str:
 
 
 async def _run(model: _ScriptedModel, *, max_tool_iterations: int = 5, **kw: Any):
+    """Run the tool loop with `model` standing in for the provider."""
     with patch.object(tool_loop, "honcho_llm_call_inner", new=model):
         return await execute_tool_loop(
             prompt="hi",
@@ -85,18 +90,17 @@ async def _run(model: _ScriptedModel, *, max_tool_iterations: int = 5, **kw: Any
             max_input_tokens=None,
             get_attempt_plan=_make_plan,
             before_retry_callback=lambda _r: None,
+            retry_condition=llm_retry_condition(
+                can_fall_back=False, retry_attempts=1, model="test/model"
+            ),
             stream_final=kw.pop("stream_final", False),
             telemetry=None,
             **kw,
         )
 
 
-def _user_texts(messages: list[dict[str, Any]]) -> list[str]:
-    return [
-        m["content"]
-        for m in messages
-        if m["role"] == "user" and isinstance(m["content"], str)
-    ]
+def _user_texts(messages: list[ChatMessage]) -> list[str]:
+    return [m.content for m in messages if isinstance(m, UserMessage)]
 
 
 @pytest.mark.asyncio
@@ -110,7 +114,7 @@ async def test_budget_line_follows_each_round_of_tool_results() -> None:
     assert _user_texts(model.seen[2])[-2:] == ["used 1 of 5", "used 2 of 5"]
     assert model.seen[2][: len(model.seen[1])] == model.seen[1]
     # The line is the last message the model sees.
-    assert model.seen[2][-1] == {"role": "user", "content": "used 2 of 5"}
+    assert model.seen[2][-1] == UserMessage(content="used 2 of 5")
 
 
 @pytest.mark.asyncio
@@ -160,6 +164,9 @@ _WRITE_TOOL = {
 
 @pytest.mark.asyncio
 async def test_final_call_offers_only_the_final_call_tools_and_runs_them() -> None:
+    """At the iteration limit, the final call offers only `final_call_tools` and runs
+    the calls it makes.
+    """
     executed: list[str] = []
 
     async def executor(name: str, _input: dict[str, Any]) -> str:
@@ -188,6 +195,9 @@ async def test_final_call_offers_only_the_final_call_tools_and_runs_them() -> No
             max_input_tokens=None,
             get_attempt_plan=_make_plan,
             before_retry_callback=lambda _r: None,
+            retry_condition=llm_retry_condition(
+                can_fall_back=False, retry_attempts=1, model="test/model"
+            ),
             final_call_tools=[_WRITE_TOOL],
         )
 

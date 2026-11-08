@@ -196,7 +196,7 @@ def resolve_scope_membership(
         raise ValueError("At least one session must be given")
     if len(ids) > MAX_SESSIONS_PER_ADD:
         raise ValueError(
-            f"At most {MAX_SESSIONS_PER_ADD} sessions can be added per call"
+            f"At most {MAX_SESSIONS_PER_ADD} sessions can be given per call"
         )
     return ids
 

@@ -274,7 +274,9 @@ class TestDeriverStatusEndpoint:
             )
         )
 
-        # Add internal task types (should NOT be counted)
+        # Add internal task types (should NOT be counted). The reconciler is
+        # the tenant-less lane and carries no workspace (the queue CHECK
+        # enforces it); the other internal types belong to a workspace.
         for task_type in ("reconciler", "webhook", "deletion"):
             internal_payload = {
                 "task_type": task_type,
@@ -287,7 +289,9 @@ class TestDeriverStatusEndpoint:
                     work_unit_key=f"{task_type}:{workspace.name}:internal",
                     payload=internal_payload,
                     processed=False,
-                    workspace_name=workspace.name,
+                    workspace_name=(
+                        None if task_type == "reconciler" else workspace.name
+                    ),
                 )
             )
 
@@ -356,3 +360,131 @@ class TestDeriverStatusEndpoint:
             responses.append(response.json())  # pyright: ignore
         # Check consistency
         assert all(r == responses[0] for r in responses)  # pyright: ignore
+
+    async def test_get_queue_status_mixed_backlog_counts(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Completed, in-progress and pending items across sessions, plus a session-less dream."""
+        workspace, _peer = sample_data
+        s1 = models.Session(workspace_name=workspace.name, name="mixed_1")
+        s2 = models.Session(workspace_name=workspace.name, name="mixed_2")
+        db_session.add_all([s1, s2])
+        await db_session.commit()
+
+        def item(
+            key: str, session_id: str | None, task_type: str, processed: bool
+        ) -> models.QueueItem:
+            return models.QueueItem(
+                session_id=session_id,
+                task_type=task_type,
+                work_unit_key=f"{task_type}:{workspace.name}:{key}",
+                payload={},
+                processed=processed,
+                workspace_name=workspace.name,
+            )
+
+        db_session.add_all(
+            [
+                item("s1-done-a", s1.id, "representation", True),
+                item("s1-done-b", s1.id, "summary", True),
+                item("s1-running", s1.id, "representation", False),
+                item("s1-wait-a", s1.id, "representation", False),
+                item("s1-wait-b", s1.id, "representation", False),
+                item("s1-wait-c", s1.id, "summary", False),
+                item("s2-done", s2.id, "representation", True),
+                item("s2-wait-a", s2.id, "representation", False),
+                item("s2-wait-b", s2.id, "summary", False),
+                item("dream", None, "dream", False),
+                item("internal", None, "deletion", False),
+            ]
+        )
+        db_session.add(
+            models.ActiveQueueSession(
+                work_unit_key=f"representation:{workspace.name}:s1-running"
+            )
+        )
+        await db_session.commit()
+
+        response = client.get(f"/v3/workspaces/{workspace.name}/queue/status")
+        assert response.status_code == 200
+        assert response.json() == {
+            "total_work_units": 10,
+            "completed_work_units": 3,
+            "in_progress_work_units": 1,
+            "pending_work_units": 6,
+            "sessions": {
+                s1.id: {
+                    "session_id": s1.id,
+                    "total_work_units": 6,
+                    "completed_work_units": 2,
+                    "in_progress_work_units": 1,
+                    "pending_work_units": 3,
+                },
+                s2.id: {
+                    "session_id": s2.id,
+                    "total_work_units": 3,
+                    "completed_work_units": 1,
+                    "in_progress_work_units": 0,
+                    "pending_work_units": 2,
+                },
+            },
+        }
+
+        response = client.get(
+            f"/v3/workspaces/{workspace.name}/queue/status",
+            params={"session_id": s1.name},
+        )
+        assert response.status_code == 200
+        assert response.json() == {
+            "total_work_units": 6,
+            "completed_work_units": 2,
+            "in_progress_work_units": 1,
+            "pending_work_units": 3,
+            "sessions": None,
+        }
+
+
+@pytest.mark.asyncio
+async def test_queue_status_counts_only_the_bound_tenant(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """queue has no RLS and workspace_name is unique only per tenant, so the status
+    of one tenant's "default" workspace must not count another tenant's."""
+    from nanoid import generate as generate_nanoid
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from src import crud
+    from src.config import settings
+    from src.db import tenant_context
+
+    workspace_name = str(generate_nanoid())
+    for tenant_id in ("tenant-a", "tenant-b"):
+        await db_session.execute(
+            pg_insert(models.Tenant)
+            .values(tenant_id=tenant_id, tier="shared")
+            .on_conflict_do_nothing()
+        )
+        db_session.add(
+            models.QueueItem(
+                tenant_id=tenant_id,
+                workspace_name=workspace_name,
+                session_id=f"{tenant_id}-session",
+                work_unit_key=f"{tenant_id}:representation:{workspace_name}:a:a",
+                task_type="representation",
+                payload={},
+            )
+        )
+    await db_session.commit()
+
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    token = tenant_context.set("tenant-a")
+    try:
+        status = await crud.get_queue_status(db_session, workspace_name)
+    finally:
+        tenant_context.reset(token)
+
+    assert status.total_work_units == 1
+    assert set(status.sessions or {}) == {"tenant-a-session"}

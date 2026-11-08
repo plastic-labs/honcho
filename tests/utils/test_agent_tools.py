@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
+from src.crud.dream_history import DreamHistoryTarget
 from src.utils.agent_tools import (
     _TOOL_HANDLERS,  # pyright: ignore[reportPrivateUsage]
     _WORKSPACE_TOOL_HANDLERS,  # pyright: ignore[reportPrivateUsage]
@@ -632,8 +633,9 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
+            history: DreamHistoryTarget | None = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed, deduplicate)
+            _ = (workspace_name, observer, observed, deduplicate, history)
             created_documents.extend(documents)
             return crud.CreateDocumentsResult(created_documents=documents)
 
@@ -695,8 +697,9 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
+            history: DreamHistoryTarget | None = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed, deduplicate)
+            _ = (workspace_name, observer, observed, deduplicate, history)
             created_documents.extend(documents)
             return crud.CreateDocumentsResult(created_documents=documents)
 
@@ -756,8 +759,9 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
+            history: DreamHistoryTarget | None = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed, deduplicate)
+            _ = (workspace_name, observer, observed, deduplicate, history)
             created_documents.extend(documents)
             return crud.CreateDocumentsResult(created_documents=documents)
 
@@ -814,8 +818,9 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
+            history: DreamHistoryTarget | None = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed, deduplicate)
+            _ = (workspace_name, observer, observed, deduplicate, history)
             return crud.CreateDocumentsResult(created_documents=documents)
 
         monkeypatch.setattr(
@@ -909,8 +914,9 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
+            history: DreamHistoryTarget | None = None,
         ) -> crud.CreateDocumentsResult:
-            _ = (workspace_name, observer, observed)
+            _ = (workspace_name, observer, observed, history)
             captured["deduplicate"] = deduplicate
             return crud.CreateDocumentsResult(created_documents=documents)
 
@@ -1896,6 +1902,113 @@ class TestUpdatePeerCard:
         )
         assert peer_card == ["IDENTITY: Name: Dana"]
 
+    async def test_strips_nul_before_validation_and_dedupe(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """NUL is stripped before validation and dedupe, and never reaches jsonb."""
+        from src.utils.types import ToolResult
+
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+
+        result = await _handle_update_peer_card(
+            ctx,
+            {
+                "content": [
+                    "IDENTITY: Name: Al\x00ice",
+                    "IDENTITY: Name: Alice\x00",  # duplicate once stripped
+                    "IDENTITY:\x00 Nick: Ali",  # prefix only valid once stripped
+                    "IDENTITY: \x00",  # empty body once stripped
+                    "ATTRIBUTE: Handle: \\u0000",  # literal text, not a NUL
+                ]
+            },
+        )
+
+        assert isinstance(result, ToolResult)
+        assert "\x00" not in result.content
+        assert result.metadata is not None
+        assert result.metadata["facts_count"] == 3
+        assert result.metadata["rejected_count"] == 1
+
+        await db_session.refresh(peer1)
+        peer_card = await crud.get_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+        assert peer_card == [
+            "IDENTITY: Name: Alice",
+            "IDENTITY: Nick: Ali",
+            "ATTRIBUTE: Handle: \\u0000",
+        ]
+
+    async def test_nul_only_update_preserves_existing_card(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """An update that is empty once NUL is stripped keeps the existing card."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+
+        await _handle_update_peer_card(ctx, {"content": ["IDENTITY: Name: Erin"]})
+
+        result = await _handle_update_peer_card(
+            ctx, {"content": ["\x00", " \x00\x00 ", "IDENTITY: \x00"]}
+        )
+        assert "rejected all 1" in str(result).lower()
+        assert "\x00" not in str(result)
+
+        await db_session.refresh(peer1)
+        peer_card = await crud.get_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+        assert peer_card == ["IDENTITY: Name: Erin"]
+
+    async def test_length_cap_and_fact_cap_apply_to_stripped_text(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """NUL padding counts toward neither the per-entry length cap nor the fact cap."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+
+        prefix = "IDENTITY: "
+        at_cap = prefix + "x" * (MAX_PEER_CARD_ENTRY_LENGTH - len(prefix))
+        over_cap = prefix + "y" * (MAX_PEER_CARD_ENTRY_LENGTH - len(prefix) + 1)
+        # Each alias appears twice, differing only by NUL: 2x the fact cap raw,
+        # exactly the cap once stripped and deduped.
+        aliases = [f"ATTRIBUTE: Alias: a-{i}" for i in range(MAX_PEER_CARD_FACTS - 1)]
+        content = [
+            at_cap + "\x00" * 5,
+            over_cap + "\x00" * 5,
+            *aliases,
+            *(f"{a}\x00" for a in aliases),
+        ]
+
+        await _handle_update_peer_card(ctx, {"content": content})
+
+        await db_session.refresh(peer1)
+        peer_card = await crud.get_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+        assert peer_card is not None
+        assert peer_card == [at_cap, *aliases]
+        assert len(peer_card) == MAX_PEER_CARD_FACTS
+
 
 class TestPeerCardEntryValidator:
     """Unit tests for the pure structural validator."""
@@ -2693,6 +2806,95 @@ class TestEvidenceCoverage:
             f"{tool_name} returns rows to the model but never records them, so "
             "they will be missing from evidence"
         )
+
+
+@pytest.mark.asyncio
+class TestObservationContextSessionCorrelation:
+    """Neighbours are seq±1 within the target's own session.
+
+    seq_in_session is per-session, so with no session_name (a peer-scoped
+    call) a seq-only correlation pulled other sessions' seq±1 rows too.
+    """
+
+    async def test_no_session_returns_only_target_sessions_neighbours(
+        self, db_session: AsyncSession, tool_test_data: Any
+    ):
+        workspace, _peer1, peer2, session, messages, _ = tool_test_data
+        other = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(other)
+        await db_session.flush()
+        for i in range(5):
+            db_session.add(
+                models.Message(
+                    workspace_name=workspace.name,
+                    session_name=other.name,
+                    peer_name=peer2.name,
+                    content=f"Other session message {i}",
+                    seq_in_session=i + 1,
+                    token_count=10,
+                )
+            )
+        await db_session.flush()
+
+        target = messages[2]  # seq 3 in `session`
+        result = await get_observation_context(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=None,
+            message_ids=[target.public_id],
+        )
+
+        assert {m.session_name for m in result} == {session.name}
+        assert [m.seq_in_session for m in result] == [2, 3, 4]
+
+    async def test_two_target_sessions_come_back_grouped_by_session(
+        self, db_session: AsyncSession, tool_test_data: Any
+    ):
+        workspace, _peer1, peer2, session, messages, _ = tool_test_data
+        other = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(other)
+        await db_session.flush()
+        other_messages = [
+            models.Message(
+                workspace_name=workspace.name,
+                session_name=other.name,
+                peer_name=peer2.name,
+                content=f"Other session message {i}",
+                seq_in_session=i + 1,
+                token_count=10,
+            )
+            for i in range(5)
+        ]
+        db_session.add_all(other_messages)
+        await db_session.flush()
+
+        result = await get_observation_context(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=None,
+            message_ids=[messages[2].public_id, other_messages[2].public_id],
+        )
+
+        rows = [(m.session_name, m.seq_in_session) for m in result]
+        assert sorted(rows) == sorted(
+            [(session.name, seq) for seq in (2, 3, 4)]
+            + [(other.name, seq) for seq in (2, 3, 4)]
+        )
+        # Postgres orders session_name by its collation, which need not agree
+        # with Python's; assert the grouping, not the collation.
+        session_runs = [
+            name for i, (name, _) in enumerate(rows) if i == 0 or rows[i - 1][0] != name
+        ]
+        assert session_runs == [
+            session_runs[0],
+            next(n for n in (session.name, other.name) if n != session_runs[0]),
+        ]
+        for name in (session.name, other.name):
+            assert [seq for n, seq in rows if n == name] == [2, 3, 4]
 
 
 @pytest.mark.asyncio

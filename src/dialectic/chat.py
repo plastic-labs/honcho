@@ -172,7 +172,8 @@ async def agentic_chat_stream(
         reasoning_context: Additional instructions, excluded from prefetch.
 
     Yields:
-        Chunks of the response text as they are generated
+        Chunks of the response text, as described in
+        `DialecticAgent.answer_stream`
     """
     # Short-lived DB session for validation + config
     async with tracked_db("dialectic.preflight", read_only=True) as db:

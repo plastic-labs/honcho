@@ -294,6 +294,7 @@ async def _fetch_random_observations(
         List of Document objects in random order
     """
     stmt = select(models.Document).where(
+        models.Document.tenant_id == models.scoped_tenant_id(),
         models.Document.workspace_name == workspace_name,
         models.Document.observer == observer,
         models.Document.observed == observed,
@@ -336,6 +337,7 @@ async def _fetch_all_observations(
     stmt = (
         select(models.Document)
         .where(
+            models.Document.tenant_id == models.scoped_tenant_id(),
             models.Document.workspace_name == workspace_name,
             models.Document.observer == observer,
             models.Document.observed == observed,

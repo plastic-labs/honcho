@@ -11,6 +11,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import settings
+from src.vector_store.tenant_namespace import resolve_namespace_prefix
 
 
 def _hash_namespace_components(*parts: str) -> str:
@@ -64,21 +65,15 @@ class VectorStore(ABC):
     - Message embeddings: {prefix}.msg.{hash}
     """
 
-    namespace_prefix: str
-
-    def __init__(self):
-        """
-        Initialize the vector store.
-        """
-        self.namespace_prefix = settings.VECTOR_STORE.NAMESPACE
-
     # === Namespace helpers ===
-    def get_vector_namespace(
+    async def get_vector_namespace(
         self,
         namespace_type: Literal["document", "message"],
         workspace_name: str,
         observer: str | None = None,
         observed: str | None = None,
+        *,
+        prefix: str | None = None,
     ) -> str:
         """
         Get the namespace for document or message embeddings.
@@ -88,6 +83,8 @@ class VectorStore(ABC):
             workspace_name: Name of the workspace
             observer: Name of the observing peer (document only)
             observed: Name of the observed peer (document only)
+            prefix: Use this namespace prefix instead of the current tenant's. Only
+                the cross-tenant background paths pass it, for the row they are on.
 
         Returns:
             Namespace string in format:
@@ -95,16 +92,24 @@ class VectorStore(ABC):
             - message: {prefix}.msg.{hash}
             where hash is derived from the workspace/peer names.
         """
+        # region ai
+        # The prefix is what keeps one tenant's vectors apart from another's — the hash
+        # below takes only workspace and peer names, which are unique within a tenant
+        # but not across tenants (every tenant has a "default" workspace). Resolved per
+        # call, never cached on the instance: this class is a process-wide singleton and
+        # an instance attribute would be one prefix for every tenant it serves.
+        # endregion
+        resolved_prefix = await resolve_namespace_prefix(prefix)
         if namespace_type == "document":
             if observer is None or observed is None:
                 raise ValueError(
                     "observer and observed are required for document namespaces"
                 )
             hash_suffix = _hash_namespace_components(workspace_name, observer, observed)
-            return f"{self.namespace_prefix}.doc.{hash_suffix}"
+            return f"{resolved_prefix}.doc.{hash_suffix}"
         elif namespace_type == "message":
             hash_suffix = _hash_namespace_components(workspace_name)
-            return f"{self.namespace_prefix}.msg.{hash_suffix}"
+            return f"{resolved_prefix}.msg.{hash_suffix}"
 
     # === Core operations ===
     @abstractmethod

@@ -22,13 +22,14 @@ from collections.abc import (
     Awaitable,
     Callable,
     Collection,
+    Mapping,
+    Sequence,
 )
 from typing import Any, ParamSpec, TypeVar
 
 from pydantic import BaseModel
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import RetryCallState, retry, stop_after_attempt, wait_exponential
 
-from src.config import ModelTransport
 from src.exceptions import ValidationException
 from src.utils.types import (
     get_last_tool_error,
@@ -40,8 +41,17 @@ from src.utils.types import (
     set_last_tool_metadata,
 )
 
+from .conversation import strip_thinking_blocks
+from .errors import llm_retry_condition
 from .executor import honcho_llm_call_inner
-from .registry import history_adapter_for_provider
+from .messages import (
+    AIMessage,
+    ChatMessage,
+    ToolMessage,
+    UserMessage,
+    coerce_messages,
+)
+from .profiles import profile_for
 from .runtime import (
     AttemptPlan,
     CapturedAgentSpan,
@@ -191,45 +201,65 @@ def _require_structured_answer(
     )
 
 
-def format_assistant_tool_message(
-    provider: ModelTransport,
-    content: Any,
-    tool_calls: list[dict[str, Any]],
-    thinking_blocks: list[dict[str, Any]] | None = None,
-    reasoning_details: list[dict[str, Any]] | None = None,
-    thinking_content: str | None = None,
-) -> dict[str, Any]:
-    """Format an assistant message with tool calls in provider-native shape."""
-    from .backend import CompletionResult as BackendCompletionResult
-    from .backend import ToolCallResult
+async def _stream_completed_answer(
+    response: HonchoLLMCallResponse[Any],
+) -> AsyncIterator[HonchoLLMCallStreamChunk]:
+    """Stream an answer the loop already has, as one chunk.
 
-    adapter = history_adapter_for_provider(provider)
-    result = BackendCompletionResult(
-        content=content,
-        tool_calls=[
-            ToolCallResult(
-                id=tool_call["id"],
-                name=tool_call["name"],
-                input=tool_call["input"],
-                thought_signature=tool_call.get("thought_signature"),
-            )
-            for tool_call in tool_calls
-        ],
-        thinking_content=thinking_content,
-        thinking_blocks=thinking_blocks or [],
-        reasoning_details=reasoning_details or [],
+    A parsed `response_model` instance goes out as its JSON, the text a
+    streamed structured answer accumulates to. The chunk carries no
+    `output_tokens`: the loop's totals already count the call that made it.
+    """
+    content = response.content
+    if isinstance(content, BaseModel):
+        content = content.model_dump_json(by_alias=True)
+    yield HonchoLLMCallStreamChunk(
+        content=content if isinstance(content, str) else "",
+        is_done=True,
+        finish_reasons=response.finish_reasons,
     )
-    return adapter.format_assistant_tool_message(result)
 
 
-def append_tool_results(
-    provider: ModelTransport,
-    tool_results: list[dict[str, Any]],
-    conversation_messages: list[dict[str, Any]],
-) -> None:
-    """Append tool results to `conversation_messages` in provider-native shape."""
-    adapter = history_adapter_for_provider(provider)
-    conversation_messages.extend(adapter.format_tool_results(tool_results))
+def _assistant_turn(response: HonchoLLMCallResponse[Any]) -> AIMessage:
+    """The assistant turn a tool-call response adds to the history."""
+    if response.message is None:
+        raise RuntimeError("A tool-call response carries no assistant message")
+    return response.message
+
+
+def _without_stale_thinking(
+    conversation_messages: list[ChatMessage],
+    plan: AttemptPlan,
+    stale_before: int,
+) -> list[ChatMessage]:
+    """Strip replayed thinking blocks whose request prefix has since changed.
+
+    Models with `preserved_thinking` reject a replayed thinking block once the
+    system prompt, the tool set or any earlier message differs from what it
+    was produced under. `stale_before` counts the leading messages produced
+    before the loop last edited history or changed the tool set; their
+    thinking blocks are dropped from this request (the history itself is left
+    as-is, since the next attempt may target another model). Blocks after it
+    were produced against the current prefix and stay: thinking may be
+    removed from the front of a history, just not from the middle.
+
+    Other models keep every block: older Claude models require the current
+    tool-use turn's thinking to be replayed.
+    """
+    if stale_before <= 0:
+        return conversation_messages
+    if not profile_for(plan.provider, plan.model).capabilities.preserved_thinking:
+        return conversation_messages
+    front, removed = strip_thinking_blocks(conversation_messages[:stale_before])
+    if not removed:
+        return conversation_messages
+    logger.debug(
+        "Dropped %d replayed thinking block(s) for %s: history or tools changed "
+        + "since they were produced",
+        removed,
+        plan.model,
+    )
+    return front + conversation_messages[stale_before:]
 
 
 async def stream_final_response(
@@ -237,7 +267,7 @@ async def stream_final_response(
     winning_plan: AttemptPlan,
     prompt: str,
     max_tokens: int,
-    conversation_messages: list[dict[str, Any]],
+    conversation_messages: list[ChatMessage],
     response_model: type[BaseModel] | None,
     json_mode: bool,
     temperature: float | None,
@@ -256,8 +286,14 @@ async def stream_final_response(
     bleed the outer current_attempt ContextVar into streaming retries,
     potentially rolling the selection back to primary after the tool loop
     had already settled on fallback. Tenacity retries re-issue the same
-    streaming call against the same pinned model for transient errors.
+    streaming call against the same pinned model for transient errors, and
+    stop on a non-retryable client error, since no other model is reachable.
     """
+    # The answer streams without tools, so no earlier thinking block matches
+    # the request's tool set anymore.
+    conversation_messages = _without_stale_thinking(
+        conversation_messages, winning_plan, len(conversation_messages)
+    )
 
     # Bump the per-retry attempt index inside `_setup_stream`. The pinned
     # `winning_plan.attempt` is frozen from before retries started; without
@@ -301,6 +337,11 @@ async def stream_final_response(
 
     if enable_retry:
         wrapped = retry(
+            retry=llm_retry_condition(
+                can_fall_back=False,
+                retry_attempts=retry_attempts,
+                model=f"{winning_plan.provider}/{winning_plan.model}",
+            ),
             stop=stop_after_attempt(retry_attempts),
             wait=wait_exponential(multiplier=1, min=4, max=10),
             before_sleep=before_retry_callback,
@@ -325,13 +366,13 @@ async def _execute_tool_calls(
     tool_calls: list[dict[str, Any]],
     tool_executor: Callable[[str, dict[str, Any]], Any],
     all_tool_calls: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], set[str]]:
+) -> tuple[list[ToolMessage], set[str]]:
     """Run one response's tool calls in order.
 
     Successful calls are appended to `all_tool_calls`. Returns the results to
     send back to the model and the names of the tools that succeeded.
     """
-    tool_results: list[dict[str, Any]] = []
+    tool_results: list[ToolMessage] = []
     succeeded_tools: set[str] = set()
     for seq, tool_call in enumerate(tool_calls):
         tool_name = tool_call["name"]
@@ -360,11 +401,9 @@ async def _execute_tool_calls(
             if not get_last_tool_error():
                 succeeded_tools.add(tool_name)
             tool_results.append(
-                {
-                    "tool_id": tool_id,
-                    "tool_name": tool_name,
-                    "result": tool_result,
-                }
+                ToolMessage(
+                    tool_call_id=tool_id, name=tool_name, content=str(tool_result)
+                )
             )
             all_tool_calls.append(
                 {
@@ -377,18 +416,18 @@ async def _execute_tool_calls(
         except Exception as e:
             logger.error(f"Tool execution failed for {tool_name}: {e}")
             tool_results.append(
-                {
-                    "tool_id": tool_id,
-                    "tool_name": tool_name,
-                    "result": f"Error: {str(e)}",
-                    "is_error": True,
-                }
+                ToolMessage(
+                    tool_call_id=tool_id,
+                    name=tool_name,
+                    content=f"Error: {str(e)}",
+                    is_error=True,
+                )
             )
     return tool_results, succeeded_tools
 
 
 def _append_budget_line(
-    conversation_messages: list[dict[str, Any]],
+    conversation_messages: list[ChatMessage],
     budget_line: BudgetLine | None,
     rounds_used: int,
     round_limit: int,
@@ -402,7 +441,7 @@ def _append_budget_line(
         return
     line = budget_line(rounds_used, round_limit)
     if line:
-        conversation_messages.append({"role": "user", "content": line})
+        conversation_messages.append(UserMessage(content=line))
 
 
 @_with_iteration_scope
@@ -410,7 +449,7 @@ async def execute_tool_loop(
     *,
     prompt: str,
     max_tokens: int,
-    messages: list[dict[str, Any]] | None,
+    messages: Sequence[ChatMessage | Mapping[str, Any]] | None,
     tools: list[dict[str, Any]],
     tool_choice: str | dict[str, Any] | None,
     tool_executor: Callable[[str, dict[str, Any]], Any],
@@ -425,6 +464,7 @@ async def execute_tool_loop(
     max_input_tokens: int | None,
     get_attempt_plan: Callable[[], AttemptPlan],
     before_retry_callback: Callable[[Any], None],
+    retry_condition: Callable[[RetryCallState], bool],
     stream_final: bool = False,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
@@ -448,6 +488,9 @@ async def execute_tool_loop(
     offers those tools instead (for an agent whose output is its writes), and
     any calls it makes are executed; no further call follows them.
 
+    Each iteration and the final call retry under `retry_condition`, which
+    the caller builds with `llm_retry_condition` for its model config.
+
     Returns:
         Final HonchoLLMCallResponse with accumulated token counts and tool call
         history, or a StreamingResponseWithMetadata if stream_final=True.
@@ -466,8 +509,8 @@ async def execute_tool_loop(
             + "call would have to both stream an answer and run tools"
         )
 
-    conversation_messages: list[dict[str, Any]] = (
-        messages.copy() if messages else [{"role": "user", "content": prompt}]
+    conversation_messages: list[ChatMessage] = (
+        coerce_messages(messages) if messages else [UserMessage(content=prompt)]
     )
 
     # Seed one hash memo for the whole span. dataclasses.replace copies the dict reference into
@@ -499,6 +542,10 @@ async def execute_tool_loop(
     # An empty gate would be unsatisfiable, so it means no gate.
     gate = frozenset(force_tools_until or ()) or None
     forced_rounds = 0
+    # Leading messages whose thinking blocks were produced before the loop
+    # last rewrote history (truncation) or changed the tool set; models with
+    # preserved thinking get them without those blocks.
+    stale_thinking_before = 0
 
     while iteration < max_tool_iterations:
         step = start_captured_span(
@@ -515,9 +562,26 @@ async def execute_tool_loop(
             if max_input_tokens is not None:
                 if count_message_tokens(conversation_messages) > max_input_tokens:
                     hit_input_token_cap = True
-                conversation_messages = truncate_messages_to_fit(
+                truncated = truncate_messages_to_fit(
                     conversation_messages, max_input_tokens
                 )
+                if truncated is not conversation_messages:
+                    stale_thinking_before = len(truncated)
+                conversation_messages = truncated
+
+            # A provider can ignore a forced tool_choice and answer outright.
+            # While the gate is unmet, a no-tool answer is discarded for a
+            # nudge, so it isn't held to `response_model`. Under stream_final
+            # the answer is checked the same way, since it is the one streamed.
+            gate_nudge_due = (
+                gate is not None
+                and effective_tool_choice in ("required", "any")
+                and forced_rounds + 1 < max_forced_iterations
+                and iteration < max_tool_iterations - 1
+            )
+            empty_nudge_due = (
+                empty_response_retries < 1 and iteration < max_tool_iterations - 1
+            )
 
             # A provider can ignore a forced tool_choice and answer outright.
             # While the gate is unmet, a no-tool answer is discarded for a
@@ -538,10 +602,11 @@ async def execute_tool_loop(
                 tool_choice_for_call: str
                 | dict[str, Any]
                 | None = effective_tool_choice,
-                captured_messages: list[dict[str, Any]] = conversation_messages,
+                captured_messages: list[ChatMessage] = conversation_messages,
                 iteration_for_call: int = iteration + 1,
                 check_answer: bool = not gate_nudge_due,
                 allow_empty_answer: bool = empty_nudge_due,
+                stale_before: int = stale_thinking_before,
             ) -> HonchoLLMCallResponse[Any]:
                 plan = get_attempt_plan()
                 result = await honcho_llm_call_inner(
@@ -560,14 +625,16 @@ async def execute_tool_loop(
                     client_override=plan.client,
                     tools=tools,
                     tool_choice=tool_choice_for_call,
-                    messages=captured_messages,
+                    messages=_without_stale_thinking(
+                        captured_messages, plan, stale_before
+                    ),
                     selected_config=plan.selected_config,
                     plan=plan,
                     telemetry=_telemetry_for_iteration(
                         telemetry, iteration_for_call, step_seq=iteration_for_call
                     ),
                 )
-                if check_answer and not stream_final:
+                if check_answer:
                     _require_structured_answer(
                         result, response_model, allow_empty=allow_empty_answer
                     )
@@ -576,6 +643,7 @@ async def execute_tool_loop(
             call_func: Callable[[], Awaitable[HonchoLLMCallResponse[Any]]]
             if enable_retry:
                 call_func = retry(
+                    retry=retry_condition,
                     stop=stop_after_attempt(retry_attempts),
                     wait=wait_exponential(multiplier=1, min=4, max=10),
                     before_sleep=before_retry_callback,
@@ -608,14 +676,11 @@ async def execute_tool_loop(
                 if gate_nudge_due and gate is not None:
                     forced_rounds += 1
                     conversation_messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "Your last response called no tool. Call one of "
-                                + ", ".join(sorted(gate))
-                                + " to read the relevant memory before answering."
-                            ),
-                        }
+                        UserMessage(
+                            content="Your last response called no tool. Call one of "
+                            + ", ".join(sorted(gate))
+                            + " to read the relevant memory before answering."
+                        )
                     )
                     iteration += 1
                     continue
@@ -627,46 +692,22 @@ async def execute_tool_loop(
                 ):
                     empty_response_retries += 1
                     conversation_messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "Your last response was empty. Provide a concise answer "
-                                "to the original query using the available context."
-                            ),
-                        }
+                        UserMessage(
+                            content="Your last response was empty. Provide a concise "
+                            + "answer to the original query using the available "
+                            + "context."
+                        )
                     )
                     iteration += 1
                     continue
 
                 if stream_final:
-                    # Snapshot the plan that just succeeded — streaming retries
-                    # pin to this exact client/model so we don't bounce back to
-                    # primary after the tool loop settled on fallback.
-                    winning_plan = get_attempt_plan()
-                    # +2 (not +1): the in-loop call we just made used iteration+1,
-                    # so the streamed tail needs the next ordinal — otherwise its
-                    # trace resource id collides with that call's. Mirrors the
-                    # synthesis path's distinct-next-value behavior.
-                    stream_telemetry = _telemetry_for_iteration(
-                        telemetry, iteration + 2, step_seq=iteration + 2
-                    )
-                    stream = stream_final_response(
-                        winning_plan=winning_plan,
-                        prompt=prompt,
-                        max_tokens=max_tokens,
-                        conversation_messages=conversation_messages,
-                        response_model=response_model,
-                        json_mode=json_mode,
-                        temperature=temperature,
-                        stop_seqs=stop_seqs,
-                        verbosity=verbosity,
-                        enable_retry=enable_retry,
-                        retry_attempts=retry_attempts,
-                        before_retry_callback=before_retry_callback,
-                        telemetry=stream_telemetry,
-                    )
+                    # Stream the answer in hand, as the non-streaming path
+                    # returns it. Asking again cost a second full call,
+                    # answered from a fresh sample, and could come back empty
+                    # when the model spent that call on thinking.
                     return StreamingResponseWithMetadata(
-                        stream=stream,
+                        stream=_stream_completed_answer(response),
                         tool_calls_made=all_tool_calls,
                         input_tokens=total_input_tokens,
                         output_tokens=total_output_tokens,
@@ -689,17 +730,7 @@ async def execute_tool_loop(
                 )
                 return response
 
-            current_provider = get_attempt_plan().provider
-
-            assistant_message = format_assistant_tool_message(
-                current_provider,
-                response.content,
-                response.tool_calls_made,
-                response.thinking_blocks,
-                response.reasoning_details,
-                response.thinking_content,
-            )
-            conversation_messages.append(assistant_message)
+            conversation_messages.append(_assistant_turn(response))
 
             # Telemetry context — 1-indexed iteration.
             set_current_iteration(iteration + 1)
@@ -708,7 +739,7 @@ async def execute_tool_loop(
                 response.tool_calls_made, tool_executor, all_tool_calls
             )
 
-            append_tool_results(current_provider, tool_results, conversation_messages)
+            conversation_messages.extend(tool_results)
 
             _append_budget_line(
                 conversation_messages, budget_line, iteration + 1, max_tool_iterations
@@ -768,16 +799,17 @@ async def execute_tool_loop(
             "Based on all the information you have gathered, provide your final response now. "
             "Do not attempt to call any more tools."
         )
-    conversation_messages.append({"role": "user", "content": synthesis_prompt})
+    conversation_messages.append(UserMessage(content=synthesis_prompt))
 
     # Truncate again — the per-iteration truncate ran before the last tool
     # call, so appending synthesis_prompt could nudge us back over the cap.
     if max_input_tokens is not None:
         if count_message_tokens(conversation_messages) > max_input_tokens:
             hit_input_token_cap = True
-        conversation_messages = truncate_messages_to_fit(
-            conversation_messages, max_input_tokens
-        )
+        truncated = truncate_messages_to_fit(conversation_messages, max_input_tokens)
+        if truncated is not conversation_messages:
+            stale_thinking_before = len(truncated)
+        conversation_messages = truncated
 
     if stream_final:
         # Snapshot the plan the loop settled on — streaming retries pin to
@@ -817,6 +849,11 @@ async def execute_tool_loop(
 
     current_attempt.set(1)
 
+    # The synthesis call offers a different tool set (final_call_tools, or
+    # none), which no earlier thinking block was produced under.
+    if (final_call_tools or None) != tools:
+        stale_thinking_before = len(conversation_messages)
+
     async def _final_call() -> HonchoLLMCallResponse[Any]:
         plan = get_attempt_plan()
         response = await honcho_llm_call_inner(
@@ -835,7 +872,9 @@ async def execute_tool_loop(
             client_override=plan.client,
             tools=final_call_tools or None,
             tool_choice=None,
-            messages=conversation_messages,
+            messages=_without_stale_thinking(
+                conversation_messages, plan, stale_thinking_before
+            ),
             selected_config=plan.selected_config,
             plan=plan,
             telemetry=_telemetry_for_iteration(
@@ -848,6 +887,7 @@ async def execute_tool_loop(
 
     if enable_retry:
         final_call_func = retry(
+            retry=retry_condition,
             stop=stop_after_attempt(retry_attempts),
             wait=wait_exponential(multiplier=1, min=4, max=10),
             before_sleep=before_retry_callback,
@@ -913,8 +953,6 @@ async def execute_tool_loop(
 __all__ = [
     "MAX_TOOL_ITERATIONS",
     "MIN_TOOL_ITERATIONS",
-    "append_tool_results",
     "execute_tool_loop",
-    "format_assistant_tool_message",
     "stream_final_response",
 ]

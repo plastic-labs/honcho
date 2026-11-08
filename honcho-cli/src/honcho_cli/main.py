@@ -65,11 +65,13 @@ def main(
 
 
 # Register top-level commands
+from honcho_cli.commands.install import install
 from honcho_cli.commands.setup import doctor, init
 from honcho_cli.commands.stack import start, status, stop
 
 app.command()(init)
 app.command()(doctor)
+app.command()(install)
 app.command()(start)
 app.command()(stop)
 app.command()(status)
@@ -85,6 +87,7 @@ def help_cmd(ctx: typer.Context) -> None:
 # Register command groups
 from honcho_cli.commands.config_cmd import app as config_app
 from honcho_cli.commands.conclusion import app as conclusion_app
+from honcho_cli.commands.dream import app as dream_app
 from honcho_cli.commands.message import app as message_app
 from honcho_cli.commands.peer import app as peer_app
 from honcho_cli.commands.scope import app as scope_app
@@ -96,6 +99,7 @@ app.add_typer(session_app,    name="session")
 app.add_typer(scope_app,      name="scope")
 app.add_typer(message_app,    name="message")
 app.add_typer(conclusion_app, name="conclusion")
+app.add_typer(dream_app,      name="dream")
 app.add_typer(workspace_app,  name="workspace")
 app.add_typer(config_app,     name="config")
 

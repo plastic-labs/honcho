@@ -15,7 +15,16 @@ from sqlalchemy.sql.functions import func
 
 from src import models, schemas
 from src.config import settings
-from src.crud.collection import get_or_create_collection
+from src.crud.collection import get_or_create_collection, record_explicit_documents
+from src.crud.dream_history import (
+    CreatedConclusion,
+    DreamHistoryTarget,
+    RemovedConclusion,
+    erase_conclusion_history,
+    record_created,
+    record_removed,
+)
+from src.crud.lifecycle import live_document_row
 from src.crud.peer import get_peer, reject_scope_observed
 from src.crud.session import get_session
 from src.dependencies import tracked_db
@@ -23,6 +32,7 @@ from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import (
     ResourceNotFoundException,
     ValidationException,
+    VectorNamespaceUnresolved,
     VectorStoreError,
 )
 from src.utils.filter import apply_filter
@@ -31,6 +41,7 @@ from src.vector_store import (
     VectorStore,
     get_external_vector_store,
 )
+from src.vector_store.tenant_namespace import prefix_for_tenant
 
 logger = getLogger(__name__)
 
@@ -51,6 +62,28 @@ def build_source_links(
         for i, sid in enumerate(dict.fromkeys(source_ids))
         if models.SOURCE_ID_RE.match(sid)
     ]
+
+
+def build_source_message_links(
+    message_ids: list[str] | None, workspace_name: str
+) -> list[models.ConclusionSourceMessage]:
+    """Convert cited message public ids to ConclusionSourceMessage rows, deduped."""
+    if not message_ids:
+        return []
+    return [
+        models.ConclusionSourceMessage(
+            message_id=mid, position=i, workspace_name=workspace_name
+        )
+        for i, mid in enumerate(dict.fromkeys(message_ids))
+        if models.SOURCE_ID_RE.match(mid)
+    ]
+
+
+def _merge_citations(
+    first: list[str] | None, incoming: list[str] | None
+) -> list[str] | None:
+    """Union two citation lists, keeping first-seen order; None when both empty."""
+    return list(dict.fromkeys([*(first or []), *(incoming or [])])) or None
 
 
 def get_all_documents(
@@ -80,10 +113,11 @@ def get_all_documents(
     """
     stmt = (
         select(models.Document)
+        .where(models.Document.tenant_id == models.scoped_tenant_id())
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.observer == observer)
         .where(models.Document.observed == observed)
-        .where(models.Document.deleted_at.is_(None))  # Exclude soft-deleted
+        .where(live_document_row(workspace_name))
     )
 
     # Apply additional filters if provided
@@ -123,8 +157,9 @@ def get_documents_with_filters(
     """
     stmt = (
         select(models.Document)
+        .where(models.Document.tenant_id == models.scoped_tenant_id())
         .where(models.Document.workspace_name == workspace_name)
-        .where(models.Document.deleted_at.is_(None))  # Exclude soft-deleted
+        .where(live_document_row(workspace_name))
     )
 
     # Apply additional filters if provided
@@ -166,10 +201,11 @@ async def query_documents_recent(
         Sequence of documents ordered by created_at descending
     """
     stmt = select(models.Document).where(
+        models.Document.tenant_id == models.scoped_tenant_id(),
         models.Document.workspace_name == workspace_name,
         models.Document.observer == observer,
         models.Document.observed == observed,
-        models.Document.deleted_at.is_(None),
+        live_document_row(workspace_name),
     )
 
     if session_name is not None:
@@ -209,7 +245,7 @@ async def summarize_documents_by_level(
             models.Document.workspace_name == workspace_name,
             models.Document.observer == observer,
             models.Document.observed == observed,
-            models.Document.deleted_at.is_(None),
+            live_document_row(workspace_name),
         )
         .group_by(models.Document.level)
     )
@@ -255,7 +291,7 @@ async def query_explicit_documents_after(
         models.Document.observer == observer,
         models.Document.observed == observed,
         models.Document.level == "explicit",
-        models.Document.deleted_at.is_(None),
+        live_document_row(workspace_name),
     ]
     if after is not None:
         conditions.append(
@@ -304,10 +340,11 @@ async def query_documents_most_derived(
     stmt = (
         select(models.Document)
         .where(
+            models.Document.tenant_id == models.scoped_tenant_id(),
             models.Document.workspace_name == workspace_name,
             models.Document.observer == observer,
             models.Document.observed == observed,
-            models.Document.deleted_at.is_(None),
+            live_document_row(workspace_name),
         )
         .order_by(
             models.Document.times_derived.desc(),
@@ -388,7 +425,7 @@ async def query_external_vector_document_ids(
     if external_vector_store is None:
         return []
 
-    namespace = external_vector_store.get_vector_namespace(
+    namespace = await external_vector_store.get_vector_namespace(
         "document", workspace_name, observer, observed
     )
 
@@ -430,7 +467,7 @@ async def fetch_documents_by_ids(
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.observer == observer)
         .where(models.Document.observed == observed)
-        .where(models.Document.deleted_at.is_(None))
+        .where(live_document_row(workspace_name))
         .where(models.Document.id.in_(document_ids))
     )
     stmt = apply_filter(stmt, models.Document, filters)
@@ -458,7 +495,7 @@ async def _query_documents_pgvector(
         .where(models.Document.observer == observer)
         .where(models.Document.observed == observed)
         .where(models.Document.embedding.isnot(None))
-        .where(models.Document.deleted_at.is_(None))
+        .where(live_document_row(workspace_name, peer_pair=(observer, observed)))
     )
 
     if max_distance is not None:
@@ -650,6 +687,7 @@ async def create_documents(
     observer: str,
     observed: str,
     deduplicate: bool = False,
+    history: DreamHistoryTarget | None = None,
 ) -> CreateDocumentsResult:
     """
     Create multiple documents with optional duplicate detection.
@@ -665,6 +703,9 @@ async def create_documents(
         observer: Name of the observing peer
         observed: Name of the observed peer
         deduplicate: Enable semantic duplicate detection
+        history: When set, record the created conclusions, and the existing
+            ones that semantic dedup replaced, to this dream run in the same
+            transaction
 
     Returns:
         List of DocumentCreate schemas that were actually inserted (excludes
@@ -788,9 +829,15 @@ async def create_documents(
                 existing_doc,
             )
 
-    # Tracks dedup keys already accepted from this batch so exact
-    # duplicates within a single inference call collapse to one document.
-    seen_in_batch: set[tuple[str, str, str | None]] = set()
+    # First document seen per dedup key, so exact duplicates within a single
+    # inference call collapse to one document. A collapsed duplicate's
+    # citations fold into the first one, and into its pending row if any.
+    first_in_batch: dict[tuple[str, str, str | None], schemas.DocumentCreate] = {}
+    pending_by_key: dict[tuple[str, str, str | None], models.Document] = {}
+    # Existing row id -> the incoming document replacing it, by its dedup key.
+    replaced_by: dict[
+        str, tuple[schemas.DocumentCreate, tuple[str, str, str | None]]
+    ] = {}
     row_ops: list[_DocumentRowOp] = []
     pending_times_derived: dict[str, int] = {}
 
@@ -819,10 +866,21 @@ async def create_documents(
 
             # Exact-match dedup, always on:
             # 1) collapse exact duplicates within this batch (drop silently).
-            if dedup_key in seen_in_batch:
+            first_doc = first_in_batch.get(dedup_key)
+            if first_doc is not None:
                 exact_dup_in_batch_count += 1
+                first_doc.source_message_ids = _merge_citations(
+                    first_doc.source_message_ids, doc.source_message_ids
+                )
+                pending_doc = pending_by_key.get(dedup_key)
+                if pending_doc is not None:
+                    # Same validation as the first insert: a malformed id
+                    # would fail the check constraints and the whole batch.
+                    pending_doc.source_message_links = build_source_message_links(
+                        first_doc.source_message_ids, workspace_name
+                    )
                 continue
-            seen_in_batch.add(dedup_key)
+            first_in_batch[dedup_key] = doc
 
             # 2) drop exact duplicates of an existing live document, recording
             #    the re-derivation as reinforcement on the existing row.
@@ -860,7 +918,13 @@ async def create_documents(
                     )
                     doc.times_derived = max(doc.times_derived, current_td + 1)
                     pending_times_derived[existing_dup.id] = doc.times_derived
+                    # The replacement inherits the replaced row's citations,
+                    # as it inherits its derivation count.
+                    doc.source_message_ids = _merge_citations(
+                        existing_dup.source_message_ids, doc.source_message_ids
+                    )
                     row_ops.append(_DocumentRowOp("replace", existing_dup.id))
+                    replaced_by.setdefault(existing_dup.id, (doc, dedup_key))
                     semantic_dup_replaced_count += 1
                 elif (
                     duplicate_result is SemanticRejectionResult.REJECTED
@@ -888,6 +952,7 @@ async def create_documents(
             )
             honcho_documents.append(new_doc)
             accepted_documents.append(doc)
+            pending_by_key[dedup_key] = new_doc
             if doc.embedding:
                 docs_with_embeddings.append((new_doc, doc.embedding))
 
@@ -907,6 +972,27 @@ async def create_documents(
             )
             continue
 
+    # A reinforce aimed at a row this batch also replaces would land on the
+    # deleted row, or be skipped, depending on op order. Its citations belong
+    # to the replacement.
+    for op in row_ops:
+        if op.kind != "reinforce" or op.fallback_document is None:
+            continue
+        replacement = replaced_by.get(op.document_id)
+        if replacement is None:
+            continue
+        replacement_doc, replacement_key = replacement
+        replacement_doc.source_message_ids = _merge_citations(
+            replacement_doc.source_message_ids,
+            op.fallback_document.source_message_ids,
+        )
+        replacement_row = pending_by_key.get(replacement_key)
+        if replacement_row is not None:
+            replacement_row.source_message_links = build_source_message_links(
+                replacement_doc.source_message_ids, workspace_name
+            )
+
+    replaced_rows: list[models.Document] = []
     try:
         fallback_docs = await _apply_document_row_updates(
             db,
@@ -914,6 +1000,7 @@ async def create_documents(
             workspace_name=workspace_name,
             observer=observer,
             observed=observed,
+            replaced_out=replaced_rows,
         )
         for fallback_doc in fallback_docs:
             new_doc = _document_model_from_create(
@@ -927,6 +1014,19 @@ async def create_documents(
             if fallback_doc.embedding:
                 docs_with_embeddings.append((new_doc, fallback_doc.embedding))
         db.add_all(honcho_documents)
+        if history is not None:
+            await _record_created_history(
+                db,
+                history,
+                workspace_name,
+                created=honcho_documents,
+                replaced=replaced_rows,
+                replaced_by={
+                    old_id: pending_by_key.get(key)
+                    for old_id, (_, key) in replaced_by.items()
+                },
+            )
+        await record_explicit_documents(db, honcho_documents)
         # NOTE
         # If the process crashes after this commit but before vector upsert completes,
         # documents will be left in sync_state='pending' with NULL embeddings.
@@ -952,7 +1052,7 @@ async def create_documents(
                 await db.commit()
             else:
                 # External vector store - upsert and track sync state
-                namespace = external_vector_store.get_vector_namespace(
+                namespace = await external_vector_store.get_vector_namespace(
                     "document",
                     workspace_name,
                     observer,
@@ -1093,6 +1193,7 @@ async def delete_documents(
     observer: str,
     observed: str,
     session_name: str | None = None,
+    history: DreamHistoryTarget | None = None,
 ) -> list[tuple[str, str]]:
     """
     Soft-delete multiple documents in a single UPDATE ... RETURNING statement.
@@ -1101,6 +1202,9 @@ async def delete_documents(
     that matched the workspace/observer/observed filter and were not already
     soft-deleted. IDs that didn't match are silently skipped; callers can diff
     the returned ids against the input to detect misses.
+
+    With ``history``, the deleted rows' content is recorded to that dream run
+    in the same transaction.
     """
     if not document_ids:
         return []
@@ -1119,10 +1223,30 @@ async def delete_documents(
         update(models.Document)
         .where(*conditions)
         .values(deleted_at=func.now())
-        .returning(models.Document.id, models.Document.level)
+        .returning(
+            models.Document.id,
+            models.Document.level,
+            models.Document.content,
+            models.Document.session_name,
+        )
     )
     result = await db.execute(stmt)
     rows = result.all()
+    if history is not None:
+        await record_removed(
+            db,
+            history,
+            workspace_name,
+            [
+                RemovedConclusion(
+                    id=row.id,
+                    level=row.level,
+                    content=row.content,
+                    session_name=row.session_name,
+                )
+                for row in rows
+            ],
+        )
     await db.commit()
     return [(row.id, row.level) for row in rows]
 
@@ -1133,10 +1257,12 @@ async def delete_document_by_id(
     document_id: str,
 ) -> None:
     """
-    Soft-delete a document by ID and workspace.
+    Soft-delete a document by ID and workspace, and erase its history copies.
 
     Sets deleted_at timestamp to mark the document as deleted. The reconciliation
-    job handles vector store cleanup and hard deletion from the database.
+    job handles vector store cleanup and hard deletion from the database. Any
+    copy Representation History kept of it is deleted in the same transaction,
+    so a conclusion a dream already removed can still be erased this way.
 
     Args:
         db: Database session
@@ -1144,7 +1270,8 @@ async def delete_document_by_id(
         document_id: ID of the document to delete
 
     Raises:
-        ResourceNotFoundException: If document not found or doesn't belong to the workspace
+        ResourceNotFoundException: If neither a live document nor a history copy
+            with this ID exists in the workspace
     """
     update_stmt = (
         update(models.Document)
@@ -1156,8 +1283,10 @@ async def delete_document_by_id(
         .values(deleted_at=func.now())
     )
     result = cast(CursorResult[Any], await db.execute(update_stmt))
+    # After the document, the order a dream takes them in when it removes one.
+    erased = await erase_conclusion_history(db, workspace_name, document_id)
 
-    if result.rowcount == 0:
+    if result.rowcount == 0 and erased == 0:
         raise ResourceNotFoundException(
             f"Document {document_id} not found or does not belong to workspace {workspace_name}"
         )
@@ -1292,6 +1421,7 @@ async def create_observations(
 
     try:
         db.add_all(honcho_documents)
+        await record_explicit_documents(db, honcho_documents)
         await db.commit()
         # Refresh all documents to get generated IDs and timestamps
         for doc in honcho_documents:
@@ -1319,7 +1449,7 @@ async def create_observations(
                 observer,
                 observed,
             ), docs_with_embeddings in collection_embeddings.items():
-                namespace = external_vector_store.get_vector_namespace(
+                namespace = await external_vector_store.get_vector_namespace(
                     "document",
                     workspace_name,
                     observer,
@@ -1426,6 +1556,9 @@ def _document_model_from_create(
             session_name=doc.session_name,
             embedding=doc.embedding,
             source_links=build_source_links(doc.source_ids, workspace_name),
+            source_message_links=build_source_message_links(
+                doc.source_message_ids, workspace_name
+            ),
         )
     else:
         new_doc = models.Document(
@@ -1438,6 +1571,9 @@ def _document_model_from_create(
             internal_metadata=metadata_dict,
             session_name=doc.session_name,
             source_links=build_source_links(doc.source_ids, workspace_name),
+            source_message_links=build_source_message_links(
+                doc.source_message_ids, workspace_name
+            ),
         )
     if doc.embedding:
         new_doc.sync_state = "pending"
@@ -1451,8 +1587,12 @@ async def _apply_document_row_updates(
     workspace_name: str,
     observer: str,
     observed: str,
+    replaced_out: list[models.Document] | None = None,
 ) -> list[schemas.DocumentCreate]:
-    """Lock target rows by id, apply ops, return fallbacks for vanished targets."""
+    """Lock target rows by id, apply ops, return fallbacks for vanished targets.
+
+    Rows a `replace` op soft-deletes are appended to ``replaced_out``.
+    """
     if not ops:
         return []
     # Deadlock fix: lock in id order (IN-clause order is ignored).
@@ -1471,6 +1611,32 @@ async def _apply_document_row_updates(
         .execution_options(populate_existing=True)
     )
     locked = {doc.id: doc for doc in result.scalars()}
+    # Read the targets' current citations under the row lock: the selectin
+    # collection can predate a concurrent writer's links.
+    cite_ids = sorted(
+        {
+            op.document_id
+            for op in ops
+            if op.kind == "reinforce"
+            and op.fallback_document is not None
+            and op.fallback_document.source_message_ids
+        }
+    )
+    existing_citations: dict[str, list[str]] = {doc_id: [] for doc_id in cite_ids}
+    if cite_ids:
+        citation_rows = await db.execute(
+            select(
+                models.ConclusionSourceMessage.conclusion_id,
+                models.ConclusionSourceMessage.message_id,
+            )
+            .where(models.ConclusionSourceMessage.conclusion_id.in_(cite_ids))
+            .order_by(
+                models.ConclusionSourceMessage.conclusion_id,
+                models.ConclusionSourceMessage.position,
+            )
+        )
+        for conclusion_id, message_id in citation_rows.all():
+            existing_citations[conclusion_id].append(message_id)
     now = datetime.datetime.now(datetime.UTC)
     fallbacks: list[schemas.DocumentCreate] = []
     stale_at_lock = {
@@ -1484,6 +1650,8 @@ async def _apply_document_row_updates(
         if op.kind == "replace":
             if row is not None and row.deleted_at is None:
                 row.deleted_at = now
+                if replaced_out is not None:
+                    replaced_out.append(row)
             continue
         # reinforce
         if op.document_id in stale_at_lock:
@@ -1494,8 +1662,83 @@ async def _apply_document_row_updates(
             # An earlier op in this batch replaced this row.
             continue
         row.times_derived = max(row.times_derived + 1, op.incoming_times_derived)
+        if op.fallback_document is not None:
+            _append_citations(
+                row,
+                existing_citations.get(row.id, []),
+                op.fallback_document.source_message_ids,
+                workspace_name,
+            )
     await db.flush()
     return fallbacks
+
+
+async def _record_created_history(
+    db: AsyncSession,
+    history: DreamHistoryTarget,
+    workspace_name: str,
+    *,
+    created: list[models.Document],
+    replaced: list[models.Document],
+    replaced_by: dict[str, models.Document | None],
+) -> None:
+    """Record a dream's created and dedup-replaced conclusions before commit."""
+    # New rows get their ids at flush.
+    await db.flush()
+    await record_created(
+        db,
+        history,
+        workspace_name,
+        [
+            CreatedConclusion(
+                id=doc.id,
+                level=doc.level,
+                source_ids=[
+                    link.source_id
+                    for link in sorted(doc.source_links, key=lambda link: link.position)
+                ],
+            )
+            for doc in created
+        ],
+    )
+    await record_removed(
+        db,
+        history,
+        workspace_name,
+        [
+            RemovedConclusion(
+                id=row.id,
+                level=row.level,
+                content=row.content,
+                session_name=row.session_name,
+                replaced_by=(
+                    replacement.id
+                    if (replacement := replaced_by.get(row.id)) is not None
+                    else None
+                ),
+            )
+            for row in replaced
+        ],
+    )
+
+
+def _append_citations(
+    row: models.Document,
+    existing: list[str],
+    incoming: list[str] | None,
+    workspace_name: str,
+) -> None:
+    """Add the incoming citations a reinforced row lacks, after its own.
+
+    ``existing`` is updated in place, so a second reinforce of the same row in
+    one batch sees the first one's additions.
+    """
+    for link in build_source_message_links(incoming, workspace_name):
+        if link.message_id in existing:
+            continue
+        link.position = len(existing)
+        row.source_message_links.append(link)
+        existing.append(link.message_id)
 
 
 class SemanticRejectionResult(Enum):
@@ -1512,8 +1755,12 @@ def _score_semantic_dup(
     The richer text wins: tokens the other side lacks are weighted ten times a
     shared token, and a tie keeps the incoming document.
     """
-    tokens_new = set(embedding_client.encoding.encode(doc.content))
-    tokens_existing = set(embedding_client.encoding.encode(existing_doc.content))
+    tokens_new = set(
+        embedding_client.encoding.encode(doc.content, disallowed_special=())
+    )
+    tokens_existing = set(
+        embedding_client.encoding.encode(existing_doc.content, disallowed_special=())
+    )
     unique_new = len(tokens_new - tokens_existing)
     unique_existing = len(tokens_existing - tokens_new)
     score_new = len(tokens_new) + (unique_new * 10)
@@ -1742,56 +1989,89 @@ async def cleanup_soft_deleted_documents(
         minutes=older_than_minutes
     )
 
-    # Find soft-deleted documents ready for cleanup
-    # Use FOR UPDATE SKIP LOCKED to prevent multiple deriver instances from
-    # processing the same documents simultaneously
-    stmt = (
-        select(models.Document)
-        .where(models.Document.deleted_at.is_not(None))
-        .where(models.Document.deleted_at < cutoff)
-        .limit(batch_size)
-        .with_for_update(skip_locked=True)
-    )
-    result = await db.execute(stmt)
-    documents = list(result.scalars().all())
+    # Find soft-deleted documents ready for cleanup, oldest first (served by the
+    # partial ix_documents_deleted_at). Use FOR UPDATE SKIP LOCKED to prevent
+    # multiple deriver instances from processing the same documents simultaneously.
+    # region ai
+    # The sweep spans tenants, and a tenant whose vector namespace can't be resolved
+    # must not strand everyone else: its rows stay eligible, so a batch they fill
+    # would clean nothing, and the next cycle would select the same rows. When a
+    # batch contains such a tenant, it is excluded and the batch re-selected. Each
+    # round excludes at least one more tenant from a batch of at most batch_size
+    # rows, so the loop ends; flag-off there is one tenant and at most two rounds.
+    # endregion
+    prefixes: dict[str, str] = {}
+    unresolvable: set[str] = set()
+    while True:
+        stmt = (
+            select(models.Document)
+            .where(models.Document.deleted_at.is_not(None))
+            .where(models.Document.deleted_at < cutoff)
+        )
+        if unresolvable:
+            stmt = stmt.where(models.Document.tenant_id.not_in(unresolvable))
+        stmt = (
+            stmt.order_by(models.Document.deleted_at)
+            .limit(batch_size)
+            .with_for_update(skip_locked=True)
+        )
+        documents = list((await db.execute(stmt)).scalars().all())
+        if not documents:
+            await db.rollback()
+            return 0
 
-    if not documents:
-        return 0
+        newly_unresolvable: set[str] = set()
+        for tenant_id in {doc.tenant_id for doc in documents} - prefixes.keys():
+            try:
+                prefixes[tenant_id] = await prefix_for_tenant(tenant_id, db)
+            except (VectorNamespaceUnresolved, VectorStoreError):
+                logger.warning(
+                    "No vector namespace for tenant %s; leaving its soft-deleted documents",
+                    tenant_id,
+                )
+                newly_unresolvable.add(tenant_id)
+        if not newly_unresolvable:
+            break
+        unresolvable |= newly_unresolvable
 
     # Group by namespace for batch vector deletion
-    by_namespace: dict[str, list[str]] = {}
+    by_namespace: dict[str, list[models.Document]] = {}
     for doc in documents:
-        namespace = external_vector_store.get_vector_namespace(
+        namespace = await external_vector_store.get_vector_namespace(
             "document",
             doc.workspace_name,
             doc.observer,
             doc.observed,
+            prefix=prefixes[doc.tenant_id],
         )
-        by_namespace.setdefault(namespace, []).append(doc.id)
+        by_namespace.setdefault(namespace, []).append(doc)
 
     # Delete from external vector store (per namespace) and track successful deletions
-    successfully_deleted_ids: set[str] = set()
-    for namespace, ids in by_namespace.items():
+    successfully_deleted_keys: set[tuple[str, str]] = set()
+    for namespace, docs in by_namespace.items():
         try:
-            await external_vector_store.delete_many(namespace, ids)
-            # Only add to successfully_deleted_ids if vector deletion succeeded
-            successfully_deleted_ids.update(ids)
+            await external_vector_store.delete_many(namespace, [d.id for d in docs])
+            # Only add to successfully_deleted_keys if vector deletion succeeded
+            successfully_deleted_keys.update((d.tenant_id, d.id) for d in docs)
         except Exception as e:
             # Log but continue - vectors may already be deleted or namespace may not exist
             logger.warning(f"Failed to delete vectors from {namespace}: {e}")
 
     # Only hard delete documents where vector deletion succeeded
-    if successfully_deleted_ids:
+    # ai: keyed on (tenant_id, id), the PK — an id-only IN can't seek it and reads every partition's index
+    if successfully_deleted_keys:
         await db.execute(
             delete(models.Document).where(
-                models.Document.id.in_(successfully_deleted_ids)
+                tuple_(models.Document.tenant_id, models.Document.id).in_(
+                    successfully_deleted_keys
+                )
             )
         )
         await db.commit()
         logger.debug(
-            f"Cleaned up {len(successfully_deleted_ids)} soft-deleted documents"
+            f"Cleaned up {len(successfully_deleted_keys)} soft-deleted documents"
         )
-        return len(successfully_deleted_ids)
+        return len(successfully_deleted_keys)
 
     # No documents were successfully deleted from vector store
     # Release FOR UPDATE locks by rolling back the transaction
@@ -1825,7 +2105,7 @@ async def get_documents_by_ids(
     stmt = select(models.Document).where(
         models.Document.workspace_name == workspace_name,
         models.Document.id.in_(document_ids),
-        models.Document.deleted_at.is_(None),
+        live_document_row(workspace_name),
     )
     result = await db.execute(stmt)
     return result.scalars().all()
@@ -1857,9 +2137,12 @@ def get_child_observations(
         Select query for documents that reference this document as a source,
         for pagination support via apaginate()
     """
+    # An entity column, not literal(1): then the tenant predicate hook
+    # (models._add_tenant_predicate) adds tenant_id to this subquery.
     linked = (
-        select(literal(1))
+        select(models.DocumentSource.derived_id)
         .where(
+            models.DocumentSource.tenant_id == models.Document.tenant_id,
             models.DocumentSource.derived_id == models.Document.id,
             models.DocumentSource.source_id == parent_id,
         )
@@ -1867,9 +2150,10 @@ def get_child_observations(
     )
     # Undrained rows still carry linkage in the legacy JSONB column.
     stmt = select(models.Document).where(
+        models.Document.tenant_id == models.scoped_tenant_id(),
         models.Document.workspace_name == workspace_name,
         or_(linked, models.Document.legacy_source_ids.contains([parent_id])),
-        models.Document.deleted_at.is_(None),
+        live_document_row(workspace_name),
     )
     if observer:
         stmt = stmt.where(models.Document.observer == observer)

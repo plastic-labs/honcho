@@ -1,4 +1,5 @@
 import datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -49,6 +50,34 @@ async def test_create_message(
 
 
 @pytest.mark.asyncio
+async def test_create_message_with_special_token_strings(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Content quoting tokenizer special tokens is stored as plain text, not a 422."""
+    test_workspace, test_peer = sample_data
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    content = "The model emitted <|endoftext|> right after <|fim_prefix|>."
+    url = f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages"
+
+    response = client.post(
+        url, json={"messages": [{"content": content, "peer_id": test_peer.name}]}
+    )
+    assert response.status_code == 201
+    created = response.json()[0]
+    assert created["content"] == content
+    assert created["token_count"] > 0
+
+    response = client.post(f"{url}/list", json={})
+    assert response.status_code == 200
+    assert [m["content"] for m in response.json()["items"]] == [content]
+
+
+@pytest.mark.asyncio
 async def test_create_message_schedules_immediate_embed(
     client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
 ):
@@ -74,7 +103,53 @@ async def test_create_message_schedules_immediate_embed(
         )
     assert response.status_code == 201
     public_id = response.json()[0]["id"]
-    mock_embed_now.assert_awaited_once_with([public_id])
+    mock_embed_now.assert_awaited_once_with([public_id], tenant_id=None)
+
+
+@pytest.mark.parametrize("upload", [False, True])
+@pytest.mark.asyncio
+async def test_create_message_hands_enqueue_the_requests_tenant(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    upload: bool,
+):
+    """Both create routes read the tenant while the request is bound and pass it
+    to the enqueue task, so the task never depends on the request's binding still
+    being in place when background tasks run."""
+    import io
+
+    test_workspace, test_peer = sample_data
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+    url = f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages"
+
+    with (
+        patch(
+            "src.routers.messages.tenant_context",
+            SimpleNamespace(get=lambda: "tenant-from-request"),
+        ),
+        patch("src.routers.messages.enqueue", new=AsyncMock()) as mock_enqueue,
+    ):
+        if upload:
+            response = client.post(
+                f"{url}/upload",
+                files={"file": ("note.txt", io.BytesIO(b"hello"), "text/plain")},
+                data={"peer_id": test_peer.name},
+            )
+        else:
+            response = client.post(
+                url,
+                json={"messages": [{"content": "hello", "peer_id": test_peer.name}]},
+            )
+
+    assert response.status_code == 201
+    mock_enqueue.assert_awaited_once()
+    assert mock_enqueue.await_args is not None
+    assert mock_enqueue.await_args.kwargs == {"tenant_id": "tenant-from-request"}
 
 
 @pytest.mark.asyncio
@@ -161,7 +236,7 @@ async def test_file_upload_schedules_immediate_embed(
         )
     assert response.status_code == 201
     expected_ids = [m["id"] for m in response.json()]
-    mock_embed_now.assert_awaited_once_with(expected_ids)
+    mock_embed_now.assert_awaited_once_with(expected_ids, tenant_id=None)
 
 
 @pytest.mark.asyncio
@@ -1147,6 +1222,51 @@ async def test_create_messages_with_file_too_large(
 
         # Should raise FileTooLargeError which gets converted to 413
         assert response.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_upload_malformed_pdf_returns_422(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """A truncated or garbage PDF is a bad upload (422), not a server error."""
+    test_workspace, test_peer = sample_data
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    for payload in (b"", b"not a pdf", b"%PDF-1.4\n"):
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/upload",
+            files={"file": ("a.pdf", payload, "application/pdf")},
+            data={"peer_id": test_peer.name},
+        )
+        assert response.status_code == 422, payload
+
+
+@pytest.mark.asyncio
+async def test_upload_form_field_failing_schema_returns_422(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Form fields are JSON-decoded before validation, so a well-formed value of
+    the wrong type (a list for metadata) must still be a 422."""
+    test_workspace, test_peer = sample_data
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/upload",
+        files={"file": ("a.txt", b"hello", "text/plain")},
+        data={"peer_id": test_peer.name, "metadata": "[]"},
+    )
+    assert response.status_code == 422, response.text
+    error = response.json()["detail"][0]
+    assert error["loc"] == ["body", "metadata"]
+    assert "input" not in error
 
 
 @pytest.mark.asyncio

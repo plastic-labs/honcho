@@ -70,6 +70,7 @@ def print_welcome(console: Console) -> None:
         ("honcho init",                  "configure API key and server URL"),
         ("honcho start [--setup basic]", "run a local Honcho stack (Docker)"),
         ("honcho doctor",                "verify connection and workspace health"),
+        ("honcho install",               "find your AI agents and add Honcho to them"),
     ]
     stack_rows = [
         ("honcho start / status / stop",          "lifecycle for the local Docker stack"),
@@ -90,6 +91,7 @@ def print_welcome(console: Console) -> None:
         ("",           "remove-session · status"),
         ("message",    "list · create · get"),
         ("conclusion", "list · create · search · delete"),
+        ("dream",      "list · inspect"),
         ("config",     "inspect current configuration"),
     ]
     memory_rows = [
@@ -102,6 +104,7 @@ def print_welcome(console: Console) -> None:
         ("honcho peer chat \"...\" -p <peer> --scope <scope>", "answer from one scope's sessions only"),
         ("honcho peer card -p <peer> -w <workspace>", "synthesized identity: traits, preferences, instructions"),
         ("honcho conclusion list -p <peer> -w <workspace>", "browse peer conclusions"),
+        ("honcho dream list -p <peer> -w <workspace>", "dreams about a peer; inspect one to see what it changed"),
         ("honcho session view / context -s <session>", "transcript, or what an agent would see"),
         ("honcho workspace queue-status", "is the deriver processing?"),
     ]

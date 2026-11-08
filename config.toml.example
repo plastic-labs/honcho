@@ -11,6 +11,7 @@ SESSION_OBSERVERS_LIMIT = 10
 GET_CONTEXT_MAX_TOKENS = 100000
 MAX_FILE_SIZE = 5242880  # 5MB
 MAX_MESSAGE_SIZE = 25000 # Characters
+PAGINATION_COUNT_LIMIT = 100000 # Rows a list endpoint counts for `total` before it stops
 EMBED_MESSAGES = true
 # LANGFUSE_HOST = "https://api.langfuse.com"
 # LANGFUSE_PUBLIC_KEY = "your-public-key-here"
@@ -18,6 +19,13 @@ EMBED_MESSAGES = true
 # LOCAL_METRICS_FILE = "metrics.jsonl"
 # REASONING_TRACES_FILE = "traces.jsonl"  # Path to JSONL file for reasoning traces
 NAMESPACE = "honcho"
+# Multi-tenant mode for a shared instance. Needs row-level-security policies and an
+# RLS-bypassing service role provisioned on the database out of band, JWT auth on
+# (AUTH_USE_AUTH) with tenant-bearing tokens, and a session-mode or no pooler; the
+# app refuses to boot otherwise. Self-hosted: leave off.
+# MULTI_TENANT = false
+# The tenant that owns this instance's data, with MULTI_TENANT off.
+# TENANT_ID = "acme"
 
 # Database settings
 [db]
@@ -155,6 +163,7 @@ ENABLED = true
 [dialectic]
 MAX_OUTPUT_TOKENS = 8192
 MAX_INPUT_TOKENS = 100000
+MAX_QUERY_LENGTH = 10000 # Characters
 SESSION_HISTORY_MAX_TOKENS = 4096
 BUDGET_ENABLED = false
 BRIEF_ENABLED = false
@@ -210,6 +219,7 @@ MESSAGES_PER_SHORT_SUMMARY = 20
 MESSAGES_PER_LONG_SUMMARY = 60
 MAX_TOKENS_SHORT = 1500
 MAX_TOKENS_LONG = 6000
+MAX_INPUT_TOKENS = 100000
 
 [summary.model_config]
 transport = "openai"
@@ -239,6 +249,8 @@ BUDGET_ENABLED = false
 NOTES_MODE = "off"  # off | shadow | on
 NOTES_MAX_TOKENS = 3000
 # WRITE_WINDOW_ITERATIONS = 2  # default: 15% of each specialist's limit
+HISTORY_ENABLED = true
+HISTORY_RETENTION_DAYS = 30
 
 [dream.deduction_model_config]
 transport = "openai"
@@ -290,6 +302,7 @@ DEFAULT_TTL_SECONDS = 300
 DEFAULT_LOCK_TTL_SECONDS = 5
 CONNECT_TIMEOUT_SECONDS = 5.0
 CONNECT_RETRIES = 3
+MAX_CONNECTIONS = 50
 
 # Vector store settings
 [vector_store]

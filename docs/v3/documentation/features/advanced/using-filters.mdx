@@ -629,6 +629,15 @@ sessions = honcho.sessions(filters={
 ```
 </CodeGroup>
 
+A wildcard, like an empty filter `{}`, places no constraint, so it is always true, including inside logical operators:
+
+| Filter | Matches |
+| --- | --- |
+| `{"AND": [{"peer_id": "*"}, {"peer_id": "bob"}]}` | bob only |
+| `{"OR": [{"peer_id": "*"}, {"peer_id": "bob"}]}` | everything |
+| `{"NOT": [{"peer_id": "*"}]}` | nothing |
+| `{"NOT": [{}]}` | nothing |
+
 ## Resource-Specific Examples
 
 ### Filtering Workspaces
@@ -784,6 +793,42 @@ bob_explicit = peer.conclusions_of("bob").list(filters={"level": "explicit"})
 ```
 </CodeGroup>
 
+Two fields link conclusions to what they came from. `source_ids` holds the
+conclusions a derived one was reasoned from; `source_message_ids` holds the
+messages an explicit one cites as evidence. Both take `contains` for a single
+id, `in` for any of several, and a bare list to require every id listed:
+
+<CodeGroup>
+```python Python
+# Conclusions reasoned from a given conclusion
+built_on = peer.conclusions.list(filters={"source_ids": {"contains": conclusion_id}})
+
+# Conclusions that cite a given message as evidence
+from_message = peer.conclusions.list(
+    filters={"source_message_ids": {"contains": message_id}}
+)
+```
+
+```typescript TypeScript
+(async () => {
+    // Conclusions reasoned from a given conclusion
+    const builtOn = await peer.conclusions.list({
+      filters: { source_ids: { contains: conclusionId } }
+    });
+
+    // Conclusions that cite a given message as evidence
+    const fromMessage = await peer.conclusions.list({
+      filters: { source_message_ids: { contains: messageId } }
+    });
+})();
+```
+</CodeGroup>
+
+`source_message_ids` is recorded only for conclusions the deriver wrote on
+Honcho v3.5.0 or later. Every derived level returns it as null, and so do older
+explicit conclusions until the deriver derives the same conclusion again and
+merges the new citations into them.
+
 ## Value Types
 
 A filter value has to be usable against the field it targets. Honcho validates
@@ -813,6 +858,16 @@ Three consequences worth knowing:
   the operator on the key — `{"metadata": {"status": {"ne": "done"}}}`. To negate
   a match, wrap the whole condition in `NOT`. See
   [Metadata Filtering](#metadata-filtering).
+
+Numeric comparisons within metadata (for example,
+`{"metadata": {"score": {"gt": 0}}}`) compare stored native JSON numbers and finite
+numeric strings. Native numbers retain PostgreSQL's full JSONB numeric range.
+Stored strings are conservatively limited to 1,000 characters and at most four
+exponent digits to avoid overflow during casting; strings such as `"NaN"`, `"Infinity"`, and
+`"-Infinity"` are intentionally not treated as numbers. Non-numeric or out-of-bound
+strings do not match ordered numeric comparisons (`gt`, `gte`, `lt`, `lte`);
+`ne` still matches values distinct from the requested number, including non-numeric
+and missing values.
 
 For every field other than `metadata`, the same rules apply however the value is
 wrapped — bare, under an operator, or inside an `in` list — so
