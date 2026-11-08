@@ -188,6 +188,15 @@ def test_config_opt_out_defaults_empty_and_host_presence_wins(
         },
     ).observation_opt_out_phrases == ["root phrase"]
 
+    assert _config(
+        plugin,
+        tmp_path / "empty-host.json",
+        {
+            "observationOptOutPhrases": ["root phrase"],
+            "hosts": {"hermes": {"observationOptOutPhrases": []}},
+        },
+    ).observation_opt_out_phrases == []
+
     caplog.set_level("WARNING")
     cfg = _config(
         plugin,
@@ -275,7 +284,13 @@ def test_failed_opt_out_configuration_sends_nothing_and_keeps_message_unsynced(
     )
     session.add_message("user", "sensitive", no_observe=True)
     user_peer, assistant_peer, honcho_session = MagicMock(), MagicMock(), MagicMock()
-    user_peer.message.side_effect = RuntimeError("SDK configuration rejected")
+
+    def message(content: str, **kwargs: Any) -> str:
+        if "configuration" in kwargs:
+            raise RuntimeError("SDK configuration rejected")
+        return content
+
+    user_peer.message.side_effect = message
 
     def get_peer(peer_id: str) -> MagicMock:
         return {"u": user_peer, "a": assistant_peer}[peer_id]
@@ -289,6 +304,10 @@ def test_failed_opt_out_configuration_sends_nothing_and_keeps_message_unsynced(
     manager._authed_call = authed_call
 
     assert manager._flush_session(session) is False
+    user_peer.message.assert_called_once_with(
+        "sensitive", configuration={"reasoning": {"enabled": False}}
+    )
+    assert all("configuration" in call.kwargs for call in user_peer.message.call_args_list)
     honcho_session.add_messages.assert_not_called()
     assert session.messages[0].get("_synced") is False
 
