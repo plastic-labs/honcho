@@ -65,6 +65,7 @@ def plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
             "spawn_context_thread": spawn_context_thread,
         },
         "agent.coding_context": {"INTERACTIVE_CODING_PLATFORMS": frozenset()},
+        "agent.skill_commands": {"extract_user_instruction_from_skill_message": lambda text: text},
         "agent.turn_author": {"a2a_key": a2a_key},
         "agent.secret_scope": {"get_secret": get_secret},
         "agent.redact": {"redact_sensitive_text": redact_sensitive_text},
