@@ -2262,7 +2262,9 @@ class AppSettings(HonchoSettings):
         the `context_window` of its model and of its fallback, where declared.
 
         The fallback is sent the same caps as the primary. The dream
-        specialists have no input budget, so their slots aren't checked.
+        specialists have no input budget, so their slots aren't checked. An
+        output cap set through `provider_params.extra_body` replaces the cap in
+        the request, but isn't checked here.
         """
         deriver_output = (
             self.DERIVER.MODEL_CONFIG.max_output_tokens or self.LLM.DEFAULT_MAX_TOKENS

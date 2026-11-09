@@ -206,7 +206,7 @@ A fallback's own `max_output_tokens` is never read.
 | Summarizer | `SUMMARY_MAX_INPUT_TOKENS`, with the larger summary cap |
 | Dialectic | `DIALECTIC_MAX_INPUT_TOKENS`, per level |
 
-The dream specialists have no input budget, so their models aren't checked. The check runs at startup only: it doesn't trim a prompt at request time, and input budgets are counted with Honcho's tokenizer, which can differ from the provider's.
+The dream specialists have no input budget, so their models aren't checked. The check runs at startup only: it doesn't trim a prompt at request time, and input budgets are counted with Honcho's tokenizer, which can differ from the provider's. It uses the output cap Honcho sends: an output cap set through `overrides.provider_params.extra_body` replaces that cap in the request but isn't checked.
 
 ```toml config.toml
 [models.nano]
