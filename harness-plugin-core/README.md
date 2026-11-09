@@ -21,17 +21,33 @@ Schema version 2 (`config.schema.json`, also at `https://cdn.jsdelivr.net/npm/@h
   "schemaVersion": 2,
   "hosts": {
     "harness": {
+      "oauth": {
+        "accessToken": "...",
+        "refreshToken": "...",
+        "accessExpiresAt": 1794263473,
+        "clientId": "harness-honcho",
+        "scope": "write"
+      },
+      "peerName": "alice",
+      "workspace": "harness",
+      "aiPeer": "harness"
+    },
+    "other-harness": {
       "apiKey": "hch-v3-...",
       "peerName": "alice",
       "workspace": "harness",
-      "aiPeer": "harness",
       "baseUrl": "http://localhost:8000"
     }
   }
 }
 ```
 
-`oauth` holds the plugin's own sign-in instead of `apiKey`. Omit `baseUrl` for Honcho cloud. A plugin may keep keys of its own in its block.
+A block signs in one of two ways:
+
+- `oauth`: the plugin's own sign-in to Honcho cloud, written by `saveGrant` after the device flow and refreshed by `ensureFreshCredential`. Each plugin has its own; none reads another's.
+- `apiKey`: a key from app.honcho.dev, or for a self-hosted Honcho (OAuth is cloud-only).
+
+`HONCHO_API_KEY` overrides both; with both in a block, a live `oauth` grant wins. Omit `baseUrl` for Honcho cloud. A plugin may keep keys of its own in its block.
 
 Resolution, highest wins: `HONCHO_*` env (`HONCHO_PEER_NAME`, `HONCHO_WORKSPACE`, `HONCHO_AI_PEER`, `HONCHO_BASE_URL`) → `hosts.<host>` → `defaults` → built-in. `peerName` falls back to `$USER`; a plugin's setup should ask for it, offering `suggestPeerName(file)` (the name the other plugins agree on, else the old top-level one, else `$USER`). `workspace` and `aiPeer` fall back to the host name. The SDK pins `/v3`; config stores the origin.
 
