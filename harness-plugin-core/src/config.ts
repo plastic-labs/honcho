@@ -1,108 +1,50 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { updateConfigFile, type OAuthTokens } from './oauth.js'
 
 /** Environment map shape; structurally identical to `process.env`, without depending on `@types/node` in consumers. */
 export type Env = Record<string, string | undefined>
 
-export interface AuthConfig {
+/** One plugin's settings: `hosts.<host>` in `~/.honcho/config.json`. */
+export interface HostConfig {
   apiKey?: string
-  /** See `OAuthTokens` in oauth.ts. */
-  oauth?: {
-    accessToken?: string
-    refreshToken?: string
-    accessExpiresAt?: number
-    clientId?: string
-    scope?: string
-  }
-}
-
-/** Identity + connection + kill switch. Valid at root and as a host override. */
-export interface RootConfig {
+  /** This plugin's own OAuth grant; see oauth.ts. */
+  oauth?: OAuthTokens
   peerName?: string
   workspace?: string
+  aiPeer?: string
+  /** Honcho API origin; omitted means Honcho cloud. */
   baseUrl?: string
-  timeoutMs?: number
-  auth?: AuthConfig
-  enabled?: boolean
 }
 
-export type HostBlock = RootConfig
-
-export interface FileConfig extends RootConfig {
+/** The file. Every setting lives in a host block; nothing at the top level. */
+export interface ConfigFile {
   schemaVersion?: number
-  hosts?: Record<string, HostBlock>
+  hosts?: Record<string, HostConfig>
 }
 
 export interface ResolvedConfig {
   host: string
   peerName: string
   workspace: string
+  aiPeer: string
   baseUrl: string
-  timeoutMs: number
-  auth: AuthConfig
-  apiKey?: string
-  enabled: boolean
+  /** Problems in the file; `honcho doctor` fixes them. */
   warnings: string[]
 }
 
 export const DEFAULT_BASE_URL = 'https://api.honcho.dev'
-export const DEFAULT_TIMEOUT_MS = 30_000
-export const CONFIG_SCHEMA_VERSION = 1
+export const CONFIG_SCHEMA_VERSION = 2
+/** Host block the honcho CLI keeps its own sign-in in. */
+export const CLI_HOST = 'honcho-cli'
 
-function isObj(v: unknown): v is Record<string, unknown> {
+function isObj(v: unknown): v is Record<string, any> {
   return v !== null && typeof v === 'object' && !Array.isArray(v)
 }
 
-/** Pre-schema files (no schemaVersion) → v1 keys. Host blocks included. */
-function migrate(file: unknown): Record<string, unknown> {
-  if (!isObj(file)) return {}
-  const v = file.schemaVersion
-  if (typeof v === 'number' && v >= CONFIG_SCHEMA_VERSION) return { ...file }
-  const out: Record<string, unknown> = { ...file }
-  const blocks: Record<string, unknown>[] = [out]
-  if (isObj(out.hosts)) {
-    out.hosts = Object.fromEntries(
-      Object.entries(out.hosts).map(([k, block]) => {
-        if (!isObj(block)) return [k, block]
-        const next = { ...block }
-        blocks.push(next)
-        return [k, next]
-      })
-    )
-  }
-  for (const b of blocks) {
-    if (typeof b.baseUrl !== 'string') {
-      if (typeof b.environmentUrl === 'string') b.baseUrl = b.environmentUrl
-      else if (isObj(b.endpoint) && typeof b.endpoint.baseUrl === 'string') {
-        b.baseUrl = b.endpoint.baseUrl
-      }
-    }
-    if (typeof b.workspace !== 'string' && typeof b.workspaceId === 'string') {
-      b.workspace = b.workspaceId
-    }
-    const auth: Record<string, unknown> = isObj(b.auth) ? { ...b.auth } : {}
-    if (typeof auth.apiKey !== 'string' && typeof b.apiKey === 'string') auth.apiKey = b.apiKey
-    if (!isObj(auth.oauth) && isObj(b.oauth)) auth.oauth = b.oauth
-    if (Object.keys(auth).length) b.auth = auth
-    delete b.environmentUrl
-    delete b.endpoint
-    delete b.workspaceId
-    delete b.apiKey
-    delete b.oauth
-  }
-  out.schemaVersion = 1
-  return out
-}
-
-function merge<T>(base: T, over: unknown): T {
-  if (over === undefined || over === null) return base
-  if (Array.isArray(over) || !isObj(over)) return over as T
-  const out: Record<string, unknown> = { ...(isObj(base) ? base : {}) }
-  for (const [k, v] of Object.entries(over)) {
-    if (v !== undefined) out[k] = k in out ? merge(out[k], v) : v
-  }
-  return out as T
+function str(v: unknown): string | undefined {
+  return typeof v === 'string' && v ? v : undefined
 }
 
 /** Make a value safe to pass to the SDK as `baseURL`. */
@@ -124,109 +66,28 @@ export function normalizeBaseUrl(input: string): string {
   }
 }
 
-function interpolate(value: string, env: Env, warnings: string[]): string {
-  return value.replace(/\$\{([^}]+)\}/g, (m, name: string) => {
-    const v = env[name]
-    if (!v) {
-      warnings.push(`${m} is not set`)
-      return m
-    }
-    return v
-  })
-}
-
-function walkStrings<T>(value: T, fn: (s: string) => string): T {
-  if (typeof value === 'string') return fn(value) as T
-  if (Array.isArray(value)) return value.map((x) => walkStrings(x, fn)) as T
-  if (isObj(value)) {
-    const out: Record<string, unknown> = {}
-    for (const [k, v] of Object.entries(value)) out[k] = walkStrings(v, fn)
-    return out as T
-  }
-  return value
-}
-
-/** Pull only the six root fields. Extra host keys (injection, observation, …) are ignored. */
-function pickRoot(block: unknown): RootConfig {
-  if (!isObj(block)) return {}
-  const auth: AuthConfig = isObj(block.auth) ? { ...(block.auth as AuthConfig) } : {}
-  const out: RootConfig = {}
-  if (typeof block.peerName === 'string') out.peerName = block.peerName
-  if (typeof block.workspace === 'string') out.workspace = block.workspace
-  if (typeof block.baseUrl === 'string') out.baseUrl = block.baseUrl
-  if (typeof block.timeoutMs === 'number') out.timeoutMs = block.timeoutMs
-  if (Object.keys(auth).length) out.auth = auth
-  if (typeof block.enabled === 'boolean') out.enabled = block.enabled
-  return out
-}
-
-function pickHost(hosts: Record<string, unknown> | undefined, name: string): RootConfig {
-  if (!hosts || !isObj(hosts[name])) return {}
-  return pickRoot(hosts[name])
-}
-
 /**
- * Highest wins: HONCHO_* env → overlay → hosts.<host> → root → built-in.
+ * Highest wins: `HONCHO_*` env → `hosts.<host>` → `defaults` → built-in.
+ * Only this host's block is read. `peerName` with none of its own falls back
+ * to the one another host uses, so plugins sharing a workspace stay one peer.
+ * Credentials come from `pickCredential` / `ensureFreshCredential`.
  */
 export function resolveConfig(
   file: unknown,
-  opts: { host: string; env?: Env; overlay?: RootConfig }
+  opts: { host: string; env?: Env; defaults?: { workspace?: string; aiPeer?: string } }
 ): ResolvedConfig {
-  const warnings: string[] = []
   const env = opts.env ?? process.env
-  const host = opts.host
-  const raw = migrate(file)
-  if (typeof raw.schemaVersion === 'number' && raw.schemaVersion > CONFIG_SCHEMA_VERSION) {
-    warnings.push(`config schemaVersion ${raw.schemaVersion} is newer than ${CONFIG_SCHEMA_VERSION}`)
-  }
-  const hosts = isObj(raw.hosts) ? raw.hosts : undefined
-
-  let acc: RootConfig = {
-    baseUrl: DEFAULT_BASE_URL,
-    timeoutMs: DEFAULT_TIMEOUT_MS,
-    enabled: true,
-    workspace: host,
-  }
-  const root = pickRoot(raw)
-  if (root.auth) delete root.auth.oauth // grants are per plugin: hosts.<host>.oauth only
-  const layers = [root, pickHost(hosts, host), pickRoot(opts.overlay)]
-  acc = layers.reduce((a, l) => merge(a, l), acc)
-  // a grant is taken whole from one layer, never merged field by field
-  const grant = [...layers].reverse().find((l) => l.auth?.oauth)?.auth?.oauth
-  if (grant) acc.auth = { ...acc.auth, oauth: grant }
-
-  if (env.HONCHO_API_KEY) {
-    if (acc.auth?.apiKey) warnings.push('HONCHO_API_KEY shadows auth.apiKey')
-    acc = merge(acc, { auth: { apiKey: env.HONCHO_API_KEY } })
-  }
-  if (env.HONCHO_BASE_URL || env.HONCHO_URL || env.HONCHO_ENDPOINT) {
-    const token = env.HONCHO_BASE_URL || env.HONCHO_URL || env.HONCHO_ENDPOINT || ''
-    acc.baseUrl = token === 'local' ? 'http://localhost:8000' : token
-  }
-  if (env.HONCHO_WORKSPACE || env.HONCHO_WORKSPACE_ID) {
-    acc.workspace = env.HONCHO_WORKSPACE || env.HONCHO_WORKSPACE_ID
-  }
-  if (env.HONCHO_PEER_NAME) acc.peerName = env.HONCHO_PEER_NAME
-  if (env.HONCHO_TIMEOUT_MS) {
-    const n = Number(env.HONCHO_TIMEOUT_MS)
-    if (Number.isFinite(n) && n > 0) acc.timeoutMs = n
-  }
-  if (env.HONCHO_ENABLED === 'false') acc.enabled = false
-
-  acc = walkStrings(acc, (s) => interpolate(s, env, warnings))
-  if (acc.baseUrl) acc.baseUrl = normalizeBaseUrl(acc.baseUrl)
-
-  const auth = acc.auth ?? {}
+  const { host } = opts
+  const hosts = isObj(file) && isObj(file.hosts) ? file.hosts : {}
+  const block = isObj(hosts[host]) ? hosts[host] : {}
+  const otherPeer = Object.values(hosts).map((b) => (isObj(b) ? str(b.peerName) : undefined)).find(Boolean)
   return {
     host,
-    peerName: acc.peerName || env.USER || env.USERNAME || 'user',
-    workspace: acc.workspace || host,
-    baseUrl: acc.baseUrl || DEFAULT_BASE_URL,
-    timeoutMs: acc.timeoutMs && acc.timeoutMs > 0 ? acc.timeoutMs : DEFAULT_TIMEOUT_MS,
-    auth,
-    apiKey: auth.apiKey,
-    enabled: acc.enabled !== false,
-    warnings,
+    peerName: str(env.HONCHO_PEER_NAME) ?? str(block.peerName) ?? otherPeer ?? str(env.USER) ?? str(env.USERNAME) ?? 'user',
+    workspace: str(env.HONCHO_WORKSPACE) ?? str(block.workspace) ?? opts.defaults?.workspace ?? host,
+    aiPeer: str(env.HONCHO_AI_PEER) ?? str(block.aiPeer) ?? opts.defaults?.aiPeer ?? host,
+    baseUrl: normalizeBaseUrl(str(env.HONCHO_BASE_URL) ?? str(block.baseUrl) ?? DEFAULT_BASE_URL),
+    warnings: checkConfig(file).map((i) => i.message),
   }
 }
 
@@ -244,20 +105,203 @@ export function configPath(env: Env = process.env): string {
   return join(home, '.honcho', 'config.json')
 }
 
+/** The parsed file, or `{}` when it is missing or unreadable. */
+export function readConfigFile(env: Env = process.env): Record<string, any> {
+  const path = configPath(env)
+  if (!existsSync(path)) return {}
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf-8'))
+    return isObj(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
 export function loadConfig(opts: {
   host: string
   env?: Env
-  overlay?: RootConfig
+  defaults?: { workspace?: string; aiPeer?: string }
 }): ResolvedConfig {
-  const env = opts.env ?? process.env
-  const path = configPath(env)
-  let file: unknown = {}
-  if (existsSync(path)) {
-    try {
-      file = JSON.parse(readFileSync(path, 'utf-8'))
-    } catch {
-      file = {}
+  return resolveConfig(readConfigFile(opts.env), opts)
+}
+
+/**
+ * Merge `patch` into `hosts.<host>` under the config lock; `undefined` removes a
+ * key. Touches nothing else in the file.
+ */
+export async function saveHost(path: string, host: string, patch: Partial<HostConfig>): Promise<void> {
+  await updateConfigFile(path, (file) => {
+    if (!isObj(file.hosts)) file.hosts = {}
+    const block = isObj(file.hosts[host]) ? file.hosts[host] : (file.hosts[host] = {})
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) delete block[k]
+      else block[k] = v
     }
+  })
+}
+
+// ── checks + fixes (shared with `honcho doctor`) ────────────────────────────
+
+export type ConfigFix = { op: 'set'; path: string[]; value: unknown } | { op: 'delete'; path: string[] }
+
+export interface ConfigIssue {
+  /** Where the problem is, e.g. `apiKey` or `hosts.claude_code.endpoint`. */
+  path: string
+  message: string
+  /** Applied in order by `applyFixes`; empty when only a person can decide. */
+  fixes: ConfigFix[]
+}
+
+const MOVABLE = ['apiKey', 'peerName', 'workspace', 'aiPeer', 'baseUrl'] as const
+
+/** A block's settings under their v2 names, reading old spellings too. */
+function settingsOf(b: Record<string, any>): Partial<Record<(typeof MOVABLE)[number], string>> {
+  const endpoint = isObj(b.endpoint) ? b.endpoint : {}
+  const out = {
+    apiKey: str(b.apiKey) ?? (isObj(b.auth) ? str(b.auth.apiKey) : undefined),
+    peerName: str(b.peerName),
+    workspace: str(b.workspace) ?? str(b.workspaceId),
+    aiPeer: str(b.aiPeer),
+    baseUrl: str(b.baseUrl) ?? str(endpoint.baseUrl) ?? (endpoint.environment === 'local' ? 'http://localhost:8000' : undefined) ?? str(b.environmentUrl),
   }
-  return resolveConfig(file, { ...opts, env })
+  // Honcho cloud is the default; no need to spell it out.
+  if (out.baseUrl && normalizeBaseUrl(out.baseUrl) === DEFAULT_BASE_URL) out.baseUrl = undefined
+  return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined))
+}
+
+/** Old spellings inside a host block. */
+const LEGACY_HOST_KEYS = ['auth', 'endpoint', 'environmentUrl', 'workspaceId']
+
+/**
+ * Problems in a config file, each with the fixes `applyFixes` (and `honcho
+ * doctor`) apply. Schema-level only: keys a plugin still uses inside its own
+ * block are left alone.
+ */
+export function checkConfig(file: unknown): ConfigIssue[] {
+  if (!isObj(file)) return []
+  const issues: ConfigIssue[] = []
+  const hosts: Record<string, any> = isObj(file.hosts) ? file.hosts : {}
+  const names = Object.keys(hosts).filter((h) => isObj(hosts[h]))
+
+  for (const h of names) {
+    const legacy = LEGACY_HOST_KEYS.filter((k) => k in hosts[h])
+    if (!legacy.length) continue
+    const settings = settingsOf(hosts[h])
+    issues.push({
+      path: `hosts.${h}`,
+      message: `hosts.${h} uses old key names (${legacy.join(', ')}).`,
+      fixes: [
+        ...Object.entries(settings)
+          .filter(([k]) => hosts[h][k] === undefined)
+          .map(([k, value]): ConfigFix => ({ op: 'set', path: ['hosts', h, k], value })),
+        ...legacy.map((k): ConfigFix => ({ op: 'delete', path: ['hosts', h, k] })),
+      ],
+    })
+  }
+
+  // Top level: settings move into every host block that lacks them; the rest goes.
+  const rootKeys = Object.keys(file).filter((k) => k !== 'schemaVersion' && k !== 'hosts')
+  if (rootKeys.length) {
+    const root = settingsOf(file)
+    const override = file.globalOverride === true
+    const fixes: ConfigFix[] = []
+    for (const [key, value] of Object.entries(root)) {
+      for (const h of names) {
+        if (hosts[h][key] === undefined || (key === 'workspace' && override)) fixes.push({ op: 'set', path: ['hosts', h, key], value })
+      }
+    }
+    if (isObj(file.oauth) && !isObj(hosts[CLI_HOST]?.oauth)) fixes.push({ op: 'set', path: ['hosts', CLI_HOST, 'oauth'], value: file.oauth })
+    // With no host block to move them into, keep the settings for a person to place.
+    const keep = names.length ? [] : ['apiKey', 'auth', 'peerName', 'workspace', 'workspaceId', 'aiPeer', 'baseUrl', 'endpoint', 'environmentUrl']
+    fixes.push(...rootKeys.filter((k) => !keep.includes(k)).map((k): ConfigFix => ({ op: 'delete', path: [k] })))
+    issues.push({
+      path: '(top level)',
+      message: `Top-level ${rootKeys.join(', ')} ${rootKeys.length === 1 ? 'is' : 'are'} no longer read; settings belong in each host block.`,
+      fixes,
+    })
+  }
+
+  // Hosts sharing a workspace must agree on the user.
+  const byWorkspace = new Map<string, Map<string, string[]>>()
+  for (const h of names) {
+    const peer = str(hosts[h].peerName) ?? str(file.peerName)
+    if (!peer) continue
+    const ws = (file.globalOverride === true && str(file.workspace)) || settingsOf(hosts[h]).workspace || str(file.workspace) || h
+    const peers = byWorkspace.get(ws) ?? new Map<string, string[]>()
+    peers.set(peer, [...(peers.get(peer) ?? []), h])
+    byWorkspace.set(ws, peers)
+  }
+  for (const [ws, peers] of byWorkspace) {
+    if (peers.size < 2) continue
+    const list = [...peers].map(([p, hs]) => `${hs.join(', ')}: "${p}"`).join('; ')
+    issues.push({ path: 'hosts', message: `Hosts in workspace "${ws}" use different peerNames (${list}), so the user is split across peers.`, fixes: [] })
+  }
+
+  if (issues.some((i) => i.fixes.length) && file.schemaVersion !== CONFIG_SCHEMA_VERSION) {
+    issues.push({ path: 'schemaVersion', message: `schemaVersion should be ${CONFIG_SCHEMA_VERSION}.`, fixes: [{ op: 'set', path: ['schemaVersion'], value: CONFIG_SCHEMA_VERSION }] })
+  }
+  return issues
+}
+
+/**
+ * What one plugin can fix by itself: copy top-level settings into its own block
+ * (its `workspace` only under `globalOverride`, or when it has no block yet),
+ * rename old keys in that block, and drop `deadKeys` it no longer uses. Never
+ * touches the top level or another host's block; `honcho doctor` cleans those.
+ */
+export function hostMigration(
+  file: unknown,
+  host: string,
+  deadKeys: readonly string[] = []
+): { set: Partial<HostConfig>; remove: string[] } {
+  const f = isObj(file) ? file : {}
+  const hosts = isObj(f.hosts) ? f.hosts : {}
+  const hasBlock = isObj(hosts[host])
+  const block: Record<string, any> = hasBlock ? hosts[host] : {}
+  const set: Record<string, unknown> = {}
+  const own = settingsOf(block)
+  const root = settingsOf(f)
+  for (const key of MOVABLE) {
+    if (block[key] !== undefined) continue
+    const fromRoot = key === 'workspace' ? (hasBlock && f.globalOverride !== true ? undefined : root.workspace) : root[key]
+    const value = own[key] ?? fromRoot
+    if (value !== undefined) set[key] = value
+  }
+  if (f.globalOverride === true && root.workspace && block.workspace !== root.workspace) set.workspace = root.workspace
+  if (block.oauth === undefined && isObj(block.auth) && isObj(block.auth.oauth)) set.oauth = block.auth.oauth
+  const remove = [...LEGACY_HOST_KEYS, ...deadKeys].filter((k) => k in block && !(k in set))
+  return { set: set as Partial<HostConfig>, remove }
+}
+
+/**
+ * Apply `hostMigration` to the file under the config lock. Returns the keys it
+ * set or removed; empty when the block was already current.
+ */
+export async function migrateHost(path: string, host: string, deadKeys: readonly string[] = []): Promise<string[]> {
+  // Cheap check first, so a current block never takes the lock or writes.
+  const peek = hostMigration(readConfigFile({ HONCHO_CONFIG_PATH: path }), host, deadKeys)
+  if (!Object.keys(peek.set).length && !peek.remove.length) return []
+  let changed: string[] = []
+  await updateConfigFile(path, (file) => {
+    const { set, remove } = hostMigration(file, host, deadKeys)
+    changed = [...Object.keys(set), ...remove.map((k) => `-${k}`)]
+    if (!changed.length) return
+    if (!isObj(file.hosts)) file.hosts = {}
+    const block = isObj(file.hosts[host]) ? file.hosts[host] : (file.hosts[host] = {})
+    Object.assign(block, set)
+    for (const k of remove) delete block[k]
+  })
+  return changed
+}
+
+/** A copy of `file` with every issue's fixes applied, in order. */
+export function applyFixes(file: Record<string, any>, issues: ConfigIssue[]): Record<string, any> {
+  const out = structuredClone(file)
+  for (const fix of issues.flatMap((i) => i.fixes)) {
+    const parent = fix.path.slice(0, -1).reduce<Record<string, any>>((o, k) => (isObj(o[k]) ? o[k] : (o[k] = {})), out)
+    const last = fix.path[fix.path.length - 1]
+    if (fix.op === 'set') parent[last] = fix.value
+    else delete parent[last]
+  }
+  return out
 }

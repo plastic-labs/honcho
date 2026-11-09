@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { homedir } from 'node:os'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { configPath, normalizeBaseUrl, resolveConfig } from '../src/index'
+import { applyFixes, checkConfig, configPath, hostMigration, migrateHost, normalizeBaseUrl, resolveConfig, saveHost } from '../src/index'
 
 const emptyEnv = {}
 
@@ -22,53 +23,55 @@ describe('normalizeBaseUrl', () => {
 })
 
 describe('resolveConfig', () => {
-  test('host block beats root; env beats host', () => {
-    const file = {
-      workspace: 'root-ws',
-      hosts: { a: { workspace: 'host-ws' } },
-    }
-    expect(resolveConfig(file, { host: 'a', env: emptyEnv }).workspace).toBe('host-ws')
-    expect(
-      resolveConfig(file, { host: 'a', env: { HONCHO_WORKSPACE: 'env-ws' } }).workspace
-    ).toBe('env-ws')
+  test('reads only its own host block; env beats it', () => {
+    const file = { workspace: 'root-ws', peerName: 'root-peer', hosts: { a: { workspace: 'host-ws' } } }
+    const cfg = resolveConfig(file, { host: 'a', env: { USER: 'u' } })
+    expect(cfg.workspace).toBe('host-ws')
+    expect(cfg.peerName).toBe('u')
+    expect(resolveConfig(file, { host: 'a', env: { HONCHO_WORKSPACE: 'env-ws' } }).workspace).toBe('env-ws')
   })
 
-  test('root apiKey / workspaceId aliases still resolve', () => {
-    const cfg = resolveConfig(
-      { apiKey: 'hch_x', workspaceId: 'from-id' },
-      { host: 'a', env: emptyEnv }
-    )
-    expect(cfg.apiKey).toBe('hch_x')
-    expect(cfg.workspace).toBe('from-id')
+  test('peerName falls back to another host before $USER', () => {
+    const file = { hosts: { a: {}, b: { peerName: 'alice' } } }
+    expect(resolveConfig(file, { host: 'a', env: { USER: 'u' } }).peerName).toBe('alice')
   })
 
-  test('v1 leftover environmentUrl is ignored', () => {
-    const cfg = resolveConfig(
-      { schemaVersion: 1, baseUrl: 'https://keep.example', environmentUrl: 'https://old.example' },
-      { host: 'a', env: emptyEnv }
-    )
-    expect(cfg.baseUrl).toBe('https://keep.example')
-  })
-
-  test('overlay sits below env', () => {
-    expect(
-      resolveConfig(
-        {},
-        { host: 'a', overlay: { workspace: 'from-overlay' }, env: { HONCHO_WORKSPACE: 'from-env' } }
-      ).workspace
-    ).toBe('from-env')
-    expect(
-      resolveConfig({}, { host: 'a', overlay: { workspace: 'from-overlay' }, env: emptyEnv }).workspace
-    ).toBe('from-overlay')
-  })
-
-  test('empty file uses built-ins; host name is not rewritten', () => {
-    const cfg = resolveConfig({}, { host: 'my-host', env: emptyEnv })
+  test('defaults, then the host name', () => {
+    const cfg = resolveConfig({}, { host: 'my-host', env: emptyEnv, defaults: { aiPeer: 'claude' } })
     expect(cfg.baseUrl).toBe('https://api.honcho.dev')
-    expect(cfg.timeoutMs).toBe(30_000)
-    expect(cfg.enabled).toBe(true)
-    expect(cfg.host).toBe('my-host')
     expect(cfg.workspace).toBe('my-host')
+    expect(cfg.aiPeer).toBe('claude')
+    expect(cfg.warnings).toEqual([])
+  })
+
+  test('warns about a file that needs honcho doctor', () => {
+    expect(resolveConfig({ apiKey: 'k', hosts: { a: {} } }, { host: 'a', env: emptyEnv }).warnings).not.toEqual([])
+  })
+})
+
+describe('checkConfig / applyFixes', () => {
+  const dir = join(import.meta.dir, 'fixtures', 'config')
+  for (const name of readdirSync(dir).filter((f) => f.endsWith('.json'))) {
+    test(name, () => {
+      const { input, issues, fixed } = JSON.parse(readFileSync(join(dir, name), 'utf-8'))
+      const found = checkConfig(input)
+      expect(found.map((i) => i.path)).toEqual(issues)
+      const out = applyFixes(input, found)
+      expect(out).toEqual(fixed)
+      // Fixing again changes nothing.
+      expect(applyFixes(out, checkConfig(out))).toEqual(out)
+    })
+  }
+})
+
+describe('saveHost', () => {
+  test('merges into one block, removes undefined keys, leaves the rest alone', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'hpc-')), 'config.json')
+    writeFileSync(path, JSON.stringify({ hosts: { a: { workspace: 'w', aiPeer: 'x' }, b: { workspace: 'other' } } }))
+    await saveHost(path, 'a', { peerName: 'alice', aiPeer: undefined })
+    expect(JSON.parse(readFileSync(path, 'utf-8'))).toEqual({
+      hosts: { a: { workspace: 'w', peerName: 'alice' }, b: { workspace: 'other' } },
+    })
   })
 })
 
@@ -77,5 +80,49 @@ describe('configPath', () => {
     expect(configPath({ HONCHO_CONFIG_PATH: '/x/cfg.json', HOME: '/h' })).toBe('/x/cfg.json')
     expect(configPath({ HOME: '/scratch' })).toBe('/scratch/.honcho/config.json')
     expect(configPath({})).toBe(join(homedir(), '.honcho', 'config.json'))
+  })
+})
+
+describe('hostMigration / migrateHost', () => {
+  const file = {
+    apiKey: 'root-key', peerName: 'alice', workspace: 'root-ws', sessions: { '/x': 's' },
+    hosts: {
+      claude_code: { workspace: 'cc', endpoint: { baseUrl: 'http://localhost:8000' }, sessionStrategy: 'chat-instance' },
+      dsh: { auth: { apiKey: 'dsh-key' } },
+    },
+  }
+
+  test('copies top-level settings into its own block and renames old keys there', () => {
+    expect(hostMigration(file, 'claude_code', ['sessionStrategy'])).toEqual({
+      set: { apiKey: 'root-key', peerName: 'alice', baseUrl: 'http://localhost:8000' },
+      remove: ['endpoint', 'sessionStrategy'],
+    })
+  })
+
+  test('a host with no block also takes the top-level workspace', () => {
+    expect(hostMigration(file, 'pi').set).toEqual({ apiKey: 'root-key', peerName: 'alice', workspace: 'root-ws' })
+  })
+
+  test('globalOverride workspace wins over its own', () => {
+    expect(hostMigration({ globalOverride: true, workspace: 'shared', hosts: { a: { workspace: 'mine' } } }, 'a').set)
+      .toEqual({ workspace: 'shared' })
+  })
+
+  test('writes only its own block, then has nothing left to do', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'hpc-')), 'config.json')
+    writeFileSync(path, JSON.stringify(file))
+    expect(await migrateHost(path, 'claude_code', ['sessionStrategy'])).toEqual(['apiKey', 'peerName', 'baseUrl', '-endpoint', '-sessionStrategy'])
+    const after = JSON.parse(readFileSync(path, 'utf-8'))
+    expect(after.apiKey).toBe('root-key')
+    expect(after.sessions).toEqual({ '/x': 's' })
+    expect(after.hosts.dsh).toEqual({ auth: { apiKey: 'dsh-key' } })
+    expect(after.hosts.claude_code).toEqual({ workspace: 'cc', apiKey: 'root-key', peerName: 'alice', baseUrl: 'http://localhost:8000' })
+    expect(await migrateHost(path, 'claude_code', ['sessionStrategy'])).toEqual([])
+  })
+
+  test('a missing file stays missing', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'hpc-')), 'config.json')
+    expect(await migrateHost(path, 'claude_code')).toEqual([])
+    expect(existsSync(path)).toBe(false)
   })
 })

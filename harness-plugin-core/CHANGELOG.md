@@ -9,6 +9,24 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+## [0.3.0]
+
+### Changed
+
+- **Config schema version 2.** Every setting lives in the plugin's own block, `hosts.<host>`: `apiKey` or `oauth`, `peerName`, `workspace`, `aiPeer`, `baseUrl`. Nothing is read from the top level, and `auth.apiKey`, `endpoint`, `environmentUrl` and `workspaceId` are not read either. With no `peerName` of its own, a plugin uses one another host already has, then `$USER`. `config.schema.json` describes the file.
+- `resolveConfig` / `loadConfig` take `{ host, env?, defaults? }` and return `{ host, peerName, workspace, aiPeer, baseUrl, warnings }`. Credentials come only from `pickCredential` / `ensureFreshCredential`, which no longer fall back to a top-level `apiKey`.
+
+### Added
+
+- `saveHost(path, host, patch)`: locked merge into one host block.
+- `migrateHost(path, host, deadKeys)` / `hostMigration`: a plugin moves an older file's settings into its own block at startup, without touching the top level or other hosts.
+- `checkConfig(file)` / `applyFixes(file, issues)`: what an older file needs and the fixes, for plugins to warn and `honcho doctor` to apply. `tests/fixtures/config/` holds the shared cases.
+- `readConfigFile`, `CONFIG_SCHEMA_VERSION`, `CLI_HOST`.
+
+### Removed
+
+- `timeoutMs`, `enabled`, the `overlay` option, `${VAR}` interpolation, the v0/v1 migration on read, and the `AuthConfig`, `RootConfig`, `HostBlock`, `FileConfig` types and `DEFAULT_TIMEOUT_MS`.
+
 ## [0.2.0] - 2026-11-05
 
 ### Added

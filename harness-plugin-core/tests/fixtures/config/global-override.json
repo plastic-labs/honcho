@@ -1,0 +1,27 @@
+{
+  "input": {
+    "globalOverride": true,
+    "workspace": "shared",
+    "hosts": {
+      "claude_code": {
+        "workspace": "cc"
+      },
+      "cursor": {}
+    }
+  },
+  "issues": [
+    "(top level)",
+    "schemaVersion"
+  ],
+  "fixed": {
+    "schemaVersion": 2,
+    "hosts": {
+      "claude_code": {
+        "workspace": "shared"
+      },
+      "cursor": {
+        "workspace": "shared"
+      }
+    }
+  }
+}

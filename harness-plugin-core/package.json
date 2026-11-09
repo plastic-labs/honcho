@@ -1,6 +1,6 @@
 {
   "name": "@honcho-ai/harness-plugin-core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Shared runtime for Honcho harness plugins",
   "author": "Plastic Labs <hello@plasticlabs.ai>",
   "license": "MIT",
@@ -16,6 +16,8 @@
   "files": [
     "dist",
     "src",
+    "config.schema.json",
+    "tests/fixtures",
     "README.md",
     "CHANGELOG.md"
   ],

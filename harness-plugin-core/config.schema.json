@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/plastic-labs/honcho/tree/main/harness-plugin-core/config.schema.json",
+  "title": "~/.honcho/config.json",
+  "description": "Schema version 2. Every setting lives in a host block; nothing at the top level.",
+  "type": "object",
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "hosts": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/host" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "host": {
+      "type": "object",
+      "description": "One plugin's settings. A plugin may keep keys of its own beside these.",
+      "properties": {
+        "apiKey": { "type": "string" },
+        "oauth": {
+          "type": "object",
+          "description": "This plugin's own OAuth grant.",
+          "properties": {
+            "accessToken": { "type": "string" },
+            "refreshToken": { "type": "string" },
+            "accessExpiresAt": { "type": "number", "description": "Epoch seconds." },
+            "clientId": { "type": "string" },
+            "scope": { "type": "string" }
+          },
+          "required": ["accessToken", "refreshToken", "accessExpiresAt", "clientId", "scope"]
+        },
+        "peerName": { "type": "string", "description": "The user." },
+        "workspace": { "type": "string" },
+        "aiPeer": { "type": "string" },
+        "baseUrl": { "type": "string", "description": "Honcho API origin; omit for Honcho cloud." }
+      }
+    }
+  }
+}

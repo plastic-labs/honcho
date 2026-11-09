@@ -3,39 +3,49 @@
 Shared runtime for Honcho harness plugins.
 
 ```ts
-import { loadConfig, resolveConfig } from '@honcho-ai/harness-plugin-core'
+import { configPath, loadConfig, saveHost } from '@honcho-ai/harness-plugin-core'
 
-const cfg = loadConfig({ host: 'harness' })
-// a harness can pass its plugin config as an overlay of the same six keys:
-const cfg = resolveConfig(file, { host: 'harness', overlay: { workspace: 'harness', auth: { apiKey } } })
+const cfg = loadConfig({ host: 'harness', defaults: { aiPeer: 'harness' } })
+for (const w of cfg.warnings) console.warn(`${w} Run \`honcho doctor\` to fix it.`)
+await saveHost(configPath(), 'harness', { workspace: 'my-workspace' })
 ```
 
 Install: `bun add @honcho-ai/harness-plugin-core` or `npm install @honcho-ai/harness-plugin-core`. The package ships compiled ESM plus type declarations in `dist/`, so it loads under plain Node and `tsc` as well as bun. Locally: `"@honcho-ai/harness-plugin-core": "file:../harness-plugin-core"`, after running `bun run build` here so `dist/` exists.
 
 ## File shape
 
+Schema version 2 (`config.schema.json`). Each plugin keeps its settings in its own block under `hosts`; nothing is read from the top level.
+
 ```json
 {
-  "schemaVersion": 1,
-  "peerName": "user",
-  "workspace": "honcho",
-  "baseUrl": "https://api.honcho.dev",
-  "timeoutMs": 30000,
-  "auth": { "apiKey": "${HONCHO_API_KEY}" },
-  "enabled": true,
+  "schemaVersion": 2,
   "hosts": {
-    "test": { "workspace": "test" }
+    "harness": {
+      "apiKey": "hch-v3-...",
+      "peerName": "alice",
+      "workspace": "harness",
+      "aiPeer": "harness",
+      "baseUrl": "http://localhost:8000"
+    }
   }
 }
 ```
 
-Missing `schemaVersion` is 0. On read, v0 keys (`environmentUrl`, `workspaceId`, top-level `apiKey`) are remapped in memory; the file is not rewritten.
+`oauth` holds the plugin's own sign-in instead of `apiKey`. Omit `baseUrl` for Honcho cloud. A plugin may keep keys of its own in its block.
 
-Resolution, highest wins: `HONCHO_*` env → overlay → `hosts.<host>` → root → built-in.
+Resolution, highest wins: `HONCHO_*` env (`HONCHO_PEER_NAME`, `HONCHO_WORKSPACE`, `HONCHO_AI_PEER`, `HONCHO_BASE_URL`) → `hosts.<host>` → `defaults` → built-in. With no `peerName` of its own, a plugin uses one another host already has, then `$USER`. `workspace` and `aiPeer` fall back to the host name. The SDK pins `/v3`; config stores the origin.
 
-A host block may override the same six fields.
+`saveHost(path, host, patch)` merges into that one block under the config lock; `undefined` removes a key.
 
-Built-ins: `baseUrl = https://api.honcho.dev`, `timeoutMs = 30000`, `enabled = true`, `peerName = $USER`, `workspace` falls back to the host name. The SDK pins `/v3`; config stores the origin.
+## Moving an older file
+
+A plugin fixes its own block at startup: `migrateHost(configPath(), host, deadKeys)` copies top-level `apiKey`, `peerName` and `baseUrl` into `hosts.<host>` (its `workspace` too, under `globalOverride` or when it has no block yet), renames old keys there, and drops the `deadKeys` it no longer uses. It returns what it changed, and writes nothing when the block is current. It never touches the top level or another host's block, since plugins on older versions may still read them; `honcho doctor` removes those once every plugin reads only its own block.
+
+## Checking a config file
+
+`checkConfig(file)` lists problems with an older file, each with the fixes `applyFixes(file, issues)` applies: top-level settings moved into every host block that lacks them, old key names (`auth.apiKey`, `endpoint`, `environmentUrl`, `workspaceId`) renamed, `globalOverride` turned into each host's `workspace`, the honcho CLI's top-level `oauth` moved to `hosts.honcho-cli`, and leftover top-level keys removed. Hosts that share a workspace under different `peerName`s are reported without a fix. `loadConfig` returns the messages as `warnings`.
+
+`tests/fixtures/config/*.json` are the cases (`input`, `issues`, `fixed`). `honcho doctor` runs against the same files, so the two implementations agree.
 
 ## Telemetry headers
 
@@ -89,6 +99,6 @@ const cred = await ensureFreshCredential({ path: configPath(), host: 'harness', 
 if (cred?.reauthRequired) console.warn('Honcho sign-in expired; sign in again')
 ```
 
-Resolution, highest wins: `HONCHO_API_KEY` env → `hosts.<host>.oauth` → `apiKey` → that grant expired. Each plugin has one grant, in its own host block, and never uses another plugin's, so plugins signed in to different tenants stay separate.
+Resolution, highest wins: `HONCHO_API_KEY` env → `hosts.<host>.oauth` → `hosts.<host>.apiKey` → that grant expired. Each plugin has one grant, in its own host block, and never uses another plugin's, so plugins signed in to different tenants stay separate.
 
 Every refresh supersedes the grant's previous access token (the API gateway may keep accepting it for up to 5 minutes from its cache, then rejects it), so a long-running process must call `ensureFreshCredential` before each batch of requests and update its SDK client's key in place rather than cache a token or build a new client.

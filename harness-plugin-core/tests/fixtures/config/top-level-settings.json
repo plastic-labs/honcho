@@ -1,0 +1,38 @@
+{
+  "input": {
+    "apiKey": "hch-1",
+    "peerName": "alice",
+    "sessions": {
+      "/x": "s"
+    },
+    "statusline": "full",
+    "hosts": {
+      "claude_code": {
+        "workspace": "cc"
+      },
+      "opencode": {
+        "apiKey": "hch-2",
+        "workspace": "oc"
+      }
+    }
+  },
+  "issues": [
+    "(top level)",
+    "schemaVersion"
+  ],
+  "fixed": {
+    "schemaVersion": 2,
+    "hosts": {
+      "claude_code": {
+        "workspace": "cc",
+        "apiKey": "hch-1",
+        "peerName": "alice"
+      },
+      "opencode": {
+        "apiKey": "hch-2",
+        "workspace": "oc",
+        "peerName": "alice"
+      }
+    }
+  }
+}

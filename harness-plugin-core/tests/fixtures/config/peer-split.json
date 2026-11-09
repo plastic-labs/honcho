@@ -1,0 +1,31 @@
+{
+  "input": {
+    "schemaVersion": 2,
+    "hosts": {
+      "claude_code": {
+        "workspace": "w",
+        "peerName": "alice"
+      },
+      "openclaw": {
+        "workspace": "w",
+        "peerName": "owner"
+      }
+    }
+  },
+  "issues": [
+    "hosts"
+  ],
+  "fixed": {
+    "schemaVersion": 2,
+    "hosts": {
+      "claude_code": {
+        "workspace": "w",
+        "peerName": "alice"
+      },
+      "openclaw": {
+        "workspace": "w",
+        "peerName": "owner"
+      }
+    }
+  }
+}

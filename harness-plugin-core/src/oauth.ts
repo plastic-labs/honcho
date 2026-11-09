@@ -269,13 +269,13 @@ export interface Credential {
 
 function apiKeyOf(file: Record<string, any>, host: string): string | undefined {
   const hb = isObj(file.hosts) ? file.hosts[host] : undefined
-  const k = hb?.apiKey ?? hb?.auth?.apiKey ?? file.apiKey ?? file.auth?.apiKey
+  const k = hb?.apiKey
   return typeof k === 'string' && k ? k : undefined
 }
 
 /**
  * The token to send, highest wins: HONCHO_API_KEY env → the plugin's live OAuth
- * grant (`hosts.<host>.oauth`) → apiKey → its expired grant. OAuth is skipped
+ * grant (`hosts.<host>.oauth`) → `hosts.<host>.apiKey` → its expired grant. OAuth is skipped
  * unless `baseUrl` is Honcho cloud. No network.
  */
 export function pickCredential(file: unknown, opts: { host: string; baseUrl?: string; env?: Env }): Credential | null {

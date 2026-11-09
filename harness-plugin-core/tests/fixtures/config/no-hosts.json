@@ -1,0 +1,16 @@
+{
+  "input": {
+    "apiKey": "hch-1",
+    "peerName": "alice",
+    "statusline": "on"
+  },
+  "issues": [
+    "(top level)",
+    "schemaVersion"
+  ],
+  "fixed": {
+    "schemaVersion": 2,
+    "apiKey": "hch-1",
+    "peerName": "alice"
+  }
+}
