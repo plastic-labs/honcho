@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import os
 import re
@@ -752,6 +753,23 @@ async def sample_data(
     yield test_workspace, test_peer
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def _reset_fleet_cache():  # pyright: ignore[reportUnusedFunction]
+    """Drop the fleet coordination keys around each test.
+
+    Once an app startup has run init_cache, fleet_cache is a process-local store
+    that outlives the test. A poller lease left by one test (it lasts three poll
+    intervals) would make the next test's poller a follower that never measures.
+    """
+    from src.cache.client import fleet_cache
+
+    with contextlib.suppress(Exception):
+        await fleet_cache.clear()
+    yield
+    with contextlib.suppress(Exception):
+        await fleet_cache.clear()
+
+
 @pytest.fixture(autouse=True)
 def _reset_vector_namespace_cache():  # pyright: ignore[reportUnusedFunction]
     """Drop every memoized tenant namespace prefix around each test.
@@ -766,6 +784,38 @@ def _reset_vector_namespace_cache():  # pyright: ignore[reportUnusedFunction]
     reset_prefix_cache()
     yield
     reset_prefix_cache()
+
+
+@pytest.fixture(autouse=True)
+def _tenant_key_guard():  # pyright: ignore[reportUnusedFunction]
+    """Fail a test whose code looked up a tenant row by id without its tenant.
+
+    See tests/tenant_key_guard.py. With TENANT_KEY_GUARD_REPORT set to a path,
+    violations are appended there instead of failing the test.
+    """
+    from sqlalchemy import event
+    from sqlalchemy.orm import ORMExecuteState
+    from sqlalchemy.orm import Session as OrmSession
+
+    from tests.tenant_key_guard import Violation, find_violations
+
+    found: list[Violation] = []
+
+    def _inspect(state: ORMExecuteState) -> None:
+        found.extend(find_violations(state))
+
+    event.listen(OrmSession, "do_orm_execute", _inspect)
+    try:
+        yield
+    finally:
+        event.remove(OrmSession, "do_orm_execute", _inspect)
+    report = os.environ.get("TENANT_KEY_GUARD_REPORT")
+    if report:
+        with open(report, "a") as handle:
+            handle.writelines(f"{violation}\n" for violation in found)
+    elif found:
+        listing = "\n".join(sorted({str(violation) for violation in found}))
+        pytest.fail(f"tenant-key guard:\n{listing}")
 
 
 @pytest.fixture(autouse=True)

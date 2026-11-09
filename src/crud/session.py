@@ -32,13 +32,18 @@ from src.cache.client import (
     cache,
     cache_key_namespace,
     cache_prefix_namespace,
+    fallback_on_cache_error,
     safe_cache_delete,
     safe_cache_set,
 )
 from src.config import settings
 from src.crud.deriver import active_queue_session_match, queue_item_tenant_match
 from src.crud.dream_history import delete_session_history
-from src.crud.lifecycle import live_session_peer_row, live_session_row
+from src.crud.lifecycle import (
+    live_message_row,
+    live_session_peer_row,
+    live_session_row,
+)
 from src.exceptions import (
     AuthenticationException,
     ConflictException,
@@ -94,6 +99,7 @@ def session_cache_key(workspace_name: str, session_name: str) -> str:
     )
 
 
+@fallback_on_cache_error
 @cache(
     key=SESSION_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
@@ -901,6 +907,7 @@ async def clone_session(
             models.Message.workspace_name == workspace_name,
             models.Message.public_id == cutoff_message_id,
             models.Message.session_name == original_session_name,
+            live_message_row(),
         )
         cutoff_message = await db.scalar(stmt)
         if not cutoff_message:
@@ -923,6 +930,7 @@ async def clone_session(
     stmt = select(models.Message).where(
         models.Message.workspace_name == workspace_name,
         models.Message.session_name == original_session_name,
+        live_message_row(),
     )
     if cutoff_message_id is not None and cutoff_message is not None:
         stmt = stmt.where(models.Message.id <= cast(cutoff_message.id, BigInteger))
@@ -1159,10 +1167,12 @@ async def get_session_peer_configuration(
         .join(
             models.SessionPeer,
             and_(
+                models.Peer.tenant_id == models.SessionPeer.tenant_id,
                 models.Peer.name == models.SessionPeer.peer_name,
                 models.Peer.workspace_name == models.SessionPeer.workspace_name,
             ),
         )
+        .where(live_session_peer_row())
         .where(models.SessionPeer.session_name == session_name)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())

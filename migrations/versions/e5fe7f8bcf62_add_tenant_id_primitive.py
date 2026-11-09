@@ -36,6 +36,12 @@ DEFAULT_TENANT_ID = instance_tenant_id()
 
 LEGACY_SESSION_PEERS_INDEX = "uq_session_peers_legacy_ws_session_peer"
 
+LOCK_LINT_EXEMPT = (
+    "the body runs only on a database without the tenants table (dedicated and"
+    " self-hosted), which is never partitioned; its index builds are on"
+    " session_peers and the new tenant indexes, inside the one upgrade transaction"
+)
+
 # Tables that gain tenant_id + a composite PK + composite FKs (session_peers has
 # an all-natural composite PK and is handled with the rest).
 TENANT_SCOPED: tuple[str, ...] = (

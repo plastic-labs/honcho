@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Build, launch, and drive a local Honcho stack to verify a change at its runtime surface (the /v3 HTTP API and the deriver queue). Use when verifying a diff or confirming a change works in the running app.
+description: Build, launch, and drive a local Honcho stack to verify a change at its runtime surface (the /v3 HTTP API and the deriver queue), including SQL/search/index performance. Use when verifying a diff or confirming a change works in the running app.
 ---
 
 # Verifying changes in Honcho
@@ -77,6 +77,59 @@ Two concrete levers: deep-nested settings (e.g.
 miserable as env vars — drop a partial `config.toml` in the repo root instead.
 And for load-time config behavior, `uv run python -c "import src.config; ..."`
 is faster than booting the server.
+
+## Performance-sensitive verification
+
+If the diff changes SQL predicates, joins, parent-liveness checks, search/vector
+ordering or limits, indexes, or partitioning, verify query plans as well as
+results. Small functional fixtures and green CI can miss workspace-wide parent
+scans and loss of pgvector HNSW plans.
+
+1. **Compare exact code and data.** Record baseline/candidate commit SHAs and
+   exercise their actual query paths, not hand-written approximations. Use
+   isolated databases with equivalent seeded data, statistics, and settings;
+   apply each revision's migrations and record intentional schema differences.
+   Do not benchmark against shared development or production data.
+2. **Vary parent and result cardinality separately.** Include a large workspace
+   with many peers/sessions but a small queried collection, and a large
+   conclusion collection. Cover zero, sparse, and dense parent/row tombstones,
+   selective and broad filters, and colliding workspace/peer/session names in
+   different tenants. When message search is affected, include large-session
+   message/MessageEmbedding cases and their vector and text query plans too.
+3. **Record the environment.** Save PostgreSQL/pgvector versions, relevant
+   planner/HNSW settings, application DB role and RLS/tenant context, migration
+   and index state, data/seed provenance, parent/collection/message counts per
+   tenant/workspace, vector dimensions/distribution, and statistics freshness.
+   Record warm-up and cache state; do not label a run cold without evidence.
+4. **Capture the real plan repeatedly.** Save ORM-emitted SQL and bound
+   parameters after tenant hooks, then run natural
+   `EXPLAIN (ANALYZE, BUFFERS)` under the same role/settings for both revisions.
+   Preserve predicates, vector distance ordering, filters, and limits. Compare
+   repeated samples, not one best timing: inspect subplan loops, rows removed
+   by filters, estimates versus actual rows, buffer hits/reads, and temporary
+   I/O. Measure the full read path too, including any fast-path prechecks.
+   Never force planner flags as proof of performance; diagnostic overrides
+   must be disclosed and followed by natural-plan evidence.
+5. **Check index use and pruning.** For representative vector sizes, inspect
+   whether distance-ordered HNSW scans survive or become scans plus sorts;
+   verify the distance operator/opclass and filter placement. Do not universally
+   demand HNSW on tiny tables where a sequential scan may be cheaper. Check
+   bound tenant predicates and partition pruning, including planning/partition
+   lock evidence when relevant, not only which partitions execute. Supporting
+   partial indexes need both migrations and matching `src/models.py`
+   declarations; use `migrations.utils.create_index_online`/`drop_index_online`
+   for large or partitioned tables. Verify applied predicates, valid indexes,
+   and attached indexes on every relevant partition, not just the parent.
+6. **Keep correctness gates.** Any fast path must preserve row/parent
+   visibility, authorization, tenant isolation, ordering/pagination, and
+   history semantics. Exercise concurrent deletion under the actual transaction
+   isolation: a cached liveness result or precheck followed by a read in a
+   different snapshot is not correctness proof.
+
+Keep commands, SQL/plans, sample results, and provenance with the verification
+report. Disclose synthetic vectors, reduced dimensions, mocks, and local
+hardware/timings; distinguish plan evidence from real user-path validation.
+One fixture is not a production benchmark or proof of recall/LLM quality.
 
 ## Test suites
 

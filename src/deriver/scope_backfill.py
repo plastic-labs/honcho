@@ -543,6 +543,7 @@ async def process_scope_removal(
         # writes below. Nothing here commits until the end, so the lock holds.
         rejoined = await db.scalar(
             select(models.SessionPeer.left_at.is_(None))
+            .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
             .where(models.SessionPeer.workspace_name == workspace_name)
             .where(models.SessionPeer.session_name == session_name)
             .where(models.SessionPeer.peer_name == scope_peer)

@@ -81,6 +81,8 @@ async def test_drain_covers_every_legacy_location(db_session: AsyncSession) -> N
 
     assert await has_pending_document_sources(db_session)
     assert await count_pending_document_sources(db_session) == 4
+    # Past the cap the gauge reads the cap rather than counting the whole table.
+    assert await count_pending_document_sources(db_session, cap=2) == 2
 
     drained = await drain_document_sources_batch(db_session)
     await db_session.commit()

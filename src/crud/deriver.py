@@ -179,8 +179,8 @@ def queue_item_tenant_match() -> ColumnElement[bool] | None:
     # region ai
     # tenant_id is the authoritative tenant-scoped column for queue rows, not
     # workspace_name or message_id: workspace_name is only unique per tenant
-    # (every tenant has a "default" workspace) and message ids are drawn from
-    # one global sequence, so either can collide across tenants. tenant_id
+    # (every tenant has a "default" workspace) and message ids are unique
+    # only within a tenant, so either can collide across tenants. tenant_id
     # does not. No migration backfills it (e5fe7f8bcf62 adds the column
     # nullable, unfilled); it holds because every tenant-bound writer
     # (src/deriver/enqueue.py's _stamp_tenant_id, the reconciler scheduler,
@@ -657,11 +657,10 @@ def _build_queue_status_query(
     observer: str | None = None,
     observed: str | None = None,
 ) -> Select[Any]:
-    """Build SQL query for queue status with validation and aggregation."""
+    """Build the queue status query: one row of counts per session_id."""
     observer_name_expr = models.QueueItem.payload["observer"].astext
     observed_name_expr = models.QueueItem.payload["observed"].astext
 
-    # Define conditions for cleaner window functions
     is_completed = models.QueueItem.processed
     is_in_progress = (~models.QueueItem.processed) & (
         models.ActiveQueueSession.id.isnot(None)
@@ -670,28 +669,20 @@ def _build_queue_status_query(
         models.ActiveQueueSession.id.is_(None)
     )
 
-    # Use window functions to calculate totals and per-session counts in SQL
-    stmt = select(
-        models.QueueItem.session_id,
-        # Overall totals using window functions
-        func.count().over().label("total"),
-        func.count(case((is_completed, 1))).over().label("completed"),
-        func.count(case((is_in_progress, 1))).over().label("in_progress"),
-        func.count(case((is_pending, 1))).over().label("pending"),
-        # Per-session totals using partitioned window functions
-        func.count()
-        .over(partition_by=models.QueueItem.session_id)
-        .label("session_total"),
-        func.count(case((is_completed, 1)))
-        .over(partition_by=models.QueueItem.session_id)
-        .label("session_completed"),
-        func.count(case((is_in_progress, 1)))
-        .over(partition_by=models.QueueItem.session_id)
-        .label("session_in_progress"),
-        func.count(case((is_pending, 1)))
-        .over(partition_by=models.QueueItem.session_id)
-        .label("session_pending"),
-    ).select_from(models.QueueItem)
+    # One row per session (NULL for session-less items such as dreams), so a
+    # large backlog returns a few rows instead of one per queue item.
+    stmt = (
+        select(
+            models.QueueItem.session_id,
+            func.count().label("total"),
+            func.count(case((is_completed, 1))).label("completed"),
+            func.count(case((is_in_progress, 1))).label("in_progress"),
+            func.count(case((is_pending, 1))).label("pending"),
+        )
+        .select_from(models.QueueItem)
+        .group_by(models.QueueItem.session_id)
+        .order_by(models.QueueItem.session_id)
+    )
 
     stmt = stmt.outerjoin(
         models.ActiveQueueSession,
@@ -725,38 +716,21 @@ def _build_queue_status_query(
 
 
 def _process_queue_rows(rows: Sequence[Row[Any]]) -> schemas.QueueCounts:
-    """Process query results that already contain aggregated counts."""
-    if not rows:
-        return schemas.QueueCounts(
-            total=0,
-            completed=0,
-            in_progress=0,
-            pending=0,
-            sessions={},
+    """Sum the per-session rows into totals; session-less rows count only toward totals."""
+    sessions: dict[str, schemas.SessionCounts] = {
+        row.session_id: schemas.SessionCounts(
+            completed=row.completed,
+            in_progress=row.in_progress,
+            pending=row.pending,
         )
-
-    # Since we're using window functions, all rows have the same overall totals
-    # We just need the first row for overall counts
-    first_row = rows[0]
-
-    # Build sessions dictionary from unique session_ids
-    sessions: dict[str, schemas.SessionCounts] = {}
-    seen_sessions: set[str] = set()
-
-    for row in rows:
-        if row.session_id and row.session_id not in seen_sessions:
-            sessions[row.session_id] = schemas.SessionCounts(
-                completed=row.session_completed,
-                in_progress=row.session_in_progress,
-                pending=row.session_pending,
-            )
-            seen_sessions.add(row.session_id)
-
+        for row in rows
+        if row.session_id
+    }
     return schemas.QueueCounts(
-        total=first_row.total,
-        completed=first_row.completed,
-        in_progress=first_row.in_progress,
-        pending=first_row.pending,
+        total=sum(row.total for row in rows),
+        completed=sum(row.completed for row in rows),
+        in_progress=sum(row.in_progress for row in rows),
+        pending=sum(row.pending for row in rows),
         sessions=sessions,
     )
 

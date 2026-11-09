@@ -2,13 +2,18 @@
 
 import asyncio
 import contextlib
+import os
+import socket
 import time
 from dataclasses import dataclass, field
 from logging import getLogger
+from typing import Any
 
 import sentry_sdk
+from nanoid import generate as generate_nanoid
 
 from src import crud, schemas
+from src.cache.client import fleet_cache, fleet_key
 from src.config import settings
 from src.db import tenant_context
 from src.dependencies import service_db
@@ -56,8 +61,24 @@ def outstanding_work_seconds(
     return 0.0
 
 
+_LEASE = "deriver_metrics_lease"
+_SNAPSHOT = "deriver_metrics_snapshot"
+
+
+def _coordination_ttl() -> float:
+    """How long a lease or a shared snapshot outlives its last refresh."""
+    return 3 * settings.DERIVER.BACKLOG_METRICS_POLL_INTERVAL_SECONDS
+
+
 class DeriverMetricsPoller:
-    """Refreshes the deriver gauges and the cached snapshot on a timer."""
+    """Refreshes the deriver gauges and the cached snapshot on a timer.
+
+    Under DERIVER_SCHEDULER=api every API replica runs one, but only the replica
+    holding the fleet lease measures: it runs the cross-tenant counts, lists and
+    enqueues due dreams, cleans up stale claims, and shares the result. The others
+    serve that shared snapshot, so every replica reports the same numbers to the
+    load-balanced scrape and to KEDA.
+    """
 
     def __init__(self) -> None:
         self._task: asyncio.Task[None] | None = None
@@ -67,6 +88,10 @@ class DeriverMetricsPoller:
         self._due_dreams: list[DueDream] = []
         self._next_stale_cleanup: float | None = None
         self._embeddings_pending: tuple[int, int] = (0, 0)
+        self._holder: str = (
+            f"{socket.gethostname()}:{os.getpid()}:{generate_nanoid(size=8)}"
+        )
+        self._leading: bool = True
 
     @property
     def snapshot(self) -> DeriverMetricsSnapshot:
@@ -96,6 +121,10 @@ class DeriverMetricsPoller:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
         self._task = None
+        if self._leading and settings.DERIVER.SCHEDULER == "api":
+            # Hand over now rather than after the lease expires.
+            with contextlib.suppress(Exception):
+                await fleet_cache.unlock(fleet_key(_LEASE), self._holder)
         logger.info("DeriverMetricsPoller stopped")
 
     async def _loop(self) -> None:
@@ -107,7 +136,7 @@ class DeriverMetricsPoller:
                 logger.error("DeriverMetricsPoller refresh failed: %s", e)
                 if settings.SENTRY.ENABLED:
                     sentry_sdk.capture_exception(e)
-            if settings.DERIVER.SCHEDULER == "api":
+            if settings.DERIVER.SCHEDULER == "api" and self._leading:
                 try:
                     await self._maybe_cleanup_stale_work_units()
                 except Exception as e:
@@ -118,7 +147,81 @@ class DeriverMetricsPoller:
                 await asyncio.wait_for(self._shutdown_event.wait(), timeout=interval)
 
     async def refresh(self) -> None:
-        """One pass. The snapshot only advances on a complete pass."""
+        """One pass: measure, or serve the leaseholder's snapshot."""
+        if settings.DERIVER.SCHEDULER == "api":
+            self._leading = await self._hold_lease()
+            if not self._leading and await self._follow():
+                return
+        await self._measure()
+        if settings.DERIVER.SCHEDULER == "api" and self._leading:
+            await self._share()
+
+    async def _hold_lease(self) -> bool:
+        """Take or renew the fleet lease; True when this replica should measure."""
+        # region ai
+        # Sticky: the holder renews on every pass, so its own dream-poll and
+        # stale-cleanup clocks stay meaningful; another replica takes over only
+        # after the lease expires (the holder died, or stopped renewing). The
+        # renewal is a read then an expire, not atomic: if the lease lapses in
+        # between and another replica takes it, both measure for a pass. That
+        # is harmless (the counts are read-only, a duplicate dream enqueue hits
+        # uq_queue_dream_pending_work_unit_key, stale cleanup is idempotent).
+        # Coordination unavailable (no Redis, or an error) means measuring
+        # locally, which is what every replica did before the lease.
+        # endregion
+        key, ttl = fleet_key(_LEASE), _coordination_ttl()
+        try:
+            if await fleet_cache.set_lock(key, self._holder, expire=ttl):
+                return True
+            # ai: set_lock stores the holder raw, and get() would unpickle it (None on Redis), so read it raw
+            held = await fleet_cache.get_raw(key)
+            if isinstance(held, bytes):
+                held = held.decode()
+            if held == self._holder:
+                await fleet_cache.expire(key, ttl)
+                return True
+            return False
+        except Exception:
+            logger.debug("Fleet lease unavailable; measuring locally", exc_info=True)
+            return True
+
+    async def _follow(self) -> bool:
+        """Serve the leaseholder's snapshot; False when there is none to serve."""
+        try:
+            shared: dict[str, Any] | None = await fleet_cache.get(fleet_key(_SNAPSHOT))
+        except Exception:
+            logger.debug("Fleet snapshot unavailable", exc_info=True)
+            return False
+        if not shared:
+            return False
+        self._publish(
+            DeriverMetricsSnapshot(
+                signal_seconds=shared["signal_seconds"],
+                dreams_due=shared["dreams_due"],
+                stats=schemas.DeriverMetrics(**shared["stats"]),
+                measured_at=shared["measured_at"],
+            )
+        )
+        return True
+
+    async def _share(self) -> None:
+        snapshot = self._snapshot
+        try:
+            await fleet_cache.set(
+                fleet_key(_SNAPSHOT),
+                {
+                    "signal_seconds": snapshot.signal_seconds,
+                    "dreams_due": snapshot.dreams_due,
+                    "stats": snapshot.stats.model_dump(mode="json"),
+                    "measured_at": snapshot.measured_at,
+                },
+                expire=_coordination_ttl(),
+            )
+        except Exception:
+            logger.debug("Could not share the deriver metrics snapshot", exc_info=True)
+
+    async def _measure(self) -> None:
+        """Run the counts. The snapshot only advances on a complete pass."""
         dream_tick = self._dream_poll_due()
         # region ai
         # Cross-tenant: the metrics query and the due-dream scan both read across every
@@ -151,16 +254,21 @@ class DeriverMetricsPoller:
         if dream_tick and settings.DERIVER.SCHEDULER == "api":
             await self._enqueue_due_dreams()
 
-        signal = outstanding_work_seconds(stats, dreams_due=len(self._due_dreams))
-        measured_at = time.time()
-
-        self._snapshot = DeriverMetricsSnapshot(
-            signal_seconds=signal,
-            dreams_due=len(self._due_dreams),
-            stats=stats,
-            measured_at=measured_at,
+        self._publish(
+            DeriverMetricsSnapshot(
+                signal_seconds=outstanding_work_seconds(
+                    stats, dreams_due=len(self._due_dreams)
+                ),
+                dreams_due=len(self._due_dreams),
+                stats=stats,
+                measured_at=time.time(),
+            )
         )
 
+    def _publish(self, snapshot: DeriverMetricsSnapshot) -> None:
+        """Serve a snapshot and set the gauges from it."""
+        self._snapshot = snapshot
+        stats = snapshot.stats
         metrics = prometheus_metrics
         metrics.set_deriver_metrics(
             eligible_work_units=stats.eligible_work_units,
@@ -175,9 +283,10 @@ class DeriverMetricsPoller:
         )
         if settings.MULTI_TENANT:
             metrics.set_paused_tenants(count=stats.paused_tenants)
-        metrics.set_dreams_due(count=len(self._due_dreams))
-        metrics.set_deriver_outstanding_work(seconds=signal)
-        metrics.set_deriver_metrics_last_success(timestamp=measured_at)
+        metrics.set_dreams_due(count=snapshot.dreams_due)
+        metrics.set_deriver_outstanding_work(seconds=snapshot.signal_seconds)
+        if snapshot.measured_at is not None:
+            metrics.set_deriver_metrics_last_success(timestamp=snapshot.measured_at)
 
     def _dream_poll_due(self) -> bool:
         """The dream query is far more expensive, so it runs on its own spacing."""
