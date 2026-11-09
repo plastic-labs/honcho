@@ -9,38 +9,29 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
-## [0.3.0]
-
-### Changed
-
-- **Config schema version 2.** Every setting lives in the plugin's own block, `hosts.<host>`: `apiKey` or `oauth`, `peerName`, `workspace`, `aiPeer`, `baseUrl`. Nothing is read from the top level, and `auth.apiKey`, `endpoint`, `environmentUrl` and `workspaceId` are not read either. With no `peerName` of its own, a plugin uses one another host already has, then `$USER`. `config.schema.json` describes the file.
-- `resolveConfig` / `loadConfig` take `{ host, env?, defaults? }` and return `{ host, peerName, workspace, aiPeer, baseUrl, warnings }`. Credentials come only from `pickCredential` / `ensureFreshCredential`, which no longer fall back to a top-level `apiKey`.
+## [0.2.0] - unreleased
 
 ### Added
 
+- OAuth device sign-in for Honcho cloud (`requestDeviceCode`, `pollForToken`, `refreshAccessToken`). Each plugin passes its own `clientId` (a first-party client registered in Honcho cloud) and `source`. Cloud only: off `api.honcho.dev` OAuth is skipped and the API key is used.
+- `pickCredential` / `ensureFreshCredential`: token resolution, highest wins: `HONCHO_API_KEY` env → the plugin's own grant (`hosts.<host>.oauth`) → `hosts.<host>.apiKey` → that grant expired. One grant per plugin; a root `oauth` block, a root `apiKey` or another host's grant is never used, so each plugin keeps the tenant it signed in to. `ensureFreshCredential` refreshes a grant within 60s of expiry under a cross-process lock and re-reads the file first, so concurrent processes refresh once.
+- `saveGrant`, `readGrant`, `updateConfigFile`, `withConfigLock`: locked, atomic (temp + rename, mode 0600) writes that touch only the block they change.
 - `saveHost(path, host, patch)`: locked merge into one host block.
 - `migrateHost(path, host, deadKeys)` / `hostMigration`: a plugin moves an older file's settings into its own block at startup, without touching the top level or other hosts.
 - `checkConfig(file)` / `applyFixes(file, issues)`: what an older file needs and the fixes, for plugins to warn and `honcho doctor` to apply. `tests/fixtures/config/` holds the shared cases.
 - `readConfigFile`, `CONFIG_SCHEMA_VERSION`, `CLI_HOST`.
 - `hosts.<host>.schemaVersion`: written by `saveHost` / `migrateHost` to mark a block whose plugin reads only that block. `checkConfig` deletes top-level keys, and a block's old key names, only once the relevant blocks carry it.
 - A file with a newer `schemaVersion` is read but not written (`saveHost` throws, `migrateHost` skips), and `checkConfig` reports it.
-- `config.schema.json` has `$id` `https://cdn.jsdelivr.net/npm/@honcho-ai/harness-plugin-core@0/config.schema.json` and allows a top-level `$schema`.
+- `config.schema.json` describes the file. Its `$id` is `https://cdn.jsdelivr.net/npm/@honcho-ai/harness-plugin-core@0/config.schema.json`, and it allows a top-level `$schema`.
+
+### Changed
+
+- **Config schema version 2.** Every setting lives in the plugin's own block, `hosts.<host>`: `apiKey` or `oauth` (`accessToken`, `refreshToken`, `accessExpiresAt`, `clientId`, `scope`), `peerName`, `workspace`, `aiPeer`, `baseUrl`. Nothing is read from the top level, and `auth.apiKey`, `endpoint`, `environmentUrl` and `workspaceId` are not read either. With no `peerName` of its own, a plugin uses one another host already has, then `$USER`.
+- `resolveConfig` / `loadConfig` take `{ host, env?, defaults? }` and return `{ host, peerName, workspace, aiPeer, baseUrl, warnings }`. Credentials come only from `pickCredential` / `ensureFreshCredential`.
 
 ### Removed
 
 - `timeoutMs`, `enabled`, the `overlay` option, `${VAR}` interpolation, the v0/v1 migration on read, and the `AuthConfig`, `RootConfig`, `HostBlock`, `FileConfig` types and `DEFAULT_TIMEOUT_MS`.
-
-## [0.2.0] - 2026-11-05
-
-### Added
-
-- OAuth device sign-in for Honcho cloud (`requestDeviceCode`, `pollForToken`, `refreshAccessToken`). Each plugin passes its own `clientId` (a first-party client registered in Honcho cloud) and `source`. Cloud only: off `api.honcho.dev` OAuth is skipped and the API key is used.
-- `pickCredential` / `ensureFreshCredential`: token resolution, highest wins: `HONCHO_API_KEY` env → the plugin's own grant (`hosts.<host>.oauth`) → `apiKey` → that grant expired. One grant per plugin; a root `oauth` block or another host's grant is never used, so each plugin keeps the tenant it signed in to. `ensureFreshCredential` refreshes a grant within 60s of expiry under a cross-process lock and re-reads the file first, so concurrent processes refresh once.
-- `saveGrant`, `readGrant`, `updateConfigFile`, `withConfigLock`: locked, atomic (temp + rename, mode 0600) writes that touch only the block they change.
-
-### Changed
-
-- `AuthConfig.oauth` keys are `accessToken`, `refreshToken`, `accessExpiresAt`, `clientId`, `scope`. `resolveConfig` reads a grant only from the host block (or overlay), whole, never merged with or taken from the root.
 
 ## [0.1.1] - 2026-09-10
 
