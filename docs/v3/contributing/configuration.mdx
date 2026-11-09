@@ -144,7 +144,7 @@ DERIVER_MODEL_CONFIG__FALLBACK__MODEL_REF=nano
 ```
 
 - An entry takes the same fields as a fallback model config, plus `capabilities` (below). A misspelled field is an error.
-- Entry names are lowercase letters, digits and underscores (`gpt5_nano`, not `gpt-5-nano`), so each has one environment-variable spelling.
+- Entry names are lowercase letters and digits, with single underscores between them (`gpt5_nano`, not `gpt-5-nano` or `nano__fast`), so each has one environment-variable spelling.
 - A feature that sets `MODEL_REF` gets every field of the entry. Any other field it sets wins, for example `temperature` or a dialectic level's `thinking_budget_tokens`. It can't also set `MODEL` or `TRANSPORT` in the same source.
 - Across sources the usual precedence holds (environment over `config.toml`). An environment `MODEL_REF` replaces a `MODEL` and `TRANSPORT` set in `config.toml`, and an environment `MODEL` replaces a `config.toml` `MODEL_REF`. In an entry, or a feature that names one, `THINKING_EFFORT` and `REASONING_EFFORT` are one setting, and so are `OVERRIDES__API_KEY` and `OVERRIDES__API_KEY_ENV`.
 - `overrides` merges key by key, and so does `overrides.provider_params`. A nested value such as `extra_body` is replaced whole.

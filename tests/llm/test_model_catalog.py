@@ -96,7 +96,9 @@ CATALOG = {"haiku": HAIKU, "nano": NANO}
 # --- catalog validation -----------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ["Haiku", "gpt-5-nano", "5mini", "", "has space"])
+@pytest.mark.parametrize(
+    "name", ["Haiku", "gpt-5-nano", "5mini", "", "has space", "nano_", "nano__fast"]
+)
 def test_catalog_names_must_be_lowercase_identifiers(name: str) -> None:
     with pytest.raises(ValidationError, match="must be lowercase letters"):
         AppSettings(MODELS={name: {"model": "m", "transport": "openai"}})  # pyright: ignore[reportArgumentType]

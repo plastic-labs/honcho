@@ -411,7 +411,8 @@ class ModelCatalogEntry(FallbackModelSettings):
         return _normalize_model_transport(data)
 
 
-_MODEL_CATALOG_NAME = re.compile(r"[a-z][a-z0-9_]*")
+# Single underscores only: `__` is the env-var delimiter (MODELS__<name>__FIELD).
+_MODEL_CATALOG_NAME = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*")
 
 
 def _check_model_catalog_names(value: Any) -> Any:
@@ -423,7 +424,7 @@ def _check_model_catalog_names(value: Any) -> Any:
         if not isinstance(name, str) or not _MODEL_CATALOG_NAME.fullmatch(name):
             raise ValueError(
                 f"MODELS name {name!r} must be lowercase letters, digits and "
-                + "underscores, starting with a letter"
+                + "single underscores between them, starting with a letter"
             )
     return cast(Any, value)
 
