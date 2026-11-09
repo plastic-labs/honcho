@@ -23,7 +23,9 @@ from agent.coding_context import INTERACTIVE_CODING_PLATFORMS as _LOCAL_PLATFORM
 from agent.skill_commands import extract_user_instruction_from_skill_message
 from agent.turn_author import a2a_key
 from .attribution import HONCHO_APP_URL, attribution_url
-from .client import HonchoClientConfig, resolve_config_path
+from .cli import ConfigWriteRefused, clone_honcho_for_profile, migrate_profile_host
+from .client import HonchoClientConfig, resolve_config_path, set_agent_model_header
+from .config_panel import read_fields, write_fields
 from .client import _host_block, _HostLookup
 from .client import join_plugin_threads, spawn_context_thread
 from .dialectic import DialecticMixin
@@ -137,6 +139,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         self._memwrite_thread: Optional[threading.Thread] = None
         self._recall_mode = "hybrid"  # "context", "tools", or "hybrid"
         self._recall_sync = False
+        self._hermes_resumed = False
         self._recall_generation = object()
         self._recall_sync_thread: Optional[threading.Thread] = None
         self._recall_sync_lock = threading.Lock()
@@ -227,11 +230,33 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         from .cli import cmd_setup
         cmd_setup(types.SimpleNamespace())
 
+    # ----- Hermes profile lifecycle and config panel -----
+
+    def on_profile_created(self, profile_name: str, hermes_home: str, **kwargs) -> None:
+        """Give the new profile its own host block (aiPeer = profile name), cloned from the default."""
+        try:
+            if clone_honcho_for_profile(profile_name, in_hook=True):
+                print(f"Honcho config cloned (peer: {profile_name})")
+        except ConfigWriteRefused as e:
+            print(f"Honcho config not cloned: {e}")
+
+    def on_profile_renamed(self, old_name: str, new_name: str, hermes_home: str, **kwargs) -> None:
+        """Re-key the profile's host block to its new name, keeping its peer."""
+        for line in migrate_profile_host(old_name, new_name):
+            print(line)
+
+    def read_config_fields(self, hermes_home: str) -> Dict[str, Any]:
+        return read_fields()
+
+    def write_config_fields(self, values: Dict[str, Any], hermes_home: str) -> None:
+        write_fields(values)
+
     # ----- Session lifecycle -----
 
     def initialize(self, session_id: str, **kwargs) -> None:
         """Configure recall settings and start (or defer) Honcho session creation."""
         self._recall_generation = object()
+        self._hermes_resumed = bool(kwargs.get("resumed"))
         try:
             agent_context, platform = kwargs.get("agent_context", ""), kwargs.get("platform", "cli")
             if agent_context in {"cron", "flush"} or platform == "cron":
@@ -394,7 +419,9 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
         # Generic dialectic prewarm is incompatible with latest-message query rewriting,
         # which needs the first substantive user message.
-        if self._recall_mode in {"context", "hybrid"} and not self._recall_sync:
+        if self._hermes_resumed:
+            logger.debug("Honcho dialectic prewarm skipped: Hermes is continuing session %s", self._session_key)
+        elif self._recall_mode in {"context", "hybrid"} and not self._recall_sync:
             if self._query_rewriter is None or not self._query_rewrite_enabled:
                 self._spawn_dialectic(_PREWARM_QUERY, thread_name="honcho-prewarm-dialectic", fired_at=0,
                                       log_label="dialectic prewarm", use_query_rewrite=False)
@@ -553,6 +580,8 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
     def _first_turn_dialectic_wait(self, query: str) -> None:
         """Turn 1 only: reuse an in-flight prewarm or start one dialectic, then wait briefly.
         Unfinished work stays async and surfaces on a later turn."""
+        if self._hermes_resumed:
+            return
         with self._prefetch_lock:
             prewarm_landed = bool(self._prefetch_result)
         if prewarm_landed and self._last_dialectic_turn == -999:
@@ -809,11 +838,20 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
                              "is_bot": bool(kwargs.get("author_is_bot"))}
         if self._first_turn_seen is None:
             self._first_turn_seen = turn_number
-        resumed = self._first_turn_seen > 1 and not self._first_recall_done
+        self._refresh_agent_model_header(kwargs.get("model"))
+        resumed = (self._first_turn_seen > 1 or self._hermes_resumed) and not self._first_recall_done
         if ((turn_number <= 1 or resumed) and not self._cron_skipped and self._recall_mode != "tools"
                 and not self._recall_sync and self._wait_for_first_recall(message, resumed=resumed)):
             self._first_recall_done = True
             self._recall_waited_turn = turn_number
+
+    def _refresh_agent_model_header(self, model: Optional[str]) -> None:
+        """Send the turn's model as X-Honcho-Agent-Model. Checked every turn: the client is shared by every
+        agent on this identity, and a turn with no model removes the header rather than leaving a stale one."""
+        if self._manager is None:
+            return
+        with contextlib.suppress(Exception):
+            set_agent_model_header(self._manager.honcho, (model or "").strip())
 
     def on_session_switch(self, new_session_id: str, **kwargs) -> None:
         """Discard in-flight recall even when the configured backend session is pinned."""
