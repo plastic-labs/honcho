@@ -71,9 +71,8 @@ export function normalizeBaseUrl(input: string): string {
 
 /**
  * Highest wins: `HONCHO_*` env → `hosts.<host>` → `defaults` → built-in.
- * Only this host's block is read. `peerName` with none of its own falls back
- * to the one another host uses, so plugins sharing a workspace stay one peer.
- * Credentials come from `pickCredential` / `ensureFreshCredential`.
+ * Only this host's block is read. Credentials come from `pickCredential` /
+ * `ensureFreshCredential`.
  */
 export function resolveConfig(
   file: unknown,
@@ -83,15 +82,27 @@ export function resolveConfig(
   const { host } = opts
   const hosts = isObj(file) && isObj(file.hosts) ? file.hosts : {}
   const block = isObj(hosts[host]) ? hosts[host] : {}
-  const otherPeer = Object.values(hosts).map((b) => (isObj(b) ? str(b.peerName) : undefined)).find(Boolean)
   return {
     host,
-    peerName: str(env.HONCHO_PEER_NAME) ?? str(block.peerName) ?? otherPeer ?? str(env.USER) ?? str(env.USERNAME) ?? 'user',
+    peerName: str(env.HONCHO_PEER_NAME) ?? str(block.peerName) ?? str(env.USER) ?? str(env.USERNAME) ?? 'user',
     workspace: str(env.HONCHO_WORKSPACE) ?? str(block.workspace) ?? opts.defaults?.workspace ?? host,
     aiPeer: str(env.HONCHO_AI_PEER) ?? str(block.aiPeer) ?? opts.defaults?.aiPeer ?? host,
     baseUrl: normalizeBaseUrl(str(env.HONCHO_BASE_URL) ?? str(block.baseUrl) ?? DEFAULT_BASE_URL),
     warnings: checkConfig(file).map((i) => i.message),
   }
+}
+
+/**
+ * The name a setup screen should offer: the one every other plugin's block
+ * agrees on, else the old top-level `peerName`, else `$USER`. For the user to
+ * confirm, not to read at runtime.
+ */
+export function suggestPeerName(file: unknown, env: Env = process.env): string {
+  const f = isObj(file) ? file : {}
+  const hosts = isObj(f.hosts) ? f.hosts : {}
+  const names = new Set(Object.values(hosts).map((b) => (isObj(b) ? str(b.peerName) : undefined)).filter(Boolean))
+  if (names.size === 1) return [...names][0] as string
+  return str(f.peerName) ?? str(env.USER) ?? str(env.USERNAME) ?? 'user'
 }
 
 /**

@@ -33,7 +33,7 @@ Schema version 2 (`config.schema.json`, also at `https://cdn.jsdelivr.net/npm/@h
 
 `oauth` holds the plugin's own sign-in instead of `apiKey`. Omit `baseUrl` for Honcho cloud. A plugin may keep keys of its own in its block.
 
-Resolution, highest wins: `HONCHO_*` env (`HONCHO_PEER_NAME`, `HONCHO_WORKSPACE`, `HONCHO_AI_PEER`, `HONCHO_BASE_URL`) → `hosts.<host>` → `defaults` → built-in. With no `peerName` of its own, a plugin uses one another host already has, then `$USER`. `workspace` and `aiPeer` fall back to the host name. The SDK pins `/v3`; config stores the origin.
+Resolution, highest wins: `HONCHO_*` env (`HONCHO_PEER_NAME`, `HONCHO_WORKSPACE`, `HONCHO_AI_PEER`, `HONCHO_BASE_URL`) → `hosts.<host>` → `defaults` → built-in. `peerName` falls back to `$USER`; a plugin's setup should ask for it, offering `suggestPeerName(file)` (the name the other plugins agree on, else the old top-level one, else `$USER`). `workspace` and `aiPeer` fall back to the host name. The SDK pins `/v3`; config stores the origin.
 
 `saveHost(path, host, patch)` merges into that one block under the config lock; `undefined` removes a key.
 

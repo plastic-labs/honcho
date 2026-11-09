@@ -9,6 +9,7 @@ export {
   readConfigFile,
   resolveConfig,
   saveHost,
+  suggestPeerName,
   CLI_HOST,
   CONFIG_SCHEMA_VERSION,
   DEFAULT_BASE_URL,
