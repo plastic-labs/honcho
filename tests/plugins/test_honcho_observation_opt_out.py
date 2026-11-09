@@ -185,7 +185,7 @@ def test_config_opt_out_defaults_empty_and_host_presence_wins(
         plugin,
         tmp_path / "root-fallback.json",
         {
-            "observationOptOutPhrases": ["root phrase"],
+            "observationOptOutPhrases": [" root phrase ", "", "   ", 7],
             "hosts": {"hermes": {"enabled": True}},
         },
     ).observation_opt_out_phrases == ["root phrase"]
