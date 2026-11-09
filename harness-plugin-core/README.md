@@ -47,8 +47,6 @@ A plugin fixes its own block at startup: `migrateHost(configPath(), host, deadKe
 
 `checkConfig(file)` lists problems with an older file, each with the fixes `applyFixes(file, issues)` applies: top-level settings moved into every host block that lacks them, old key names (`auth.apiKey`, `endpoint`, `environmentUrl`, `workspaceId`) renamed, `globalOverride` turned into each host's `workspace`, the honcho CLI's top-level `oauth` moved to `hosts.honcho-cli`, and leftover top-level keys removed. Copies are always offered; deletions (top-level keys, a block's old key names) only once the plugins that might still read them have marked their blocks, so an old plugin never loses its settings. Hosts that share a workspace under different `peerName`s are reported without a fix. `loadConfig` returns the messages as `warnings`.
 
-`tests/fixtures/config/*.json` are the cases (`input`, `issues`, `fixed`). `honcho doctor` runs against the same files, so the two implementations agree.
-
 ## Telemetry headers
 
 Pass `telemetryHeaders()` as the SDK's `defaultHeaders`. Arbitrary headers are accepted by both the SDK and the Honcho API; missing identity fields are omitted.

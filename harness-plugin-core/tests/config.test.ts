@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { applyFixes, checkConfig, configPath, hostMigration, migrateHost, normalizeBaseUrl, resolveConfig, saveHost } from '../src/index'
@@ -49,16 +49,54 @@ describe('resolveConfig', () => {
   })
 })
 
+// [name, input, issue paths, fixed]
+const CASES: Array<[string, Record<string, any>, string[], Record<string, any>]> = [
+  [
+    "top-level settings are only copied while a plugin is unmarked",
+    {"apiKey":"hch-1","peerName":"alice","sessions":{"/x":"s"},"statusline":"full","hosts":{"claude_code":{"workspace":"cc"},"opencode":{"apiKey":"hch-2","workspace":"oc"}}},
+    ["(top level)","schemaVersion"],
+    {"apiKey":"hch-1","peerName":"alice","sessions":{"/x":"s"},"statusline":"full","hosts":{"claude_code":{"workspace":"cc","apiKey":"hch-1","peerName":"alice"},"opencode":{"apiKey":"hch-2","workspace":"oc","peerName":"alice"}},"schemaVersion":2},
+  ],
+  [
+    "top-level keys go once every block is marked; $schema stays",
+    {"$schema":"x","apiKey":"hch-1","peerName":"alice","statusline":"on","hosts":{"claude_code":{"schemaVersion":2,"workspace":"cc"},"pi":{"schemaVersion":2,"apiKey":"hch-2"}}},
+    ["(top level)","schemaVersion"],
+    {"$schema":"x","hosts":{"claude_code":{"schemaVersion":2,"workspace":"cc","apiKey":"hch-1","peerName":"alice"},"pi":{"schemaVersion":2,"apiKey":"hch-2","peerName":"alice"}},"schemaVersion":2},
+  ],
+  [
+    "old key names: copied in an unmarked block, renamed in a marked one",
+    {"hosts":{"dsh":{"auth":{"apiKey":"hch-1"},"endpoint":{"environment":"local"},"workspaceId":"w"},"pi":{"schemaVersion":2,"auth":{"apiKey":"hch-1"},"endpoint":{"baseUrl":"http://localhost:8000"}}}},
+    ["hosts.dsh","hosts.pi","schemaVersion"],
+    {"hosts":{"dsh":{"auth":{"apiKey":"hch-1"},"endpoint":{"environment":"local"},"workspaceId":"w","apiKey":"hch-1","workspace":"w","baseUrl":"http://localhost:8000"},"pi":{"schemaVersion":2,"apiKey":"hch-1","baseUrl":"http://localhost:8000"}},"schemaVersion":2},
+  ],
+  [
+    "globalOverride becomes each host's workspace",
+    {"globalOverride":true,"workspace":"shared","hosts":{"claude_code":{"workspace":"cc"},"cursor":{}}},
+    ["(top level)","schemaVersion"],
+    {"globalOverride":true,"workspace":"shared","hosts":{"claude_code":{"workspace":"shared"},"cursor":{"workspace":"shared"}},"schemaVersion":2},
+  ],
+  [
+    "the CLI's top-level oauth is copied to hosts.honcho-cli",
+    {"oauth":{"accessToken":"a","refreshToken":"r","accessExpiresAt":1,"clientId":"honcho-cli","scope":"write"},"environmentUrl":"https://api.honcho.dev","hosts":{"claude_code":{"workspace":"cc"}}},
+    ["(top level)","schemaVersion"],
+    {"oauth":{"accessToken":"a","refreshToken":"r","accessExpiresAt":1,"clientId":"honcho-cli","scope":"write"},"environmentUrl":"https://api.honcho.dev","hosts":{"claude_code":{"workspace":"cc"},"honcho-cli":{"oauth":{"accessToken":"a","refreshToken":"r","accessExpiresAt":1,"clientId":"honcho-cli","scope":"write"}}},"schemaVersion":2},
+  ],
+  [
+    "a newer schemaVersion is left alone",
+    {"schemaVersion":3,"apiKey":"x","hosts":{"a":{"newThing":1}}},
+    ["schemaVersion"],
+    {"schemaVersion":3,"apiKey":"x","hosts":{"a":{"newThing":1}}},
+  ],
+
+]
+
 describe('checkConfig / applyFixes', () => {
-  const dir = join(import.meta.dir, 'fixtures', 'config')
-  for (const name of readdirSync(dir).filter((f) => f.endsWith('.json'))) {
+  for (const [name, input, issues, fixed] of CASES) {
     test(name, () => {
-      const { input, issues, fixed } = JSON.parse(readFileSync(join(dir, name), 'utf-8'))
       const found = checkConfig(input)
       expect(found.map((i) => i.path)).toEqual(issues)
       const out = applyFixes(input, found)
       expect(out).toEqual(fixed)
-      // Fixing again changes nothing.
       expect(applyFixes(out, checkConfig(out))).toEqual(out)
     })
   }
