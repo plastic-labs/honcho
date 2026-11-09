@@ -22,6 +22,9 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 - `migrateHost(path, host, deadKeys)` / `hostMigration`: a plugin moves an older file's settings into its own block at startup, without touching the top level or other hosts.
 - `checkConfig(file)` / `applyFixes(file, issues)`: what an older file needs and the fixes, for plugins to warn and `honcho doctor` to apply. `tests/fixtures/config/` holds the shared cases.
 - `readConfigFile`, `CONFIG_SCHEMA_VERSION`, `CLI_HOST`.
+- `hosts.<host>.schemaVersion`: written by `saveHost` / `migrateHost` to mark a block whose plugin reads only that block. `checkConfig` deletes top-level keys, and a block's old key names, only once the relevant blocks carry it.
+- A file with a newer `schemaVersion` is read but not written (`saveHost` throws, `migrateHost` skips), and `checkConfig` reports it.
+- `config.schema.json` has `$id` `https://cdn.jsdelivr.net/npm/@honcho-ai/harness-plugin-core@0/config.schema.json` and allows a top-level `$schema`.
 
 ### Removed
 

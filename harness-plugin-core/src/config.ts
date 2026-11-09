@@ -16,10 +16,13 @@ export interface HostConfig {
   aiPeer?: string
   /** Honcho API origin; omitted means Honcho cloud. */
   baseUrl?: string
+  /** Set by the plugin once it reads only this block; `honcho doctor` waits for it. */
+  schemaVersion?: number
 }
 
 /** The file. Every setting lives in a host block; nothing at the top level. */
 export interface ConfigFile {
+  $schema?: string
   schemaVersion?: number
   hosts?: Record<string, HostConfig>
 }
@@ -131,12 +134,14 @@ export function loadConfig(opts: {
  */
 export async function saveHost(path: string, host: string, patch: Partial<HostConfig>): Promise<void> {
   await updateConfigFile(path, (file) => {
+    if (isNewer(file)) throw new Error(`${path} was written by a newer Honcho plugin; update this one.`)
     if (!isObj(file.hosts)) file.hosts = {}
     const block = isObj(file.hosts[host]) ? file.hosts[host] : (file.hosts[host] = {})
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) delete block[k]
       else block[k] = v
     }
+    block.schemaVersion = CONFIG_SCHEMA_VERSION
   })
 }
 
@@ -153,6 +158,16 @@ export interface ConfigIssue {
 }
 
 const MOVABLE = ['apiKey', 'peerName', 'workspace', 'aiPeer', 'baseUrl'] as const
+
+/** The file was written by a newer version of this package; leave it alone. */
+function isNewer(file: unknown): boolean {
+  return isObj(file) && typeof file.schemaVersion === 'number' && file.schemaVersion > CONFIG_SCHEMA_VERSION
+}
+
+/** A host whose plugin reads only its own block. */
+function isMigrated(block: unknown): boolean {
+  return isObj(block) && typeof block.schemaVersion === 'number' && block.schemaVersion >= CONFIG_SCHEMA_VERSION
+}
 
 /** A block's settings under their v2 names, reading old spellings too. */
 function settingsOf(b: Record<string, any>): Partial<Record<(typeof MOVABLE)[number], string>> {
@@ -179,9 +194,15 @@ const LEGACY_HOST_KEYS = ['auth', 'endpoint', 'environmentUrl', 'workspaceId']
  */
 export function checkConfig(file: unknown): ConfigIssue[] {
   if (!isObj(file)) return []
+  if (isNewer(file)) {
+    return [{ path: 'schemaVersion', message: `This file is schema version ${file.schemaVersion}, newer than this plugin understands; update the plugin.`, fixes: [] }]
+  }
   const issues: ConfigIssue[] = []
   const hosts: Record<string, any> = isObj(file.hosts) ? file.hosts : {}
   const names = Object.keys(hosts).filter((h) => isObj(hosts[h]))
+  // Copies are always safe. Deletes wait until the plugins that might still read
+  // the old place are updated, or an old plugin would lose its settings.
+  const pending = names.filter((h) => !isMigrated(hosts[h]))
 
   for (const h of names) {
     const legacy = LEGACY_HOST_KEYS.filter((k) => k in hosts[h])
@@ -189,34 +210,37 @@ export function checkConfig(file: unknown): ConfigIssue[] {
     const settings = settingsOf(hosts[h])
     issues.push({
       path: `hosts.${h}`,
-      message: `hosts.${h} uses old key names (${legacy.join(', ')}).`,
+      message: `hosts.${h} uses old key names (${legacy.join(', ')})${isMigrated(hosts[h]) ? '' : `; they stay until the ${h} plugin is updated`}.`,
       fixes: [
         ...Object.entries(settings)
           .filter(([k]) => hosts[h][k] === undefined)
           .map(([k, value]): ConfigFix => ({ op: 'set', path: ['hosts', h, k], value })),
-        ...legacy.map((k): ConfigFix => ({ op: 'delete', path: ['hosts', h, k] })),
+        ...(isMigrated(hosts[h]) ? legacy.map((k): ConfigFix => ({ op: 'delete', path: ['hosts', h, k] })) : []),
       ],
     })
   }
 
-  // Top level: settings move into every host block that lacks them; the rest goes.
-  const rootKeys = Object.keys(file).filter((k) => k !== 'schemaVersion' && k !== 'hosts')
+  // Top level: settings are copied into every host block that lacks them; the
+  // top-level keys go once every plugin reads only its own block.
+  const rootKeys = Object.keys(file).filter((k) => k !== 'schemaVersion' && k !== 'hosts' && k !== '$schema')
   if (rootKeys.length) {
     const root = settingsOf(file)
     const override = file.globalOverride === true
     const fixes: ConfigFix[] = []
     for (const [key, value] of Object.entries(root)) {
       for (const h of names) {
-        if (hosts[h][key] === undefined || (key === 'workspace' && override)) fixes.push({ op: 'set', path: ['hosts', h, key], value })
+        if (hosts[h][key] === undefined || (key === 'workspace' && override && hosts[h].workspace !== value)) {
+          fixes.push({ op: 'set', path: ['hosts', h, key], value })
+        }
       }
     }
     if (isObj(file.oauth) && !isObj(hosts[CLI_HOST]?.oauth)) fixes.push({ op: 'set', path: ['hosts', CLI_HOST, 'oauth'], value: file.oauth })
-    // With no host block to move them into, keep the settings for a person to place.
-    const keep = names.length ? [] : ['apiKey', 'auth', 'peerName', 'workspace', 'workspaceId', 'aiPeer', 'baseUrl', 'endpoint', 'environmentUrl']
-    fixes.push(...rootKeys.filter((k) => !keep.includes(k)).map((k): ConfigFix => ({ op: 'delete', path: [k] })))
+    const canDelete = names.length > 0 && pending.length === 0
+    if (canDelete) fixes.push(...rootKeys.map((k): ConfigFix => ({ op: 'delete', path: [k] })))
+    const wait = canDelete ? '' : names.length ? ` They stay until ${pending.join(', ')} ${pending.length === 1 ? 'is' : 'are'} updated.` : ' There is no host block to move them into.'
     issues.push({
       path: '(top level)',
-      message: `Top-level ${rootKeys.join(', ')} ${rootKeys.length === 1 ? 'is' : 'are'} no longer read; settings belong in each host block.`,
+      message: `Top-level ${rootKeys.join(', ')} ${rootKeys.length === 1 ? 'is' : 'are'} no longer read; settings belong in each host block.${wait}`,
       fixes,
     })
   }
@@ -254,6 +278,7 @@ export function hostMigration(
   host: string,
   deadKeys: readonly string[] = []
 ): { set: Partial<HostConfig>; remove: string[] } {
+  if (isNewer(file)) return { set: {}, remove: [] }
   const f = isObj(file) ? file : {}
   const hosts = isObj(f.hosts) ? f.hosts : {}
   const hasBlock = isObj(hosts[host])
@@ -270,12 +295,14 @@ export function hostMigration(
   if (f.globalOverride === true && root.workspace && block.workspace !== root.workspace) set.workspace = root.workspace
   if (block.oauth === undefined && isObj(block.auth) && isObj(block.auth.oauth)) set.oauth = block.auth.oauth
   const remove = [...LEGACY_HOST_KEYS, ...deadKeys].filter((k) => k in block && !(k in set))
+  // Mark the block as read by a current plugin, so doctor knows it may clean up.
+  if ((hasBlock || Object.keys(set).length) && !isMigrated(block)) set.schemaVersion = CONFIG_SCHEMA_VERSION
   return { set: set as Partial<HostConfig>, remove }
 }
 
 /**
- * Apply `hostMigration` to the file under the config lock. Returns the keys it
- * set or removed; empty when the block was already current.
+ * Apply `hostMigration` to the file under the config lock. Returns the settings
+ * it moved or removed (not the `schemaVersion` mark); empty when there were none.
  */
 export async function migrateHost(path: string, host: string, deadKeys: readonly string[] = []): Promise<string[]> {
   // Cheap check first, so a current block never takes the lock or writes.
@@ -284,8 +311,8 @@ export async function migrateHost(path: string, host: string, deadKeys: readonly
   let changed: string[] = []
   await updateConfigFile(path, (file) => {
     const { set, remove } = hostMigration(file, host, deadKeys)
-    changed = [...Object.keys(set), ...remove.map((k) => `-${k}`)]
-    if (!changed.length) return
+    changed = [...Object.keys(set).filter((k) => k !== 'schemaVersion'), ...remove.map((k) => `-${k}`)]
+    if (!Object.keys(set).length && !remove.length) return
     if (!isObj(file.hosts)) file.hosts = {}
     const block = isObj(file.hosts[host]) ? file.hosts[host] : (file.hosts[host] = {})
     Object.assign(block, set)

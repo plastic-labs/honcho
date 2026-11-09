@@ -1,0 +1,23 @@
+{
+  "input": {
+    "schemaVersion": 3,
+    "apiKey": "x",
+    "hosts": {
+      "a": {
+        "newThing": 1
+      }
+    }
+  },
+  "issues": [
+    "schemaVersion"
+  ],
+  "fixed": {
+    "schemaVersion": 3,
+    "apiKey": "x",
+    "hosts": {
+      "a": {
+        "newThing": 1
+      }
+    }
+  }
+}

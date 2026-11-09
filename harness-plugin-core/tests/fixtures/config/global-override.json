@@ -14,7 +14,8 @@
     "schemaVersion"
   ],
   "fixed": {
-    "schemaVersion": 2,
+    "globalOverride": true,
+    "workspace": "shared",
     "hosts": {
       "claude_code": {
         "workspace": "shared"
@@ -22,6 +23,7 @@
       "cursor": {
         "workspace": "shared"
       }
-    }
+    },
+    "schemaVersion": 2
   }
 }

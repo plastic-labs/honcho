@@ -19,7 +19,14 @@
     "schemaVersion"
   ],
   "fixed": {
-    "schemaVersion": 2,
+    "oauth": {
+      "accessToken": "a",
+      "refreshToken": "r",
+      "accessExpiresAt": 1,
+      "clientId": "honcho-cli",
+      "scope": "write"
+    },
+    "environmentUrl": "https://api.honcho.dev",
     "hosts": {
       "claude_code": {
         "workspace": "cc"
@@ -33,6 +40,7 @@
           "scope": "write"
         }
       }
-    }
+    },
+    "schemaVersion": 2
   }
 }

@@ -1,0 +1,29 @@
+{
+  "input": {
+    "schemaVersion": 2,
+    "hosts": {
+      "dsh": {
+        "schemaVersion": 2,
+        "auth": {
+          "apiKey": "hch-1"
+        },
+        "endpoint": {
+          "baseUrl": "http://localhost:8000"
+        }
+      }
+    }
+  },
+  "issues": [
+    "hosts.dsh"
+  ],
+  "fixed": {
+    "schemaVersion": 2,
+    "hosts": {
+      "dsh": {
+        "schemaVersion": 2,
+        "apiKey": "hch-1",
+        "baseUrl": "http://localhost:8000"
+      }
+    }
+  }
+}

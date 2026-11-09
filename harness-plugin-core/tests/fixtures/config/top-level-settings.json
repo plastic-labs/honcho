@@ -21,7 +21,12 @@
     "schemaVersion"
   ],
   "fixed": {
-    "schemaVersion": 2,
+    "apiKey": "hch-1",
+    "peerName": "alice",
+    "sessions": {
+      "/x": "s"
+    },
+    "statusline": "full",
     "hosts": {
       "claude_code": {
         "workspace": "cc",
@@ -33,6 +38,7 @@
         "workspace": "oc",
         "peerName": "alice"
       }
-    }
+    },
+    "schemaVersion": 2
   }
 }

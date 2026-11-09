@@ -5,12 +5,11 @@
     "statusline": "on"
   },
   "issues": [
-    "(top level)",
-    "schemaVersion"
+    "(top level)"
   ],
   "fixed": {
-    "schemaVersion": 2,
     "apiKey": "hch-1",
-    "peerName": "alice"
+    "peerName": "alice",
+    "statusline": "on"
   }
 }

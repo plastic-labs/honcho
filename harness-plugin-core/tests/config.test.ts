@@ -70,7 +70,7 @@ describe('saveHost', () => {
     writeFileSync(path, JSON.stringify({ hosts: { a: { workspace: 'w', aiPeer: 'x' }, b: { workspace: 'other' } } }))
     await saveHost(path, 'a', { peerName: 'alice', aiPeer: undefined })
     expect(JSON.parse(readFileSync(path, 'utf-8'))).toEqual({
-      hosts: { a: { workspace: 'w', peerName: 'alice' }, b: { workspace: 'other' } },
+      hosts: { a: { workspace: 'w', peerName: 'alice', schemaVersion: 2 }, b: { workspace: 'other' } },
     })
   })
 })
@@ -94,18 +94,31 @@ describe('hostMigration / migrateHost', () => {
 
   test('copies top-level settings into its own block and renames old keys there', () => {
     expect(hostMigration(file, 'claude_code', ['sessionStrategy'])).toEqual({
-      set: { apiKey: 'root-key', peerName: 'alice', baseUrl: 'http://localhost:8000' },
+      set: { apiKey: 'root-key', peerName: 'alice', baseUrl: 'http://localhost:8000', schemaVersion: 2 },
       remove: ['endpoint', 'sessionStrategy'],
     })
   })
 
   test('a host with no block also takes the top-level workspace', () => {
-    expect(hostMigration(file, 'pi').set).toEqual({ apiKey: 'root-key', peerName: 'alice', workspace: 'root-ws' })
+    expect(hostMigration(file, 'pi').set).toEqual({ apiKey: 'root-key', peerName: 'alice', workspace: 'root-ws', schemaVersion: 2 })
   })
 
   test('globalOverride workspace wins over its own', () => {
     expect(hostMigration({ globalOverride: true, workspace: 'shared', hosts: { a: { workspace: 'mine' } } }, 'a').set)
-      .toEqual({ workspace: 'shared' })
+      .toEqual({ workspace: 'shared', schemaVersion: 2 })
+  })
+
+  test('a current block only gets the schemaVersion mark, once', () => {
+    expect(hostMigration({ hosts: { a: { apiKey: 'k' } } }, 'a')).toEqual({ set: { schemaVersion: 2 }, remove: [] })
+    expect(hostMigration({ hosts: { a: { apiKey: 'k', schemaVersion: 2 } } }, 'a')).toEqual({ set: {}, remove: [] })
+  })
+
+  test('a file from a newer schema is left alone', async () => {
+    expect(hostMigration({ schemaVersion: 3, apiKey: 'k' }, 'a')).toEqual({ set: {}, remove: [] })
+    const path = join(mkdtempSync(join(tmpdir(), 'hpc-')), 'config.json')
+    writeFileSync(path, JSON.stringify({ schemaVersion: 3, hosts: {} }))
+    await expect(saveHost(path, 'a', { workspace: 'w' })).rejects.toThrow('newer Honcho plugin')
+    expect(JSON.parse(readFileSync(path, 'utf-8'))).toEqual({ schemaVersion: 3, hosts: {} })
   })
 
   test('writes only its own block, then has nothing left to do', async () => {
@@ -116,7 +129,7 @@ describe('hostMigration / migrateHost', () => {
     expect(after.apiKey).toBe('root-key')
     expect(after.sessions).toEqual({ '/x': 's' })
     expect(after.hosts.dsh).toEqual({ auth: { apiKey: 'dsh-key' } })
-    expect(after.hosts.claude_code).toEqual({ workspace: 'cc', apiKey: 'root-key', peerName: 'alice', baseUrl: 'http://localhost:8000' })
+    expect(after.hosts.claude_code).toEqual({ workspace: 'cc', apiKey: 'root-key', peerName: 'alice', baseUrl: 'http://localhost:8000', schemaVersion: 2 })
     expect(await migrateHost(path, 'claude_code', ['sessionStrategy'])).toEqual([])
   })
 
