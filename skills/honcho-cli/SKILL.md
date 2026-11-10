@@ -107,8 +107,9 @@ honcho workspace chat "what happened here?" --scope <name> --json
 # Always dry-run first: it reads both sides and writes nothing
 honcho workspace replay --from <src> --to <dst> --dry-run --json | jq '.actions, .messages_to_send'
 
-# Another instance: that side needs its own key; the configured key is never sent to it
-HONCHO_TO_API_KEY=<key> honcho workspace replay --from <src> --to-url <url> --json
+# Another instance, e.g. managed Honcho (configured) to a self-hosted one.
+# The configured key is never sent to it; set HONCHO_TO_API_KEY if its auth is on
+honcho workspace replay --from <src> --to-url http://localhost:8000 --json
 
 # Only the N sessions with the most recent message
 honcho workspace replay --from <src> --to <dst> --num-sessions 20 --json

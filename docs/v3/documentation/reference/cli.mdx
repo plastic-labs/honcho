@@ -256,27 +256,43 @@ honcho workspace chat "what happened in this project?" --scope my-project --json
 message in order with its original timestamp. The destination runs its own
 reasoning over those messages, so its conclusions, summaries and peer cards are
 derived fresh and can differ from the source. Conclusions and peer cards are
-not copied.
+not copied. Use it to copy a workspace inside one instance, or to move one
+between instances, for example from managed Honcho to a self-hosted instance.
 
 ```bash
 # Preview: what happens to each session, and how many messages are sent
-honcho workspace replay --from prod-ws --to scratch --dry-run
+honcho workspace replay --from my-app --to my-app-copy --dry-run
 
 # Same instance, new workspace
-honcho workspace replay --from prod-ws --to scratch
+honcho workspace replay --from my-app --to my-app-copy
 
-# Another instance: the destination needs its own key
-export HONCHO_TO_API_KEY=hch-v3-staging-xxx
-honcho workspace replay --from prod-ws --to-url https://staging.example.com
+# From managed Honcho (the configured instance) to a self-hosted one
+honcho workspace replay --from my-app --to-url http://localhost:8000
+
+# The other direction: read from a self-hosted instance
+honcho workspace replay --from my-app --from-url http://localhost:8000
 
 # Only the 20 sessions with the most recent message
-honcho workspace replay --from prod-ws --to scratch --num-sessions 20
+honcho workspace replay --from my-app --to my-app-copy --num-sessions 20
 ```
 
 Each side uses the configured instance unless `--from-url` / `--to-url` names
-another one. A side on another instance authenticates only with its own
-`--from-api-key` / `--to-api-key` (or `HONCHO_FROM_API_KEY` /
-`HONCHO_TO_API_KEY`); your configured credentials are never sent to it.
+another one, so with the CLI set up for managed Honcho (`https://api.honcho.dev`)
+only the self-hosted side needs a URL. `--to` defaults to the `--from` ID, so the
+copy keeps its name on the other instance.
+
+A side on another instance authenticates only with its own key, and your
+configured credentials are never sent to it. A self-hosted instance with
+authentication off needs no key. If authentication is on, pass that instance's
+key:
+
+```bash
+export HONCHO_TO_API_KEY=<key for the self-hosted instance>
+honcho workspace replay --from my-app --to-url https://honcho.internal.example.com
+```
+
+Use `HONCHO_FROM_API_KEY` (or `--from-api-key`) when the other instance is the
+source.
 
 Things to know:
 
