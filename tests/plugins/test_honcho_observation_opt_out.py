@@ -76,7 +76,18 @@ def plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
         child = _stub(monkeypatch, name, **attrs)
         setattr(agent, name.rsplit(".", 1)[1], child)
 
+    _stub(
+        monkeypatch,
+        "utils",
+        read_json_or_empty=lambda *args, **kwargs: {},
+        atomic_json_write=lambda *args, **kwargs: None,
+    )
     _stub(monkeypatch, "hermes_cli", package=True)
+    _stub(
+        monkeypatch,
+        "hermes_cli.config",
+        cfg_get=lambda config, key, default=None: default,
+    )
     profiles = _stub(
         monkeypatch,
         "hermes_cli.profiles",
@@ -84,7 +95,10 @@ def plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     )
     sys.modules["hermes_cli"].__dict__["profiles"] = profiles
     _stub(
-        monkeypatch, "hermes_constants", get_hermes_home=lambda: Path.home() / ".hermes"
+        monkeypatch,
+        "hermes_constants",
+        get_hermes_home=lambda: Path.home() / ".hermes",
+        mkdir_under_hermes_home=lambda *args, **kwargs: None,
     )
     _stub(
         monkeypatch,
@@ -109,6 +123,12 @@ def plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     registry = _stub(monkeypatch, "tools.registry", tool_error=tool_error)
     tools.__dict__["registry"] = registry
 
+    _stub(
+        monkeypatch,
+        f"{_PLUGIN_NAME}.config_panel",
+        read_fields=lambda *args: None,
+        write_fields=lambda *args: None,
+    )
     spec = importlib.util.spec_from_file_location(
         _PLUGIN_NAME,
         _PLUGIN_PATH / "__init__.py",
