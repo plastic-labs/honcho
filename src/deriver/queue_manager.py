@@ -38,6 +38,7 @@ from src.crud.lifecycle_barrier import (
     ClaimStamp,
     WriteSnapshot,
     capture_write_snapshot,
+    claim_context,
     stamp_representations,
 )
 from src.db import tenant_context
@@ -959,7 +960,18 @@ class QueueManager:
                                 break
 
                             try:
-                                await process_item(queue_item)
+                                # Producers read the claim from here, so their
+                                # final write proves this worker still holds
+                                # the unit and the row it is working from.
+                                async with claim_context(
+                                    ClaimStamp(
+                                        work_unit_key=work_unit_key,
+                                        claim_id=ownership.aqs_id,
+                                        tenant_id=work_unit.tenant_id,
+                                        queue_item_ids=(queue_item.id,),
+                                    )
+                                ):
+                                    await process_item(queue_item)
                                 await self.mark_queue_items_as_processed(
                                     [queue_item], work_unit_key
                                 )

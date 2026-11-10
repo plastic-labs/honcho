@@ -16,9 +16,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import schemas
 from src.cache.client import cache as cache_client
 from src.config import ConfiguredModelSettings, settings
+from src.crud.lifecycle_barrier import (
+    WriteSnapshot,
+    capture_write_snapshot,
+    current_claim,
+    final_write,
+)
 from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
-from src.exceptions import EmptySummaryError, ResourceNotFoundException
+from src.exceptions import (
+    EmptySummaryError,
+    LifecycleBarrierError,
+    ResourceNotFoundException,
+    WriteGenerationStaleError,
+    WriteParentGoneError,
+)
 from src.llm import HonchoLLMCallResponse, honcho_llm_call
 from src.llm.types import (
     LLMTelemetryContext,
@@ -525,7 +537,9 @@ def _raise_summary_failures(
         failures.values(),
         key=lambda failure: (
             0
+            # A write the lifecycle barrier found stale is recomputed by a retry.
             if is_retryable_error(failure)
+            or isinstance(failure, WriteGenerationStaleError)
             else 1
             if isinstance(failure, EmptySummaryError)
             else 2
@@ -579,11 +593,29 @@ async def _create_and_save_summary(
         )
 
     async with tracked_db("summary.fetch_data") as db:
+        # Lifecycle barrier: capture the workspace and session before the
+        # session row and its messages are read. A summary lands on the
+        # session row by name, so without the captured id it could land on a
+        # session recreated under the same name.
         try:
+            barrier = await capture_write_snapshot(
+                db,
+                workspace_name,
+                session_name=session_name,
+                claim=current_claim(
+                    [queue_item_id] if queue_item_id is not None else []
+                ),
+            )
             session = await crud.get_session(db, session_name, workspace_name)
-        except ResourceNotFoundException:
+        except (ResourceNotFoundException, WriteParentGoneError):
             return
         session_id = session.id
+        if barrier.session is None or session_id != barrier.session.uid:
+            # The session row came from the cache and is an older session of
+            # the same name. Its summaries are not this session's input.
+            raise WriteGenerationStaleError(
+                "session", f"Session {session_name} was replaced since it was cached"
+            )
         summaries: dict[str, Summary] = session.internal_metadata.get(SUMMARIES_KEY, {})
         latest_summary = summaries.get(summary_type.value)
         if latest_summary:
@@ -653,6 +685,8 @@ async def _create_and_save_summary(
         last_message_content_preview = messages[-1].content[:30]
         message_count = len(messages)
         source_message_ids = [message.public_id for message in messages]
+        # Every message in the prompt is a source the summary depends on.
+        barrier = barrier.with_messages(source_message_ids)
 
         # A clipped message is sent shorter than its stored count says.
         messages_tokens = (
@@ -717,6 +751,7 @@ async def _create_and_save_summary(
                 new_summary,
                 workspace_name,
                 session_name,
+                barrier=barrier,
             )
 
     accumulate_metric(
@@ -911,6 +946,8 @@ async def _save_summary(
     summary: Summary,
     workspace_name: str,
     session_name: str,
+    *,
+    barrier: WriteSnapshot | None = None,
 ) -> None:
     """
     Save a summary as metadata on a session.
@@ -923,20 +960,26 @@ async def _save_summary(
         summary: The summary to save
         workspace_name: Workspace name
         session_name: Session name
-    """
-    from src.exceptions import ResourceNotFoundException
+        barrier: What the summarizer captured before it read the session. The
+            save then runs behind the lifecycle barrier, in the transaction
+            this function commits, and lands on the captured session id only
 
+    Raises:
+        LifecycleBarrierError: With ``barrier``, when the session or a
+            summarized message was deleted since capture. Nothing is saved
+    """
     # Get the label value from the enum
     label_value = summary["summary_type"]
 
-    try:
-        await crud.get_session(db, session_name, workspace_name)
-    except ResourceNotFoundException:
-        # If session doesn't exist, we can't save the summary
-        logger.warning(
-            f"Cannot save summary: session {session_name} not found in workspace {workspace_name}"
-        )
-        return
+    if barrier is None:
+        try:
+            await crud.get_session(db, session_name, workspace_name)
+        except ResourceNotFoundException:
+            # If session doesn't exist, we can't save the summary
+            logger.warning(
+                f"Cannot save summary: session {session_name} not found in workspace {workspace_name}"
+            )
+            return
 
     sanitized: Summary = {**summary, "content": strip_nul(summary["content"])}
 
@@ -961,8 +1004,22 @@ async def _save_summary(
         )
     )
 
-    await db.execute(stmt)
-    await db.commit()
+    if barrier is None or barrier.session is None:
+        await db.execute(stmt)
+        await db.commit()
+    else:
+        try:
+            async with final_write(db, barrier):
+                await db.execute(
+                    stmt.where(
+                        models.Session.tenant_id == barrier.tenant_id,
+                        models.Session.id == barrier.session.uid,
+                    )
+                )
+            await db.commit()
+        except LifecycleBarrierError:
+            await db.rollback()
+            raise
 
     cache_key = session_cache_key(workspace_name, session_name)
     await cache_client.delete(cache_key)
