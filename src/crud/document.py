@@ -1228,6 +1228,7 @@ async def delete_documents(
     observed: str,
     session_name: str | None = None,
     history: DreamHistoryTarget | None = None,
+    barrier: WriteSnapshot | None = None,
 ) -> list[tuple[str, str]]:
     """
     Soft-delete multiple documents in a single UPDATE ... RETURNING statement.
@@ -1239,6 +1240,15 @@ async def delete_documents(
 
     With ``history``, the deleted rows' content is recorded to that dream run
     in the same transaction.
+
+    This is a consolidation, not an erasure: it does not raise the
+    collection's ``deletion_generation``. With ``barrier`` (what a dream
+    captured when it started) the removal runs behind the lifecycle barrier,
+    so a dream whose reading is stale removes nothing.
+
+    Raises:
+        LifecycleBarrierError: With ``barrier``, when a deletion made the
+            dream's reading stale. Nothing is removed
     """
     if not document_ids:
         return []
@@ -1264,24 +1274,34 @@ async def delete_documents(
             models.Document.session_name,
         )
     )
-    result = await db.execute(stmt)
-    rows = result.all()
-    if history is not None:
-        await record_removed(
-            db,
-            history,
-            workspace_name,
-            [
-                RemovedConclusion(
-                    id=row.id,
-                    level=row.level,
-                    content=row.content,
-                    session_name=row.session_name,
+    write_barrier = (
+        final_write(db, barrier.for_representation(observer, observed))
+        if barrier is not None
+        else nullcontext()
+    )
+    try:
+        async with write_barrier:
+            result = await db.execute(stmt)
+            rows = result.all()
+            if history is not None:
+                await record_removed(
+                    db,
+                    history,
+                    workspace_name,
+                    [
+                        RemovedConclusion(
+                            id=row.id,
+                            level=row.level,
+                            content=row.content,
+                            session_name=row.session_name,
+                        )
+                        for row in rows
+                    ],
                 )
-                for row in rows
-            ],
-        )
-    await db.commit()
+        await db.commit()
+    except LifecycleBarrierError:
+        await db.rollback()
+        raise
     return [(row.id, row.level) for row in rows]
 
 

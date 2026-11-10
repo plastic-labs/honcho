@@ -602,9 +602,7 @@ async def _create_and_save_summary(
                 db,
                 workspace_name,
                 session_name=session_name,
-                claim=current_claim(
-                    [queue_item_id] if queue_item_id is not None else []
-                ),
+                claim=current_claim(),
             )
             session = await crud.get_session(db, session_name, workspace_name)
         except (ResourceNotFoundException, WriteParentGoneError):

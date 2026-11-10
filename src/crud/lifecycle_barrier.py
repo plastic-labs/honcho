@@ -61,6 +61,7 @@ from src import models
 from src.config import settings
 from src.crud.lifecycle import live_message_row
 from src.exceptions import (
+    LifecycleBarrierError,
     WriteClaimLostError,
     WriteGenerationStaleError,
     WriteParentGoneError,
@@ -71,6 +72,7 @@ __all__ = [
     "CollectionStamp",
     "GenerationStamp",
     "PeerStamp",
+    "WriteGate",
     "WriteSnapshot",
     "begin_session_deletion",
     "begin_workspace_deletion",
@@ -177,17 +179,35 @@ class WriteSnapshot:
         return next((p for p in self.peers if p.name == name), None)
 
 
+@dataclass(slots=True)
+class WriteGate:
+    """One snapshot shared by the many writes of a long producer, such as a dream.
+
+    A dream writes several times across many model calls. Every write runs
+    behind ``final_write`` with ``snapshot``, captured when the dream started.
+    The first refusal is kept in ``refusal``: the producer then stops writing
+    and raises it once its model loop returns.
+    """
+
+    snapshot: WriteSnapshot
+    refusal: LifecycleBarrierError | None = None
+
+
 # The claim of the work unit the current task is processing, set by the queue
 # worker for the duration of the unit. Producers that run off the queue read it
 # at capture so their final write also proves the worker still holds its unit.
 _claim: ContextVar[ClaimStamp | None] = ContextVar("lifecycle_claim", default=None)
 
 
-def current_claim(queue_item_ids: Iterable[int] = ()) -> ClaimStamp | None:
-    """The running work unit's claim, narrowed to the queue rows in hand."""
+def current_claim(queue_item_ids: Iterable[int] | None = None) -> ClaimStamp | None:
+    """The running work unit's claim, or None outside a queue worker.
+
+    The worker binds the queue rows it is processing. Pass ``queue_item_ids``
+    only to narrow the claim to other rows.
+    """
     claim = _claim.get()
-    if claim is None:
-        return None
+    if claim is None or queue_item_ids is None:
+        return claim
     return replace(claim, queue_item_ids=tuple(sorted(set(queue_item_ids))))
 
 

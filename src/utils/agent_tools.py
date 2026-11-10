@@ -15,9 +15,10 @@ from src import crud, models, schemas
 from src.config import settings
 from src.crud.dream_history import DreamHistoryTarget
 from src.crud.lifecycle import live_message_row
+from src.crud.lifecycle_barrier import WriteGate, WriteSnapshot
 from src.dependencies import tracked_db
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
-from src.exceptions import ResourceNotFoundException
+from src.exceptions import LifecycleBarrierError, ResourceNotFoundException
 from src.models import Document
 from src.schemas import ResolvedConfiguration
 from src.telemetry.events import (
@@ -856,6 +857,7 @@ async def create_observations(
     run_id: str | None = None,
     parent_category: str | None = None,
     history: DreamHistoryTarget | None = None,
+    barrier: WriteSnapshot | None = None,
 ) -> ObservationsCreatedResult:
     """
     Create multiple observations (documents) in the memory system in a single call.
@@ -874,9 +876,15 @@ async def create_observations(
             EmbeddingCallCompletedEvents emitted here can be joined back to
             the originating agent run.
         history: Dream run to record the created and replaced conclusions to
+        barrier: What the agent's run captured before it read its input. The
+            save then runs behind the lifecycle barrier
 
     Returns:
         ObservationsCreatedResult with created count and any per-observation failures
+
+    Raises:
+        LifecycleBarrierError: With ``barrier``, when a deletion made the
+            run's input stale. Nothing is created
     """
     if not observations:
         logger.warning("create_observations called with empty list")
@@ -908,14 +916,17 @@ async def create_observations(
             created_count=0, created_levels=[], failed=failed
         )
 
-    # Ensure collection exists (short DB scope)
-    async with tracked_db("create_observations.collection") as db:
-        await crud.get_or_create_collection(
-            db,
-            workspace_name,
-            observer=observer,
-            observed=observed,
-        )
+    # Ensure collection exists (short DB scope). With a barrier, the save
+    # creates it in its own transaction instead: this helper commits, and a
+    # collection must not be created under a parent deleted since capture.
+    if barrier is None:
+        async with tracked_db("create_observations.collection") as db:
+            await crud.get_or_create_collection(
+                db,
+                workspace_name,
+                observer=observer,
+                observed=observed,
+            )
 
     # Compute embeddings (no DB needed)
     contents = [obs.content for obs in normalized_observations]
@@ -1009,6 +1020,7 @@ async def create_observations(
                     observed=observed,
                     deduplicate=settings.DERIVER.DEDUPLICATE,
                     history=history,
+                    barrier=barrier,
                 )
             ).created_documents
         logger.info(
@@ -1237,6 +1249,14 @@ class ToolContext:
     # History. Write handlers record their changes to it in the same
     # transaction as the change.
     history: DreamHistoryTarget | None = None
+    # Set for a producer that writes across many model calls (a dream). Every
+    # write handler runs behind the lifecycle barrier with its snapshot; once
+    # one write is refused, every later tool call is refused too.
+    barrier: WriteGate | None = None
+
+    @property
+    def write_snapshot(self) -> WriteSnapshot | None:
+        return self.barrier.snapshot if self.barrier is not None else None
 
 
 def _normalize_observation_id(obs_id: str) -> str:
@@ -1421,6 +1441,7 @@ async def _handle_create_observations_impl(
             run_id=ctx.run_id,
             parent_category=ctx.parent_category,
             history=ctx.history,
+            barrier=ctx.write_snapshot,
         )
 
     # Merge validation and embedding failures
@@ -1613,6 +1634,7 @@ async def _handle_update_peer_card(
             observer=ctx.observer,
             observed=ctx.observed,
             history=ctx.history,
+            barrier=ctx.write_snapshot,
         )
     logger.info(
         f"Updated peer card for {ctx.workspace_name}/{ctx.observer}/{ctx.observed}"
@@ -2154,6 +2176,7 @@ async def _handle_delete_observations(
             observer=ctx.observer,
             observed=ctx.observed,
             history=ctx.history,
+            barrier=ctx.write_snapshot,
         )
 
     deleted_ids = {doc_id for doc_id, _ in deleted}
@@ -2411,6 +2434,13 @@ def get_tool_handler(
     return _TOOL_HANDLERS.get(tool_name)
 
 
+_STALE_RUN_ERROR = (
+    "ERROR: A deletion changed the memory this run was reading, so its writes "
+    + "are refused and nothing more can be read or written. Stop now. The run "
+    + "will start again from the current memory."
+)
+
+
 async def create_tool_executor(
     workspace_name: str,
     observer: str,
@@ -2426,6 +2456,7 @@ async def create_tool_executor(
     handler_resolver: Callable[[str], Any] | None = None,
     evidence: EvidenceAccumulator | None = None,
     history: DreamHistoryTarget | None = None,
+    barrier: WriteGate | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
     Create a unified tool executor function for all agent operations.
@@ -2457,6 +2488,8 @@ async def create_tool_executor(
             not requested and nothing is collected.
         history: Dream run that write handlers record their changes to, for
             Representation History. None records nothing.
+        barrier: The run's lifecycle-barrier snapshot, shared by all of its
+            writes. None for agents that do not write.
 
     Returns:
         An async callable that executes tools with the captured context
@@ -2480,6 +2513,7 @@ async def create_tool_executor(
         parent_category=parent_category,
         evidence=evidence,
         history=history,
+        barrier=barrier,
     )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
@@ -2518,8 +2552,16 @@ async def create_tool_executor(
         is_error: bool = False
 
         try:
-            handler = (handler_resolver or _TOOL_HANDLERS.get)(tool_name)
-            if handler:
+            # A write of this run was refused by the lifecycle barrier: its
+            # input is stale, so nothing more is read or written for it.
+            refused = ctx.barrier is not None and ctx.barrier.refusal is not None
+            handler = (
+                None if refused else (handler_resolver or _TOOL_HANDLERS.get)(tool_name)
+            )
+            if refused:
+                result_str = _STALE_RUN_ERROR
+                is_error = True
+            elif handler:
                 handler_result = await handler(ctx, tool_input)
                 # Handlers return either a plain str (existing contract) or a
                 # ToolResult(content, metadata) carrying structured fields for
@@ -2556,6 +2598,16 @@ async def create_tool_executor(
             result_str = f"Tool {tool_name} cancelled"
             is_error = True
             raise
+        except LifecycleBarrierError as e:
+            # Not an error of the tool: a deletion landed while the run was
+            # working. Keep the refusal for the run to raise once its loop
+            # ends, and tell the model to stop.
+            if ctx.barrier is None:
+                raise
+            ctx.barrier.refusal = e
+            result_str = _STALE_RUN_ERROR
+            is_error = True
+            logger.info("Tool %s refused by the lifecycle barrier: %s", tool_name, e)
         except ValueError as e:
             # Recoverable errors (bad input, validation failures) - return to LLM
             result_str = (

@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from src import crud
 from src.config import settings
+from src.crud.lifecycle_barrier import WriteSnapshot, final_write
 from src.dependencies import tracked_db
 from src.utils.tokens import estimate_tokens
 from src.utils.types import ToolResult
@@ -610,26 +611,51 @@ async def _store_entries(
     entries: list[NoteEntry],
     *,
     epoch: str | None,
+    barrier: WriteSnapshot | None = None,
 ) -> bool:
     """Write the entries back, only while the notes' epoch is still `epoch`.
+
+    Notes are free text a dream writes from what it read, so with `barrier`
+    (what the dream captured when it started) the write runs behind the
+    lifecycle barrier, in the transaction this function commits.
 
     Returns:
         False when the notes were reset since `epoch` was read; nothing is
         written then.
+
+    Raises:
+        LifecycleBarrierError: With `barrier`, when a deletion made the
+            dream's reading stale. Nothing is written
     """
+    patch = {
+        "version": 1,
+        "entries": [entry.model_dump(mode="json") for entry in entries],
+    }
     async with tracked_db("dream.notes_write") as db:
-        return await crud.merge_collection_internal_metadata_value(
-            db,
-            workspace_name,
-            observer,
-            observed,
-            NOTES_KEY,
-            {
-                "version": 1,
-                "entries": [entry.model_dump(mode="json") for entry in entries],
-            },
-            if_unchanged=(EPOCH_KEY, epoch),
-        )
+        if barrier is None:
+            return await crud.merge_collection_internal_metadata_value(
+                db,
+                workspace_name,
+                observer,
+                observed,
+                NOTES_KEY,
+                patch,
+                if_unchanged=(EPOCH_KEY, epoch),
+            )
+        async with final_write(db, barrier.for_representation(observer, observed)):
+            written = await crud.merge_collection_internal_metadata_value(
+                db,
+                workspace_name,
+                observer,
+                observed,
+                NOTES_KEY,
+                patch,
+                commit=False,
+                if_unchanged=(EPOCH_KEY, epoch),
+            )
+        await db.commit()
+    await crud.invalidate_collection_cache(workspace_name, observer, observed)
+    return written
 
 
 @dataclass(frozen=True)
@@ -850,7 +876,13 @@ def make_update_notes_handler(
             )
 
         if not await _store_entries(
-            ctx.workspace_name, ctx.observer, ctx.observed, updated, epoch=epoch
+            ctx.workspace_name,
+            ctx.observer,
+            ctx.observed,
+            updated,
+            epoch=epoch,
+            # ctx is duck-typed here; one without a barrier writes as before.
+            barrier=getattr(ctx, "write_snapshot", None),
         ):
             return _NOTES_RESET_ERROR
         changes = [
