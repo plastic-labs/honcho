@@ -134,10 +134,16 @@ class LLMCallCompletedEvent(BaseEvent):
         description="True for the stream_final_response path. Token counts are 0 placeholders — see class docstring.",
     )
 
-    # Agent correlation (None for non-agent calls like summarizer / deriver)
+    # Correlation with the work the call belongs to
     run_id: str | None = Field(
         default=None,
-        description="Agent run id (ULID when widened in follow-up)",
+        description=(
+            "Id of the run the call belongs to: the agent run for dialectic and "
+            "dreamer, the batch's trace id for the deriver (matches "
+            "representation.completed run_id), and the summary's trace id for "
+            "the summarizer (matches agent.tool.summary.created run_id). None "
+            "for calls outside a run."
+        ),
     )
     iteration: int | None = Field(
         default=None,

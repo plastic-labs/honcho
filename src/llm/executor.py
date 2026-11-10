@@ -160,7 +160,12 @@ def _emit_llm_call_completed(
                 has_tools=has_tools,
                 tool_call_count=(len(result.tool_calls) if result else 0),
                 was_stream=was_stream,
-                run_id=(telemetry.run_id if telemetry else None),
+                # Agent runs set run_id equal to their trace_id. Single-shot
+                # callers (deriver, summarizer) set only trace_id, and their
+                # completion events carry it as run_id, so it joins them too.
+                run_id=(
+                    (telemetry.run_id or telemetry.trace_id) if telemetry else None
+                ),
                 iteration=(telemetry.iteration if telemetry else None),
             )
         )
