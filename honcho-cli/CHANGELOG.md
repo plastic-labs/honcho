@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `honcho workspace replay --from <id> --to <id>`: copy a workspace by replaying it. Workspace, peer and session metadata and configuration, session membership and scopes are copied, then every message is re-sent in order with its original `created_at`, so the destination derives its own conclusions, summaries and peer cards; nothing derived is copied. `--from-url` / `--to-url` (and `HONCHO_FROM_API_KEY` / `HONCHO_TO_API_KEY`) put either side on another Honcho instance, and the configured credentials are never sent to an instance they were not issued for. `--num-sessions N` replays only the N sessions with the most recent message, `--dry-run` reads both sides without writing and says, for each session, whether a replay will create it, resume it, find it up to date, or skip it as a conflict, and a rerun resumes by skipping messages the destination already has. A destination session whose messages differ from the source is left untouched and reported. In a terminal the command prints a short report and the `queue-status` command that shows derivation on the destination; `--json` prints the same facts as one object. Per-message configuration is not stored by Honcho and cannot be replayed
+
 ## [0.5.0] - 2026-11-05
 
 ### Added

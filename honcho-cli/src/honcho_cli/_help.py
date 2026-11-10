@@ -82,6 +82,7 @@ def print_welcome(console: Console) -> None:
         ("[dim]example[/dim]", "[dim]honcho peer chat \"what does alice prefer?\" -p alice -w agents[/dim]"),
         ("", ""),
         ("workspace",  "list · create · search · chat · delete · inspect · queue-status"),
+        ("",           "replay"),
         ("peer",       "list · create · search · inspect · card · chat"),
         ("",           "get-metadata · set-metadata · representation"),
         ("session",    "list · create · search · delete · inspect · view · add-peers"),

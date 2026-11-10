@@ -250,6 +250,44 @@ honcho workspace chat "what themes show up across peers?" --json
 honcho workspace chat "what happened in this project?" --scope my-project --json
 ```
 
+### Copy a workspace to another workspace or instance
+
+`honcho workspace replay` copies settings and membership, then re-sends every
+message in order with its original timestamp. The destination runs its own
+reasoning over those messages, so its conclusions, summaries and peer cards are
+derived fresh and can differ from the source. Conclusions and peer cards are
+not copied.
+
+```bash
+# Preview: what happens to each session, and how many messages are sent
+honcho workspace replay --from prod-ws --to scratch --dry-run
+
+# Same instance, new workspace
+honcho workspace replay --from prod-ws --to scratch
+
+# Another instance: the destination needs its own key
+export HONCHO_TO_API_KEY=hch-v3-staging-xxx
+honcho workspace replay --from prod-ws --to-url https://staging.example.com
+
+# Only the 20 sessions with the most recent message
+honcho workspace replay --from prod-ws --to scratch --num-sessions 20
+```
+
+Each side uses the configured instance unless `--from-url` / `--to-url` names
+another one. A side on another instance authenticates only with its own
+`--from-api-key` / `--to-api-key` (or `HONCHO_FROM_API_KEY` /
+`HONCHO_TO_API_KEY`); your configured credentials are never sent to it.
+
+Things to know:
+
+- **Dry-run first.** `--dry-run` reads both sides and writes nothing, not even the destination workspace. For each session it says whether a replay will create it, resume it, find it up to date, or skip it because the destination already has different messages under that session ID (a conflict).
+- **It costs reasoning on the destination.** Every replayed message is derived again. Derivation runs in the background after the command exits; the summary prints the `honcho workspace queue-status` command that shows its progress.
+- **It resumes.** Rerun the same command after an interruption; messages already in the destination are skipped. A session in conflict is left untouched, listed under `failed` with the reason `conflict`, and the command exits non-zero. Other failures have the reason `error` and are retried by a rerun.
+- **Output.** In a terminal you get a short report. With `--json`, or when stdout is not a terminal, you get one JSON object with the same facts: per-session `action` and message counts, `peers_created` and `peers_existing`, `failed`, `elapsed_seconds`, and the queue command under `check_derivation`. Progress lines go to stderr in both modes.
+- **Settings are copied as they are now.** Messages sent under older observer settings or custom instructions are derived under the current ones. Per-message configuration is not stored by Honcho, so it is not replayed.
+- **Existing peers and sessions with the same ID take the source's metadata and configuration.** Workspace-level settings are copied only when the destination has no sessions yet.
+- **IDs change.** Messages get new IDs, and sessions and peers get the replay time as their `created_at`.
+
 ## Scripting & automation
 
 Pipe commands into `jq` for inline transforms, or set `HONCHO_*` env vars for a CI/CD environment with no config file:
