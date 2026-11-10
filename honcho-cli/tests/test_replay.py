@@ -672,6 +672,8 @@ class TestRealSDKReadOnly:
         out = json.loads(result.stdout)
         assert out["actions"] == {"create": 3, "resume": 0, "up_to_date": 0, "conflict": 0}
         assert (out["peers_to_copy"], out["peers_in_destination"]) == (2, 0)
+        # Read through the real SDK: a missing `conclusions.list` would give None.
+        assert out["not_copied"]["conclusions_in_source"] == 7
         assert dest.reads and dest.writes == []
 
     @pytest.mark.parametrize("extra", [(), ("--num-sessions", "3")], ids=["full", "partial"])
