@@ -214,6 +214,27 @@ class TestReplaySession:
         assert ("peer", "carol", {}) in dest.writes
         assert dest.by_id["s1"].calls[-1] == ("remove_peers", ["carol"])
 
+    def test_departed_author_is_removed_when_a_later_batch_fails(self, monkeypatch):
+        """A failed run must not leave a departed author as a member until a rerun."""
+        monkeypatch.setattr(replay_lib, "MESSAGE_BATCH_SIZE", 1)
+        messages = [_message(0, "carol"), _message(1), _message(2)]
+        source = FakeHoncho("src", [FakeSession("s1", messages, members=["alice"])])
+        dest = FakeHoncho("dst")
+        dest_session = dest.by_id.setdefault("s1", FakeSession("s1"))
+        send = dest_session.add_messages
+
+        def fail_on_second_batch(batch) -> None:
+            if dest_session.calls:
+                raise RuntimeError("connection reset")
+            send(batch)
+
+        dest_session.add_messages = fail_on_second_batch
+
+        with pytest.raises(RuntimeError, match="connection reset"):
+            replay_lib.Replayer(source, dest).replay_session(source.by_id["s1"])
+
+        assert dest_session.calls == [("add_messages", 1), ("remove_peers", ["carol"])]
+
     def test_rerun_skips_messages_already_in_the_destination(self):
         messages = [_message(i) for i in range(5)]
         source = FakeHoncho("src", [FakeSession("s1", messages)])
@@ -542,7 +563,10 @@ class ReadOnlyServer:
     Every request that is not a read lands in ``writes`` and gets a 405.
     """
 
-    def __init__(self, workspace_id: str, sessions=None, *, conclusions: int = 0, get_or_create: bool = False) -> None:
+    def __init__(
+        self, workspace_id: str, sessions=None, *, conclusions: int = 0, get_or_create: bool = False, scoped_key: bool = False
+    ) -> None:
+        self.scoped_key = scoped_key  # the caller's key cannot list workspaces
         self.workspace_id = workspace_id
         self.sessions = dict(sessions or {})
         self.conclusions = conclusions
@@ -558,6 +582,8 @@ class ReadOnlyServer:
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
+        if self.scoped_key and path == "/v3/workspaces/list":
+            return httpx.Response(401, json={"message": "admin key required"})
         if request.method == "GET" or path.endswith("/list"):
             self.reads.append(f"{request.method} {path}")
             return httpx.Response(200, json=self._read(request))
@@ -690,6 +716,25 @@ class TestRealSDKReadOnly:
         # Every kind of destination read ran, and none of them was a write.
         assert {read.rsplit("/", 2)[-2] for read in dest.reads} == {"sessions", "messages", "peers"}
         assert dest.writes == []
+
+    def test_scoped_key_does_not_create_a_missing_source(self, cfg):
+        """A key that cannot list workspaces must not find out by get-or-create."""
+        source = ReadOnlyServer("src", scoped_key=True)
+
+        result = self._dry_run(source, ReadOnlyServer("dst"))
+
+        assert result.exit_code == 1
+        assert json.loads(result.stderr.splitlines()[-1])["error"]["code"] == "NOTHING_TO_REPLAY"
+        assert source.reads and source.writes == []
+
+    def test_scoped_key_reads_a_source_that_has_content(self, cfg):
+        source = self._source()
+        source.scoped_key = True
+
+        result = self._dry_run(source, ReadOnlyServer("dst"))
+
+        assert result.exit_code == 0, result.stderr
+        assert json.loads(result.stdout)["sessions_to_replay"] == 3
 
     def test_dry_run_refuses_an_sdk_it_cannot_keep_read_only(self, cfg):
         """If the SDK drops the attribute, the dry run stops instead of writing."""

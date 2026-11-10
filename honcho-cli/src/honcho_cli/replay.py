@@ -85,6 +85,18 @@ class ReadOnlyUnsupported(Exception):
         )
 
 
+class NothingToReplay(Exception):
+    """A scoped key found no sessions and no peers in the source workspace."""
+
+    def __init__(self, workspace_id: str) -> None:
+        """Say that the workspace is empty or missing; the key cannot tell which."""
+        super().__init__(
+            f"Workspace '{workspace_id}' has no sessions and no peers, or does "
+            "not exist. This API key cannot list workspaces, so it cannot tell "
+            "the two apart. Nothing was created."
+        )
+
+
 @dataclass
 class SessionPlan:
     """One source session, plus what the probe and destination check learned."""
@@ -197,12 +209,19 @@ def read_workspace(source: Honcho) -> tuple[dict[str, Any], Any]:
 
     Looks the workspace up in the workspace list first, because every other
     read in the SDK goes through a get-or-create: a mistyped ``--from`` would
-    otherwise create an empty workspace on the source instance. Listing needs
-    an admin key, so a workspace-scoped key falls back to the get-or-create
-    read, where the key itself names the workspace.
+    otherwise create an empty workspace on the source instance.
+
+    Listing needs an admin key. A workspace-scoped key can read the settings
+    only through the get-or-create, and has no way to ask whether the workspace
+    exists. So with such a key this first looks for sessions and peers without
+    creating anything. If there are some, the workspace exists and the
+    get-or-create is a plain read. If there are none, there is nothing to
+    replay and the workspace may be missing, so it stops there.
 
     Raises:
         NotFoundError: an admin key was used and the workspace does not exist.
+        NothingToReplay: a scoped key was used and the workspace has no
+            sessions and no peers, or does not exist.
     """
     try:
         page = source.workspaces(filters={"id": source.workspace_id}, size=PAGE_SIZE)
@@ -212,6 +231,15 @@ def read_workspace(source: Honcho) -> tuple[dict[str, Any], Any]:
                     return workspace.metadata or {}, workspace.configuration
             page = page.get_next_page()
     except (AuthenticationError, PermissionDeniedError):
+        with read_only(source):
+            try:
+                has_content = bool(
+                    source.sessions(size=1).items or source.peers(size=1).items
+                )
+            except NotFoundError:
+                has_content = False
+        if not has_content:
+            raise NothingToReplay(source.workspace_id) from None
         configuration = source.get_configuration()
         return source.metadata or {}, configuration
     raise NotFoundError(f"Workspace '{source.workspace_id}' not found")
@@ -573,25 +601,39 @@ class Replayer:
             batch.clear()
             on_tick(session.id, result.messages_created, None)
 
-        for message in source_messages:
-            batch.append(
-                MessageCreateParams(
-                    content=message.content,
-                    peer_id=message.peer_id,
-                    metadata=message.metadata or None,
-                    created_at=message.created_at,
-                )
-            )
-            if len(batch) >= MESSAGE_BATCH_SIZE:
-                flush()
-        flush()
+        def remove_departed() -> None:
+            """Take authors who have left the source session back out.
 
-        # An author who has since left the source session is re-added by its
-        # own messages. Take it back out so membership matches the source. This
-        # covers authors of skipped messages too, in case an earlier run stopped
-        # before this step; removing a peer that is not a member is a no-op.
-        if departed:
-            dest_session.remove_peers(sorted(departed))
+            Such an author is re-added by its own messages. This covers authors
+            of skipped messages too, in case an earlier run stopped before this
+            step; removing a peer that is not a member is a no-op.
+            """
+            leaving: list[Any] = sorted(departed)
+            if leaving:
+                dest_session.remove_peers(leaving)
+
+        try:
+            for message in source_messages:
+                batch.append(
+                    MessageCreateParams(
+                        content=message.content,
+                        peer_id=message.peer_id,
+                        metadata=message.metadata or None,
+                        created_at=message.created_at,
+                    )
+                )
+                if len(batch) >= MESSAGE_BATCH_SIZE:
+                    flush()
+            flush()
+        except Exception:
+            # A batch that was sent may have re-added a departed author. Do not
+            # leave it a member until someone reruns; the sending error is the
+            # one to report, so a failure here is dropped.
+            with suppress(Exception):
+                remove_departed()
+            raise
+
+        remove_departed()
         return result
 
 

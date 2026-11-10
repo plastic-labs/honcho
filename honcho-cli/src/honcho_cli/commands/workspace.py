@@ -406,6 +406,9 @@ def replay(
                 "conclusions_in_source": replay_lib.count_conclusions(source_client),
                 "note": replay_lib.NOT_COPIED_NOTE,
             }
+        except replay_lib.NothingToReplay as e:
+            print_error("NOTHING_TO_REPLAY", str(e), {"workspace": source_id})
+            raise typer.Exit(1) from e
         except Exception as e:
             _handle_error(e, "workspace", source_id)
             return
