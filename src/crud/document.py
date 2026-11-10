@@ -1,12 +1,22 @@
 import asyncio
 import datetime
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from logging import getLogger
 from typing import Any, Literal, cast
 
-from sqlalchemy import delete, literal, or_, select, tuple_, union_all, update
+from sqlalchemy import (
+    delete,
+    literal,
+    or_,
+    select,
+    text,
+    tuple_,
+    union_all,
+    update,
+)
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +45,7 @@ from src.exceptions import (
     VectorNamespaceUnresolved,
     VectorStoreError,
 )
+from src.migrate import advisory_lock_key
 from src.utils.filter import apply_filter
 from src.vector_store import (
     VectorRecord,
@@ -679,6 +690,46 @@ class CreateDocumentsResult:
     semantic_dup_replaced_count: int = 0
 
 
+def _collection_documents_lock_key(
+    workspace_name: str, *, observer: str, observed: str
+) -> int:
+    """The advisory lock key for creating documents in one collection."""
+    # A JSON list keeps the four parts apart whatever characters they hold. The
+    # tenant is part of the key because advisory locks are database-wide and
+    # workspace names are unique only within a tenant.
+    return advisory_lock_key(
+        "honcho:collection-documents:"
+        + json.dumps([models.scoped_tenant_id(), workspace_name, observer, observed])
+    )
+
+
+async def _lock_collection_documents(
+    db: AsyncSession, workspace_name: str, *, observer: str, observed: str
+) -> None:
+    """Make this transaction the only one creating documents in the collection.
+
+    ``create_documents`` reads the collection's documents, decides in Python
+    which incoming ones are duplicates, and inserts the rest. Without a lock,
+    two writers that both read before either commits both insert the same
+    conclusion. Writers to one collection overlap when a deep work unit drains
+    as parallel chunks, when two sessions observe the same peer, and when a
+    dream runs beside the deriver.
+
+    The lock is transaction-scoped: the commit or rollback releases it. Take it
+    before the transaction locks any row, so it cannot join a row-lock cycle.
+    Its key is a single bigint, a keyspace the message-ingest lock's two-int
+    keys do not share.
+    """
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:key)"),
+        {
+            "key": _collection_documents_lock_key(
+                workspace_name, observer=observer, observed=observed
+            )
+        },
+    )
+
+
 async def create_documents(
     db: AsyncSession,
     documents: list[schemas.DocumentCreate],
@@ -722,9 +773,49 @@ async def create_documents(
     # than one similarity query per document.
     semantic_candidate_ids: list[list[str]] = [[] for _ in documents]
     semantic_candidates_by_id: dict[str, models.Document] = {}
-    if deduplicate:
-        if _uses_pgvector():
-            try:
+    if deduplicate and not _uses_pgvector():
+        # External store: resolve before the collection lock and the first
+        # dedup read, so neither is held across the network calls.
+        resolve_sem = asyncio.Semaphore(_SEMANTIC_CANDIDATE_CONCURRENCY)
+
+        async def _resolve_candidates(index: int, doc: schemas.DocumentCreate) -> None:
+            filters = _semantic_dup_filters(doc)
+            if filters is None or not doc.embedding:
+                return
+            async with resolve_sem:
+                try:
+                    ids = await query_external_vector_document_ids(
+                        workspace_name=workspace_name,
+                        observer=observer,
+                        observed=observed,
+                        embedding=doc.embedding,
+                        top_k=_SEMANTIC_DUP_TOP_K,
+                        max_distance=_SEMANTIC_DUP_MAX_DISTANCE,
+                        filters=filters,
+                    )
+                except Exception:
+                    logger.exception(
+                        "External semantic-candidate resolve failed for %s/%s/%s",
+                        workspace_name,
+                        observer,
+                        observed,
+                    )
+                    return
+                semantic_candidate_ids[index] = ids or []
+
+        await asyncio.gather(
+            *(_resolve_candidates(i, doc) for i, doc in enumerate(documents))
+        )
+
+    try:
+        # Every dedup read below must run under the lock, and the commit at the
+        # end of this function releases it.
+        if documents:
+            await _lock_collection_documents(
+                db, workspace_name, observer=observer, observed=observed
+            )
+        if deduplicate:
+            if _uses_pgvector():
                 semantic_candidate_ids = await _pgvector_dup_candidates(
                     db,
                     documents,
@@ -732,47 +823,6 @@ async def create_documents(
                     observer=observer,
                     observed=observed,
                 )
-            except SQLAlchemyError:
-                # Dead transaction: continuing would cascade PendingRollbackErrors.
-                await db.rollback()
-                raise
-        else:
-            # External store: resolve before the first DB statement so no
-            # connection is held open across the network calls.
-            resolve_sem = asyncio.Semaphore(_SEMANTIC_CANDIDATE_CONCURRENCY)
-
-            async def _resolve_candidates(
-                index: int, doc: schemas.DocumentCreate
-            ) -> None:
-                filters = _semantic_dup_filters(doc)
-                if filters is None or not doc.embedding:
-                    return
-                async with resolve_sem:
-                    try:
-                        ids = await query_external_vector_document_ids(
-                            workspace_name=workspace_name,
-                            observer=observer,
-                            observed=observed,
-                            embedding=doc.embedding,
-                            top_k=_SEMANTIC_DUP_TOP_K,
-                            max_distance=_SEMANTIC_DUP_MAX_DISTANCE,
-                            filters=filters,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "External semantic-candidate resolve failed for %s/%s/%s",
-                            workspace_name,
-                            observer,
-                            observed,
-                        )
-                        return
-                    semantic_candidate_ids[index] = ids or []
-
-            await asyncio.gather(
-                *(_resolve_candidates(i, doc) for i, doc in enumerate(documents))
-            )
-
-        try:
             semantic_candidates_by_id = await _fetch_dup_candidates_by_id(
                 db,
                 semantic_candidate_ids,
@@ -780,9 +830,10 @@ async def create_documents(
                 observer=observer,
                 observed=observed,
             )
-        except SQLAlchemyError:
-            await db.rollback()
-            raise
+    except SQLAlchemyError:
+        # Dead transaction: continuing would cascade PendingRollbackErrors.
+        await db.rollback()
+        raise
 
     # exact-content dedup (independent of `deduplicate`): pre-fetch
     # existing live documents whose normalized content matches anything in this
