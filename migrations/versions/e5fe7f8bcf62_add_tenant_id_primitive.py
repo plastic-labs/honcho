@@ -15,14 +15,15 @@ Each new key is built and enforced before the old one it
 replaces is dropped:
 
 1. ``tenants`` and its one row; ``tenant_id`` on every table (catalog-only).
-2. Every new unique and primary-key index, built concurrently. The primary-key
-   indexes get a temporary name, ``pk_<table>_tenant``.
+2. Every new index except the two on ``session_peers``, built concurrently. The
+   primary-key indexes get a temporary name, ``pk_<table>_tenant``.
 3. The new uniques attached to their indexes; the new FKs added ``NOT VALID``
    (they check new writes and cascade at once), then validated.
 4. The old FKs, then the old uniques, dropped.
-5. Each primary key swapped onto its new index in one statement.
+5. The two ``session_peers`` indexes built, then each primary key swapped onto
+   its new index in one statement.
 
-Step 5 is last, and ``_finished`` reads it: a run that stopped part-way runs
+The swaps are last, and ``_finished`` reads them: a run that stopped part-way runs
 again from the top, and each step skips what is already done.
 """
 
@@ -763,14 +764,38 @@ def _autocommit() -> Generator[None]:
         yield
 
 
+def _short_lock_ms() -> int:
+    """Half the server's deadlock_timeout: at least 1 ms, at most one second."""
+    return int(
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT greatest(least(setting::int / 2, 1000), 1) FROM pg_settings"
+                + " WHERE name = 'deadlock_timeout'"
+            )
+        )
+        .scalar_one()
+    )
+
+
 def _alter(table: str, action: str) -> None:
-    """One catalog-only ALTER TABLE, retried in place on the runner's lock_timeout."""
+    """One catalog-only ALTER TABLE under a short lock_timeout, retried in place."""
     sql = f"ALTER TABLE {_q(table)} {action}"
     if caller_owns_transaction():
         # ai: a timeout aborts the caller's transaction; a retry would hide it.
         op.execute(sql)
-    else:
-        _execute_short_lock(sql)
+        return
+    # region ai
+    # An ALTER that touches two tables (a foreign key locks the child, then the
+    # parent) can cross a write that takes them in the other order. Postgres
+    # breaks that tie after deadlock_timeout by cancelling one side, which can be
+    # the application's write. Waiting for less than that makes this statement
+    # give up first in the common case, so fewer writes are cancelled; it does
+    # not rule a deadlock out. The statement is then retried. SET LOCAL lasts for
+    # this one statement's transaction only (the two are sent together), so
+    # nothing is left on the connection.
+    # endregion
+    _execute_short_lock(f"SET LOCAL lock_timeout = '{_short_lock_ms()}ms'; {sql}")
 
 
 def _finished() -> bool:
@@ -828,7 +853,10 @@ def _build_pk_candidate(table: str) -> None:
 
 
 def _build_indexes() -> None:
-    """Build every new index concurrently. A valid one is kept on a rerun."""
+    """Build the new indexes concurrently, except the two on session_peers.
+
+    A valid one is kept on a rerun.
+    """
     for table in NEW_PKS:
         if table != "session_peers":
             _build_pk_candidate(table)
@@ -931,7 +959,7 @@ def _build_session_peers_indexes() -> None:
     # same rows as a plain unique check: two requests that add the same new
     # membership at once can then get a unique violation instead of an update.
     # That holds in the final schema until the old pods are gone; building here
-    # keeps it out of every other build, validation and swap.
+    # keeps it out of every other build and the validation.
     # endregion
     create_index_online(
         LEGACY_SESSION_PEERS_INDEX,
@@ -942,14 +970,14 @@ def _build_session_peers_indexes() -> None:
     _build_pk_candidate("session_peers")
 
 
-def _swap_primary_keys(tables: Sequence[str]) -> None:
+def _swap_primary_keys() -> None:
     # region ai
     # One statement per table: the old key is dropped and the new one attached
     # under one short ACCESS EXCLUSIVE lock, so the table always has a primary
     # key. USING INDEX renames pk_<table>_tenant to pk_<table>. Every key column
     # is already NOT NULL, so there is no scan.
     # endregion
-    for table in tables:
+    for table in NEW_PKS:
         name, current = _pk(table)
         if current == NEW_PKS[table]:
             continue
@@ -986,7 +1014,7 @@ def upgrade() -> None:
         for table in ("queue", "active_queue_sessions"):
             _alter(table, "ADD COLUMN IF NOT EXISTS tenant_id TEXT")
 
-    # 2. Every new index, concurrently.
+    # 2. Every new index but the two on session_peers (step 5), concurrently.
     _build_indexes()
 
     # 3. New uniques and FKs: enforced first, validated second.
@@ -1002,13 +1030,18 @@ def upgrade() -> None:
         for name in _stale_unique_indexes(table):
             drop_index_online(name, table)
 
-    # 5. Last, the primary keys (_finished reads this step), and session_peers
-    #    last of all, straight after its two indexes.
-    with _autocommit():
-        _swap_primary_keys([t for t in NEW_PKS if t != "session_peers"])
+    # 5. The two session_peers indexes, then the primary keys. The swaps are the
+    #    last step, and _finished reads them.
+    # region ai
+    # The session_peers builds come before every swap, not after. A concurrent
+    # build can wait for transactions that hold older snapshots. Once messages has
+    # its new key, the previous release's queue claim reads messages by id alone,
+    # with no index that leads with id: with a backlog that query runs for
+    # minutes, and a build that starts behind it waits as long.
+    # endregion
     _build_session_peers_indexes()
     with _autocommit():
-        _swap_primary_keys(["session_peers"])
+        _swap_primary_keys()
 
 
 def downgrade() -> None:
