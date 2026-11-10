@@ -42,6 +42,7 @@ from src.crud.deriver import (
     delete_queue_items_and_claims,
 )
 from src.crud.dream_history import delete_session_history
+from src.crud.ingest_fence import take_session_fences, take_workspace_fence
 from src.crud.lifecycle import (
     live_message_row,
     live_session_peer_row,
@@ -694,6 +695,12 @@ async def delete_session(
     # Perform cascading deletes in order
     # Order is important to avoid foreign key constraint violations
     try:
+        # The ingest fence first, before any row lock: an ingest transaction
+        # writing to this session finishes first, and none starts until this
+        # deletion commits, so the ingest rows deleted below are all of them.
+        await take_workspace_fence(db, workspace_name, mode="shared")
+        await take_session_fences(db, workspace_name, [session_name])
+
         # Queue items, then the claim rows on their work units (the helper
         # carries the lock order). session_id is globally unique in practice;
         # the helper also pins the queue rows to the ambient tenant, and the
@@ -702,6 +709,26 @@ async def delete_session(
             db,
             [[models.QueueItem.session_id == honcho_session.id]],
             active_queue_session_match(workspace_name, session_name),
+        )
+
+        # The session's ingest records and the bindings that point at it. These
+        # tables have no foreign keys (src/models.py), so nothing else removes
+        # them; they go after the queue sweep, matching the ingest enqueuer's
+        # queue-then-ingest-rows order.
+        tenant_id = models.scoped_tenant_id()
+        await db.execute(
+            delete(models.IngestRecord).where(
+                models.IngestRecord.tenant_id == tenant_id,
+                models.IngestRecord.workspace_name == workspace_name,
+                models.IngestRecord.session_name == session_name,
+            )
+        )
+        await db.execute(
+            delete(models.IngestSessionBinding).where(
+                models.IngestSessionBinding.tenant_id == tenant_id,
+                models.IngestSessionBinding.workspace_name == workspace_name,
+                models.IngestSessionBinding.session_name == session_name,
+            )
         )
 
         # Vector IDs are {message_id}_{chunk_index}, where chunk_index is the 0-based
