@@ -17,8 +17,12 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
   their sources, removed conclusions, and peer card before and after.
   `get_dream` returns at most 50 created and 50 removed conclusions and counts
   the rest. Both need a workspace or admin key and a Honcho server with
-  Representation History. Requires the `@honcho-ai/sdk` release with `dreams()`
-  and `getDream()` (DEV-3260)
+  Representation History.
+
+### Changed
+
+- Requires `@honcho-ai/sdk` 2.9.0 or later, the first release with `dreams()`
+  and `getDream()`
 
 ## [3.3.0] - 2026-10-29
 
