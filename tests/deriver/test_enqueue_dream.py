@@ -7,12 +7,17 @@ the invariant that the baseline advances only when consolidation actually
 happened, and prevents the in-flight stampede from false-advancing a guard.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import insert, text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src import schemas
-from src.deriver.enqueue import enqueue_dream
+from src import models, schemas
+from src.deriver.enqueue import create_dream_record, enqueue_dream
+from tests.deriver.conftest import independent_sessions
 
 
 class TestEnqueueDreamMetadataShape:
@@ -57,3 +62,41 @@ class TestEnqueueDreamMetadataShape:
             assert mock_session.execute.called, (
                 "enqueue_dream must still insert the QueueItem row."
             )
+
+
+class TestPendingDreamDedupe:
+    """Two API replicas listing the same due dream both try to enqueue it.
+
+    enqueue_dream checks for a pending row and then inserts, so two concurrent
+    calls can both pass the check. uq_queue_dream_pending_work_unit_key is what
+    keeps the second insert out: it fails, and enqueue_dream treats the
+    IntegrityError as "already enqueued by another process".
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_second_concurrent_insert_of_the_same_dream_is_rejected(
+        self,
+        db_engine: AsyncEngine,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        workspace, peer = sample_data
+        record = create_dream_record(
+            workspace.name,
+            observer=peer.name,
+            observed=peer.name,
+            dream_type=schemas.DreamType.OMNI,
+        )
+        sessions = independent_sessions(db_engine)
+        async with sessions() as first, sessions() as second:
+            await first.execute(insert(models.QueueItem), [dict(record)])
+            await second.execute(text("SET lock_timeout = '5s'"))
+
+            async def second_insert() -> None:
+                await second.execute(insert(models.QueueItem), [dict(record)])
+                await second.commit()
+
+            pending = asyncio.create_task(second_insert())
+            await asyncio.sleep(0.2)
+            await first.commit()
+            with pytest.raises(IntegrityError, match="uq_queue_dream_pending"):
+                await pending

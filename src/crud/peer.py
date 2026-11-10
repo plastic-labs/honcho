@@ -16,6 +16,7 @@ from src.cache.client import (
     cache,
     cache_key_namespace,
     cache_prefix_namespace,
+    fallback_on_cache_error,
     safe_cache_delete,
 )
 from src.config import settings
@@ -31,6 +32,7 @@ from src.schemas.api import RESOURCE_NAME_PATTERN
 from src.telemetry.events import PeerCreatedEvent, emit
 from src.utils import scopes as scopes_util
 from src.utils.filter import apply_filter
+from src.utils.path_params import schema_from_path
 from src.utils.types import GetOrCreateResult
 
 logger = getLogger(__name__)
@@ -285,7 +287,7 @@ async def get_or_create_peers(
     """
 
     ws_result = await get_or_create_workspace(
-        db, schemas.WorkspaceCreate(name=workspace_name)
+        db, schema_from_path(schemas.WorkspaceCreate, "workspace_id", workspace_name)
     )
     peer_names = [p.name for p in peers]
     # Before the lookup: these values cannot match a stored row and would fail
@@ -403,6 +405,7 @@ async def get_or_create_peers(
     )
 
 
+@fallback_on_cache_error
 @cache(
     key=PEER_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
@@ -471,7 +474,7 @@ async def get_peer(
         )
 
     # Reconstruct ORM object from cached dict and merge into session
-    obj = models.Peer(**data)
+    obj = models.Peer(**models.with_cached_tenant(data))
     make_transient_to_detached(obj)
     existing_peer = await db.merge(obj, load=False)
 
@@ -496,7 +499,9 @@ async def get_peers(
             scope peers, and "all" returns everything.
     """
     stmt = select(models.Peer).where(
-        models.Peer.workspace_name == workspace_name, live_peer_row()
+        models.Peer.tenant_id == models.scoped_tenant_id(),
+        models.Peer.workspace_name == workspace_name,
+        live_peer_row(),
     )
 
     if kind is None:
@@ -609,7 +614,9 @@ async def get_sessions_for_peer(
             (models.Session.name == models.SessionPeer.session_name)
             & (models.Session.workspace_name == models.SessionPeer.workspace_name),
         )
+        .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
         .where(models.SessionPeer.peer_name == peer_name)
+        .where(models.Session.tenant_id == models.scoped_tenant_id())
         .where(models.Session.workspace_name == workspace_name)
         .where(live_session_row(), live_session_peer_row())
     )

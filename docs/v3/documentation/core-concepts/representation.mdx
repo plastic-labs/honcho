@@ -13,7 +13,7 @@ When you write messages to Honcho, the reasoning models extract premises, draw c
 
 A peer representation is made up of several types of artifacts that Honcho generates through [*reasoning*](/v3/documentation/core-concepts/reasoning):
 
-**Conclusions** are insights derived through formal logic. Deductive conclusions are things Honcho can be certain about based on extracted premises. Inductive conclusions identify patterns across multiple messages. Abductive conclusions infer the simplest explanations for observed behavior. For example, if a user frequently mentions work deadlines and rarely mentions hobbies, Honcho might inductively conclude they're time-constrained or career-focused.
+**Conclusions** are insights derived through formal logic. Deductive conclusions are things Honcho can be certain about based on extracted premises. Inductive conclusions identify patterns across multiple messages. For example, if a user frequently mentions work deadlines and rarely mentions hobbies, Honcho might inductively conclude they're time-constrained or career-focused.
 
 **Summaries** capture the essence of sessions. Short summaries are generated every 20 messages by default, and long summaries every 60 messages. These help compress conversation history into dense, queryable context.
 
@@ -26,7 +26,7 @@ These enable continuous improvement. Each new message refines conclusions, updat
 
 Honcho can build different representations based on what each peer observes. This enables sophisticated multi-peer scenarios where understanding is relative to what was actually witnessed.
 
-There are two observation modes controlled by [configuration](/v3/documentation/features/advanced/configuration):
+There are two observation modes controlled by [configuration](/v3/documentation/features/advanced/reasoning-configuration):
 
 **Honcho observing peers** (`observe_me`): When enabled (default), Honcho forms a representation of the peer based on all messages they've sent across all sessions. This is Honcho's understanding of that peer, built from everything they've said and done in your system. Set `observe_me: false` if you don't want Honcho to reason about that peer at all.
 

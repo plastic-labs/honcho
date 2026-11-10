@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 
+import psycopg
 import sentry_sdk
 from fastapi import FastAPI, Request, Response
 from fastapi.encoders import jsonable_encoder
@@ -16,6 +17,7 @@ from fastapi_pagination import add_pagination
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
+from sqlalchemy.exc import DataError
 
 from src._version import HONCHO_VERSION
 from src.backlog import DeriverMetricsPoller
@@ -26,21 +28,28 @@ from src.db import (
     register_db_connection_instrumentation,
     register_db_query_instrumentation,
     request_context,
+    service_engine,
 )
 from src.exceptions import HonchoException
 from src.reconciler import ReconcilerScheduler, set_reconciler_scheduler
 from src.routers import (
     conclusions,
     deriver_metrics,
+    dreams,
     keys,
     messages,
     peers,
     scopes,
     sessions,
+    tenants,
     webhooks,
     workspaces,
 )
-from src.startup import validate_embedding_schema
+from src.startup import (
+    validate_embedding_schema,
+    validate_queue_item_batches,
+    validate_tenant_isolation,
+)
 from src.telemetry import (
     initialize_telemetry_async,
     metrics_endpoint,
@@ -140,7 +149,17 @@ async def lifespan(_: FastAPI):
     # the configured EMBEDDING_VECTOR_DIMENSIONS does not match the physical
     # pgvector columns, the process refuses to start rather than silently
     # writing wrong-dim vectors.
-    await validate_embedding_schema(engine)
+    # ai: the service engine — its namespace sample reads every tenant's workspaces, which RLS hides from the request role with no tenant bound
+    await validate_embedding_schema(service_engine)
+    # Fail closed on a multi-tenant half-state (no-op unless MULTI_TENANT is on);
+    # the validator's module docstring lists the four it refuses.
+    await validate_tenant_isolation(
+        engine, instance_type="api", service_engine=service_engine
+    )
+    # Fail closed if the deriver claim's trigger-maintained aggregate is not
+    # wired: missing or disabled queue_item_batches triggers would leave
+    # enqueued work invisible to every deriver, with no error anywhere.
+    await validate_queue_item_batches(engine)
 
     try:
         await init_cache()
@@ -219,7 +238,12 @@ app.include_router(sessions.router, prefix="/v3")
 app.include_router(scopes.router, prefix="/v3")
 app.include_router(messages.router, prefix="/v3")
 app.include_router(conclusions.router, prefix="/v3")
+app.include_router(dreams.router, prefix="/v3")
 app.include_router(keys.router, prefix="/v3")
+# The tenant registry is the hosting provisioner's API, not part of the public
+# surface: keep it out of the published schema. Its routes still refuse every
+# request unless MULTI_TENANT and TENANT_API.SECRET are set (require_tenant_api).
+app.include_router(tenants.router, prefix="/v3", include_in_schema=False)
 app.include_router(webhooks.router, prefix="/v3")
 app.include_router(deriver_metrics.router)
 
@@ -266,6 +290,48 @@ async def validation_exception_handler(_request: Request, exc: RequestValidation
         status_code=422,
         content={"detail": jsonable_encoder(exc.errors())},
     )
+
+
+# SQLSTATEs for input Postgres cannot store: a value out of range for its
+# column type, and a `\u0000` escape in JSONB.
+_INPUT_DATA_SQLSTATES = {"22003", "22P05"}
+
+# A lone surrogate escape inside a JSONB value (free-form metadata or
+# configuration) is 22P02, a SQLSTATE that also covers server-side bugs such as
+# a bad cast, so only the surrogate message is treated as caller input.
+_JSON_SURROGATE_SQLSTATE = "22P02"
+
+
+def _is_input_data_error(exc: DataError) -> bool:
+    orig = exc.orig
+    sqlstate = getattr(orig, "sqlstate", None)
+    if sqlstate in _INPUT_DATA_SQLSTATES:
+        return True
+    if sqlstate == _JSON_SURROGATE_SQLSTATE and "surrogate" in str(orig):
+        return True
+    # psycopg rejects NUL in text parameters client-side, without a SQLSTATE
+    return isinstance(orig, psycopg.DataError) and "NUL (0x00)" in str(orig)
+
+
+@app.exception_handler(DataError)
+async def data_exception_handler(request: Request, exc: DataError):
+    """422 for request values Postgres cannot store; anything else is a 500."""
+    if _is_input_data_error(exc):
+        sqlstate = getattr(exc.orig, "sqlstate", None) or "unknown"
+        route = get_route_template(request)
+        # Driver messages can echo SQL, parameters, or user data. Log only the
+        # classification and static route template, never the exception/input.
+        logger.warning(
+            "Rejected unstorable input: sqlstate=%s route=%s",
+            sqlstate,
+            route,
+            extra={"sqlstate": sqlstate, "route": route},
+        )
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "Request contains a value that cannot be stored"},
+        )
+    return await global_exception_handler(request, exc)
 
 
 @app.exception_handler(Exception)

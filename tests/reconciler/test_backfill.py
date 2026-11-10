@@ -76,7 +76,7 @@ def _patch_scheduler_db(monkeypatch: pytest.MonkeyPatch, db: AsyncSession) -> No
     async def _db(_: str | None = None) -> AsyncGenerator[AsyncSession]:
         yield db
 
-    monkeypatch.setattr(scheduler_module, "tracked_db", _db)
+    monkeypatch.setattr(scheduler_module, "service_db", _db)
 
 
 async def _queue_rows(db: AsyncSession, work_unit_key: str) -> list[models.QueueItem]:
@@ -319,14 +319,10 @@ async def test_scheduler_loop_refreshes_backfill_gauge(
     async def _fake_refresh() -> None:
         refreshed.set()
 
-    async def _noop() -> None:
-        return None
-
     async def _never_enqueue(_self: object, _task: object) -> bool:
         return False
 
     monkeypatch.setattr(scheduler_module, "record_backfill_pending", _fake_refresh)
-    monkeypatch.setattr(scheduler_module, "record_pending_embeddings_backlog", _noop)
     monkeypatch.setattr(ReconcilerScheduler, "_try_enqueue_task", _never_enqueue)
 
     scheduler = ReconcilerScheduler()

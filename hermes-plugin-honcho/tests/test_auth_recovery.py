@@ -331,6 +331,7 @@ def _make_manager(peer, *, reauth_ok=True):
     )
     mgr._cache["k"] = session
     mgr._get_or_create_peer = lambda peer_id: peer
+    mgr._peer_ref = lambda peer_id: peer
     mgr._force_reauth = lambda **kw: reauth_ok
     return mgr
 

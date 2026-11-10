@@ -9,6 +9,32 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+### Added
+
+- `list_dreams` and `get_dream` read Representation History: the dreams that
+  changed a workspace's representations, newest first and filterable by
+  `observed_id` and `observer_id`, and one dream's created conclusions with
+  their sources, removed conclusions, and peer card before and after.
+  `get_dream` returns at most 50 created and 50 removed conclusions and counts
+  the rest. Both need a workspace or admin key and a Honcho server with
+  Representation History.
+
+### Changed
+
+- Requires `@honcho-ai/sdk` 2.9.0 or later, the first release with `dreams()`
+  and `getDream()`
+
+## [3.3.0] - 2026-10-29
+
+### Added
+
+- `source_message_ids` on every conclusion the tools return: the messages an
+  explicit conclusion cites as evidence (Honcho v3.5.0+, null for derived levels
+  and on older servers). `list_conclusions` filters accept
+  `{"source_message_ids": {"contains": "<message id>"}}` to find the
+  conclusions that cite a message as evidence. Surfaces once `@honcho-ai/sdk`
+  carries the field; earlier SDKs report null
+
 ### Security
 
 - The Docker image now builds on Bun 1.4.4 (was 1.2), the first Bun that

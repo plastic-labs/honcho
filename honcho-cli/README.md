@@ -139,6 +139,13 @@ honcho stop --wipe     # also delete volumes
 | `honcho conclusion create` | Create a conclusion |
 | `honcho conclusion delete <id>` | Delete a conclusion |
 
+### Dreams (Representation History)
+
+| Command | Description |
+|---------|-------------|
+| `honcho dream list` | Dreams in the workspace, newest first (`-p` for dreams about one peer, `--observer` for one representation) |
+| `honcho dream inspect <id>` | What one dream changed: conclusions created (with what each was derived from), conclusions removed, and the peer card before and after |
+
 ### Config
 
 | Command | Description |

@@ -58,6 +58,7 @@ class Scope(ScopeBase):
 
     _metadata: dict[str, Any] | None = PrivateAttr(default=None)
     _created_at: datetime | None = PrivateAttr(default=None)
+    _session_count: int | None = PrivateAttr(default=None)
     _honcho: "Honcho" = PrivateAttr()
 
     @property
@@ -70,6 +71,15 @@ class Scope(ScopeBase):
         """When this scope was created. Only available if fetched from the API."""
         return self._created_at
 
+    @property
+    def session_count(self) -> int | None:
+        """How many sessions were in this scope when it was listed.
+
+        Only set on scopes returned by ``honcho.scopes(include_session_count=True)``,
+        and not refreshed afterwards; ``None`` otherwise.
+        """
+        return self._session_count
+
     def __init__(
         self,
         scope_id: str,
@@ -77,6 +87,7 @@ class Scope(ScopeBase):
         *,
         metadata: dict[str, Any] | None = None,
         created_at: datetime | None = None,
+        session_count: int | None = None,
     ) -> None:
         """
         Initialize a new Scope.
@@ -88,6 +99,7 @@ class Scope(ScopeBase):
             honcho: Honcho client instance
             metadata: Cached metadata, if already fetched
             created_at: Creation timestamp, if already fetched
+            session_count: Member session count, if listed with counts
         """
         super().__init__(
             id=scope_id,
@@ -96,6 +108,7 @@ class Scope(ScopeBase):
         self._honcho = honcho
         self._metadata = metadata
         self._created_at = created_at
+        self._session_count = session_count
 
     @property
     def aio(self) -> "ScopeAio":
@@ -141,6 +154,30 @@ class Scope(ScopeBase):
         self._honcho._ensure_workspace()
         self._honcho._http.post(
             routes.scope_sessions(self.workspace_id, self.id),
+            body={"session_ids": session_ids},
+        )
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    def remove_sessions(self, sessions: Sequence[str | SessionBase]) -> None:
+        """
+        Remove sessions from this scope in one request.
+
+        Every named session must exist; if any doesn't, the server rejects the
+        whole batch and nothing is removed. Sessions that aren't members are
+        ignored. Each removed session is reconciled out asynchronously, as with
+        :meth:`remove_session`; poll :meth:`status` to watch that settle.
+
+        Args:
+            sessions: Sessions to remove, as ID strings or Session objects. At
+                most 100 per call, matching the server's limit.
+
+        Raises:
+            ValueError: If no sessions are given, or more than 100.
+        """
+        session_ids = resolve_scope_membership(sessions)
+        self._honcho._ensure_workspace()
+        self._honcho._http.post(
+            routes.scope_sessions_remove(self.workspace_id, self.id),
             body={"session_ids": session_ids},
         )
 

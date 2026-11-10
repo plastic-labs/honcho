@@ -34,6 +34,16 @@ class RepresentationCompletedEvent(BaseEvent, CustomInstructionsFields):
     # Peer context
     observed: str = Field(..., description="Observed peer name")
 
+    # Run correlation
+    run_id: str | None = Field(
+        default=None,
+        description=(
+            "Id of this batch's run. The batch's llm.call.completed events "
+            "carry the same run_id, and its llm.call.traced events carry it as "
+            "trace_id."
+        ),
+    )
+
     # Queue processing info
     queue_items_processed: int = Field(
         ..., description="Number of QueueItem records dequeued and processed"

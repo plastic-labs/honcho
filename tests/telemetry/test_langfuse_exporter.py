@@ -9,13 +9,16 @@ user attributes, session-as-metadata) without a real Langfuse backend.
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from typing import cast
 
 import pytest
 
 from src.config import settings
+from src.db import tenant_context
 from src.llm.backend import CompletionResult, ToolCallResult
 from src.llm.capture import CapturedSpan, CapturedToolCall, build_captured_call
+from src.llm.messages import UserMessage
 from src.llm.types import LLMTelemetryContext
 from src.telemetry import langfuse_session
 from src.telemetry.langfuse_exporter import LangfuseExporter
@@ -131,7 +134,7 @@ def _call(
         transport="anthropic",
         provider_label=None,
         model="claude-x",
-        messages=[{"role": "user", "content": "q"}],
+        messages=[UserMessage(content="q")],
         tools=None,
         tool_choice=None,
         result=result,
@@ -225,6 +228,27 @@ def test_single_shot_generation_is_trace_root(_exporter_env: FakeClient):
     assert gen._otel_span.attributes.get("user.id") == "tenant1"
     assert "session.id" not in gen._otel_span.attributes
     assert gen._otel_span._parent is None
+
+
+def test_single_shot_generation_uses_bound_tenant_as_user_id(
+    _exporter_env: FakeClient, monkeypatch: pytest.MonkeyPatch
+):
+    """Under MULTI_TENANT with a tenant bound, the Langfuse user is the tenant --
+    not the namespace pinned by `_exporter_env` -- and metadata carries tenant_id
+    beside it. The flag-off "tenant1" case above is the conflation this breaks."""
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    client = _exporter_env
+    token = tenant_context.set("acme")
+    try:
+        LangfuseExporter().export(
+            _call(run_id=None, trace_id="t1b", track_name="Minimal Deriver")
+        )
+    finally:
+        tenant_context.reset(token)
+
+    gen = client.observations[0]
+    assert gen._otel_span.attributes.get("user.id") == "acme"
+    assert gen.kwargs["metadata"]["tenant_id"] == "acme"
 
 
 def test_agentic_run_builds_run_step_generation(_exporter_env: FakeClient):
@@ -325,6 +349,40 @@ def test_error_finish_marks_generation_level(_exporter_env: FakeClient):
     )
     gen = client.observations[0]
     assert gen.kwargs["level"] == "ERROR"
+
+
+def test_failed_attempt_is_filterable_and_keeps_its_output(
+    _exporter_env: FakeClient,
+):
+    """A rejected or unparseable response is exported with what the model
+    said, tagged so failed generations can be filtered from successful ones."""
+    client = _exporter_env
+    failed = replace(
+        _call(run_id=None, trace_id="t1", finish_reason="error", content="{bad"),
+        outcome="error",
+        error_class="StructuredOutputError",
+    )
+    LangfuseExporter().export(failed)
+    gen = client.observations[0]
+    assert gen.kwargs["output"] == "{bad"
+    assert gen.kwargs["level"] == "ERROR"
+    assert gen.kwargs["status_message"] == "StructuredOutputError"
+    metadata = cast(dict[str, str], gen.kwargs["metadata"])
+    assert metadata["outcome"] == "error"
+    assert metadata["error_class"] == "StructuredOutputError"
+
+
+def test_successful_attempt_is_tagged_success(_exporter_env: FakeClient):
+    client = _exporter_env
+    LangfuseExporter().export(
+        replace(_call(run_id=None, trace_id="t1"), outcome="success")
+    )
+    gen = client.observations[0]
+    assert gen.kwargs["level"] is None
+    assert gen.kwargs["status_message"] is None
+    metadata = cast(dict[str, str], gen.kwargs["metadata"])
+    assert metadata["outcome"] == "success"
+    assert "error_class" not in metadata
 
 
 def test_exporter_disabled_without_public_key_emits_nothing(

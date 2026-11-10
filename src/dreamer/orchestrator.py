@@ -21,9 +21,8 @@ from typing import Any
 
 import sentry_sdk
 from nanoid import generate as generate_nanoid
-from sqlalchemy import func, select
 
-from src import crud, models
+from src import crud
 from src.config import settings
 from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import (
@@ -276,6 +275,14 @@ async def run_dream(
     total_iterations = 0
     total_input_tokens = 0
     total_output_tokens = 0
+    history = await crud.open_run(
+        run_id=run_id,
+        workspace_name=workspace_name,
+        observer=observer,
+        observed=observed,
+        dream_type=dream_type,
+        trigger_reason=trigger_reason,
+    )
     try:
         # Run deduction specialist (manages its own DB sessions)
         logger.info(f"[{run_id}] Running deduction specialist")
@@ -292,6 +299,7 @@ async def run_dream(
                 session_id=resolved_session_id,
                 queue_item_id=queue_item_id,
                 state=state,
+                history=history,
             )
             logger.info(
                 f"[{run_id}] Deduction completed: {deduction_result.content[:200]}..."
@@ -323,6 +331,7 @@ async def run_dream(
                 session_id=resolved_session_id,
                 queue_item_id=queue_item_id,
                 state=state,
+                history=history,
             )
             logger.info(
                 f"[{run_id}] Induction completed: {induction_result.content[:200]}..."
@@ -349,6 +358,10 @@ async def run_dream(
         # schema-validation surprises during partial state.
         if duration_ms == 0.0:
             duration_ms = (time.perf_counter() - start_time) * 1000
+        if history is not None:
+            await crud.close_run(
+                history.run_id, succeeded=deduction_success and induction_success
+            )
         if dream_trace is not None:
             dream_trace.end(
                 output={
@@ -485,6 +498,14 @@ async def run_card_refresh_dream(
         session_id=resolved_session_id,
         dream_type=dream_type,
     )
+    history = await crud.open_run(
+        run_id=run_id,
+        workspace_name=workspace_name,
+        observer=observer,
+        observed=observed,
+        dream_type=dream_type,
+        trigger_reason=trigger_reason,
+    )
     try:
         specialist = CardRefreshSpecialist(rebuild=rebuild)
         try:
@@ -497,6 +518,7 @@ async def run_card_refresh_dream(
                 parent_run_id=run_id,
                 session_id=resolved_session_id,
                 queue_item_id=queue_item_id,
+                history=history,
             )
             logger.info(
                 f"[{run_id}] Card refresh completed: {specialist_result.content[:200]}..."
@@ -523,6 +545,8 @@ async def run_card_refresh_dream(
         # deduction-family run, so its outcome rides on deduction_success.
         if duration_ms == 0.0:
             duration_ms = (time.perf_counter() - start_time) * 1000
+        if history is not None:
+            await crud.close_run(history.run_id, succeeded=specialist_success)
         if dream_trace is not None:
             dream_trace.end(
                 output=specialist_result.content if specialist_result else None,
@@ -672,13 +696,7 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                             observed=payload.observed,
                             with_for_update=True,
                         )
-                        count_stmt = select(func.count(models.Document.id)).where(
-                            models.Document.workspace_name == workspace_name,
-                            models.Document.observer == payload.observer,
-                            models.Document.observed == payload.observed,
-                            models.Document.level == "explicit",
-                        )
-                        current_explicit_count = int(await db.scalar(count_stmt) or 0)
+                        current_explicit_count = collection.explicit_count
                         dream_meta = dict(collection.internal_metadata.get("dream", {}))
                         dream_meta["last_dream_at"] = now_iso
                         dream_meta["last_dream_document_count"] = max(

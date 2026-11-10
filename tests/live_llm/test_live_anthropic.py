@@ -3,15 +3,17 @@ from __future__ import annotations
 import pytest
 
 from src.llm.backend import CompletionResult
-from src.llm.history_adapters import AnthropicHistoryAdapter
+from src.llm.capabilities import anthropic_capabilities
 from src.llm.request_builder import execute_completion
 
 from .conftest import (
+    REASONING_TOOL_PROMPT,
     StructuredLiveResponse,
     execute_local_tool,
     favorite_prime_tools,
     make_backend,
     make_large_system_prompt,
+    replay_tool_round,
     require_provider_key,
     wrap_async_method,
 )
@@ -94,48 +96,38 @@ async def test_live_anthropic_thinking_and_tool_replay(
     backend, config = make_backend(model_spec, thinking_budget_tokens=1024)
     create_calls = wrap_async_method(monkeypatch, backend._client.messages, "create")
     tools = favorite_prime_tools()
-    adapter = AnthropicHistoryAdapter()
-
-    initial_messages = [
-        {
-            "role": "user",
-            "content": (
-                "Before answering, call the get_favorite_prime tool exactly once. "
-                "After you receive the tool result, answer in one sentence that includes "
-                "the number and the word 'prime'."
-            ),
-        }
-    ]
-
-    first = await execute_completion(
-        backend,
-        config,
-        messages=initial_messages,
-        max_tokens=2048,
-        tools=tools,
+    # A budget model gets the budget; an adaptive model rejects one, so the
+    # budget only switches adaptive thinking on.
+    expected_thinking = (
+        {"type": "enabled", "budget_tokens": 1024}
+        if anthropic_capabilities(model_spec.model).thinking == "budget"
+        else {"type": "adaptive"}
     )
 
-    assert create_calls[0]["kwargs"]["thinking"] == {
-        "type": "enabled",
-        "budget_tokens": 1024,
-    }
+    initial_messages = [{"role": "user", "content": REASONING_TOOL_PROMPT}]
+
+    # Adaptive models decide per turn whether to think, so give the first turn
+    # a few tries to produce a thinking block worth replaying.
+    first = None
+    for _ in range(3):
+        first = await execute_completion(
+            backend,
+            config,
+            messages=initial_messages,
+            max_tokens=2048,
+            tools=tools,
+        )
+        if first.thinking_blocks and first.tool_calls:
+            break
+    assert first is not None
+
+    assert create_calls[0]["kwargs"]["thinking"] == expected_thinking
     assert first.tool_calls, "Anthropic should issue a tool call in the first turn"
     assert first.thinking_blocks, "Anthropic thinking blocks should be preserved"
 
     tool_call = first.tool_calls[0]
     tool_result = execute_local_tool(tool_call.name, tool_call.input)
-    replay_messages = initial_messages + [
-        adapter.format_assistant_tool_message(first),
-        *adapter.format_tool_results(
-            [
-                {
-                    "tool_id": tool_call.id,
-                    "tool_name": tool_call.name,
-                    "result": tool_result,
-                }
-            ]
-        ),
-    ]
+    replay_messages = replay_tool_round(config, initial_messages, first, tool_result)
 
     second = await execute_completion(
         backend,
@@ -145,10 +137,7 @@ async def test_live_anthropic_thinking_and_tool_replay(
         tools=tools,
     )
 
-    assert create_calls[1]["kwargs"]["thinking"] == {
-        "type": "enabled",
-        "budget_tokens": 1024,
-    }
+    assert create_calls[-1]["kwargs"]["thinking"] == expected_thinking
     assert isinstance(second.content, str)
     assert "13" in second.content
     assert "prime" in second.content.lower()

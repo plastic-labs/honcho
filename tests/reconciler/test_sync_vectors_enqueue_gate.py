@@ -109,7 +109,7 @@ async def test_enqueue_gated_on_pending_work(
     async def _db(_: str | None = None) -> AsyncGenerator[AsyncSession]:
         yield db_session
 
-    monkeypatch.setattr(scheduler_module, "tracked_db", _db)
+    monkeypatch.setattr(scheduler_module, "service_db", _db)
     task = RECONCILER_TASKS["sync_vectors"].model_copy(
         update={"has_pending": AsyncMock(return_value=has_work)}
     )
@@ -142,7 +142,7 @@ async def test_cleanup_queue_is_not_gated(
     async def _db(_: str | None = None) -> AsyncGenerator[AsyncSession]:
         yield db_session
 
-    monkeypatch.setattr(scheduler_module, "tracked_db", _db)
+    monkeypatch.setattr(scheduler_module, "service_db", _db)
     task = RECONCILER_TASKS["cleanup_queue"]
 
     enqueued = await ReconcilerScheduler()._try_enqueue_task(task)  # pyright: ignore[reportPrivateUsage]

@@ -4,21 +4,23 @@ description: "Using streaming responses with Honcho SDKs"
 icon: "wave-sine"
 ---
 
-When working with AI-generated content, streaming the response as it's generated can significantly improve the user experience. Honcho provides streaming functionality in its SDKs that allows your application to display content as it's being generated, rather than waiting for the complete response.
+Honcho's SDKs can receive chat answers as a stream of text chunks over server-sent events, so your application can consume the answer through the same streaming interface it uses for other model output.
+
+<Note>
+The dialectic is an agent loop. It will stream when it can but it's designed to answer as fast as possible.
+</Note>
 
 ## When to Use Streaming
 
 Streaming is particularly useful for:
 
-- Real-time chat interfaces
-- Long-form content generation
-- Applications where perceived speed is important
-- Interactive agent experiences
-- Reducing time-to-first-word in user interactions
+- Chat interfaces that already consume streamed model output
+- Server-sent-event pipelines that forward answers to a client
+- Long answers that hit the agent's tool-call limit, which stream as they are generated
 
 ## Streaming with the Chat Endpoint
 
-One of the primary use cases for streaming in Honcho is with the [chat endpoint](/v3/documentation/features/chat). This allows you to stream the AI's reasoning about a user in real-time.
+One of the primary use cases for streaming in Honcho is with the [chat endpoint](/v3/documentation/features/chat). This lets you receive the answer about a user over the same streaming interface as other model output.
 
 ### Prerequisites
 

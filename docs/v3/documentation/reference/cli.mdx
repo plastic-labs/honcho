@@ -181,6 +181,13 @@ When you pick up a workspace and need to orient — start broad, narrow to the p
     honcho conclusion search "topic" --observer <peer_id> --json
     ```
   </Step>
+  <Step title="See what dreams changed">
+    ```bash
+    honcho dream list -p <peer_id>
+    honcho dream inspect <run_id>
+    ```
+    Each dream lists the conclusions it created with what each was derived from, the conclusions it removed, and the peer card before and after.
+  </Step>
   <Step title="Debug a session">
     ```bash
     honcho session inspect <session_id> --json

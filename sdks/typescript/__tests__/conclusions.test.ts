@@ -572,6 +572,7 @@ describe('Conclusions', () => {
       expect(conclusion.createdAt).toBe('2024-01-15T10:00:00Z')
       // Attribution fields default when absent from the response
       expect(conclusion.sourceIds).toBeNull()
+      expect(conclusion.sourceMessageIds).toBeNull()
       expect(conclusion.timesDerived).toBe(1)
     })
 
@@ -592,7 +593,26 @@ describe('Conclusions', () => {
 
       expect(conclusion.level).toBe('deductive')
       expect(conclusion.sourceIds).toEqual(['premise-1', 'premise-2'])
+      expect(conclusion.sourceMessageIds).toBeNull()
       expect(conclusion.timesDerived).toBe(3)
+    })
+
+    test('fromApiResponse carries cited message ids', () => {
+      const conclusion = Conclusion.fromApiResponse({
+        id: 'explicit-id',
+        content: 'alice chose SQLite',
+        observer_id: 'observer',
+        observed_id: 'alice',
+        session_id: 'session',
+        level: 'explicit' as const,
+        source_ids: null,
+        source_message_ids: ['msg-question', 'msg-answer'],
+        times_derived: 1,
+        created_at: '2024-01-15T10:00:00Z',
+      })
+
+      expect(conclusion.sourceIds).toBeNull()
+      expect(conclusion.sourceMessageIds).toEqual(['msg-question', 'msg-answer'])
     })
 
     test('toString returns readable format', async () => {

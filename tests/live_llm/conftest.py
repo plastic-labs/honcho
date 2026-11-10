@@ -10,7 +10,11 @@ from pydantic import BaseModel
 from src.config import EmbeddingModelConfig, ModelConfig, settings
 from src.embedding_client import _EmbeddingClient  # pyright: ignore[reportPrivateUsage]
 from src.llm import get_backend
+from src.llm.backend import CompletionResult
 from src.llm.caching import gemini_cache_store
+from src.llm.codecs import RenderTarget
+from src.llm.messages import ModelOrigin, ToolMessage, coerce_messages
+from src.llm.profiles import profile_for
 
 from .embedding_matrix import LiveEmbeddingSpec, selected_embedding_summary_lines
 from .model_matrix import LiveModelSpec, selected_model_summary_lines
@@ -135,6 +139,19 @@ def make_large_system_prompt(*, label: str) -> str:
     )
 
 
+# Adaptive-thinking models (Claude 4.6+) decide per turn whether to think, and
+# skip it on a bare "call the tool" request or on an easy problem they can work
+# through in visible text. A non-trivial check with no visible work before the
+# call makes them think, so there is a thinking block to replay.
+REASONING_TOOL_PROMPT = (
+    "Exactly one of 4087, 4093 and 4097 is prime. Find it by checking divisors, "
+    "without writing out your work. Then call the get_favorite_prime tool exactly "
+    "once, passing that prime in the topic, with no text before the call. After "
+    "you receive the tool result, answer in one sentence that includes the number "
+    "the tool returned and the word 'prime'."
+)
+
+
 def favorite_prime_tools() -> list[dict[str, Any]]:
     return [
         {
@@ -185,3 +202,30 @@ def extract_openai_reasoning_tokens(raw_response: Any) -> int | None:
         return None
     reasoning_tokens = getattr(details, "reasoning_tokens", None)
     return int(reasoning_tokens) if reasoning_tokens is not None else None
+
+
+def replay_tool_round(
+    config: ModelConfig,
+    initial_messages: list[dict[str, Any]],
+    first: CompletionResult,
+    tool_result: str,
+) -> list[dict[str, Any]]:
+    """The next turn's messages after `first`'s tool call is answered.
+
+    Built as the tool loop builds it: typed history (the opening messages,
+    `first` parsed into an assistant turn, the tool result), rendered by the
+    codec for `config`'s model.
+    """
+    codec = profile_for(config.transport, config.model).codec
+    origin = ModelOrigin(
+        transport=config.transport, model=config.model, base_url=config.base_url
+    )
+    call = first.tool_calls[0]
+    history = [
+        *coerce_messages(initial_messages),
+        codec.parse(first, origin),
+        ToolMessage(tool_call_id=call.id, name=call.name, content=str(tool_result)),
+    ]
+    return codec.render(
+        history, RenderTarget(config.transport, config.model, config.base_url)
+    ).messages
