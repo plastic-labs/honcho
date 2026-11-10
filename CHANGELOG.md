@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [3.6.1] - 2026-11-10
+
+### Changed
+
+- Migration `e5fe7f8bcf62`, the 3.6.0 revision that adds `tenant_id` to every tenant-scoped table, no longer blocks reads and writes while it runs. It did all of its work in one transaction, so every table whose keys it rebuilt stayed locked until the end, which took longer the bigger the database was. It now commits after each statement: the new unique and primary-key indexes build concurrently, the new foreign keys are added `NOT VALID` and then validated, and each primary key is swapped onto its new index in one short statement, so the previous release can keep serving during the upgrade. The index builds and the foreign-key validation run under a 60-minute `statement_timeout` instead of the migrations' 5 minutes. A run that stops part-way can be run again, and each step skips what is already done. The revision id and the resulting schema are unchanged. An instance already on 3.6.0 ran the earlier version and is not affected; an upgrade from 3.5.x or earlier runs this one (#1574)
+- The `representation.completed` and `agent.tool.summary.created` CloudEvents carry a `run_id`, and the `llm.call.completed` events of that deriver batch or summary carry the same `run_id` (their `llm.call.traced` events carry it as `trace_id`), so a batch or a summary can be joined to its LLM calls by id instead of by message ids or token counts. Before, `run_id` was null on these LLM-call events. A short and a long summary of the same message get separate ids. With `TELEMETRY_HIGH_VOLUME_SAMPLE_RATE` below 1.0, these LLM-call events are now sampled per run, so a call and its retries are kept or dropped together. Langfuse traces are unchanged (#1576)
+
+### Fixed
+
+- Deleting a session or a workspace no longer deadlocks with a deriver worker that is finishing a batch for it. Deletion removed the work unit's claim row before its queue rows, and a worker marking its batch done writes them in the other order, so Postgres aborted one of the two (`40P01`). Deletion now deletes the queue rows first, then the claim, and both sides lock their queue rows in id order (#1577)
+- Session deletion deletes the session's vectors from an external vector store (turbopuffer, LanceDB) after its transaction commits, as workspace deletion already did. Before, it deleted them inside the transaction, so its row locks were held across those network calls, and a transaction that rolled back left live messages and conclusions without vectors (#1577)
+- The deriver's other multi-row queue writes can no longer deadlock with a session or workspace deletion over the same rows. Clearing a work unit's retry count and marking a malformed or tenant-less work unit errored now lock their rows in id order, and the reconciler's cleanup of processed queue items skips rows another transaction holds and removes them on its next pass (#1580)
+
 ## [3.6.0] - 2026-11-05
 
 ### Added
