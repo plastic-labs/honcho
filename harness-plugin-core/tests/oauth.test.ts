@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { resolveConfig } from '../src/config.js'
 import {
   ensureFreshCredential,
   pickCredential,
@@ -82,8 +81,7 @@ describe('device sign-in', () => {
 
 describe('pickCredential', () => {
   const file = (own?: OAuthTokens, apiKey?: string) => ({
-    ...(apiKey ? { apiKey } : {}),
-    hosts: { claude_code: own ? { oauth: own } : {} },
+    hosts: { claude_code: { ...(own ? { oauth: own } : {}), ...(apiKey ? { apiKey } : {}) } },
   })
   const pick = (f: unknown, env: Record<string, string> = {}, baseUrl?: string) =>
     pickCredential(f, { host: 'claude_code', env, baseUrl })
@@ -97,9 +95,10 @@ describe('pickCredential', () => {
     expect(pick(file(grant('own', now() - 10)))).toMatchObject({ token: 'own', source: 'oauth', expired: true })
     expect(pick({})).toBeNull()
   })
-  test("another plugin's grant and a root grant are never used", () => {
+  test("another plugin's grant and a root grant or key are never used", () => {
     const f = { oauth: grant('root', now() + 600), hosts: { hermes: { oauth: grant('hermes', now() + 600) } } }
     expect(pick(f)).toBeNull()
+    expect(pick({ apiKey: 'root', auth: { apiKey: 'root' }, hosts: { claude_code: {} } })).toBeNull()
   })
   test('OAuth is ignored off Honcho cloud', () => {
     expect(pick(file(grant('own', now() + 600), 'k'), {}, 'http://localhost:8000')).toMatchObject({ source: 'apiKey' })
@@ -151,7 +150,7 @@ describe('ensureFreshCredential', () => {
   })
 
   test('a rejected grant flags reauthRequired and falls back to apiKey', async () => {
-    const path = tmpConfig({ apiKey: 'k', hosts: { claude_code: { oauth: grant('hch-at-x', now() - 5) } } })
+    const path = tmpConfig({ hosts: { claude_code: { apiKey: 'k', oauth: grant('hch-at-x', now() - 5) } } })
     const s = scripted([400, { error: 'invalid_grant' }])
     const cred = await ensureFreshCredential({ path, host: 'claude_code', env: {}, fetch: s.fetch })
     expect(cred).toMatchObject({ token: 'k', source: 'apiKey', reauthRequired: true, error: 'invalid_grant' })
@@ -183,14 +182,5 @@ describe('saveGrant / readGrant', () => {
     writeFileSync(path, '{ not json')
     await expect(saveGrant(path, 'h', grant('a', 1))).rejects.toThrow()
     expect(readFileSync(path, 'utf-8')).toBe('{ not json')
-  })
-})
-
-describe('resolveConfig', () => {
-  test('a grant is read only from the host block, never from the root', () => {
-    const f = { oauth: { accessToken: 'root', refreshToken: 'root-r', clientId: 'other-client' } }
-    expect(resolveConfig(f, { host: 'h', env: {} }).auth.oauth).toBeUndefined()
-    const g = { ...f, hosts: { h: { oauth: { accessToken: 'own' } } } }
-    expect(resolveConfig(g, { host: 'h', env: {} }).auth.oauth).toEqual({ accessToken: 'own' })
   })
 })

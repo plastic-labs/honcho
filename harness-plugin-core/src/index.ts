@@ -1,19 +1,27 @@
 export {
+  applyFixes,
+  checkConfig,
+  hostMigration,
+  migrateHost,
   configPath,
   loadConfig,
   normalizeBaseUrl,
+  readConfigFile,
   resolveConfig,
+  saveHost,
+  suggestPeerName,
+  CLI_HOST,
+  CONFIG_SCHEMA_VERSION,
   DEFAULT_BASE_URL,
-  DEFAULT_TIMEOUT_MS,
 } from './config.js'
 
 export type {
-  AuthConfig,
+  ConfigFile,
+  ConfigFix,
+  ConfigIssue,
   Env,
-  FileConfig,
-  HostBlock,
+  HostConfig,
   ResolvedConfig,
-  RootConfig,
 } from './config.js'
 
 export {

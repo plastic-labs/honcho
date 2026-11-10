@@ -13,6 +13,7 @@ export const OAUTH_SCOPE = 'write'
 
 const DEVICE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:device_code'
 const SLOW_DOWN_STEP_S = 5
+const DEFAULT_DEVICE_EXPIRES_S = 600
 const REQUEST_TIMEOUT_MS = 10_000
 const REFRESH_SKEW_S = 60
 const LOCK_STALE_MS = 30_000
@@ -121,7 +122,8 @@ export async function requestDeviceCode(
     userCode: b.user_code,
     verificationUri: b.verification_uri,
     verificationUriComplete: b.verification_uri_complete || b.verification_uri,
-    expiresIn: Number(b.expires_in),
+    // RFC 8628 requires expires_in; without it the poll would never time out
+    expiresIn: Number(b.expires_in) > 0 ? Number(b.expires_in) : DEFAULT_DEVICE_EXPIRES_S,
     interval: Number(b.interval) || 5,
   }
 }
@@ -138,12 +140,20 @@ export async function pollForToken(
   while (true) {
     if (Date.now() >= deadline) throw new OAuthError('expired_token', 'timed out waiting for approval')
     await sleep(interval * 1000)
-    const r = await post(
-      opts.tokenUrl ?? OAUTH_TOKEN_URL,
-      { grant_type: DEVICE_GRANT_TYPE, device_code: device.deviceCode, client_id: clientId },
-      opts
-    )
+    let r: { status: number; body: any }
+    try {
+      r = await post(
+        opts.tokenUrl ?? OAUTH_TOKEN_URL,
+        { grant_type: DEVICE_GRANT_TYPE, device_code: device.deviceCode, client_id: clientId },
+        opts
+      )
+    } catch (e) {
+      // A dropped request is transient; the device code is still good until the deadline.
+      if (e instanceof OAuthError && e.code === 'connection_error') continue
+      throw e
+    }
     if (r.status === 200) return tokensFrom(r.body, clientId)
+    if (r.status >= 500) continue
     const err = errorOf(r)
     if (err.code === 'authorization_pending') continue
     if (err.code === 'slow_down') {
@@ -269,13 +279,13 @@ export interface Credential {
 
 function apiKeyOf(file: Record<string, any>, host: string): string | undefined {
   const hb = isObj(file.hosts) ? file.hosts[host] : undefined
-  const k = hb?.apiKey ?? hb?.auth?.apiKey ?? file.apiKey ?? file.auth?.apiKey
+  const k = hb?.apiKey
   return typeof k === 'string' && k ? k : undefined
 }
 
 /**
  * The token to send, highest wins: HONCHO_API_KEY env → the plugin's live OAuth
- * grant (`hosts.<host>.oauth`) → apiKey → its expired grant. OAuth is skipped
+ * grant (`hosts.<host>.oauth`) → `hosts.<host>.apiKey` → its expired grant. OAuth is skipped
  * unless `baseUrl` is Honcho cloud. No network.
  */
 export function pickCredential(file: unknown, opts: { host: string; baseUrl?: string; env?: Env }): Credential | null {
