@@ -6,7 +6,7 @@ Shared runtime for Honcho harness plugins.
 import { configPath, loadConfig, saveHost } from '@honcho-ai/harness-plugin-core'
 
 const cfg = loadConfig({ host: 'harness', defaults: { aiPeer: 'harness' } })
-for (const w of cfg.warnings) console.warn(`${w} Run \`honcho doctor\` to fix it.`)
+for (const w of cfg.warnings) console.warn(w)
 await saveHost(configPath(), 'harness', { workspace: 'my-workspace' })
 ```
 
@@ -57,11 +57,19 @@ Versions: `saveHost` and `migrateHost` mark the block `"schemaVersion": 2`, whic
 
 ## Moving an older file
 
-A plugin fixes its own block at startup: `migrateHost(configPath(), host, deadKeys)` copies top-level `apiKey`, `peerName` and `baseUrl` into `hosts.<host>` (its `workspace` too, under `globalOverride` or when it has no block yet), renames old keys there, and drops the `deadKeys` it no longer uses. The block's own value wins over the top level's, so a host that chose Honcho cloud under an old key name keeps `baseUrl: "https://api.honcho.dev"` rather than taking a self-hosted top-level URL. It returns what it changed, and writes nothing when the block is current. It never touches the top level or another host's block, since plugins on older versions may still read them; `honcho doctor` removes those once every plugin reads only its own block.
+A plugin fixes its own block at startup: `migrateHost(configPath(), host, deadKeys)` copies top-level `apiKey`, `peerName` and `baseUrl` into `hosts.<host>` (its `workspace` too, under `globalOverride` or when it has no block yet), renames old keys there (`auth.apiKey`, `auth.oauth`, `endpoint`, `environmentUrl`, `workspaceId`), and drops the `deadKeys` it no longer uses. The block's own value wins over the top level's, so a host that chose Honcho cloud under an old key name keeps `baseUrl: "https://api.honcho.dev"` rather than taking a self-hosted top-level URL. It returns what it changed, and writes nothing when the block is current. It never touches the top level or another host's block, since plugins on older versions may still read them.
 
 ## Checking a config file
 
-`checkConfig(file)` lists problems with an older file, each with the fixes `applyFixes(file, issues)` applies: top-level settings moved into every host block that lacks them, old key names (`auth.apiKey`, `auth.oauth`, `endpoint`, `environmentUrl`, `workspaceId`) renamed, `globalOverride` turned into each host's `workspace`, and leftover top-level keys removed. Copies are always offered; deletions (top-level keys, a block's old key names) only once the plugins that might still read them have marked their blocks, so an old plugin never loses its settings. The honcho CLI still reads the top-level `apiKey`, `environmentUrl` and `oauth`, so those stay, and the CLI's `oauth` is not copied, until `hosts.honcho-cli` is marked; then they move there. Hosts that share a workspace under different `peerName`s are reported without a fix. `loadConfig` returns the messages as `warnings`.
+`checkConfig(file)` lists what a plugin should tell the user, read-only: a file newer than this package, and hosts that share a workspace under different `peerName`s (the user is split across peers; only a person can pick the name). `loadConfig` returns the messages as `warnings`. There are no fixes here: each plugin fixes its own block with `migrateHost`, and the top level is the honcho CLI's.
+
+## The top level and the honcho CLI
+
+The honcho CLI owns the top level. It keeps its own sign-in in `hosts.honcho-cli`, and its `honcho doctor` removes the old top-level keys once every installed integration reads only its own block. Anything else that writes this file follows the same rules as this package:
+
+1. `hosts.<host>.schemaVersion` of 2 or more means that host's plugin reads only its own block.
+2. A top-level `schemaVersion` above 2 means the file is read, never written.
+3. Writes hold `<config>.lock` (created exclusively, holding a per-writer token, stale after 30s, removed only by its holder) and replace the file by temp file + rename, mode 0600.
 
 ## Telemetry headers
 

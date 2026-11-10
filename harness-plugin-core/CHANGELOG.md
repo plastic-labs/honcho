@@ -17,11 +17,11 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 - `pickCredential` / `ensureFreshCredential`: token resolution, highest wins: `HONCHO_API_KEY` env → the plugin's own grant (`hosts.<host>.oauth`) → `hosts.<host>.apiKey` → that grant expired. One grant per plugin; a root `oauth` block, a root `apiKey` or another host's grant is never used, so each plugin keeps the tenant it signed in to. `ensureFreshCredential` refreshes a grant within 60s of expiry under a cross-process lock and re-reads the file first, so concurrent processes refresh once.
 - `saveGrant`, `readGrant`, `updateConfigFile`, `withConfigLock`: locked, atomic (temp + rename, mode 0600) writes that touch only the block they change.
 - `saveHost(path, host, patch)`: locked merge into one host block.
-- `migrateHost(path, host, deadKeys)` / `hostMigration`: a plugin moves an older file's settings into its own block at startup, without touching the top level or other hosts.
-- `checkConfig(file)` / `applyFixes(file, issues)`: what an older file needs and the fixes, for plugins to warn and `honcho doctor` to apply.
-- `readConfigFile`, `CONFIG_SCHEMA_VERSION`, `CLI_HOST`.
+- `migrateHost(path, host, deadKeys)` / `hostMigration`: a plugin moves an older file's settings into its own block at startup, without touching the top level or other hosts. The block's own value, an explicit Honcho cloud URL included, beats the top level's.
+- `checkConfig(file)`: read-only problems for a plugin to show the user: a newer file, and hosts sharing a workspace under different `peerName`s. Cleaning the top level is the honcho CLI's job (`honcho doctor`), not this package's.
+- `readConfigFile`, `CONFIG_SCHEMA_VERSION`.
 - `suggestPeerName(file)`: the name a plugin's setup offers the user: the one the other plugins agree on, else the old top-level `peerName`, else `$USER`.
-- `hosts.<host>.schemaVersion`: written by `saveHost` / `migrateHost` to mark a block whose plugin reads only that block. `checkConfig` deletes top-level keys, and a block's old key names, only once the relevant blocks carry it; the top-level `apiKey`, `environmentUrl` and `oauth` the honcho CLI reads wait for `hosts.honcho-cli`. A host's own value, an explicit Honcho cloud URL included, beats the top level's in both `migrateHost` and `checkConfig`.
+- `hosts.<host>.schemaVersion`: written by `saveHost` / `migrateHost` to mark a block whose plugin reads only that block; `honcho doctor` waits for it before removing top-level keys.
 - A file with a newer `schemaVersion` is read but not written (`saveHost` throws, `migrateHost` skips), and `checkConfig` reports it.
 - `config.schema.json` describes the file. Its `$id` is `https://cdn.jsdelivr.net/npm/@honcho-ai/harness-plugin-core@0/config.schema.json`, and it allows a top-level `$schema`.
 

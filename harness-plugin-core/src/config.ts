@@ -33,14 +33,12 @@ export interface ResolvedConfig {
   workspace: string
   aiPeer: string
   baseUrl: string
-  /** Problems in the file; `honcho doctor` fixes them. */
+  /** Problems in the file the user should know about; see `checkConfig`. */
   warnings: string[]
 }
 
 export const DEFAULT_BASE_URL = 'https://api.honcho.dev'
 export const CONFIG_SCHEMA_VERSION = 2
-/** Host block the honcho CLI keeps its own sign-in in. */
-export const CLI_HOST = 'honcho-cli'
 
 function isObj(v: unknown): v is Record<string, any> {
   return v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -156,16 +154,12 @@ export async function saveHost(path: string, host: string, patch: Partial<HostCo
   })
 }
 
-// ── checks + fixes (shared with `honcho doctor`) ────────────────────────────
-
-export type ConfigFix = { op: 'set'; path: string[]; value: unknown } | { op: 'delete'; path: string[] }
+// ── migration + checks ──────────────────────────────────────────────────────
 
 export interface ConfigIssue {
-  /** Where the problem is, e.g. `apiKey` or `hosts.claude_code.endpoint`. */
+  /** Where the problem is: `schemaVersion` or `hosts`. */
   path: string
   message: string
-  /** Applied in order by `applyFixes`; empty when only a person can decide. */
-  fixes: ConfigFix[]
 }
 
 const MOVABLE = ['apiKey', 'peerName', 'workspace', 'aiPeer', 'baseUrl'] as const
@@ -207,9 +201,6 @@ function rootSettingsOf(file: Record<string, any>): Settings {
   return out
 }
 
-/** Top-level keys the honcho CLI still reads; they stay until it keeps its sign-in in `hosts.honcho-cli`. */
-const CLI_ROOT_KEYS = ['apiKey', 'environmentUrl', 'oauth']
-
 /** Old spellings inside a host block. */
 const LEGACY_HOST_KEYS = ['auth', 'endpoint', 'environmentUrl', 'workspaceId']
 
@@ -219,77 +210,19 @@ function legacyGrantOf(b: Record<string, any>): Record<string, any> | undefined 
 }
 
 /**
- * Problems in a config file, each with the fixes `applyFixes` (and `honcho
- * doctor`) apply. Schema-level only: keys a plugin still uses inside its own
- * block are left alone.
+ * Problems a plugin should tell the user about. Read-only, and nothing to
+ * clean: each plugin fixes its own block with `migrateHost`, and the top level
+ * belongs to the honcho CLI, whose `honcho doctor` removes it once every
+ * integration reads only its own block.
  */
 export function checkConfig(file: unknown): ConfigIssue[] {
   if (!isObj(file)) return []
   if (isNewer(file)) {
-    return [{ path: 'schemaVersion', message: `This file is schema version ${file.schemaVersion}, newer than this plugin understands; update the plugin.`, fixes: [] }]
+    return [{ path: 'schemaVersion', message: `This file is schema version ${file.schemaVersion}, newer than this plugin understands; update the plugin.` }]
   }
   const issues: ConfigIssue[] = []
   const hosts: Record<string, any> = isObj(file.hosts) ? file.hosts : {}
   const names = Object.keys(hosts).filter((h) => isObj(hosts[h]))
-  // Copies are always safe. Deletes wait until the plugins that might still read
-  // the old place are updated, or an old plugin would lose its settings.
-  const pending = names.filter((h) => !isMigrated(hosts[h]))
-
-  for (const h of names) {
-    const legacy = LEGACY_HOST_KEYS.filter((k) => k in hosts[h])
-    if (!legacy.length) continue
-    const settings = settingsOf(hosts[h])
-    const grant = legacyGrantOf(hosts[h])
-    issues.push({
-      path: `hosts.${h}`,
-      message: `hosts.${h} uses old key names (${legacy.join(', ')})${isMigrated(hosts[h]) ? '' : `; they stay until the ${h} plugin is updated`}.`,
-      fixes: [
-        ...Object.entries(settings)
-          .filter(([k]) => hosts[h][k] === undefined)
-          .map(([k, value]): ConfigFix => ({ op: 'set', path: ['hosts', h, k], value })),
-        ...(grant ? [{ op: 'set', path: ['hosts', h, 'oauth'], value: grant } as ConfigFix] : []),
-        ...(isMigrated(hosts[h]) ? legacy.map((k): ConfigFix => ({ op: 'delete', path: ['hosts', h, k] })) : []),
-      ],
-    })
-  }
-
-  // Top level: settings are copied into every host block that lacks them; the
-  // top-level keys go once every plugin reads only its own block, and the
-  // CLI's own keys once the CLI does too.
-  const rootKeys = Object.keys(file).filter((k) => k !== 'schemaVersion' && k !== 'hosts' && k !== '$schema')
-  if (rootKeys.length) {
-    const root = rootSettingsOf(file)
-    const override = file.globalOverride === true
-    const fixes: ConfigFix[] = []
-    for (const [key, value] of Object.entries(root)) {
-      for (const h of names) {
-        // A host's own value wins, under any spelling (cloud included).
-        const own = settingsOf(hosts[h])[key as (typeof MOVABLE)[number]]
-        const set = own !== undefined || hosts[h][key] !== undefined
-        if (!set || (key === 'workspace' && override && own !== value)) {
-          fixes.push({ op: 'set', path: ['hosts', h, key], value })
-        }
-      }
-    }
-    // Until the CLI reads its own block it keeps refreshing the top-level grant,
-    // so a copy made earlier would hold a rotated-out refresh token.
-    const cliMigrated = isMigrated(hosts[CLI_HOST])
-    if (cliMigrated && isObj(file.oauth) && !isObj(hosts[CLI_HOST].oauth)) fixes.push({ op: 'set', path: ['hosts', CLI_HOST, 'oauth'], value: file.oauth })
-    const held = cliMigrated ? [] : rootKeys.filter((k) => CLI_ROOT_KEYS.includes(k))
-    const canDelete = names.length > 0 && pending.length === 0
-    if (canDelete) fixes.push(...rootKeys.filter((k) => !held.includes(k)).map((k): ConfigFix => ({ op: 'delete', path: [k] })))
-    const waits = [
-      ...(!names.length ? ['There is no host block to move them into.'] : []),
-      ...(pending.length ? [`They stay until ${pending.join(', ')} ${pending.length === 1 ? 'is' : 'are'} updated.`] : []),
-      ...(names.length && held.length ? [`${held.join(', ')} ${held.length === 1 ? 'stays' : 'stay'} until the honcho CLI keeps its sign-in in hosts.${CLI_HOST}.`] : []),
-    ]
-    const wait = waits.map((w) => ` ${w}`).join('')
-    issues.push({
-      path: '(top level)',
-      message: `Top-level ${rootKeys.join(', ')} ${rootKeys.length === 1 ? 'is' : 'are'} no longer read; settings belong in each host block.${wait}`,
-      fixes,
-    })
-  }
 
   // Hosts sharing a workspace must agree on the user.
   const byWorkspace = new Map<string, Map<string, string[]>>()
@@ -304,11 +237,7 @@ export function checkConfig(file: unknown): ConfigIssue[] {
   for (const [ws, peers] of byWorkspace) {
     if (peers.size < 2) continue
     const list = [...peers].map(([p, hs]) => `${hs.join(', ')}: "${p}"`).join('; ')
-    issues.push({ path: 'hosts', message: `Hosts in workspace "${ws}" use different peerNames (${list}), so the user is split across peers.`, fixes: [] })
-  }
-
-  if (issues.some((i) => i.fixes.length) && file.schemaVersion !== CONFIG_SCHEMA_VERSION) {
-    issues.push({ path: 'schemaVersion', message: `schemaVersion should be ${CONFIG_SCHEMA_VERSION}.`, fixes: [{ op: 'set', path: ['schemaVersion'], value: CONFIG_SCHEMA_VERSION }] })
+    issues.push({ path: 'hosts', message: `Hosts in workspace "${ws}" use different peerNames (${list}), so the user is split across peers.` })
   }
   return issues
 }
@@ -317,7 +246,7 @@ export function checkConfig(file: unknown): ConfigIssue[] {
  * What one plugin can fix by itself: copy top-level settings into its own block
  * (its `workspace` only under `globalOverride`, or when it has no block yet),
  * rename old keys in that block, and drop `deadKeys` it no longer uses. Never
- * touches the top level or another host's block; `honcho doctor` cleans those.
+ * touches another host's block or the top level, which the honcho CLI cleans.
  */
 export function hostMigration(
   file: unknown,
@@ -367,16 +296,4 @@ export async function migrateHost(path: string, host: string, deadKeys: readonly
     for (const k of remove) delete block[k]
   })
   return changed
-}
-
-/** A copy of `file` with every issue's fixes applied, in order. */
-export function applyFixes(file: Record<string, any>, issues: ConfigIssue[]): Record<string, any> {
-  const out = structuredClone(file)
-  for (const fix of issues.flatMap((i) => i.fixes)) {
-    const parent = fix.path.slice(0, -1).reduce<Record<string, any>>((o, k) => (isObj(o[k]) ? o[k] : (o[k] = {})), out)
-    const last = fix.path[fix.path.length - 1]
-    if (fix.op === 'set') parent[last] = fix.value
-    else delete parent[last]
-  }
-  return out
 }
