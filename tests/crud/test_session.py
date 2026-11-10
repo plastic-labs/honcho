@@ -969,6 +969,114 @@ class TestDeleteSessionVectorNamespaceScoping:
         )
 
 
+class TestDeleteSessionExternalVectorsAfterCommit:
+    """External-store vectors are deleted only after the session's rows commit.
+
+    Deleting them inside the transaction held its row locks across network
+    calls, and a transaction that then rolled back left live messages and
+    conclusions without their vectors.
+    """
+
+    @staticmethod
+    async def _seed(db_session: AsyncSession) -> tuple[str, str]:
+        workspace_name = str(generate_nanoid())
+        db_session.add(models.Workspace(name=workspace_name))
+        await db_session.flush()
+        peer = models.Peer(name=str(generate_nanoid()), workspace_name=workspace_name)
+        db_session.add(peer)
+        await db_session.flush()
+        db_session.add(
+            models.Collection(
+                workspace_name=workspace_name, observer=peer.name, observed=peer.name
+            )
+        )
+        session_name = str(generate_nanoid())
+        db_session.add(models.Session(name=session_name, workspace_name=workspace_name))
+        await db_session.flush()
+        message = models.Message(
+            public_id=str(generate_nanoid()),
+            session_name=session_name,
+            workspace_name=workspace_name,
+            peer_name=peer.name,
+            content="hello world",
+            seq_in_session=1,
+        )
+        db_session.add(message)
+        await db_session.flush()
+        db_session.add_all(
+            [
+                models.MessageEmbedding(
+                    content=message.content,
+                    message_id=message.public_id,
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    peer_name=peer.name,
+                    sync_state="pending",
+                    embedding=[1.0] * 1536,
+                ),
+                models.Document(
+                    content="a document in this session",
+                    workspace_name=workspace_name,
+                    observer=peer.name,
+                    observed=peer.name,
+                    session_name=session_name,
+                    sync_state="pending",
+                    embedding=[1.0] * 1536,
+                ),
+            ]
+        )
+        await db_session.commit()
+        return workspace_name, session_name
+
+    @pytest.mark.asyncio
+    async def test_vectors_are_deleted_after_the_rows_commit(
+        self, db_session: AsyncSession
+    ):
+        from unittest.mock import patch
+
+        workspace_name, session_name = await self._seed(db_session)
+        open_transaction_at_delete: list[bool] = []
+
+        class _Store(_RecordingVectorStore):
+            async def delete_many(self, namespace: str, ids: list[str]) -> None:
+                open_transaction_at_delete.append(db_session.in_transaction())
+                await super().delete_many(namespace, ids)
+
+        store = _Store()
+        with patch("src.crud.session.get_external_vector_store", return_value=store):
+            await crud.delete_session(db_session, workspace_name, session_name)
+
+        # One call for the message namespace, one for the document namespace.
+        assert len(store.deleted_many_namespaces) == 2
+        assert open_transaction_at_delete == [False, False]
+
+    @pytest.mark.asyncio
+    async def test_a_rolled_back_deletion_keeps_its_vectors(
+        self, db_session: AsyncSession
+    ):
+        from unittest.mock import AsyncMock, patch
+
+        workspace_name, session_name = await self._seed(db_session)
+        store = _RecordingVectorStore()
+        with (
+            patch("src.crud.session.get_external_vector_store", return_value=store),
+            patch(
+                "src.crud.session.delete_session_history",
+                AsyncMock(side_effect=RuntimeError("synthetic failure")),
+            ),
+            pytest.raises(RuntimeError, match="synthetic failure"),
+        ):
+            await crud.delete_session(db_session, workspace_name, session_name)
+
+        assert store.deleted_many_namespaces == []
+        remaining = await db_session.scalar(
+            select(func.count())
+            .select_from(models.Message)
+            .where(models.Message.session_name == session_name)
+        )
+        assert remaining == 1
+
+
 class TestDeleteSessionKeepsSiblingSessions:
     """Deleting one session must not touch any other session's rows.
 

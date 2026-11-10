@@ -206,6 +206,45 @@ def queue_item_tenant_match() -> ColumnElement[bool] | None:
     return models.QueueItem.tenant_id == tenant
 
 
+def queue_ids_locked_in_order(*conditions: ColumnElement[bool]) -> Select[Any]:
+    """Ids of the matching queue rows, locked in id order, for an ``id IN (...)`` write.
+
+    A predicate UPDATE or DELETE locks rows in whatever order its plan scans
+    them, so two of them over overlapping rows can deadlock. Every multi-row
+    write that can overlap another goes through this.
+    """
+    return (
+        select(models.QueueItem.id)
+        .where(*conditions)
+        .order_by(models.QueueItem.id)
+        .with_for_update()
+    )
+
+
+async def delete_queue_items_and_claims(
+    db: AsyncSession,
+    queue_conditions: Sequence[Sequence[ColumnElement[bool]]],
+    claim_condition: ColumnElement[bool],
+) -> None:
+    """Delete queue rows, then the claim rows on their work units, in the caller's transaction.
+
+    ``queue_conditions`` holds one predicate set per DELETE, run in order.
+    Queue rows go first and in id order: a worker marking its batch done
+    updates its queue rows (the batch trigger then locks the unit's
+    ``queue_item_batches`` row) and then its claim row, so taking the claim
+    rows first deadlocks against it.
+    """
+    tenant_match = queue_item_tenant_match()
+    for conditions in queue_conditions:
+        where = [*conditions] if tenant_match is None else [*conditions, tenant_match]
+        await db.execute(
+            delete(models.QueueItem).where(
+                models.QueueItem.id.in_(queue_ids_locked_in_order(*where))
+            )
+        )
+    await db.execute(delete(models.ActiveQueueSession).where(claim_condition))
+
+
 # The claim ranks this many of each tenant's oldest eligible units for each
 # worker (see claim_rows_query).
 CLAIM_CANDIDATE_FANOUT = 4

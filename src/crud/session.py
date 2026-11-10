@@ -37,7 +37,10 @@ from src.cache.client import (
     safe_cache_set,
 )
 from src.config import settings
-from src.crud.deriver import active_queue_session_match, queue_item_tenant_match
+from src.crud.deriver import (
+    active_queue_session_match,
+    delete_queue_items_and_claims,
+)
 from src.crud.dream_history import delete_session_history
 from src.crud.lifecycle import (
     live_message_row,
@@ -681,31 +684,26 @@ async def delete_session(
         db, session_name, workspace_name, include_inactive=True
     )
 
+    # External-store vectors to delete once the rows are committed: deleting
+    # them inside the transaction would hold its locks across network calls,
+    # and lose live vectors if the transaction then rolled back.
+    external_vector_store = get_external_vector_store()
+    message_vectors: tuple[str, list[str]] | None = None
+    document_vectors: dict[str, list[str]] = {}
+
     # Perform cascading deletes in order
     # Order is important to avoid foreign key constraint violations
     try:
-        # Delete ActiveQueueSession entries, matching on the work_unit_key
-        # (flag-aware position + tenant pinning; rationale lives on the helper).
-        await db.execute(
-            delete(models.ActiveQueueSession).where(
-                active_queue_session_match(workspace_name, session_name)
-            )
+        # Queue items, then the claim rows on their work units (the helper
+        # carries the lock order). session_id is globally unique in practice;
+        # the helper also pins the queue rows to the ambient tenant, and the
+        # claim match is flag-aware and tenant-pinned (rationale on each helper).
+        await delete_queue_items_and_claims(
+            db,
+            [[models.QueueItem.session_id == honcho_session.id]],
+            active_queue_session_match(workspace_name, session_name),
         )
 
-        # Delete QueueItem entries. session_id is globally unique in practice,
-        # but pin to the ambient tenant, flag-aware, for defense in depth
-        # (rationale lives on the helper).
-        queue_item_match = queue_item_tenant_match()
-        session_queue_item_delete = delete(models.QueueItem).where(
-            models.QueueItem.session_id == honcho_session.id
-        )
-        if queue_item_match is not None:
-            session_queue_item_delete = session_queue_item_delete.where(
-                queue_item_match
-            )
-        await db.execute(session_queue_item_delete)
-
-        # Delete message vectors from vector store before deleting DB records
         # Vector IDs are {message_id}_{chunk_index}, where chunk_index is the 0-based
         # position of the chunk within its message. Only the message id and the chunk
         # count are needed to rebuild the IDs we delete from the external store
@@ -721,7 +719,6 @@ async def delete_session(
             .group_by(models.MessageEmbedding.message_id)
         )
         message_chunk_counts = embedding_result.all()
-        external_vector_store = get_external_vector_store()
 
         # Only delete from external vector store if one exists
         if external_vector_store is not None and message_chunk_counts:
@@ -730,16 +727,12 @@ async def delete_session(
                 for message_id, chunk_count in message_chunk_counts
                 for chunk_idx in range(chunk_count)
             ]
-
-            # Try to delete from external vector store (best effort)
+            # Best effort, like the delete itself after the commit
             try:
                 namespace = await external_vector_store.get_vector_namespace(
                     "message", workspace_name
                 )
-                await external_vector_store.delete_many(namespace, vector_ids)
-                logger.debug(
-                    f"Deleted {len(vector_ids)} message vectors for session {session_name}"
-                )
+                message_vectors = (namespace, vector_ids)
             except Exception as e:
                 # Log warning but continue - workspace deletion will clean up eventually
                 logger.warning(
@@ -757,7 +750,6 @@ async def delete_session(
             batch_size=5000,
         )
 
-        # Delete document vectors from vector store before deleting DB records
         # Fetch all Document records to get IDs and namespaces
         doc_result = await db.execute(
             select(
@@ -775,7 +767,6 @@ async def delete_session(
         # Only delete from external vector store if one exists
         if external_vector_store is not None and documents:
             # Group document IDs by namespace (observer/observed)
-            docs_by_namespace: dict[str, list[str]] = {}
             for doc in documents:
                 namespace = await external_vector_store.get_vector_namespace(
                     "document",
@@ -783,20 +774,7 @@ async def delete_session(
                     doc.observer,
                     doc.observed,
                 )
-                docs_by_namespace.setdefault(namespace, []).append(doc.id)
-
-            # Try to delete from external vector store (best effort, per namespace)
-            for namespace, doc_ids in docs_by_namespace.items():
-                try:
-                    await external_vector_store.delete_many(namespace, doc_ids)
-                    logger.debug(
-                        f"Deleted {len(doc_ids)} document vectors from {namespace}"
-                    )
-                except Exception as e:
-                    # Log warning but continue - workspace deletion will clean up eventually
-                    logger.warning(
-                        f"Failed to delete document vectors from {namespace}: {e}"
-                    )
+                document_vectors.setdefault(namespace, []).append(doc.id)
 
         # Delete SessionPeer associations before the documents. A scope_removal
         # task locks the scope's membership row and then updates this session's
@@ -854,6 +832,31 @@ async def delete_session(
         logger.error("Failed to delete session %s: %s", session_name, e)
         await db.rollback()
         raise e
+
+    if external_vector_store is not None:
+        if message_vectors is not None:
+            namespace, vector_ids = message_vectors
+            try:
+                await external_vector_store.delete_many(namespace, vector_ids)
+                logger.debug(
+                    f"Deleted {len(vector_ids)} message vectors for session {session_name}"
+                )
+            except Exception as e:
+                # Log warning but continue - workspace deletion will clean up eventually
+                logger.warning(
+                    f"Failed to delete message vectors for session {session_name}: {e}"
+                )
+        for namespace, doc_ids in document_vectors.items():
+            try:
+                await external_vector_store.delete_many(namespace, doc_ids)
+                logger.debug(
+                    f"Deleted {len(doc_ids)} document vectors from {namespace}"
+                )
+            except Exception as e:
+                # Log warning but continue - workspace deletion will clean up eventually
+                logger.warning(
+                    f"Failed to delete document vectors from {namespace}: {e}"
+                )
 
     return SessionDeletionResult(
         messages_deleted=messages_deleted,
