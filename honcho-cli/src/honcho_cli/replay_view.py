@@ -35,10 +35,12 @@ _ACTION_STYLE = {
 
 
 def plural(count: int, noun: str) -> str:
+    """``1 session`` / ``2 sessions``."""
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
 def format_duration(seconds: float) -> str:
+    """Seconds as ``14s``, ``3m 05s`` or ``1h 02m``."""
     whole = int(round(seconds))
     if whole < 60:
         return f"{whole}s"
@@ -66,6 +68,7 @@ class Reporter:
     """
 
     def __init__(self) -> None:
+        """Use a live status line only when stderr is a terminal."""
         self._status = (
             console.status("", spinner="dots") if console.is_terminal else None
         )
@@ -73,11 +76,13 @@ class Reporter:
         self._last_log = time.monotonic()
 
     def __enter__(self) -> Reporter:
+        """Start the status line."""
         if self._status is not None:
             self._status.start()
         return self
 
     def __exit__(self, *_exc: object) -> None:
+        """Stop the status line, also when the command exits with an error."""
         if self._status is not None:
             self._status.stop()
 
@@ -90,6 +95,7 @@ class Reporter:
             self.line(text)
 
     def line(self, text: str) -> None:
+        """Print a progress line that stays on screen and in logs."""
         # soft_wrap: one progress line stays one line in a log file.
         console.print(f"[dim]{escape(text)}[/dim]", soft_wrap=True)
         self._last_log = time.monotonic()
@@ -97,6 +103,7 @@ class Reporter:
             self._status.update(f"[dim]{escape(self._phase)}[/dim]")
 
     def tick(self, label: str, done: int, total: int | None) -> None:
+        """Report progress inside the current step."""
         text = f"{label}: {done}/{total}" if total else f"{label}: {done} messages sent"
         if self._status is not None:
             self._status.update(f"[dim]{escape(text)}[/dim]")
@@ -115,6 +122,7 @@ def _facts(rows: list[tuple[str, str | Text]]) -> Table:
 
 
 def _endpoint(ref: dict[str, Any], note: str = "") -> Text:
+    """A workspace and the instance it lives on, with an optional second line."""
     text = Text(str(ref["workspace_id"]), style="bold")
     text.append(f" at {ref['url']}", style="not bold")
     if note:
@@ -123,6 +131,7 @@ def _endpoint(ref: dict[str, Any], note: str = "") -> Text:
 
 
 def _join(parts: list[str]) -> str:
+    """Join the non-empty parts of one report row."""
     return " · ".join(part for part in parts if part)
 
 
@@ -139,6 +148,7 @@ def _session_action(session: dict[str, Any]) -> tuple[str, str]:
 
 
 def _session_table(sessions: list[dict[str, Any]]) -> Table:
+    """One row per session, for a terminal wide enough to hold it."""
     table = Table(show_header=True, header_style="bold")
     table.add_column("session", overflow="fold")
     table.add_column("messages", justify="right", no_wrap=True)

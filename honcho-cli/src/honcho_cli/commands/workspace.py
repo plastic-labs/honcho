@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from typing import Optional
 
@@ -341,19 +342,11 @@ def replay(
     ),
     from_url: Optional[str] = typer.Option(
         None, "--from-url", envvar="HONCHO_FROM_URL",
-        help="Source Honcho URL, when it is not the configured instance",
-    ),
-    from_api_key: Optional[str] = typer.Option(
-        None, "--from-api-key", envvar="HONCHO_FROM_API_KEY",
-        help="API key for the source. Prefer the environment variable over the flag.",
+        help="Source Honcho URL, when it is not the configured instance. Its API key is read from HONCHO_FROM_API_KEY.",
     ),
     to_url: Optional[str] = typer.Option(
         None, "--to-url", envvar="HONCHO_TO_URL",
-        help="Destination Honcho URL, when it is not the configured instance",
-    ),
-    to_api_key: Optional[str] = typer.Option(
-        None, "--to-api-key", envvar="HONCHO_TO_API_KEY",
-        help="API key for the destination. Prefer the environment variable over the flag.",
+        help="Destination Honcho URL, when it is not the configured instance. Its API key is read from HONCHO_TO_API_KEY.",
     ),
     num_sessions: Optional[int] = typer.Option(
         None, "--num-sessions", min=1,
@@ -370,10 +363,14 @@ def replay(
     messages already in the destination are skipped.
 
     Each side uses the configured instance unless its URL is given. A side on
-    another instance needs its own API key (HONCHO_FROM_API_KEY /
-    HONCHO_TO_API_KEY); the configured credentials are never sent to it.
+    another instance needs its own API key, read from HONCHO_FROM_API_KEY /
+    HONCHO_TO_API_KEY; the configured credentials are never sent to it.
     """
     handle_cmd_flags(json_output=json_output)
+    # Keys come from the environment only: a key passed as an argument shows up
+    # in process listings and shell history.
+    from_api_key = os.environ.get("HONCHO_FROM_API_KEY") or None
+    to_api_key = os.environ.get("HONCHO_TO_API_KEY") or None
     source_id = validate_resource_id(source, "workspace")
     dest_id = validate_resource_id(dest or source, "workspace")
 

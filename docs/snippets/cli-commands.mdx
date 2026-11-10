@@ -854,8 +854,8 @@ conclusions; conclusions and peer cards are not copied. Rerunning resumes:
 messages already in the destination are skipped.
 
 Each side uses the configured instance unless its URL is given. A side on
-another instance needs its own API key (HONCHO_FROM_API_KEY /
-HONCHO_TO_API_KEY); the configured credentials are never sent to it.
+another instance needs its own API key, read from HONCHO_FROM_API_KEY /
+HONCHO_TO_API_KEY; the configured credentials are never sent to it.
 
 ```bash
 honcho workspace replay
@@ -868,16 +868,10 @@ honcho workspace replay
   Destination workspace ID. Defaults to the --from ID, which needs a different destination instance.
 </ParamField>
 <ParamField path="--from-url" type="string">
-  Source Honcho URL, when it is not the configured instance.
-</ParamField>
-<ParamField path="--from-api-key" type="string">
-  API key for the source. Prefer the environment variable over the flag.
+  Source Honcho URL, when it is not the configured instance. Its API key is read from HONCHO_FROM_API_KEY.
 </ParamField>
 <ParamField path="--to-url" type="string">
-  Destination Honcho URL, when it is not the configured instance.
-</ParamField>
-<ParamField path="--to-api-key" type="string">
-  API key for the destination. Prefer the environment variable over the flag.
+  Destination Honcho URL, when it is not the configured instance. Its API key is read from HONCHO_TO_API_KEY.
 </ParamField>
 <ParamField path="--num-sessions" type="string">
   Replay only the N sessions with the most recent message.

@@ -41,6 +41,7 @@ Tick = Callable[[str, int, "int | None"], None]
 
 
 def _no_tick(_label: str, _done: int, _total: int | None) -> None:
+    """The default progress callback: report nothing."""
     pass
 
 
@@ -48,6 +49,7 @@ class ReplayMismatch(Exception):
     """The destination session holds messages that are not a prefix of the source."""
 
     def __init__(self, position: int) -> None:
+        """Record the 1-based position of the first differing message."""
         self.position = position
         super().__init__(
             "the destination session already has different messages "
@@ -69,11 +71,13 @@ class SessionPlan:
 
     @property
     def messages_to_send(self) -> int:
+        """How many messages a replay would send for this session."""
         if self.action == "conflict":
             return 0
         return max((self.message_count or 0) - self.messages_in_destination, 0)
 
     def to_dict(self) -> dict[str, Any]:
+        """The plan as JSON-ready data, with the destination check when it ran."""
         data: dict[str, Any] = {
             "id": self.session.id,
             "message_count": self.message_count,
@@ -98,11 +102,13 @@ class SessionResult:
 
     @property
     def action(self) -> str:
+        """What the replay did with the session: created, resumed or up_to_date."""
         if self.messages_skipped and not self.messages_created:
             return "up_to_date"
         return "resumed" if self.messages_skipped else "created"
 
     def to_dict(self) -> dict[str, Any]:
+        """The result as JSON-ready data."""
         return {
             "id": self.session_id,
             "action": self.action,
@@ -199,6 +205,7 @@ def probe_sessions(plans: list[SessionPlan], on_tick: Tick = _no_tick) -> None:
     """
 
     def probe(plan: SessionPlan) -> None:
+        """Read one session's newest message and its message count."""
         page = plan.session.messages(reverse=True, size=1)
         newest = page.items
         plan.message_count = page.total
@@ -215,6 +222,7 @@ def select_most_recent(plans: list[SessionPlan], count: int) -> list[SessionPlan
     """
 
     def recency(plan: SessionPlan) -> tuple[bool, datetime]:
+        """Sort key: sessions with messages first, then by newest message."""
         if plan.last_message_at is not None:
             return True, plan.last_message_at
         return False, plan.session.created_at or _EPOCH
@@ -255,6 +263,7 @@ def _session_members(
 
 
 def _same_message(existing: Any, message: Any) -> bool:
+    """Whether a destination message is the replayed copy of a source message."""
     return (
         existing.peer_id == message.peer_id
         and existing.content == message.content
@@ -266,6 +275,7 @@ class Replayer:
     """Copies sessions from ``source`` into ``dest``, creating peers as needed."""
 
     def __init__(self, source: Honcho, dest: Honcho) -> None:
+        """Hold both clients and the peers seen so far."""
         self.source = source
         self.dest = dest
         self._source_peers: dict[str, Any] = {}
@@ -362,10 +372,12 @@ class Replayer:
 
     @property
     def peers_created(self) -> int:
+        """Peers this replay created in the destination."""
         return sum(1 for p in self._ensured_peers if not self._in_destination[p])
 
     @property
     def peers_existing(self) -> int:
+        """Peers the destination already had, which took the source's settings."""
         return len(self._ensured_peers) - self.peers_created
 
     def peers_for(self, plans: list[SessionPlan], *, all_peers: bool) -> list[str]:
@@ -380,6 +392,7 @@ class Replayer:
         members: dict[str, None] = {}
 
         def collect(plan: SessionPlan) -> None:
+            """Add one session's members to the set."""
             for peer_id in _session_member_ids(self.source, plan.session):
                 members[peer_id] = None
 
@@ -435,6 +448,7 @@ class Replayer:
             return
 
         def check(plan: SessionPlan) -> None:
+            """Compare one session with the destination and set its action."""
             try:
                 matched = self._count_matching(
                     plan.session.id, self._source_messages(plan.session.id)
@@ -471,6 +485,7 @@ class Replayer:
         departed: set[str] = set()
 
         def track(message: Any) -> Any:
+            """Note an author who is no longer a member of the source session."""
             if message.peer_id not in member_ids:
                 departed.add(message.peer_id)
             return message
@@ -495,6 +510,7 @@ class Replayer:
         batch: list[MessageCreateParams] = []
 
         def flush() -> None:
+            """Send the pending batch, creating its authors first."""
             if not batch:
                 return
             self.ensure_peers(message.peer_id for message in batch)

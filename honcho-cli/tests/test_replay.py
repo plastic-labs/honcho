@@ -421,6 +421,26 @@ class TestReplayCommand:
         assert result.exit_code == 1
         assert json.loads(result.stderr)["error"]["code"] == "SAME_WORKSPACE"
 
+    def test_key_for_another_instance_comes_from_the_environment_only(self, cfg, monkeypatch):
+        monkeypatch.setenv("HONCHO_TO_API_KEY", "dest-key")
+        source = FakeHoncho("src", [FakeSession("s1", [_message(0)])])
+        asked: list[dict] = []
+        clients = iter([source, FakeHoncho("dst")])
+
+        def endpoint(**kwargs):
+            asked.append(kwargs)
+            return next(clients)
+
+        args = ["workspace", "replay", "--from", "src", "--to-url", "http://dst.test", "--dry-run"]
+        with patch("honcho_cli.commands.workspace.get_endpoint_client", side_effect=endpoint):
+            result = CliRunner().invoke(app, args)
+
+        assert result.exit_code == 0, result.stderr
+        assert [(k["base_url"], k["api_key"]) for k in asked] == [(None, None), ("http://dst.test", "dest-key")]
+        # No flag takes a key: an argument shows up in shell history and process listings.
+        for flag in ("--to-api-key", "--from-api-key"):
+            assert CliRunner().invoke(app, [*args, flag, "dest-key"]).exit_code == 2
+
     def test_dry_run_reports_the_selection_and_writes_nothing(self, cfg):
         source = FakeHoncho("src", [
             FakeSession("old", [_message(0, day=1)]),
