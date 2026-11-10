@@ -180,20 +180,35 @@ function isMigrated(block: unknown): boolean {
   return isObj(block) && typeof block.schemaVersion === 'number' && block.schemaVersion >= CONFIG_SCHEMA_VERSION
 }
 
-/** A block's settings under their v2 names, reading old spellings too. */
-function settingsOf(b: Record<string, any>): Partial<Record<(typeof MOVABLE)[number], string>> {
+type Settings = Partial<Record<(typeof MOVABLE)[number], string>>
+
+/**
+ * A block's settings under their v2 names, reading old spellings too. A host's
+ * explicit Honcho cloud URL is kept: it is how that host overrides a self-hosted
+ * top-level URL, so it must survive until precedence is decided.
+ */
+function settingsOf(b: Record<string, any>): Settings {
   const endpoint = isObj(b.endpoint) ? b.endpoint : {}
+  const environment = endpoint.environment === 'local' ? 'http://localhost:8000' : endpoint.environment === 'production' ? DEFAULT_BASE_URL : undefined
   const out = {
     apiKey: str(b.apiKey) ?? (isObj(b.auth) ? str(b.auth.apiKey) : undefined),
     peerName: str(b.peerName),
     workspace: str(b.workspace) ?? str(b.workspaceId),
     aiPeer: str(b.aiPeer),
-    baseUrl: str(b.baseUrl) ?? str(endpoint.baseUrl) ?? (endpoint.environment === 'local' ? 'http://localhost:8000' : undefined) ?? str(b.environmentUrl),
+    baseUrl: str(b.baseUrl) ?? str(endpoint.baseUrl) ?? environment ?? str(b.environmentUrl),
   }
-  // Honcho cloud is the default; no need to spell it out.
-  if (out.baseUrl && normalizeBaseUrl(out.baseUrl) === DEFAULT_BASE_URL) out.baseUrl = undefined
   return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined))
 }
+
+/** Top-level settings to copy into host blocks. Honcho cloud there is the default, so it is not copied. */
+function rootSettingsOf(file: Record<string, any>): Settings {
+  const out = settingsOf(file)
+  if (out.baseUrl && normalizeBaseUrl(out.baseUrl) === DEFAULT_BASE_URL) delete out.baseUrl
+  return out
+}
+
+/** Top-level keys the honcho CLI still reads; they stay until it keeps its sign-in in `hosts.honcho-cli`. */
+const CLI_ROOT_KEYS = ['apiKey', 'environmentUrl', 'oauth']
 
 /** Old spellings inside a host block. */
 const LEGACY_HOST_KEYS = ['auth', 'endpoint', 'environmentUrl', 'workspaceId']
@@ -232,26 +247,36 @@ export function checkConfig(file: unknown): ConfigIssue[] {
   }
 
   // Top level: settings are copied into every host block that lacks them; the
-  // top-level keys go once every plugin reads only its own block.
+  // top-level keys go once every plugin reads only its own block, and the
+  // CLI's own keys once the CLI does too.
   const rootKeys = Object.keys(file).filter((k) => k !== 'schemaVersion' && k !== 'hosts' && k !== '$schema')
   if (rootKeys.length) {
-    const root = settingsOf(file)
+    const root = rootSettingsOf(file)
     const override = file.globalOverride === true
     const fixes: ConfigFix[] = []
     for (const [key, value] of Object.entries(root)) {
       for (const h of names) {
         // A host's own value wins, under any spelling (cloud included).
         const own = settingsOf(hosts[h])[key as (typeof MOVABLE)[number]]
-        const set = own !== undefined || hosts[h][key] !== undefined || (key === 'baseUrl' && ('endpoint' in hosts[h] || 'environmentUrl' in hosts[h]))
+        const set = own !== undefined || hosts[h][key] !== undefined
         if (!set || (key === 'workspace' && override && own !== value)) {
           fixes.push({ op: 'set', path: ['hosts', h, key], value })
         }
       }
     }
-    if (isObj(file.oauth) && !isObj(hosts[CLI_HOST]?.oauth)) fixes.push({ op: 'set', path: ['hosts', CLI_HOST, 'oauth'], value: file.oauth })
+    // Until the CLI reads its own block it keeps refreshing the top-level grant,
+    // so a copy made earlier would hold a rotated-out refresh token.
+    const cliMigrated = isMigrated(hosts[CLI_HOST])
+    if (cliMigrated && isObj(file.oauth) && !isObj(hosts[CLI_HOST].oauth)) fixes.push({ op: 'set', path: ['hosts', CLI_HOST, 'oauth'], value: file.oauth })
+    const held = cliMigrated ? [] : rootKeys.filter((k) => CLI_ROOT_KEYS.includes(k))
     const canDelete = names.length > 0 && pending.length === 0
-    if (canDelete) fixes.push(...rootKeys.map((k): ConfigFix => ({ op: 'delete', path: [k] })))
-    const wait = canDelete ? '' : names.length ? ` They stay until ${pending.join(', ')} ${pending.length === 1 ? 'is' : 'are'} updated.` : ' There is no host block to move them into.'
+    if (canDelete) fixes.push(...rootKeys.filter((k) => !held.includes(k)).map((k): ConfigFix => ({ op: 'delete', path: [k] })))
+    const waits = [
+      ...(!names.length ? ['There is no host block to move them into.'] : []),
+      ...(pending.length ? [`They stay until ${pending.join(', ')} ${pending.length === 1 ? 'is' : 'are'} updated.`] : []),
+      ...(names.length && held.length ? [`${held.join(', ')} ${held.length === 1 ? 'stays' : 'stay'} until the honcho CLI keeps its sign-in in hosts.${CLI_HOST}.`] : []),
+    ]
+    const wait = waits.map((w) => ` ${w}`).join('')
     issues.push({
       path: '(top level)',
       message: `Top-level ${rootKeys.join(', ')} ${rootKeys.length === 1 ? 'is' : 'are'} no longer read; settings belong in each host block.${wait}`,
@@ -298,8 +323,9 @@ export function hostMigration(
   const hasBlock = isObj(hosts[host])
   const block: Record<string, any> = hasBlock ? hosts[host] : {}
   const set: Record<string, unknown> = {}
+  // The host's own value (an explicit cloud URL included) beats the top level.
   const own = settingsOf(block)
-  const root = settingsOf(f)
+  const root = rootSettingsOf(f)
   for (const key of MOVABLE) {
     if (block[key] !== undefined) continue
     const fromRoot = key === 'workspace' ? (hasBlock && f.globalOverride !== true ? undefined : root.workspace) : root[key]

@@ -21,7 +21,7 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 - `checkConfig(file)` / `applyFixes(file, issues)`: what an older file needs and the fixes, for plugins to warn and `honcho doctor` to apply.
 - `readConfigFile`, `CONFIG_SCHEMA_VERSION`, `CLI_HOST`.
 - `suggestPeerName(file)`: the name a plugin's setup offers the user: the one the other plugins agree on, else the old top-level `peerName`, else `$USER`.
-- `hosts.<host>.schemaVersion`: written by `saveHost` / `migrateHost` to mark a block whose plugin reads only that block. `checkConfig` deletes top-level keys, and a block's old key names, only once the relevant blocks carry it.
+- `hosts.<host>.schemaVersion`: written by `saveHost` / `migrateHost` to mark a block whose plugin reads only that block. `checkConfig` deletes top-level keys, and a block's old key names, only once the relevant blocks carry it; the top-level `apiKey`, `environmentUrl` and `oauth` the honcho CLI reads wait for `hosts.honcho-cli`. A host's own value, an explicit Honcho cloud URL included, beats the top level's in both `migrateHost` and `checkConfig`.
 - A file with a newer `schemaVersion` is read but not written (`saveHost` throws, `migrateHost` skips), and `checkConfig` reports it.
 - `config.schema.json` describes the file. Its `$id` is `https://cdn.jsdelivr.net/npm/@honcho-ai/harness-plugin-core@0/config.schema.json`, and it allows a top-level `$schema`.
 
