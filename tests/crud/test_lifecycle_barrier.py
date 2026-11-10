@@ -7,12 +7,13 @@ then open ``final_write``. Producer-specific tests live with their producers.
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, event, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src import models
@@ -430,3 +431,48 @@ async def test_a_write_under_several_sessions_is_refused_when_any_was_deleted(
         await write(db_session, graph, snapshot)
     assert raised.value.scope == "session"
     assert await document_count(db_session, graph) == 1
+
+
+async def test_a_final_write_takes_its_locks_in_the_global_order(
+    db_session: AsyncSession, db_engine: AsyncEngine
+) -> None:
+    """Parents first, then the documents, then collections, then the queue tables.
+
+    Queue rows are locked in id order and before the claim row: the order a
+    completing worker, a deletion and every other queue writer take them in.
+    """
+    graph = await seed_graph(db_session)
+    claim = await _seed_claim(db_session, graph, None)
+    snapshot = await capture(db_session, graph, claim=claim)
+    locked: list[str] = []
+
+    def record(
+        _conn: Any, _cursor: Any, statement: str, *_args: Any, **_kwargs: Any
+    ) -> None:
+        sql = " ".join(statement.split())
+        lock = re.search(
+            r"FROM (?:\w+\.)?(\w+) .*(FOR (?:NO )?KEY (?:SHARE|UPDATE))", sql
+        )
+        if lock is not None:
+            ordered = (
+                " by id" if re.search(r"ORDER BY (?:\w+\.)?\w+\.id FOR", sql) else ""
+            )
+            locked.append(f"{lock.group(1)} {lock.group(2)}{ordered}")
+        elif sql.startswith("INSERT INTO") and "documents" in sql:
+            locked.append("documents INSERT")
+
+    event.listen(db_engine.sync_engine, "before_cursor_execute", record)
+    try:
+        await write(db_session, graph, snapshot)
+    finally:
+        event.remove(db_engine.sync_engine, "before_cursor_execute", record)
+
+    assert locked == [
+        "workspaces FOR KEY SHARE",
+        "peers FOR KEY SHARE by id",
+        "sessions FOR KEY SHARE by id",
+        "documents INSERT",
+        "collections FOR NO KEY UPDATE",
+        "queue FOR KEY SHARE by id",
+        "active_queue_sessions FOR KEY SHARE",
+    ]

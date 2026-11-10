@@ -143,6 +143,36 @@ async def test_failing_an_unscoped_key_locks_in_id_order(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("whole_unit", [True, False], ids=["unit", "listed-items"])
+async def test_dropping_queue_items_locks_in_id_order(
+    whole_unit: bool,
+    db_engine: AsyncEngine,
+    db_session: AsyncSession,
+    seed_work_unit: SeedWorkUnit,
+) -> None:
+    """The lifecycle barrier drops work whose parent was deleted, by unit or by item."""
+    key = "representation:drop:unit"
+    other = "representation:drop:other"
+    items = await seed_work_unit(key, token_counts=(1, 1, 1))
+    already_done = await seed_work_unit(key, token_counts=(1,), processed=True)
+    await seed_work_unit(other, token_counts=(1,))
+    dropped = items if whole_unit else items[:2]
+
+    with captured_queue_writes(db_engine) as statements:
+        await QueueManager()._drop_queue_items(  # pyright: ignore[reportPrivateUsage]
+            None if whole_unit else [item.id for item in dropped], key
+        )
+
+    assert len(statements) == 1 and ID_ORDER_LOCK.search(statements[0])
+    rows = {row[0]: row for row in await _rows(db_session, key)}
+    # Dropped, not failed: processed with no error. Nothing else is touched.
+    for item in items:
+        assert rows[item.id][1:3] == (item in dropped, None)
+    assert rows[already_done[0].id][1:3] == (True, None)
+    assert [row[1] for row in await _rows(db_session, other)] == [False]
+
+
+@pytest.mark.asyncio
 async def test_cleanup_skips_a_row_another_transaction_holds(
     db_engine: AsyncEngine, db_session: AsyncSession, seed_work_unit: SeedWorkUnit
 ) -> None:
@@ -181,6 +211,7 @@ EXPECTED_QUEUE_WRITES = {
     "src/deriver/queue_manager.py:mark_queue_items_as_processed": "id_order",
     "src/deriver/queue_manager.py:mark_queue_item_as_errored": "single_row",
     "src/deriver/queue_manager.py:_fail_unscoped_work_unit": "id_order",
+    "src/deriver/queue_manager.py:_drop_queue_items": "id_order",
     "src/reconciler/queue_cleanup.py:cleanup_queue_items": "skip_locked",
 }
 
@@ -378,6 +409,7 @@ async def _seed_descending_rows(
         "_clear_work_unit_retry_attempts",
         "_mark_invalid_work_unit_as_errored",
         "_fail_unscoped_work_unit",
+        "_drop_queue_items",
         "cleanup_queue_items",
     ],
 )
@@ -416,6 +448,8 @@ async def test_a_writer_racing_a_session_deletion_does_not_deadlock(
                 await manager._mark_invalid_work_unit_as_errored(  # pyright: ignore[reportPrivateUsage]
                     key, ValueError("unparsable")
                 )
+            elif writer == "_drop_queue_items":
+                await manager._drop_queue_items(None, key)  # pyright: ignore[reportPrivateUsage]
             else:
                 await getattr(manager, writer)(key)
 
