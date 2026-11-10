@@ -28,6 +28,7 @@ from src.crud.deriver import (
     claim_heartbeat_interval_seconds,
     claim_rows_query,
     not_paused_clause,
+    queue_ids_locked_in_order,
 )
 from src.crud.deriver import (
     cleanup_stale_work_units as crud_cleanup_stale_work_units,
@@ -1452,10 +1453,18 @@ class QueueManager:
         async with service_db("process_queue_item_batch") as db:
             work_unit = parse_work_unit_key(work_unit_key)
             item_ids = [item.id for item in items]
+            # Queue rows in id order, then the claim row: the order session and
+            # workspace deletion take them in (crud.delete_queue_items_and_claims).
             await db.execute(
                 update(models.QueueItem)
-                .where(models.QueueItem.id.in_(item_ids))
-                .where(models.QueueItem.work_unit_key == work_unit_key)
+                .where(
+                    models.QueueItem.id.in_(
+                        queue_ids_locked_in_order(
+                            models.QueueItem.id.in_(item_ids),
+                            models.QueueItem.work_unit_key == work_unit_key,
+                        )
+                    )
+                )
                 .values(processed=True)
             )
             await db.execute(

@@ -22,7 +22,10 @@ from src.cache.client import (
     safe_cache_set,
 )
 from src.config import settings
-from src.crud.deriver import active_queue_session_match, queue_item_tenant_match
+from src.crud.deriver import (
+    active_queue_session_match,
+    delete_queue_items_and_claims,
+)
 from src.crud.dream_history import delete_workspace_history
 from src.crud.lifecycle import (
     live_message_row,
@@ -422,8 +425,8 @@ async def delete_workspace(
     )
 
     # order is important here.
-    # delete all active queue sessions referencing this workspace first (using work_unit_key parsing)
-    # then queue items referencing this workspace
+    # delete queue items referencing this workspace first
+    # then the active queue sessions on their work units (using work_unit_key parsing)
 
     # then embeddings
     # then documents
@@ -437,41 +440,30 @@ async def delete_workspace(
     # then peers
     # then workspace
 
-    # Delete ActiveQueueSession entries first, matching on the work_unit_key
-    # (flag-aware position + tenant pinning; rationale lives on the helper).
-    active_queue_match = active_queue_session_match(workspace_name)
     try:
-        await db.execute(delete(models.ActiveQueueSession).where(active_queue_match))
-
-        # Then delete QueueItem entries. workspace_name is only unique per
-        # tenant (every tenant has a "default" workspace) and queue is
-        # deliberately not under RLS (see _RLS_REQUIRED_TABLES), so a
-        # tenant-blind match here would delete another tenant's same-named
-        # workspace's queue rows too; pin to the ambient tenant, flag-aware.
-        queue_item_match = queue_item_tenant_match()
-        queue_item_delete = delete(models.QueueItem).where(
-            models.QueueItem.workspace_name == workspace_name
-        )
-        if queue_item_match is not None:
-            queue_item_delete = queue_item_delete.where(queue_item_match)
-        await db.execute(queue_item_delete)
-
-        # Also delete any queue items that reference messages in this workspace
-        # (handles race condition where deriver creates new queue items).
-        # messages is under RLS, so this subquery is already tenant-scoped. But
-        # message ids are unique only within a tenant and queue is not under
-        # RLS, so queue_item_match pins the deleted rows to the tenant too.
+        # Queue items, then the claim rows on their work units (the helper
+        # carries the lock order). workspace_name is only unique per tenant
+        # (every tenant has a "default" workspace) and queue is deliberately
+        # not under RLS (see _RLS_REQUIRED_TABLES), so the helper pins the
+        # queue rows to the ambient tenant, flag-aware; the claim match is
+        # flag-aware and tenant-pinned too (rationale on each helper).
+        #
+        # The second delete catches queue items that reference messages in
+        # this workspace (handles race condition where deriver creates new
+        # queue items). messages is under RLS, so that subquery is already
+        # tenant-scoped, but message ids are unique only within a tenant, so
+        # the tenant pin applies there as well.
         message_ids_subquery = select(models.Message.id).where(
             models.Message.workspace_name == workspace_name
         )
-        message_queue_item_delete = delete(models.QueueItem).where(
-            models.QueueItem.message_id.in_(message_ids_subquery)
+        await delete_queue_items_and_claims(
+            db,
+            [
+                [models.QueueItem.workspace_name == workspace_name],
+                [models.QueueItem.message_id.in_(message_ids_subquery)],
+            ],
+            active_queue_session_match(workspace_name),
         )
-        if queue_item_match is not None:
-            message_queue_item_delete = message_queue_item_delete.where(
-                queue_item_match
-            )
-        await db.execute(message_queue_item_delete)
 
         # Get all collections for this workspace to delete their vector namespaces
         collections_result = await db.execute(
