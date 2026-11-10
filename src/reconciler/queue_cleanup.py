@@ -37,24 +37,25 @@ async def cleanup_queue_items() -> int:
         # deleting the same processed rows) instead of waiting on them: this
         # gets them on a later pass, and a statement that never waits can't be
         # a deadlock partner.
-        deletable = (
-            select(models.QueueItem.id)
-            .where(
-                models.QueueItem.processed
-                & (
-                    models.QueueItem.error.is_(None)
-                    | (
-                        models.QueueItem.error.is_not(None)
-                        & (models.QueueItem.created_at < error_cutoff)
-                    )
-                )
-            )
-            .with_for_update(skip_locked=True)
-        )
         result = cast(
             CursorResult[Any],
             await db.execute(
-                delete(models.QueueItem).where(models.QueueItem.id.in_(deletable))
+                delete(models.QueueItem).where(
+                    models.QueueItem.id.in_(
+                        select(models.QueueItem.id)
+                        .where(
+                            models.QueueItem.processed
+                            & (
+                                models.QueueItem.error.is_(None)
+                                | (
+                                    models.QueueItem.error.is_not(None)
+                                    & (models.QueueItem.created_at < error_cutoff)
+                                )
+                            )
+                        )
+                        .with_for_update(skip_locked=True)
+                    )
+                )
             ),
         )
         await db.commit()

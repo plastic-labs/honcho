@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import event, select, text, update
+from sqlalchemy import event, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src import models
@@ -168,9 +168,10 @@ async def test_cleanup_skips_a_row_another_transaction_holds(
     assert await _rows(db_session, key) == []
 
 
-# How each write to ``queue`` in src/ locks, keyed by "module:function".
+# How each write to ``queue`` in src/ locks, keyed by "module:function". Every
+# write statement in a listed function must lock that way.
 #   single_row  - matches one row by id
-#   id_order    - locks its rows through queue_ids_locked_in_order
+#   id_order    - locks its rows in id order (queue_ids_locked_in_order)
 #   skip_locked - FOR UPDATE SKIP LOCKED, so it never waits
 EXPECTED_QUEUE_WRITES = {
     "src/crud/deriver.py:delete_queue_items_and_claims": "id_order",
@@ -183,63 +184,260 @@ EXPECTED_QUEUE_WRITES = {
     "src/reconciler/queue_cleanup.py:cleanup_queue_items": "skip_locked",
 }
 
+# Text that shows a write statement locks the listed way, for ORM and raw SQL.
 POLICY_MARKERS = {
-    "single_row": "models.QueueItem.id == ",
-    "id_order": "queue_ids_locked_in_order(",
-    "skip_locked": "skip_locked=True",
+    "single_row": ("QueueItem.id == ",),
+    "id_order": ("queue_ids_locked_in_order(", "ORDER BY id FOR UPDATE"),
+    "skip_locked": ("skip_locked=True", "SKIP LOCKED"),
 }
+
+# A raw-SQL write to the queue table, schema-qualified or quoted or not.
+RAW_QUEUE_WRITE = re.compile(
+    r"\b(UPDATE|DELETE\s+FROM)\s+(\"?\w+\"?\.)?\"?queue\"?(\s|$)", re.IGNORECASE
+)
+
+
+def _is_queue_target(node: ast.AST) -> bool:
+    """``QueueItem``, ``models.QueueItem``, or either one's ``__table__``."""
+    if isinstance(node, ast.Attribute) and node.attr == "__table__":
+        node = node.value
+    return (isinstance(node, ast.Attribute) and node.attr == "QueueItem") or (
+        isinstance(node, ast.Name) and node.id == "QueueItem"
+    )
 
 
 def _is_queue_write(node: ast.AST) -> bool:
-    """``update(models.QueueItem)`` / ``delete(models.QueueItem)``, or the bare name."""
-    if not (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in {"update", "delete"}
-        and node.args
-    ):
+    """A statement-building call that writes ``queue``.
+
+    Covers ``update``/``delete`` of the model, bare or through a module
+    (``sa.update``), the table's own ``.update()``/``.delete()``, and an
+    ``UPDATE queue``/``DELETE FROM queue`` string passed to a call such as
+    ``text()`` or ``exec_driver_sql()``.
+    """
+    if not isinstance(node, ast.Call):
         return False
-    target = node.args[0]
-    return (isinstance(target, ast.Attribute) and target.attr == "QueueItem") or (
-        isinstance(target, ast.Name) and target.id == "QueueItem"
+    func = node.func
+    name = (
+        func.id
+        if isinstance(func, ast.Name)
+        else func.attr
+        if isinstance(func, ast.Attribute)
+        else None
+    )
+    if name in {"update", "delete"}:
+        # update(QueueItem), sa.update(QueueItem), sqlalchemy.delete(QueueItem)
+        if node.args and _is_queue_target(node.args[0]):
+            return True
+        # QueueItem.__table__.update()
+        if isinstance(func, ast.Attribute) and _is_queue_target(func.value):
+            return isinstance(func.value, ast.Attribute) and (
+                func.value.attr == "__table__"
+            )
+    return any(
+        isinstance(arg, ast.Constant)
+        and isinstance(arg.value, str)
+        and RAW_QUEUE_WRITE.search(arg.value) is not None
+        for arg in node.args
     )
 
 
-def _queue_writes() -> dict[str, str]:
-    """Each function in src/ that writes ``queue``, with its source."""
-    found: dict[str, str] = {}
-    for path in sorted(SRC.rglob("*.py")):
-        source = path.read_text()
-        tree = ast.parse(source)
-        for function in ast.walk(tree):
-            if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
-                continue
-            direct = [
-                node
-                for node in ast.walk(function)
-                if _is_queue_write(node)
-                # Attribute a write to the innermost function only.
-                and not any(
-                    isinstance(inner, ast.FunctionDef | ast.AsyncFunctionDef)
-                    and inner is not function
-                    and node in ast.walk(inner)
-                    for inner in ast.walk(function)
-                )
-            ]
-            if direct:
-                site = f"{path.relative_to(SRC.parent)}:{function.name}"
-                found[site] = ast.get_source_segment(source, function) or ""
+def _queue_writes_in(label: str, source: str) -> dict[str, list[str]]:
+    """Each function that writes ``queue``, with the source of each write statement."""
+    tree = ast.parse(source)
+    found: dict[str, list[str]] = {}
+
+    def visit(node: ast.AST, function: str | None, statement: ast.stmt | None) -> None:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            function = node.name
+        if isinstance(node, ast.stmt):
+            statement = node
+        if function is not None and statement is not None and _is_queue_write(node):
+            found.setdefault(f"{label}:{function}", []).append(
+                ast.get_source_segment(source, statement) or ""
+            )
+        for child in ast.iter_child_nodes(node):
+            visit(child, function, statement)
+
+    visit(tree, None, None)
     return found
 
 
+def _queue_writes() -> dict[str, list[str]]:
+    found: dict[str, list[str]] = {}
+    for path in sorted(SRC.rglob("*.py")):
+        found |= _queue_writes_in(str(path.relative_to(SRC.parent)), path.read_text())
+    return found
+
+
+def _unlisted_or_unlocked(
+    writes: dict[str, list[str]], expected: dict[str, str]
+) -> list[str]:
+    """Writes that aren't listed, or that don't lock the way their listing says."""
+    problems = [f"{site}: not listed" for site in writes if site not in expected]
+    problems += [
+        f"{site}: listed but has no queue write"
+        for site in expected
+        if site not in writes
+    ]
+    for site, statements in writes.items():
+        policy = expected.get(site)
+        if policy is None:
+            continue
+        for statement in statements:
+            if not any(marker in statement for marker in POLICY_MARKERS[policy]):
+                problems.append(f"{site}: a write does not lock as {policy}")
+    return problems
+
+
 def test_every_queue_write_has_a_lock_policy() -> None:
-    writes = _queue_writes()
-    assert set(writes) == set(EXPECTED_QUEUE_WRITES), (
-        "A write to queue was added or removed. Decide how it locks (one row by "
-        "id, queue_ids_locked_in_order, or SKIP LOCKED) and update "
-        "EXPECTED_QUEUE_WRITES."
+    problems = _unlisted_or_unlocked(_queue_writes(), EXPECTED_QUEUE_WRITES)
+    assert problems == [], (
+        "Every write to queue must be listed in EXPECTED_QUEUE_WRITES and lock "
+        "the listed way (one row by id, queue_ids_locked_in_order, or SKIP "
+        f"LOCKED): {problems}"
     )
-    for site, policy in EXPECTED_QUEUE_WRITES.items():
-        assert POLICY_MARKERS[policy] in writes[site], (
-            f"{site} is listed as {policy} but does not lock that way"
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        "await db.execute(sa.update(models.QueueItem).values(processed=True))",
+        "await db.execute(models.QueueItem.__table__.update().values(processed=True))",
+        'await db.execute(text("DELETE FROM queue WHERE processed"))',
+        'await db.execute(text("UPDATE public.queue SET processed = true"))',
+    ],
+    ids=["module-update", "table-update", "raw-delete", "raw-schema-update"],
+)
+def test_the_guard_finds_each_form_of_queue_write(write: str) -> None:
+    source = f"async def writer(db):\n    {write}\n"
+    assert _unlisted_or_unlocked(_queue_writes_in("m.py", source), {}) == [
+        "m.py:writer: not listed"
+    ]
+
+
+def test_the_guard_checks_every_write_in_a_listed_function() -> None:
+    source = (
+        "async def writer(db):\n"
+        "    await db.execute(update(models.QueueItem).where("
+        "models.QueueItem.id.in_(queue_ids_locked_in_order(x))))\n"
+        "    await db.execute(update(models.QueueItem).where(y))\n"
+    )
+    writes = _queue_writes_in("m.py", source)
+    assert len(writes["m.py:writer"]) == 2
+    assert _unlisted_or_unlocked(writes, {"m.py:writer": "id_order"}) == [
+        "m.py:writer: a write does not lock as id_order"
+    ]
+
+
+# The race the locking prevents, run for real. Each writer races a session
+# deletion over the same rows. The rows are inserted in descending id order, so
+# a write that locks in scan order takes them in the opposite order from the
+# deletion's id-ordered lock; on main that deadlocks every round.
+RACE_ROWS = 3000
+RACE_ROUNDS = 3
+RACE_TIMEOUT_SECONDS = 30.0
+
+
+async def _seed_descending_rows(
+    db: AsyncSession,
+    *,
+    session_id: str,
+    workspace_name: str,
+    work_unit_key: str,
+    processed: bool,
+    first_id: int,
+) -> None:
+    payload = f'{{"{RETRY_ATTEMPTS_PAYLOAD_KEY}": 1}}'
+    await db.execute(
+        text(
+            "INSERT INTO queue (id, session_id, work_unit_key, task_type, payload,"
+            + " processed, workspace_name, tenant_id)"
+            + " OVERRIDING SYSTEM VALUE"
+            + " SELECT g, :session_id, :key, 'representation', CAST(:payload AS jsonb),"
+            + " :processed, :ws, :tenant"
+            + " FROM generate_series(:hi, :lo, -1) AS g"
+        ),
+        {
+            "session_id": session_id,
+            "key": work_unit_key,
+            "payload": payload,
+            "processed": processed,
+            "ws": workspace_name,
+            "tenant": models.DEFAULT_TENANT_ID,
+            "hi": first_id + RACE_ROWS - 1,
+            "lo": first_id,
+        },
+    )
+    await db.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "writer",
+    [
+        "_clear_work_unit_retry_attempts",
+        "_mark_invalid_work_unit_as_errored",
+        "_fail_unscoped_work_unit",
+        "cleanup_queue_items",
+    ],
+)
+async def test_a_writer_racing_a_session_deletion_does_not_deadlock(
+    writer: str,
+    db_engine: AsyncEngine,
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+) -> None:
+    from src.crud.deriver import delete_queue_items_and_claims
+
+    workspace, _ = sample_data
+    sessions = independent_sessions(db_engine)
+    manager = QueueManager()
+
+    for round_ in range(RACE_ROUNDS):
+        session = models.Session(
+            name=f"race-{writer}-{round_}", workspace_name=workspace.name
         )
+        db_session.add(session)
+        await db_session.commit()
+        key = f"representation:{workspace.name}:{session.name}:race"
+        await _seed_descending_rows(
+            db_session,
+            session_id=session.id,
+            workspace_name=workspace.name,
+            work_unit_key=key,
+            processed=writer == "cleanup_queue_items",
+            first_id=50_000_000 + round_ * RACE_ROWS,
+        )
+
+        async def write(key: str = key) -> None:
+            if writer == "cleanup_queue_items":
+                await cleanup_queue_items()
+            elif writer == "_mark_invalid_work_unit_as_errored":
+                await manager._mark_invalid_work_unit_as_errored(  # pyright: ignore[reportPrivateUsage]
+                    key, ValueError("unparsable")
+                )
+            else:
+                await getattr(manager, writer)(key)
+
+        async def delete(key: str = key, session_id: str = session.id) -> None:
+            async with sessions() as db:
+                await delete_queue_items_and_claims(
+                    db,
+                    [[models.QueueItem.session_id == session_id]],
+                    models.ActiveQueueSession.work_unit_key == key,
+                )
+                await db.commit()
+
+        results = await asyncio.wait_for(
+            asyncio.gather(write(), delete(), return_exceptions=True),
+            RACE_TIMEOUT_SECONDS,
+        )
+        assert [r for r in results if isinstance(r, BaseException)] == [], (
+            f"round {round_}: {results}"
+        )
+        remaining = await db_session.scalar(
+            select(func.count())
+            .select_from(models.QueueItem)
+            .where(models.QueueItem.work_unit_key == key)
+        )
+        assert remaining == 0
