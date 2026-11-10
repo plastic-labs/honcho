@@ -33,6 +33,7 @@ from src.crud.lifecycle import (
     live_session_row,
     live_workspace_row,
 )
+from src.crud.lifecycle_barrier import begin_workspace_deletion
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.telemetry.events import WorkspaceCreatedEvent, emit
 from src.utils.filter import apply_filter
@@ -367,6 +368,10 @@ async def delete_workspace(
         and cascade counts for deleted resources
     """
     logger.warning("Deleting workspace %s", workspace_name)
+    # The deleter's side of the lifecycle barrier, before anything under the
+    # workspace is read or removed: every producer's final write holds this
+    # row FOR KEY SHARE, so it either commits before this or is refused.
+    await begin_workspace_deletion(db, workspace_name)
     stmt = select(models.Workspace).where(models.Workspace.name == workspace_name)
     result = await db.execute(stmt)
     honcho_workspace = result.scalar_one_or_none()

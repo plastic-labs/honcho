@@ -37,6 +37,7 @@ from sqlalchemy.sql.functions import func
 from src import crud, models
 from src.config import settings
 from src.crud.document import build_source_message_links
+from src.crud.lifecycle_barrier import bump_collection_generations
 from src.crud.scope import ScopeBackfillState
 from src.dependencies import tracked_db
 from src.dreamer.working_memory import EPOCH_KEY, NOTES_KEY
@@ -639,6 +640,14 @@ async def process_scope_removal(
                 {"entries": [], EPOCH_KEY: epoch},
                 commit=False,
             )
+
+        # A dream that read the removed copies must not write from them. The
+        # rows are already locked by the notes write above.
+        await bump_collection_generations(
+            db,
+            workspace_name,
+            [(scope_peer, observed) for observed in removed_by_observed],
+        )
 
         # The session left the scope, so its backfill status entry is moot;
         # clearing it keeps a later re-add starting from a fresh "pending".

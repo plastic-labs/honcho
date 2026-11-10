@@ -47,6 +47,10 @@ from src.crud.lifecycle import (
     live_session_peer_row,
     live_session_row,
 )
+from src.crud.lifecycle_barrier import (
+    begin_session_deletion,
+    bump_collection_generations,
+)
 from src.exceptions import (
     AuthenticationException,
     ConflictException,
@@ -694,6 +698,11 @@ async def delete_session(
     # Perform cascading deletes in order
     # Order is important to avoid foreign key constraint violations
     try:
+        # The deleter's side of the lifecycle barrier, before anything under
+        # the session is removed: a producer's final write holds this row FOR
+        # KEY SHARE, so it either commits before this or finds the session gone.
+        await begin_session_deletion(db, workspace_name, session_name)
+
         # Queue items, then the claim rows on their work units (the helper
         # carries the lock order). session_id is globally unique in practice;
         # the helper also pins the queue rows to the ambient tenant, and the
@@ -799,6 +808,12 @@ async def delete_session(
                 models.Document.workspace_name == workspace_name,
             ],
             batch_size=5000,
+        )
+        # Every representation that lost conclusions here had a deletion: a
+        # dream or backfill that read them before this commit must not write.
+        # After the documents, in sorted key order (see the locking rules).
+        await bump_collection_generations(
+            db, workspace_name, {(doc.observer, doc.observed) for doc in documents}
         )
 
         # Delete Message entries in batches

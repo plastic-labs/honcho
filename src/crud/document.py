@@ -25,6 +25,7 @@ from src.crud.dream_history import (
     record_removed,
 )
 from src.crud.lifecycle import live_document_row
+from src.crud.lifecycle_barrier import bump_collection_generations
 from src.crud.peer import get_peer, reject_scope_observed
 from src.crud.session import get_session
 from src.dependencies import tracked_db
@@ -1182,6 +1183,8 @@ async def delete_document(
             f"Document {document_id} not found or does not belong to the specified collection/session"
         )
 
+    # An erasure, not a consolidation: writes computed before it are stale.
+    await bump_collection_generations(db, workspace_name, [(observer, observed)])
     await db.commit()
 
 
@@ -1281,16 +1284,23 @@ async def delete_document_by_id(
             models.Document.deleted_at.is_(None),
         )
         .values(deleted_at=func.now())
+        .returning(models.Document.observer, models.Document.observed)
     )
-    result = cast(CursorResult[Any], await db.execute(update_stmt))
+    erased_pairs = {
+        (row.observer, row.observed) for row in await db.execute(update_stmt)
+    }
     # After the document, the order a dream takes them in when it removes one.
     erased = await erase_conclusion_history(db, workspace_name, document_id)
 
-    if result.rowcount == 0 and erased == 0:
+    if not erased_pairs and erased == 0:
         raise ResourceNotFoundException(
             f"Document {document_id} not found or does not belong to workspace {workspace_name}"
         )
 
+    # An erasure, not a consolidation: a write computed from this conclusion
+    # (a reinforcement of it, a deduction resting on it, a scope copy of it)
+    # must be refused. After the document, as every collection lock is.
+    await bump_collection_generations(db, workspace_name, erased_pairs)
     await db.commit()
 
 
