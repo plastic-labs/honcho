@@ -23,7 +23,7 @@ from sqlalchemy import (
     event,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, TEXT
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TEXT
 from sqlalchemy.orm import (
     Mapped,
     MappedColumn,
@@ -1382,6 +1382,8 @@ class WebhookEndpoint(Base, TenantPartitioned):
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
     workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
     url: Mapped[str] = mapped_column(TEXT, nullable=False)
+    # The event types this endpoint receives; NULL receives every type.
+    event_types: Mapped[list[str] | None] = mapped_column(ARRAY(TEXT), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

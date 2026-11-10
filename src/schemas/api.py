@@ -1308,8 +1308,31 @@ class WebhookEndpointBase(BaseModel):
     pass
 
 
+# Event types an endpoint can subscribe to. test.event is not one: the test
+# route reaches every endpoint, so it can check any of them.
+WebhookSubscribableEventType = Literal["queue.empty"]
+
+
 class WebhookEndpointCreate(WebhookEndpointBase):
     url: str
+    event_types: list[WebhookSubscribableEventType] | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Event types this endpoint receives. Omit or send null to receive "
+            "every event type. Registering a URL that already exists with this "
+            "field set replaces its event types; null resets it to every type, "
+            "and omitting the field leaves it unchanged. `test.event` reaches "
+            "every endpoint."
+        ),
+    )
+
+    @field_validator("event_types")
+    @classmethod
+    def dedupe_event_types(
+        cls, v: list[WebhookSubscribableEventType] | None
+    ) -> list[WebhookSubscribableEventType] | None:
+        return None if v is None else list(dict.fromkeys(v))
 
     @field_validator("url")
     @classmethod
@@ -1346,6 +1369,10 @@ class WebhookEndpoint(WebhookEndpointBase):
     id: str
     workspace_name: str | None = Field(serialization_alias="workspace_id")
     url: str
+    event_types: list[str] | None = Field(
+        default=None,
+        description="Event types this endpoint receives; null receives every type.",
+    )
     created_at: datetime.datetime
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)  # pyright: ignore

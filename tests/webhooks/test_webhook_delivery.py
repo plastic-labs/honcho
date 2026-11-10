@@ -4,7 +4,7 @@ import hmac
 import json
 from collections.abc import AsyncGenerator
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, get_args
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -78,8 +78,8 @@ async def test_get_webhook_urls_returns_all_endpoint_urls(
     list_endpoints = AsyncMock(return_value=query)
     monkeypatch.setattr(webhook_delivery, "list_webhook_endpoints", list_endpoints)
 
-    endpoint_a = SimpleNamespace(url="https://a.example.com/hook")
-    endpoint_b = SimpleNamespace(url="https://b.example.com/hook")
+    endpoint_a = SimpleNamespace(url="https://a.example.com/hook", event_types=None)
+    endpoint_b = SimpleNamespace(url="https://b.example.com/hook", event_types=None)
     execute_result = MagicMock()
     execute_result.scalars.return_value.all.return_value = [endpoint_a, endpoint_b]
 
@@ -87,7 +87,7 @@ async def test_get_webhook_urls_returns_all_endpoint_urls(
     db.execute.return_value = execute_result
 
     urls = await webhook_delivery._get_webhook_urls(  # pyright: ignore[reportPrivateUsage]
-        db, "workspace-a"
+        db, "workspace-a", "queue.empty"
     )
 
     assert urls == [endpoint_a.url, endpoint_b.url]
@@ -107,7 +107,7 @@ async def test_get_webhook_urls_returns_empty_list_on_error(
     db = AsyncMock()
 
     urls = await webhook_delivery._get_webhook_urls(  # pyright: ignore[reportPrivateUsage]
-        db, "workspace-a"
+        db, "workspace-a", "queue.empty"
     )
 
     assert urls == []
@@ -585,3 +585,49 @@ async def test_deliver_webhook_looks_up_endpoints_under_the_signed_tenant(
         tenant_context.reset(token)
 
     assert bound == ["tenant-a"]
+
+
+@pytest.mark.asyncio
+async def test_get_webhook_urls_honours_each_endpoints_event_types(
+    db_session: AsyncSession,
+) -> None:
+    from src import models
+    from src.schemas.api import WebhookSubscribableEventType
+    from src.webhooks.events import WebhookEventType
+
+    workspace = models.Workspace(name=str(generate_nanoid()))
+    db_session.add(workspace)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            models.WebhookEndpoint(
+                workspace_name=workspace.name, url="https://all.example.com/hook"
+            ),
+            models.WebhookEndpoint(
+                workspace_name=workspace.name,
+                url="https://queue.example.com/hook",
+                event_types=["queue.empty"],
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    async def urls(event_type: str) -> set[str]:
+        return set(
+            await webhook_delivery._get_webhook_urls(  # pyright: ignore[reportPrivateUsage]
+                db_session, workspace.name, event_type
+            )
+        )
+
+    both = {"https://all.example.com/hook", "https://queue.example.com/hook"}
+    assert await urls("queue.empty") == both
+    # A type the filtered endpoint didn't subscribe to reaches only the other.
+    assert await urls("some.future.event") == {"https://all.example.com/hook"}
+    # test.event reaches every endpoint, so the test route can check any of them.
+    assert await urls("test.event") == both
+
+    # Every event type except test.event can be subscribed to.
+    subscribable: set[str] = set(get_args(WebhookSubscribableEventType))
+    assert subscribable == {t.value for t in WebhookEventType} - {
+        WebhookEventType.TEST.value
+    }

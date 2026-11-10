@@ -10,8 +10,9 @@ immediately reflected in the peer's representation. Instead of polling
 register a webhook endpoint and have Honcho notify you when the work it queued
 for a session has drained.
 
-Webhooks are registered per workspace. Every event for that workspace is
-delivered to every endpoint registered on it.
+Webhooks are registered per workspace. By default an endpoint receives every
+event for its workspace; it can instead
+[subscribe to specific event types](#choosing-event-types).
 
 <Note>
 **On Honcho Cloud, register endpoints from the dashboard.** The webhook API
@@ -51,6 +52,27 @@ Registration is get-or-create: a URL already registered on the workspace
 returns `200` with the existing endpoint, a new one returns `201`. The test
 route emits a `test.event` to every endpoint on the workspace, which is the
 quickest way to confirm your receiver and signature check work end to end.
+
+### Choosing Event Types
+
+Pass `event_types` to receive only some events:
+
+```bash
+curl -X POST "$HONCHO_URL/v3/workspaces/my-app/webhooks" \
+  -H "Authorization: Bearer $HONCHO_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/honcho/webhook", "event_types": ["queue.empty"]}'
+```
+
+- Leave `event_types` out, or send `null`, to receive every event type. An
+  endpoint's `event_types` is `null` in responses when it receives everything.
+- To change an existing endpoint, register the same URL again. Sending
+  `event_types` replaces its list, `null` resets it to every type, and leaving
+  the field out keeps the list it has.
+- The list can't be empty, and each entry must be an event type from
+  [Events](#events) other than `test.event`. Anything else returns `422`.
+- `test.event` always reaches every endpoint, whatever its list, so the test
+  route can check any endpoint.
 
 Webhook routes accept an admin key or a workspace-scoped key for that
 workspace. Peer- and session-scoped keys cannot manage webhooks.

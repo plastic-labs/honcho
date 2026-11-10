@@ -276,3 +276,81 @@ async def test_same_endpoint_in_different_workspaces(
     assert response1.json()["id"] != response2.json()["id"]
     assert response1.json()["workspace_id"] == ws1.name
     assert response2.json()["workspace_id"] == ws2["id"]
+
+
+def _register(
+    client: TestClient, workspace: str, body: dict[str, Any]
+) -> dict[str, Any]:
+    response = client.post(f"/v3/workspaces/{workspace}/webhooks", json=body)
+    assert response.status_code in (200, 201), response.text
+    return response.json()
+
+
+@pytest.mark.asyncio
+async def test_endpoint_without_event_types_receives_every_type(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    workspace, _ = sample_data
+    endpoint = _register(client, workspace.name, {"url": "https://a.example.com/hook"})
+    assert endpoint["event_types"] is None
+
+
+@pytest.mark.asyncio
+async def test_register_with_event_types(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    workspace, _ = sample_data
+    endpoint = _register(
+        client,
+        workspace.name,
+        {
+            "url": "https://a.example.com/hook",
+            "event_types": ["queue.empty", "queue.empty"],
+        },
+    )
+    assert endpoint["event_types"] == ["queue.empty"]
+    listed = client.get(f"/v3/workspaces/{workspace.name}/webhooks").json()["items"]
+    assert [item["event_types"] for item in listed] == [["queue.empty"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "event_types",
+    [[], ["not.a.type"], ["test.event"]],
+    ids=["empty", "unknown", "test-event"],
+)
+async def test_register_rejects_bad_event_types(
+    client: TestClient, sample_data: tuple[Workspace, Peer], event_types: list[str]
+):
+    workspace, _ = sample_data
+    response = client.post(
+        f"/v3/workspaces/{workspace.name}/webhooks",
+        json={"url": "https://a.example.com/hook", "event_types": event_types},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_reregistering_sets_replaces_and_resets_event_types(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    workspace, _ = sample_data
+    url = "https://a.example.com/hook"
+    created = _register(client, workspace.name, {"url": url})
+
+    # Setting the field on an existing URL replaces its event types.
+    updated = _register(
+        client, workspace.name, {"url": url, "event_types": ["queue.empty"]}
+    )
+    assert updated["id"] == created["id"]
+    assert updated["event_types"] == ["queue.empty"]
+
+    # Omitting it leaves them as they are.
+    unchanged = _register(client, workspace.name, {"url": url})
+    assert unchanged["event_types"] == ["queue.empty"]
+
+    # An explicit null resets the endpoint to every type.
+    reset = _register(client, workspace.name, {"url": url, "event_types": None})
+    assert reset["event_types"] is None
+    listed = client.get(f"/v3/workspaces/{workspace.name}/webhooks").json()["items"]
+    assert len(listed) == 1 and listed[0]["event_types"] is None

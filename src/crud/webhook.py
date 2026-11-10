@@ -20,6 +20,10 @@ async def get_or_create_webhook_endpoint(
     """
     Get an existing webhook endpoint for a workspace or create it if missing.
 
+    For an existing URL, ``event_types`` replaces the endpoint's event types when
+    the request sets it (null resets it to every type) and is left unchanged when
+    the request omits it.
+
     Args:
         db: Database session
         workspace_name: Name of the workspace
@@ -45,6 +49,15 @@ async def get_or_create_webhook_endpoint(
     # Check if webhook already exists for this workspace
     for endpoint in endpoints:
         if endpoint.url == webhook.url:
+            if (
+                "event_types" in webhook.model_fields_set
+                and endpoint.event_types != webhook.event_types
+            ):
+                endpoint.event_types = (
+                    None if webhook.event_types is None else list(webhook.event_types)
+                )
+                await db.commit()
+                logger.debug("Webhook endpoint event types updated: %s", webhook.url)
             return GetOrCreateResult(
                 schemas.WebhookEndpoint.model_validate(endpoint), created=False
             )
@@ -59,6 +72,7 @@ async def get_or_create_webhook_endpoint(
     webhook_endpoint = models.WebhookEndpoint(
         workspace_name=workspace_name,
         url=webhook.url,
+        event_types=None if webhook.event_types is None else list(webhook.event_types),
     )
     db.add(webhook_endpoint)
     await db.commit()
