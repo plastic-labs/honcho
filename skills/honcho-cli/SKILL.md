@@ -117,6 +117,8 @@ honcho workspace replay --from <src> --to <dst> --num-sessions 20 --json
 
 - Each session's `action` in the dry run is `create`, `resume`, `up_to_date` or `conflict`. A conflict means the destination has different messages under that session ID; a replay skips it and exits `1`. Pass a different `--to`.
 - A rerun resumes: messages already in the destination are skipped.
+- Conclusions and peer cards written through the API are not recreated, because they have no source message. `not_copied.conclusions_in_source` in both reports counts every conclusion in the source; Honcho does not mark which ones were written through the API.
+- The destination session has the source's current members from its first message. A peer that joined late and observes others gets conclusions from messages sent before it joined.
 - Derivation on the destination continues after the command exits. The result's `check_derivation` field is the `queue-status` command to poll.
 
 ## Debugging playbook

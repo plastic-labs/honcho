@@ -850,8 +850,9 @@ Replay a workspace's sessions into another workspace, on this or another instanc
 
 Copies workspace, peer and session settings, then re-sends every message in
 order with its original timestamp. The destination derives its own
-conclusions; conclusions and peer cards are not copied. Rerunning resumes:
-messages already in the destination are skipped.
+conclusions; conclusions and peer cards are not copied, so the ones written
+through the API are not recreated. Rerunning resumes: messages already in
+the destination are skipped.
 
 Each side uses the configured instance unless its URL is given. A side on
 another instance needs its own API key, read from HONCHO_FROM_API_KEY /

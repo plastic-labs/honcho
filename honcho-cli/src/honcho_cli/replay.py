@@ -5,6 +5,15 @@ configuration, session membership, scopes) and then re-sends every message in
 its original order with its original ``created_at``. The destination derives
 its own conclusions from those messages; nothing derived is copied.
 
+Two things a replay cannot reproduce:
+
+- Conclusions written through the API and peer cards set by hand. They have no
+  source message, so the destination cannot derive them again.
+  ``count_conclusions`` gives the reports a number to warn with.
+- Membership over time. The API does not say when a peer joined or left a
+  session, so the destination session has the source's current members from
+  its first message. A peer that joined late observes the whole session.
+
 The functions here take two SDK clients and know nothing about flags, config
 files or output, so the command in ``commands/workspace.py`` stays thin.
 """
@@ -34,6 +43,13 @@ PAGE_SIZE = 100
 MESSAGE_BATCH_SIZE = 100
 
 _WORKERS = 8
+
+# Goes into both reports, next to the number of conclusions in the source.
+NOT_COPIED_NOTE = (
+    "Conclusions and peer cards are not copied. The destination derives its "
+    "own from the replayed messages. Conclusions and peer cards written "
+    "through the API have no source message, so they are not recreated."
+)
 _EPOCH = datetime.min.replace(tzinfo=UTC)
 
 # Called as ``on_tick(label, done, total)`` while a long step makes progress.
@@ -54,6 +70,18 @@ class ReplayMismatch(Exception):
         super().__init__(
             "the destination session already has different messages "
             f"(first difference at message {position})"
+        )
+
+
+class ReadOnlyUnsupported(Exception):
+    """The installed SDK gives no known way to read without creating a workspace."""
+
+    def __init__(self) -> None:
+        """Say what is missing and what to do about it."""
+        super().__init__(
+            "This version of the Honcho SDK (honcho-ai) has no known way to read "
+            "a workspace without creating it, so the destination cannot be "
+            "checked safely. Upgrade honcho-cli."
         )
 
 
@@ -134,8 +162,20 @@ def read_only(client: Honcho) -> Iterator[None]:
     Every workspace-scoped SDK call first runs a get-or-create on the
     workspace. A dry run must leave the destination untouched, so this marks
     the workspace as already ensured for the duration of the reads.
+
+    ``_workspace_ensured`` is private to the SDK. If a later SDK drops it,
+    setting it would do nothing and the reads would create the workspace, so
+    this refuses to run instead. Two tests watch the flag itself:
+    ``TestRealSDKReadOnly`` runs a dry run through the real client and fails on
+    any write request, and ``tests/sdk/test_workspace_ensured.py`` checks the
+    flag against a real server in the suite that CI runs.
+
+    Raises:
+        ReadOnlyUnsupported: the client has no ``_workspace_ensured``.
     """
-    ensured = getattr(client, "_workspace_ensured", False)
+    if not hasattr(client, "_workspace_ensured"):
+        raise ReadOnlyUnsupported
+    ensured = client._workspace_ensured
     client._workspace_ensured = True
     try:
         yield
@@ -175,6 +215,20 @@ def read_workspace(source: Honcho) -> tuple[dict[str, Any], Any]:
         configuration = source.get_configuration()
         return source.metadata or {}, configuration
     raise NotFoundError(f"Workspace '{source.workspace_id}' not found")
+
+
+def count_conclusions(source: Honcho) -> int | None:
+    """How many conclusions the source workspace holds, or None if unknown.
+
+    A replay copies none of them. The ones derived from messages are derived
+    again in the destination; the ones written through the API are not, and the
+    API does not mark which is which. The reports use this number to say so.
+    One request. A source that cannot answer must not stop a replay.
+    """
+    try:
+        return source.conclusions.list(size=1).total
+    except Exception:  # noqa: BLE001 - the count only feeds a warning
+        return None
 
 
 def list_sessions(source: Honcho) -> list[SessionPlan]:

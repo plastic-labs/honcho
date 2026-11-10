@@ -130,6 +130,22 @@ def _endpoint(ref: dict[str, Any], note: str = "") -> Text:
     return text
 
 
+def _not_copied(report: dict[str, Any]) -> tuple[str, str]:
+    """The report row for memory a replay leaves behind in the source."""
+    count = report["not_copied"]["conclusions_in_source"]
+    if count is None:
+        what = "Conclusions and peer cards."
+    elif count:
+        what = f"{plural(count, 'conclusion')} and any peer cards."
+    else:
+        what = "Peer cards. The source has no conclusions."
+    return (
+        "Not copied",
+        f"{what} The destination derives its own from the messages. "
+        "Conclusions and peer cards written through the API are not recreated.",
+    )
+
+
 def _join(parts: list[str]) -> str:
     """Join the non-empty parts of one report row."""
     return " · ".join(part for part in parts if part)
@@ -257,6 +273,7 @@ def print_plan(report: dict[str, Any]) -> None:
                         ]
                     ),
                 ),
+                _not_copied(report),
             ]
         )
     )
@@ -357,6 +374,7 @@ def print_summary(report: dict[str, Any]) -> None:
             ),
         ),
     ]
+    rows.append(_not_copied(report))
     if not report["workspace_settings_copied"]:
         rows.append(
             (

@@ -359,8 +359,9 @@ def replay(
 
     Copies workspace, peer and session settings, then re-sends every message in
     order with its original timestamp. The destination derives its own
-    conclusions; conclusions and peer cards are not copied. Rerunning resumes:
-    messages already in the destination are skipped.
+    conclusions; conclusions and peer cards are not copied, so the ones written
+    through the API are not recreated. Rerunning resumes: messages already in
+    the destination are skipped.
 
     Each side uses the configured instance unless its URL is given. A side on
     another instance needs its own API key, read from HONCHO_FROM_API_KEY /
@@ -401,6 +402,10 @@ def replay(
                 replay_lib.probe_sessions(plans, progress.tick)
             if num_sessions is not None:
                 plans = replay_lib.select_most_recent(plans, num_sessions)
+            not_copied = {
+                "conclusions_in_source": replay_lib.count_conclusions(source_client),
+                "note": replay_lib.NOT_COPIED_NOTE,
+            }
         except Exception as e:
             _handle_error(e, "workspace", source_id)
             return
@@ -413,6 +418,9 @@ def replay(
                 replayer.check_sessions(plans, progress.tick)
                 peer_ids = replayer.peers_for(plans, all_peers=all_peers)
                 peers_in_destination = replayer.peers_in_destination(peer_ids)
+        except replay_lib.ReadOnlyUnsupported as e:
+            print_error("SDK_UNSUPPORTED", str(e), {})
+            raise typer.Exit(1) from e
         except Exception as e:
             _handle_error(e, "workspace", dest_id)
             return
@@ -455,6 +463,7 @@ def replay(
             "peers_to_copy": len(peer_ids),
             "peers_in_destination": len(peers_in_destination),
             "workspace_settings_copied": dest_sessions == 0,
+            "not_copied": not_copied,
             "sessions": [plan.to_dict() for plan in plans],
         }
         if use_json():
@@ -479,6 +488,7 @@ def replay(
         "peers_created": result.peers_created,
         "peers_existing": result.peers_existing,
         "workspace_settings_copied": result.workspace_copied,
+        "not_copied": not_copied,
         "elapsed_seconds": round(time.monotonic() - started, 1),
         "check_derivation": _queue_status_command(dest_client.base_url, dest_id) if messages_created else None,
         "sessions": [s.to_dict() for s in result.sessions],

@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import honcho
+import httpx
 import pytest
 from honcho.api_types import SessionPeerConfig
 from honcho_cli import replay as replay_lib
@@ -74,8 +76,9 @@ class FakeSession:
 class FakeHoncho:
     """An in-memory workspace exposing the SDK calls replay makes, with a write log."""
 
-    def __init__(self, workspace_id: str, sessions=(), peers=()) -> None:
+    def __init__(self, workspace_id: str, sessions=(), peers=(), conclusions: int = 0) -> None:
         self.workspace_id = workspace_id
+        self.conclusions = SimpleNamespace(list=lambda size=50: FakePage([], total=conclusions))
         self.base_url = f"http://{workspace_id}.test"
         self.by_id = {s.id: s for s in sessions}
         self.peer_list = list(peers)
@@ -495,6 +498,22 @@ class TestReplayCommand:
         ]
         assert (out["peers_created"], out["peers_existing"]) == (1, 0)
 
+    def test_both_reports_count_the_conclusions_a_replay_leaves_behind(self, cfg):
+        """Conclusions written through the API cannot be derived again, so say how many exist."""
+        source = FakeHoncho("src", [FakeSession("s1", [_message(0)])], conclusions=12)
+        args = ["--from", "src", "--to", "dst"]
+
+        for extra in (["--dry-run"], []):
+            out = json.loads(self._invoke([*args, *extra], source, FakeHoncho("dst")).stdout)
+            assert out["not_copied"]["conclusions_in_source"] == 12
+            assert "written through the API" in out["not_copied"]["note"]
+
+        # A source that cannot count them (an older server) still replays.
+        source.conclusions.list = lambda size=50: (_ for _ in ()).throw(RuntimeError("no such route"))
+        result = self._invoke(args, source, FakeHoncho("dst"))
+        assert result.exit_code == 0, result.stderr
+        assert json.loads(result.stdout)["not_copied"]["conclusions_in_source"] is None
+
     def test_result_names_the_command_that_shows_the_destination_queue(self, cfg):
         source = FakeHoncho("src", [FakeSession("s1", [_message(0)])])
 
@@ -514,6 +533,175 @@ class TestReplayCommand:
         # Nothing left to derive on a rerun, so there is nothing to check.
         out = json.loads(self._invoke(["--from", "src", "--to", "dst"], source, local).stdout)
         assert (out["messages_created"], out["check_derivation"]) == (0, None)
+
+
+class ReadOnlyServer:
+    """A Honcho API in memory, as an httpx transport. It serves reads and refuses the rest.
+
+    ``sessions`` maps a session ID to its messages, each ``(peer_id, content)``.
+    Every request that is not a read lands in ``writes`` and gets a 405.
+    """
+
+    def __init__(self, workspace_id: str, sessions=None, *, conclusions: int = 0, get_or_create: bool = False) -> None:
+        self.workspace_id = workspace_id
+        self.sessions = dict(sessions or {})
+        self.conclusions = conclusions
+        self.get_or_create = get_or_create  # a source may run the SDK's workspace get-or-create
+        self.reads: list[str] = []
+        self.writes: list[str] = []
+
+    def client(self) -> honcho.Honcho:
+        """The real SDK client, talking to this server."""
+        url = f"http://{self.workspace_id}.test"
+        http_client = httpx.Client(transport=httpx.MockTransport(self), base_url=url)
+        return honcho.Honcho(base_url=url, api_key="k", workspace_id=self.workspace_id, http_client=http_client)
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == "GET" or path.endswith("/list"):
+            self.reads.append(f"{request.method} {path}")
+            return httpx.Response(200, json=self._read(request))
+        if self.get_or_create and (request.method, path) == ("POST", "/v3/workspaces"):
+            return httpx.Response(200, json=self._workspace())
+        self.writes.append(f"{request.method} {path}")
+        return httpx.Response(405, json={"message": "this server is read-only"})
+
+    def _workspace(self) -> dict:
+        return {"id": self.workspace_id, "metadata": {}, "configuration": {}, "created_at": T0.isoformat()}
+
+    def _messages(self, session_id: str) -> list[dict]:
+        return [
+            {
+                "id": f"{session_id}-{i}", "content": content, "peer_id": peer_id, "session_id": session_id,
+                "workspace_id": self.workspace_id, "metadata": {}, "token_count": 1,
+                "created_at": (T0 + timedelta(minutes=i)).isoformat(),
+            }
+            for i, (peer_id, content) in enumerate(self.sessions[session_id])
+        ]
+
+    def _peers(self, session_ids) -> list[dict]:
+        names = dict.fromkeys(peer_id for sid in session_ids for peer_id, _ in self.sessions[sid])
+        return [
+            {"id": name, "workspace_id": self.workspace_id, "metadata": {}, "configuration": {}, "created_at": T0.isoformat()}
+            for name in names
+        ]
+
+    def _read(self, request: httpx.Request) -> dict:
+        parts = request.url.path.removeprefix("/v3/workspaces/").split("/")
+        body = json.loads(request.content or b"{}") or {}
+        if parts == ["list"]:
+            items = [self._workspace()]
+        elif parts[1:] == ["sessions", "list"]:
+            items = [
+                {"id": sid, "is_active": True, "workspace_id": self.workspace_id, "metadata": {}, "configuration": {}, "created_at": T0.isoformat()}
+                for sid in self.sessions
+            ]
+        elif parts[1:] == ["peers", "list"]:
+            wanted = ((body.get("filters") or {}).get("id") or {}).get("in")
+            items = [peer for peer in self._peers(self.sessions) if wanted is None or peer["id"] in wanted]
+        elif parts[1:] == ["conclusions", "list"]:
+            return {"items": [], "total": self.conclusions, "page": 1, "size": 1, "pages": self.conclusions}
+        elif parts[1] == "sessions" and parts[3:] == ["messages", "list"]:
+            items = self._messages(parts[2]) if parts[2] in self.sessions else []
+            if request.url.params.get("reverse") == "true":
+                items = items[::-1]
+        elif parts[1] == "sessions" and parts[3:] == ["peers"]:
+            items = self._peers([parts[2]])
+        else:
+            raise AssertionError(f"unexpected read: {request.method} {request.url.path}")
+        page, size = int(request.url.params.get("page", 1)), int(request.url.params.get("size", 50))
+        return {
+            "items": items[(page - 1) * size : page * size],
+            "total": len(items), "page": page, "size": size, "pages": max(-(-len(items) // size), 1),
+        }
+
+
+class TestRealSDKReadOnly:
+    """A dry run goes through the real SDK client and sends the destination no write.
+
+    ``read_only`` depends on a private SDK attribute. These tests use the SDK
+    itself, not ``FakeHoncho``, so a change to that attribute fails here.
+    """
+
+    CONVERSATION = [("alice", "hi"), ("bob", "hello"), ("alice", "how are you")]
+
+    @pytest.fixture(autouse=True)
+    def real_session(self):
+        with patch.object(replay_lib, "Session", honcho.Session):
+            yield
+
+    @pytest.fixture
+    def cfg(self, tmp_path, monkeypatch):
+        f = tmp_path / "config.json"
+        monkeypatch.setattr("honcho_cli.config.CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("honcho_cli.config.CONFIG_FILE", f)
+        for k in [k for k in os.environ if k.startswith("HONCHO_")]:
+            monkeypatch.delenv(k)
+        f.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
+        return f
+
+    def _dry_run(self, source: ReadOnlyServer, dest: ReadOnlyServer, *extra: str):
+        clients = iter([source.client(), dest.client()])
+        args = ["workspace", "replay", "--from", "src", "--to", "dst", "--dry-run", *extra]
+        with patch("honcho_cli.commands.workspace.get_endpoint_client", side_effect=lambda **_: next(clients)):
+            return CliRunner().invoke(app, args)
+
+    def _source(self) -> ReadOnlyServer:
+        sessions = {sid: self.CONVERSATION for sid in ("a", "b", "c")}
+        return ReadOnlyServer("src", sessions, conclusions=7, get_or_create=True)
+
+    def test_an_sdk_read_outside_read_only_creates_the_workspace(self):
+        """The hazard itself: without the guard, looking at a workspace creates it."""
+        dest = ReadOnlyServer("dst")
+        client = dest.client()
+
+        with pytest.raises(honcho.APIError):
+            client.sessions(size=1)
+        assert dest.writes == ["POST /v3/workspaces"]
+
+        with replay_lib.read_only(client):
+            assert client.sessions(size=1).total == 0
+        assert dest.writes == ["POST /v3/workspaces"]  # nothing new
+
+    def test_dry_run_sends_no_write_to_a_destination_that_does_not_exist(self, cfg):
+        dest = ReadOnlyServer("dst")
+
+        result = self._dry_run(self._source(), dest)
+
+        assert result.exit_code == 0, result.stderr
+        out = json.loads(result.stdout)
+        assert out["actions"] == {"create": 3, "resume": 0, "up_to_date": 0, "conflict": 0}
+        assert (out["peers_to_copy"], out["peers_in_destination"]) == (2, 0)
+        assert dest.reads and dest.writes == []
+
+    @pytest.mark.parametrize("extra", [(), ("--num-sessions", "3")], ids=["full", "partial"])
+    def test_dry_run_sends_no_write_to_a_destination_in_use(self, cfg, extra):
+        dest = ReadOnlyServer("dst", {"b": self.CONVERSATION[:2], "c": [("zed", "something else")]})
+
+        result = self._dry_run(self._source(), dest, *extra)
+
+        assert result.exit_code == 0, result.stderr
+        out = json.loads(result.stdout)
+        assert out["actions"] == {"create": 1, "resume": 1, "up_to_date": 0, "conflict": 1}
+        assert (out["messages_in_sessions"], out["messages_to_send"]) == (9, 4)
+        assert (out["peers_to_copy"], out["peers_in_destination"]) == (2, 2)
+        # Every kind of destination read ran, and none of them was a write.
+        assert {read.rsplit("/", 2)[-2] for read in dest.reads} == {"sessions", "messages", "peers"}
+        assert dest.writes == []
+
+    def test_dry_run_refuses_an_sdk_it_cannot_keep_read_only(self, cfg):
+        """If the SDK drops the attribute, the dry run stops instead of writing."""
+        source = FakeHoncho("src", [FakeSession("s1", [_message(0)])])
+        dest = FakeHoncho("dst")
+        del dest._workspace_ensured
+        clients = iter([source, dest])
+
+        with patch("honcho_cli.commands.workspace.get_endpoint_client", side_effect=lambda **_: next(clients)):
+            result = CliRunner().invoke(app, ["workspace", "replay", "--from", "src", "--to", "dst", "--dry-run"])
+
+        assert result.exit_code == 1
+        assert json.loads(result.stderr.splitlines()[-1])["error"]["code"] == "SDK_UNSUPPORTED"
+        assert dest.writes == []
 
 
 class TestHumanOutput:
@@ -556,6 +744,7 @@ class TestHumanOutput:
         assert "resume, send 2" in out
         assert "differs at message 1" in out
         assert "1 session in conflict." in out
+        assert "Not copied  Peer cards. The source has no conclusions." in out
         assert "{" not in out  # no JSON inside the report
 
     def test_dry_run_in_a_narrow_terminal_keeps_each_session_readable(self, cfg, monkeypatch):
@@ -601,12 +790,14 @@ class TestHumanOutput:
         assert "{" not in out
 
     def test_summary_of_a_clean_run_has_no_empty_rows(self, cfg):
-        source = FakeHoncho("src", [FakeSession("s1", [_message(0)])])
+        source = FakeHoncho("src", [FakeSession("s1", [_message(0)])], conclusions=412)
 
         out = self._invoke(["--from", "src", "--to", "dst"], source, FakeHoncho("dst")).stdout
 
         assert "Replayed 1 session in" in out
         assert "1 sent" in out
+        assert "Not copied  412 conclusions and any peer cards." in out
+        assert "written through the API are not recreated." in out
         for absent in ("already present", "failed", "Failed", "Settings", "already existed"):
             assert absent not in out
 
