@@ -146,7 +146,7 @@ export function loadConfig(opts: {
 export async function saveHost(path: string, host: string, patch: Partial<HostConfig>): Promise<void> {
   await updateConfigFile(path, (file) => {
     if (isNewer(file)) throw new Error(`${path} was written by a newer Honcho plugin; update this one.`)
-    const { set, remove } = hostMigration(file, host)
+    const { set, remove } = hostMigration(file, host, [], patch)
     if (!isObj(file.hosts)) file.hosts = {}
     const block = isObj(file.hosts[host]) ? file.hosts[host] : (file.hosts[host] = {})
     Object.assign(block, set)
@@ -190,7 +190,8 @@ function settingsOf(b: Record<string, any>): Settings {
   const endpoint = isObj(b.endpoint) ? b.endpoint : {}
   const environment = endpoint.environment === 'local' ? 'http://localhost:8000' : endpoint.environment === 'production' ? DEFAULT_BASE_URL : undefined
   const out = {
-    apiKey: str(b.apiKey) ?? (isObj(b.auth) ? str(b.auth.apiKey) : undefined),
+    // 0.1.x's order: `auth.apiKey` before `apiKey` (at the top level, the CLI's key).
+    apiKey: (isObj(b.auth) ? str(b.auth.apiKey) : undefined) ?? str(b.apiKey),
     peerName: str(b.peerName),
     workspace: str(b.workspace) ?? str(b.workspaceId),
     aiPeer: str(b.aiPeer),
@@ -204,6 +205,11 @@ function rootSettingsOf(file: Record<string, any>): Settings {
   const out = settingsOf(file)
   if (out.baseUrl && normalizeBaseUrl(out.baseUrl) === DEFAULT_BASE_URL) delete out.baseUrl
   return out
+}
+
+/** Two URLs name the same server; missing means Honcho cloud. */
+function sameServer(a: string | undefined, b: string | undefined): boolean {
+  return normalizeBaseUrl(a ?? DEFAULT_BASE_URL) === normalizeBaseUrl(b ?? DEFAULT_BASE_URL)
 }
 
 /** Old spellings inside a host block. */
@@ -253,11 +259,14 @@ export function checkConfig(file: unknown): ConfigIssue[] {
  * or when it has no block yet),
  * rename old keys in that block, and drop `deadKeys` it no longer uses. Never
  * touches another host's block or the top level, which the honcho CLI cleans.
+ * `patch` is what `saveHost` is about to write, so a key and the server it is
+ * for are never taken from two different places.
  */
 export function hostMigration(
   file: unknown,
   host: string,
-  deadKeys: readonly string[] = []
+  deadKeys: readonly string[] = [],
+  patch: Partial<HostConfig> = {}
 ): { set: Partial<HostConfig>; remove: string[] } {
   if (isNewer(file)) return { set: {}, remove: [] }
   const f = isObj(file) ? file : {}
@@ -270,11 +279,23 @@ export function hostMigration(
   // The top level is copied once. A marked block already took what it needed, and
   // anything written there later (an older honcho CLI's key or URL) must not reach it.
   const root: Settings = isMigrated(block) ? {} : rootSettingsOf(f)
+  // A key and the server it is for come from one place. A block signed in with its
+  // own grant (cloud only) takes neither from the top level, and a credential the
+  // patch sets was chosen without the top level's server.
+  const topServer = root.baseUrl
+  const signedIn = block.oauth !== undefined || legacyGrantOf(block) !== undefined
+  if (signedIn) delete root.apiKey
+  if (signedIn || 'apiKey' in patch || 'oauth' in patch) delete root.baseUrl
   for (const key of MOVABLE) {
     if (block[key] !== undefined) continue
     const fromRoot = key === 'workspace' ? (hasBlock && f.globalOverride !== true ? undefined : root.workspace) : root[key]
     const value = own[key] ?? fromRoot
     if (value !== undefined) set[key] = value
+  }
+  // The top level's key goes only to the top level's server (the patch's choice counts).
+  if (set.apiKey !== undefined && own.apiKey === undefined) {
+    const server = 'baseUrl' in patch ? patch.baseUrl : (str(block.baseUrl) ?? (set.baseUrl as string | undefined))
+    if (!sameServer(server, topServer)) delete set.apiKey
   }
   if (f.globalOverride === true && root.workspace && block.workspace !== root.workspace) set.workspace = root.workspace
   const grant = legacyGrantOf(block)
