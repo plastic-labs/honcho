@@ -9,6 +9,8 @@ This package versions independently of the Honcho API, `@honcho-ai/sdk`, and hos
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-11-10
+
 ### Added
 
 - `list_dreams` and `get_dream` read Representation History: the dreams that

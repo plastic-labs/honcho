@@ -27,7 +27,20 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v3.6.0 (Current)">
+        <Update label="v3.6.1 (Current)">
+        ### Changed
+
+        - Migration `e5fe7f8bcf62`, the 3.6.0 revision that adds `tenant_id` to every tenant-scoped table, no longer blocks reads and writes while it runs. It did all of its work in one transaction, so every table whose keys it rebuilt stayed locked until the end, which took longer the bigger the database was. It now commits after each statement: the new unique and primary-key indexes build concurrently, the new foreign keys are added `NOT VALID` and then validated, and each primary key is swapped onto its new index in one short statement, so the previous release can keep serving during the upgrade. The index builds and the foreign-key validation run under a 60-minute `statement_timeout` instead of the migrations' 5 minutes. A run that stops part-way can be run again, and each step skips what is already done. The revision id and the resulting schema are unchanged. An instance already on 3.6.0 ran the earlier version and is not affected; an upgrade from 3.5.x or earlier runs this one (#1574)
+        - The `representation.completed` and `agent.tool.summary.created` CloudEvents carry a `run_id`, and the `llm.call.completed` events of that deriver batch or summary carry the same `run_id` (their `llm.call.traced` events carry it as `trace_id`), so a batch or a summary can be joined to its LLM calls by id instead of by message ids or token counts. Before, `run_id` was null on these LLM-call events. A short and a long summary of the same message get separate ids. With `TELEMETRY_HIGH_VOLUME_SAMPLE_RATE` below 1.0, these LLM-call events are now sampled per run, so a call and its retries are kept or dropped together. Langfuse traces are unchanged (#1576)
+
+        ### Fixed
+
+        - Deleting a session or a workspace no longer deadlocks with a deriver worker that is finishing a batch for it. Deletion removed the work unit's claim row before its queue rows, and a worker marking its batch done writes them in the other order, so Postgres aborted one of the two (`40P01`). Deletion now deletes the queue rows first, then the claim, and both sides lock their queue rows in id order (#1577)
+        - Session deletion deletes the session's vectors from an external vector store (turbopuffer, LanceDB) after its transaction commits, as workspace deletion already did. Before, it deleted them inside the transaction, so its row locks were held across those network calls, and a transaction that rolled back left live messages and conclusions without vectors (#1577)
+        - The deriver's other multi-row queue writes can no longer deadlock with a session or workspace deletion over the same rows. Clearing a work unit's retry count and marking a malformed or tenant-less work unit errored now lock their rows in id order, and the reconciler's cleanup of processed queue items skips rows another transaction holds and removes them on its next pass (#1580)
+        </Update>
+
+        <Update label="v3.6.0">
         ### Added
 
         - Multi-tenancy: one deployment can serve many tenants, behind `MULTI_TENANT` (default off). Every tenant-scoped table now carries a `tenant_id` that leads its primary key, unique constraints and foreign keys. With the flag on, Postgres row-level security scopes every read and write to the tenant named by the caller's JWT, which must carry a tenant claim (`tn`); an admin key is admin only within its own tenant. Each tenant's vectors live under their own namespace, keyed by the tenant's `vector_correlation_id`, and a tenant without one is refused rather than given an empty namespace. With the flag off nothing changes: Honcho runs single-tenant on plain Postgres, and the optional `TENANT_ID` names the instance's tenant (default `default`). It is fixed for the life of the database, and boot is refused if the rows carry another tenant (#1264, #1546)
@@ -1505,7 +1518,17 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
     </Tab>
     <Tab title="Honcho CLI">
         [Honcho CLI](https://pypi.org/project/honcho-cli/)
-        <Update label="v0.5.0 (Current)">
+        <Update label="v0.6.0 (Current)">
+        ### Added
+
+        - `honcho workspace replay --from <id> --to <id>`: copy a workspace by replaying it. Workspace, peer and session metadata and configuration, session membership and scopes are copied, then every message is re-sent in order with its original `created_at`, so the destination derives its own conclusions, summaries and peer cards; nothing derived is copied. `--from-url` / `--to-url` (and `HONCHO_FROM_API_KEY` / `HONCHO_TO_API_KEY`) put either side on another Honcho instance, and the configured credentials are never sent to an instance they were not issued for. `--num-sessions N` replays only the N sessions with the most recent message, `--dry-run` reads both sides without writing and says, for each session, whether a replay will create it, resume it, find it up to date, or skip it as a conflict, and a rerun resumes by skipping messages the destination already has. A destination session whose messages differ from the source is left untouched and reported. In a terminal the command prints a short report and the `queue-status` command that shows derivation on the destination; `--json` prints the same facts as one object. Both reports count the conclusions in the source (`not_copied`), because conclusions and peer cards written through the API have no source message and are not recreated. The destination session has the source's current members from its first message, so a peer that joined late observes the whole session. With a workspace-scoped key, a source that has no sessions and no peers is reported as `NOTHING_TO_REPLAY` and is not created. Per-message configuration is not stored by Honcho and cannot be replayed (#1573)
+
+        ### Fixed
+
+        - `honcho --version`, the update check and the `X-Honcho-Host` header report the installed version. `__version__` was a hardcoded string that the 0.5.0 release did not bump, so a 0.5.0 install reported itself as 0.4.0, and the update check told 0.5.0 users that 0.5.0 was available. The version is now read from the installed package metadata (#1571)
+        </Update>
+
+        <Update label="v0.5.0">
         ### Added
 
         - `honcho dream list` and `honcho dream inspect <id>` (Representation History): list the dreams in a workspace, newest first, or the dreams about one peer with `-p`, and see what a dream changed. `inspect` shows the conclusions it created, each with the conclusions it was derived from and where those stand now (current, removed and by which dream, or unavailable once deleted or removed longer ago than history is kept); the conclusions it removed, as they read when removed; and the peer card before and after. A dream past the retention window shows when it was pruned and keeps only the conclusions it created that still exist. Needs a workspace or admin key, and Honcho v3.6.0+ (#1542)
