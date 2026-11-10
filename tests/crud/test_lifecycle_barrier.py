@@ -404,3 +404,29 @@ async def test_a_final_write_waits_for_an_open_deletion_and_is_then_refused(
             await deleter.rollback()
             if pending is not None:
                 await asyncio.wait({pending}, timeout=FINISH_TIMEOUT_SECONDS)
+
+
+async def test_a_write_under_several_sessions_is_refused_when_any_was_deleted(
+    db_session: AsyncSession,
+) -> None:
+    """A public write of several conclusions can name several sessions."""
+    graph = await seed_graph(db_session)
+    other = models.Session(name="other", workspace_name=graph.workspace.name)
+    db_session.add(other)
+    await db_session.commit()
+    other_id = other.id
+
+    snapshot = await capture(db_session, graph, session_names=["other"], message_ids=[])
+    assert {s.uid for s in snapshot.sessions} == {graph.session.id, other_id}
+    with pytest.raises(ValueError, match="more than one session"):
+        _ = snapshot.session
+
+    await write(db_session, graph, snapshot)
+    assert await document_count(db_session, graph) == 1
+
+    await begin_session_deletion(db_session, graph.workspace.name, "other")
+    await db_session.commit()
+    with pytest.raises(WriteGenerationStaleError) as raised:
+        await write(db_session, graph, snapshot)
+    assert raised.value.scope == "session"
+    assert await document_count(db_session, graph) == 1

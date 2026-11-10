@@ -15,8 +15,9 @@ writes. Removing its queued work does not stop that write. The barrier does:
 
 ``final_write`` takes its locks in one global order:
 
-    workspace -> peers (id order) -> session -> [the producer's document
-    writes] -> collections (sorted key order) -> queue -> active_queue_sessions
+    workspace -> peers (id order) -> sessions (id order) -> [the producer's
+    document writes] -> collections (sorted key order) -> queue ->
+    active_queue_sessions
 
 Parents are locked first, before any document row, and compared with the
 snapshot. The collection check runs after the document writes, which keeps the
@@ -144,11 +145,20 @@ class WriteSnapshot:
 
     tenant_id: str
     workspace: GenerationStamp
-    session: GenerationStamp | None = None
+    # Most producers write under one session, or none. A public write of
+    # several conclusions can name several.
+    sessions: tuple[GenerationStamp, ...] = ()
     peers: tuple[PeerStamp, ...] = ()
     collections: tuple[CollectionStamp, ...] = ()
     message_ids: tuple[str, ...] = ()
     claim: ClaimStamp | None = None
+
+    @property
+    def session(self) -> GenerationStamp | None:
+        """The session of a producer that captured at most one."""
+        if len(self.sessions) > 1:
+            raise ValueError("This snapshot holds more than one session")
+        return self.sessions[0] if self.sessions else None
 
     def with_messages(self, message_ids: Iterable[str]) -> WriteSnapshot:
         """Add source messages read after the capture."""
@@ -245,6 +255,7 @@ async def capture_write_snapshot(
     *,
     tenant_id: str | None = None,
     session_name: str | None = None,
+    session_names: Iterable[str] = (),
     peer_names: Iterable[str] = (),
     representations: Iterable[tuple[str, str]] = (),
     message_ids: Iterable[str] = (),
@@ -267,6 +278,7 @@ async def capture_write_snapshot(
         tenant_id: The tenant. Defaults to the bound tenant under
             ``MULTI_TENANT`` and to the instance tenant otherwise
         session_name: The session the write lands in or reads from, if any
+        session_names: Further sessions, for a write that lands in several
         peer_names: Peers that must stay live. The peers of ``representations``
             are added
         representations: ``(observer, observed)`` pairs the write touches
@@ -296,28 +308,37 @@ async def capture_write_snapshot(
         workspace_row.id, workspace_name, workspace_row.deletion_generation
     )
 
-    session: GenerationStamp | None = None
+    session_name_set: set[str] = set(session_names)
     if session_name is not None:
-        session_row = (
-            await db.execute(
-                select(models.Session.id, models.Session.deletion_generation).where(
+        session_name_set.add(session_name)
+    wanted_sessions = sorted(session_name_set)
+    sessions: list[GenerationStamp] = []
+    if wanted_sessions:
+        session_rows = {
+            row.name: row
+            for row in await db.execute(
+                select(
+                    models.Session.id,
+                    models.Session.name,
+                    models.Session.deletion_generation,
+                ).where(
                     models.Session.tenant_id == tenant,
                     models.Session.workspace_name == workspace_name,
-                    models.Session.name == session_name,
+                    models.Session.name.in_(wanted_sessions),
                     models.Session.deleted_at.is_(None),
                 )
             )
-        ).one_or_none()
-        if session_row is None:
-            raise WriteParentGoneError("session", f"Session {session_name} is gone")
-        session = GenerationStamp(
-            session_row.id, session_name, session_row.deletion_generation
-        )
+        }
+        for name in wanted_sessions:
+            row = session_rows.get(name)
+            if row is None:
+                raise WriteParentGoneError("session", f"Session {name} is gone")
+            sessions.append(GenerationStamp(row.id, name, row.deletion_generation))
 
     snapshot = WriteSnapshot(
         tenant_id=tenant,
         workspace=workspace,
-        session=session,
+        sessions=tuple(sessions),
         message_ids=tuple(dict.fromkeys(message_ids)),
         claim=claim,
     )
@@ -401,7 +422,7 @@ async def final_write(
 ) -> AsyncGenerator[None]:
     """Run a producer's writes behind the barrier, in the producer's transaction.
 
-    On entry it locks the workspace, peers and session ``FOR KEY SHARE`` and
+    On entry it locks the workspace, peers and sessions ``FOR KEY SHARE`` and
     compares each with the snapshot, then checks the source messages. The
     caller's writes go in the block. On a clean exit it flushes those writes,
     locks the snapshot's collections in sorted key order and compares their
@@ -471,39 +492,42 @@ async def _lock_parents(db: AsyncSession, snapshot: WriteSnapshot) -> None:
             if live.get(peer.uid) != peer.name:
                 raise WriteParentGoneError("peer", f"Peer {peer.name} was deleted")
 
-    if snapshot.session is not None:
-        session = (
-            await db.execute(
-                select(
-                    models.Session.name,
-                    models.Session.deleted_at,
-                    models.Session.deletion_generation,
+    if snapshot.sessions:
+        # Explicit id order, as for the peers.
+        rows = await db.execute(
+            select(
+                models.Session.id,
+                models.Session.name,
+                models.Session.deleted_at,
+                models.Session.deletion_generation,
+            )
+            .where(
+                models.Session.tenant_id == tenant,
+                models.Session.workspace_name == snapshot.workspace.name,
+                models.Session.id.in_([s.uid for s in snapshot.sessions]),
+            )
+            .order_by(models.Session.id)
+            .with_for_update(read=True, key_share=True)
+        )
+        found = {row.id: row for row in rows}
+        for stamp in snapshot.sessions:
+            session = found.get(stamp.uid)
+            if (
+                session is None
+                or session.deleted_at is not None
+                or session.name != stamp.name
+            ):
+                raise WriteParentGoneError(
+                    "session", f"Session {stamp.name} was deleted"
                 )
-                .where(
-                    models.Session.tenant_id == tenant,
-                    models.Session.workspace_name == snapshot.workspace.name,
-                    models.Session.id == snapshot.session.uid,
+            if session.deletion_generation != stamp.deletion_generation:
+                raise WriteGenerationStaleError(
+                    "session", f"Session {stamp.name} had a deletion since capture"
                 )
-                .with_for_update(read=True, key_share=True)
-            )
-        ).one_or_none()
-        if (
-            session is None
-            or session.deleted_at is not None
-            or session.name != snapshot.session.name
-        ):
-            raise WriteParentGoneError(
-                "session", f"Session {snapshot.session.name} was deleted"
-            )
-        if session.deletion_generation != snapshot.session.deletion_generation:
-            raise WriteGenerationStaleError(
-                "session",
-                f"Session {snapshot.session.name} had a deletion since capture",
-            )
 
     if snapshot.message_ids:
         # No lock: a message deletion raises its session's generation under
-        # FOR UPDATE, which the session lock above already waited for.
+        # FOR UPDATE, which the session locks above already waited for.
         live_ids = set(
             await db.scalars(
                 select(models.Message.public_id).where(

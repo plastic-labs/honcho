@@ -16,7 +16,7 @@ from sqlalchemy.sql.functions import func
 
 from src import models, schemas
 from src.config import settings
-from src.crud.collection import get_or_create_collection, record_explicit_documents
+from src.crud.collection import record_explicit_documents
 from src.crud.dream_history import (
     CreatedConclusion,
     DreamHistoryTarget,
@@ -29,6 +29,7 @@ from src.crud.lifecycle import live_document_row
 from src.crud.lifecycle_barrier import (
     WriteSnapshot,
     bump_collection_generations,
+    capture_write_snapshot,
     ensure_collections,
     final_write,
 )
@@ -1377,6 +1378,8 @@ async def create_observations(
     Raises:
         ResourceNotFoundException: If any session or peer is not found
         ValidationException: If embedding generation fails or integrity constraint is violated
+        WriteParentGoneError: If a session or peer was deleted while the
+            request was being served. Nothing is created (404)
     """
     if not observations:
         return []
@@ -1419,11 +1422,10 @@ async def create_observations(
         action="No conclusion is ever formed about a scope.",
     )
 
-    # Get or create all collections
-    for observer, observed in collection_pairs:
-        await get_or_create_collection(
-            db, workspace_name, observer=observer, observed=observed
-        )
+    # The lookups above give a caller a clear 404 early. They are not the
+    # check: nothing is locked, and the embedding call below can take a while.
+    # The check is the lifecycle barrier around the insert further down, which
+    # also creates the collections (get_or_create_collection would commit).
 
     # Generate embeddings in batch
     contents = [obs.content for obs in observations]
@@ -1481,7 +1483,20 @@ async def create_observations(
         collection_embeddings[collection_key].append((doc, embedding))
 
     try:
-        db.add_all(honcho_documents)
+        # A public write obeys parent liveness like any producer. It captures
+        # in the write's own transaction: the barrier locks what was just read
+        # and holds it to the commit, so a deletion of a named session or peer
+        # either waits for this write or refuses it.
+        barrier = await capture_write_snapshot(
+            db,
+            workspace_name,
+            session_names=sessions_to_validate,
+            representations=collection_pairs,
+        )
+        async with final_write(db, barrier):
+            await ensure_collections(db, barrier, collection_pairs)
+            db.add_all(honcho_documents)
+        # After the block: it locked the collection rows this updates.
         await record_explicit_documents(db, honcho_documents)
         await db.commit()
         # Refresh all documents to get generated IDs and timestamps
@@ -1585,6 +1600,9 @@ async def create_observations(
         raise ValidationException(
             "Failed to create observations due to integrity constraint violation"
         ) from e
+    except LifecycleBarrierError:
+        await db.rollback()
+        raise
 
     logger.debug(
         "Created %d observations in workspace %s",
