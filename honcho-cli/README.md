@@ -80,6 +80,7 @@ honcho stop --wipe     # also delete volumes
 | `honcho workspace chat <query>` | Query the dialectic across all peers (optional `-s` / `--scope` / `--reasoning`) |
 | `honcho workspace search <query>` | Search messages across workspace |
 | `honcho workspace queue-status` | Deriver queue status (filter with `--observer` / `--sender`) |
+| `honcho workspace replay --from <id> --to <id>` | Copy a workspace by re-sending its messages, so the destination derives its own memory. `--to-url` / `--from-url` for another instance, `--num-sessions N` for the N most recently active sessions, `--dry-run` to preview |
 | `honcho workspace delete <id>` | Delete a workspace. Use `--dry-run` to preview, `--cascade` to also delete sessions, `--yes` to skip the confirm prompt |
 
 ### Peers
@@ -208,6 +209,8 @@ Precedence (highest first): **flag → env var → config file → default**.
 | `HONCHO_JSON` | `--json` | Force JSON output (`1` / `true`) |
 | `HONCHO_NO_UPDATE_CHECK` | — | Disable the once-a-day upgrade notice (`1` / `true`) |
 | `HONCHO_PROFILE` | `--profile` (start/stop/status) | Local stack profile (default: `local`) |
+| `HONCHO_FROM_URL` / `HONCHO_FROM_API_KEY` | `--from-url` (workspace replay); the key has no flag | Source instance, when it is not the configured one |
+| `HONCHO_TO_URL` / `HONCHO_TO_API_KEY` | `--to-url` (workspace replay); the key has no flag | Destination instance, when it is not the configured one |
 | `LLM_OPENAI_API_KEY` | — | Provider key for `honcho start` (also `LLM_ANTHROPIC_API_KEY`, `LLM_GEMINI_API_KEY`) |
 
 ```bash

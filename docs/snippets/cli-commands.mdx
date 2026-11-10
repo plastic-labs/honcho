@@ -845,6 +845,42 @@ honcho workspace queue-status
   Filter by sender peer.
 </ParamField>
 </Accordion>
+<Accordion title="replay">
+Replay a workspace's sessions into another workspace, on this or another instance.
+
+Copies workspace, peer and session settings, then re-sends every message in
+order with its original timestamp. The destination derives its own
+conclusions; conclusions and peer cards are not copied, so the ones written
+through the API are not recreated. Rerunning resumes: messages already in
+the destination are skipped.
+
+Each side uses the configured instance unless its URL is given. A side on
+another instance needs its own API key, read from HONCHO_FROM_API_KEY /
+HONCHO_TO_API_KEY; the configured credentials are never sent to it.
+
+```bash
+honcho workspace replay
+```
+
+<ParamField path="--from" type="string" required>
+  Source workspace ID.
+</ParamField>
+<ParamField path="--to" type="string">
+  Destination workspace ID. Defaults to the --from ID, which needs a different destination instance.
+</ParamField>
+<ParamField path="--from-url" type="string">
+  Source Honcho URL, when it is not the configured instance. Its API key is read from HONCHO_FROM_API_KEY.
+</ParamField>
+<ParamField path="--to-url" type="string">
+  Destination Honcho URL, when it is not the configured instance. Its API key is read from HONCHO_TO_API_KEY.
+</ParamField>
+<ParamField path="--num-sessions" type="string">
+  Replay only the N sessions with the most recent message.
+</ParamField>
+<ParamField path="--dry-run" type="boolean">
+  Show what a replay would do with each session, without writing anything.
+</ParamField>
+</Accordion>
 <Accordion title="search">
 Search messages across workspace.
 

@@ -1,8 +1,10 @@
-"""Workspace commands: list, inspect, create, delete, search, chat, queue-status."""
+"""Workspace commands: list, inspect, create, delete, search, chat, queue-status, replay."""
 
 from __future__ import annotations
 
 import json
+import os
+import time
 from typing import Optional
 
 import typer
@@ -16,13 +18,15 @@ from honcho import (
     ServerError,
 )
 
+from honcho_cli import replay as replay_lib
+from honcho_cli import replay_view
 from honcho_cli.config import identity_headers
-from honcho_cli.output import print_error, print_result, status, use_json
+from honcho_cli.output import print_error, print_json, print_result, status, use_json
 from honcho_cli.recall import parse_csv_repeatable, reject_incompatible_recall, scope_for_sdk
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli._help import HonchoTyperGroup
-from honcho_cli.common import add_common_options, format_evidence, get_client, get_flag_overrides, get_resolved_config, handle_cmd_flags
+from honcho_cli.common import add_common_options, format_evidence, get_client, get_endpoint_client, get_flag_overrides, get_resolved_config, handle_cmd_flags, same_instance
 
 app = typer.Typer(cls=HonchoTyperGroup, help="List, create, inspect, chat, delete, and search workspaces.")
 add_common_options(app)
@@ -326,6 +330,187 @@ def queue_status(
         print_result(result.model_dump(mode="json"))
     except Exception as e:
         _handle_error(e, "queue", "status")
+
+
+@app.command()
+def replay(
+    source: str = typer.Option(..., "--from", help="Source workspace ID"),
+    dest: Optional[str] = typer.Option(
+        None,
+        "--to",
+        help="Destination workspace ID. Defaults to the --from ID, which needs a different destination instance.",
+    ),
+    from_url: Optional[str] = typer.Option(
+        None, "--from-url", envvar="HONCHO_FROM_URL",
+        help="Source Honcho URL, when it is not the configured instance. Its API key is read from HONCHO_FROM_API_KEY.",
+    ),
+    to_url: Optional[str] = typer.Option(
+        None, "--to-url", envvar="HONCHO_TO_URL",
+        help="Destination Honcho URL, when it is not the configured instance. Its API key is read from HONCHO_TO_API_KEY.",
+    ),
+    num_sessions: Optional[int] = typer.Option(
+        None, "--num-sessions", min=1,
+        help="Replay only the N sessions with the most recent message",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what a replay would do with each session, without writing anything"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Replay a workspace's sessions into another workspace, on this or another instance.
+
+    Copies workspace, peer and session settings, then re-sends every message in
+    order with its original timestamp. The destination derives its own
+    conclusions; conclusions and peer cards are not copied, so the ones written
+    through the API are not recreated. Rerunning resumes: messages already in
+    the destination are skipped.
+
+    Each side uses the configured instance unless its URL is given. A side on
+    another instance needs its own API key, read from HONCHO_FROM_API_KEY /
+    HONCHO_TO_API_KEY; the configured credentials are never sent to it.
+    """
+    handle_cmd_flags(json_output=json_output)
+    # Keys come from the environment only: a key passed as an argument shows up
+    # in process listings and shell history.
+    from_api_key = os.environ.get("HONCHO_FROM_API_KEY") or None
+    to_api_key = os.environ.get("HONCHO_TO_API_KEY") or None
+    source_id = validate_resource_id(source, "workspace")
+    dest_id = validate_resource_id(dest or source, "workspace")
+
+    source_client = get_endpoint_client(workspace_id=source_id, base_url=from_url, api_key=from_api_key)
+    dest_client = get_endpoint_client(workspace_id=dest_id, base_url=to_url, api_key=to_api_key)
+    source_ref = {"url": source_client.base_url, "workspace_id": source_id}
+
+    if source_id == dest_id and same_instance(source_client.base_url, dest_client.base_url):
+        print_error(
+            "SAME_WORKSPACE",
+            "Source and destination are the same workspace. Pass a different --to, or --to-url for another instance.",
+            {"workspace": source_id, "url": source_client.base_url},
+        )
+        raise typer.Exit(1)
+
+    started = time.monotonic()
+    replayer = replay_lib.Replayer(source_client, dest_client)
+    all_peers = num_sessions is None
+
+    with replay_view.Reporter() as progress:
+        # Read the source, and look at the destination without writing to it.
+        try:
+            progress.phase(f"Reading source workspace '{source_id}'")
+            metadata, configuration = replay_lib.read_workspace(source_client)
+            plans = replay_lib.list_sessions(source_client)
+            sessions_in_source = len(plans)
+            if num_sessions is not None or dry_run:
+                replay_lib.probe_sessions(plans, progress.tick)
+            if num_sessions is not None:
+                plans = replay_lib.select_most_recent(plans, num_sessions)
+            not_copied = {
+                "conclusions_in_source": replay_lib.count_conclusions(source_client),
+                "note": replay_lib.NOT_COPIED_NOTE,
+            }
+        except replay_lib.NothingToReplay as e:
+            print_error("NOTHING_TO_REPLAY", str(e), {"workspace": source_id})
+            raise typer.Exit(1) from e
+        except Exception as e:
+            _handle_error(e, "workspace", source_id)
+            return
+
+        try:
+            progress.phase(f"Checking destination workspace '{dest_id}'")
+            dest_sessions = replayer.destination_session_count()
+            dest_ref = {"url": dest_client.base_url, "workspace_id": dest_id, "sessions": dest_sessions}
+            if dry_run:
+                replayer.check_sessions(plans, progress.tick)
+                peer_ids = replayer.peers_for(plans, all_peers=all_peers)
+                peers_in_destination = replayer.peers_in_destination(peer_ids)
+        except replay_lib.ReadOnlyUnsupported as e:
+            print_error("SDK_UNSUPPORTED", str(e), {})
+            raise typer.Exit(1) from e
+        except Exception as e:
+            _handle_error(e, "workspace", dest_id)
+            return
+
+        if not dry_run:
+            progress.line(
+                f"Replaying {len(plans)} of {replay_view.plural(sessions_in_source, 'session')} "
+                f"from '{source_id}' ({source_client.base_url}) "
+                f"to '{dest_id}' ({dest_client.base_url})"
+                + (f". The destination already has {replay_view.plural(dest_sessions, 'session')}." if dest_sessions else "")
+            )
+            progress.phase("Copying peers and sessions")
+            try:
+                result = replay_lib.replay(
+                    replayer,
+                    plans,
+                    workspace_metadata=metadata,
+                    workspace_configuration=configuration,
+                    all_peers=all_peers,
+                    on_progress=progress.line,
+                    on_tick=progress.tick,
+                )
+            except Exception as e:
+                _handle_error(e, "workspace", dest_id)
+                return
+
+    if dry_run:
+        report = {
+            "dry_run": True,
+            "source": source_ref,
+            "destination": dest_ref,
+            "sessions_in_source": sessions_in_source,
+            "sessions_to_replay": len(plans),
+            "actions": {
+                action: sum(1 for plan in plans if plan.action == action)
+                for action in ("create", "resume", "up_to_date", "conflict")
+            },
+            "messages_in_sessions": sum(plan.message_count or 0 for plan in plans),
+            "messages_to_send": sum(plan.messages_to_send for plan in plans),
+            "peers_to_copy": len(peer_ids),
+            "peers_in_destination": len(peers_in_destination),
+            "workspace_settings_copied": dest_sessions == 0,
+            "not_copied": not_copied,
+            "sessions": [plan.to_dict() for plan in plans],
+        }
+        if use_json():
+            print_json(report)
+        else:
+            replay_view.print_plan(report)
+        return
+
+    messages_created = sum(s.messages_created for s in result.sessions)
+    report = {
+        "source": source_ref,
+        "destination": dest_ref,
+        "sessions_in_source": sessions_in_source,
+        "sessions_replayed": len(result.sessions),
+        "sessions_failed": len(result.failed),
+        "actions": {
+            action: sum(1 for s in result.sessions if s.action == action)
+            for action in ("created", "resumed", "up_to_date")
+        },
+        "messages_created": messages_created,
+        "messages_skipped": sum(s.messages_skipped for s in result.sessions),
+        "peers_created": result.peers_created,
+        "peers_existing": result.peers_existing,
+        "workspace_settings_copied": result.workspace_copied,
+        "not_copied": not_copied,
+        "elapsed_seconds": round(time.monotonic() - started, 1),
+        "check_derivation": _queue_status_command(dest_client.base_url, dest_id) if messages_created else None,
+        "sessions": [s.to_dict() for s in result.sessions],
+        "failed": result.failed,
+    }
+    if use_json():
+        print_json(report)
+    else:
+        replay_view.print_summary(report)
+    if result.failed:
+        raise typer.Exit(1)
+
+
+def _queue_status_command(dest_url: str, dest_id: str) -> str:
+    """The command that shows the destination's derivation queue after a replay."""
+    command = f"honcho workspace queue-status -w {dest_id}"
+    if same_instance(dest_url, get_resolved_config().base_url):
+        return command
+    return f'HONCHO_BASE_URL={dest_url} HONCHO_API_KEY="$HONCHO_TO_API_KEY" {command}'
 
 
 def _with_workspace(client, workspace_id: str):

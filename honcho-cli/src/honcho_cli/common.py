@@ -12,6 +12,7 @@ no-op if the same flag was already set at an outer level.
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 from typing import Optional
 
@@ -20,7 +21,7 @@ import typer
 from honcho import Honcho
 
 from honcho_cli import oauth
-from honcho_cli.config import CLIConfig, OAuthTokens, get_client_kwargs
+from honcho_cli.config import ENV_MAP, CLIConfig, OAuthTokens, get_client_kwargs, identity_headers
 from honcho_cli.output import print_error, set_json_mode
 from honcho_cli.validation import validate_resource_id
 
@@ -129,6 +130,52 @@ def get_client(*, require_workspace: bool = True):
         raise typer.Exit(1)
     maybe_refresh_token(config)
     return Honcho(**get_client_kwargs(config)), config
+
+
+def same_instance(url_a: str, url_b: str) -> bool:
+    """True when two base URLs name the same Honcho instance."""
+    return url_a.rstrip("/") == url_b.rstrip("/")
+
+
+def get_endpoint_client(
+    *,
+    workspace_id: str,
+    base_url: str | None = None,
+    api_key: str | None = None,
+) -> Honcho:
+    """Create a client for one side of a command that spans two instances.
+
+    With no overrides this is the configured instance and its credentials. An
+    explicit ``api_key`` always wins. A ``base_url`` that names a different
+    instance never receives the configured credentials: they belong to another
+    host, so that side authenticates with its own ``api_key`` or, for an
+    instance with auth disabled, with nothing.
+    """
+    config = CLIConfig.load()
+    url = base_url or config.base_url
+    key = api_key
+    if not key and same_instance(url, config.base_url):
+        maybe_refresh_token(config)
+        key = config.resolved_api_key()
+
+    kwargs: dict = {
+        "base_url": url,
+        "workspace_id": workspace_id,
+        "default_headers": identity_headers(),
+    }
+    if key:
+        return Honcho(api_key=key, **kwargs)
+
+    # Given no key, the SDK reads HONCHO_API_KEY itself. Hide it while the
+    # client is built, or a key meant for the configured instance would be sent
+    # to this one.
+    env_key = ENV_MAP["api_key"]
+    hidden = os.environ.pop(env_key, None)
+    try:
+        return Honcho(**kwargs)
+    finally:
+        if hidden is not None:
+            os.environ[env_key] = hidden
 
 
 def handle_cmd_flags(
