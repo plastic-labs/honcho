@@ -159,19 +159,26 @@ class WriteSnapshot:
         return replace(self, claim=claim)
 
     def for_representation(self, observer: str, observed: str) -> WriteSnapshot:
-        """Narrow to one representation, for a write that touches only it.
+        """Narrow to one representation, for a write that touches only it."""
+        return self.for_representations([(observer, observed)])
 
-        Keeps the workspace, session, messages and claim. Keeps only the two
-        peers and the one collection, so a write to one observer's collection
-        does not lock, or fail on, another observer's.
+    def for_representations(
+        self, pairs: Iterable[tuple[str, str]], *, peer_names: Iterable[str] = ()
+    ) -> WriteSnapshot:
+        """Narrow to some representations, for a write that touches only them.
+
+        Keeps the workspace, session, messages and claim. Keeps only the
+        collections of ``pairs``, and only their peers plus ``peer_names``, so
+        a write to one observer's collection does not lock, or fail on,
+        another observer's.
         """
+        wanted = set(pairs)
+        names = {*peer_names, *(name for pair in wanted for name in pair)}
         return replace(
             self,
-            peers=tuple(p for p in self.peers if p.name in (observer, observed)),
+            peers=tuple(p for p in self.peers if p.name in names),
             collections=tuple(
-                c
-                for c in self.collections
-                if (c.observer, c.observed) == (observer, observed)
+                c for c in self.collections if (c.observer, c.observed) in wanted
             ),
         )
 

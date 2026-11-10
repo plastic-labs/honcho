@@ -34,6 +34,7 @@ from sqlalchemy import func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src import crud, models
+from src.crud.lifecycle_barrier import WriteSnapshot, capture_write_snapshot
 from src.deriver import scope_backfill as scope_backfill_mod
 from src.deriver.scope_backfill import (
     COPIED_FROM_KEY,
@@ -667,6 +668,18 @@ async def test_copy_chunk_membership_lock_blocks_leave_until_write_commits(
 
     monkeypatch.setattr(scope_backfill_mod, "tracked_db", tracked_db_with_leave_race)
 
+    # What the plan phase captures before it reads the session's documents.
+    barrier = await capture_write_snapshot(
+        db_session,
+        workspace_name,
+        session_name=session.name,
+        representations=[
+            (sender.name, sender.name),
+            (scope_peer.name, sender.name),
+        ],
+    )
+    await db_session.commit()
+
     ok = await scope_backfill_mod._copy_chunk(  # pyright: ignore[reportPrivateUsage]
         workspace_name,
         scope_peer.name,
@@ -685,6 +698,7 @@ async def test_copy_chunk_membership_lock_blocks_leave_until_write_commits(
             )
         ],
         store_in_postgres=True,
+        barrier=barrier,
     )
     assert ok is True
 
@@ -1729,11 +1743,13 @@ async def test_backfill_embeds_and_writes_in_bounded_chunks(
         sess_name: str,
         plans: list[scope_backfill._CopySpec],  # pyright: ignore[reportPrivateUsage]
         store_in_postgres: bool,
+        *,
+        barrier: WriteSnapshot,
     ) -> bool:
         nonlocal peak_live_embeddings
         seen_specs.extend(plans)
         result = await original_copy_chunk(
-            ws_name, peer_name, sess_name, plans, store_in_postgres
+            ws_name, peer_name, sess_name, plans, store_in_postgres, barrier=barrier
         )
         # Sampled after this chunk syncs but before _run_backfill drops its
         # vectors, so every *earlier* chunk must already be cleared and the
