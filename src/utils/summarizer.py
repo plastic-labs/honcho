@@ -299,8 +299,8 @@ async def create_short_summary(
         formatted_messages, target_tokens, previous_summary_text, custom_instructions
     )
 
-    # Mint a root span id.
-    trace_id = generate_nanoid()
+    # The caller's trace id is the summary's run id; mint one if it has none.
+    trace_id = (telemetry.trace_id if telemetry else None) or generate_nanoid()
     return await honcho_llm_call(
         model_config=_get_summary_model_config(),
         prompt=prompt,
@@ -336,8 +336,8 @@ async def create_long_summary(
         formatted_messages, target_tokens, previous_summary_text, custom_instructions
     )
 
-    # Mint a root span id.
-    trace_id = generate_nanoid()
+    # The caller's trace id is the summary's run id; mint one if it has none.
+    trace_id = (telemetry.trace_id if telemetry else None) or generate_nanoid()
     return await honcho_llm_call(
         model_config=_get_summary_model_config(),
         prompt=prompt,
@@ -663,6 +663,8 @@ async def _create_and_save_summary(
         previous_summary_tokens = latest_summary["token_count"] if latest_summary else 0
         input_tokens = messages_tokens + previous_summary_tokens
 
+    # One run id per summary: its LLM calls and its summary-created event share it.
+    run_id = generate_nanoid()
     (
         new_summary,
         is_fallback,
@@ -681,6 +683,7 @@ async def _create_and_save_summary(
         telemetry=LLMTelemetryContext(
             workspace_name=workspace_name,
             session_id=session_id,
+            trace_id=run_id,
             source_message_ids=source_message_ids,
             queue_item_ids=[queue_item_id] if queue_item_id is not None else [],
             custom_instructions=configuration.summary.custom_instructions,
@@ -744,6 +747,7 @@ async def _create_and_save_summary(
         # it's guaranteed bound here.
         emit(
             AgentToolSummaryCreatedEvent(
+                run_id=run_id,
                 parent_category="deriver",
                 agent_type="summarizer",
                 workspace_name=workspace_name,

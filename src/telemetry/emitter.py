@@ -42,8 +42,9 @@ def _should_sample(
 
     When the event carries a `run_id`, sampling decisions hash on that id —
     so every event in an agent run either passes or fails the sampler, and
-    join queries downstream don't see half-traces. Events without `run_id`
-    (summarizer, deriver — non-agentic call sites) sample independently per
+    join queries downstream don't see half-traces. Deriver and summarizer LLM
+    calls carry their batch's or summary's run id, so a call and its retries
+    pass or fail together. Events without `run_id` sample independently per
     event using the event's deterministic id. Callers that have already
     computed `event.generate_id()` can pass it as `event_id` to avoid the
     redundant sha256 hash.
