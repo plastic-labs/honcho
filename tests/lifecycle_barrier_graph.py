@@ -9,9 +9,12 @@ input is read, and the final write behind the barrier.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator, Generator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 from nanoid import generate as generate_nanoid
 from sqlalchemy import func, select, text, update
@@ -19,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.crud.lifecycle_barrier import (
+    GenerationStamp,
     WriteSnapshot,
     capture_write_snapshot,
     final_write,
@@ -169,3 +173,27 @@ async def wait_until_waiting_on_a_lock(db: AsyncSession, pid: int) -> None:
             return
         await asyncio.sleep(0.05)
     raise AssertionError(f"backend {pid} never waited on a lock")
+
+
+@contextmanager
+def barrier_stand_in(module: str) -> Generator[WriteSnapshot]:
+    """Let a test drive ``module``'s producer with a mock database session.
+
+    The capture returns a stand-in snapshot and the final write passes through.
+    For tests of something other than the barrier, whose session cannot answer
+    its queries. Yields the stand-in.
+    """
+    snapshot = WriteSnapshot(
+        tenant_id=models.DEFAULT_TENANT_ID,
+        workspace=GenerationStamp("workspace-uid", "workspace", 0),
+    )
+
+    @asynccontextmanager
+    async def passthrough(*_args: Any, **_kwargs: Any) -> AsyncGenerator[None]:
+        yield
+
+    with (
+        patch(f"{module}.capture_write_snapshot", AsyncMock(return_value=snapshot)),
+        patch(f"{module}.final_write", passthrough),
+    ):
+        yield snapshot

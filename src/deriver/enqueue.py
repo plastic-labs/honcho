@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from contextlib import nullcontext
 from typing import Any, Literal
 
 from sqlalchemy import exists, insert, select
@@ -8,9 +9,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
+from src.crud.lifecycle import live_message_row, live_session_row
+from src.crud.lifecycle_barrier import (
+    WriteSnapshot,
+    capture_write_snapshot,
+    final_write,
+)
 from src.dependencies import service_db, tracked_db
 from src.dreamer.dream_scheduler import get_dream_scheduler
-from src.exceptions import ValidationException
+from src.exceptions import (
+    LifecycleBarrierError,
+    ValidationException,
+    WriteGenerationStaleError,
+    WriteParentGoneError,
+)
 from src.models import QueueItem
 from src.schemas import MessageConfiguration, ResolvedConfiguration
 from src.utils.config_helpers import get_configuration
@@ -89,12 +101,9 @@ async def enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> No
             if session_name is None or workspace_name is None:
                 raise ValidationException("Session and workspace are required")
 
-            queue_records = await handle_session(
+            await _enqueue_session_messages(
                 db_session, payload, workspace_name, session_name
             )
-
-            if queue_records:
-                await _insert_queue_records(db_session, queue_records)
 
         except Exception as e:
             # Reached only after _insert_queue_records has exhausted its
@@ -107,10 +116,136 @@ async def enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> No
                 sentry_sdk.capture_exception(e)
 
 
-async def _insert_queue_records(
-    db_session: AsyncSession, queue_records: list[dict[str, Any]]
+# How often a message enqueue is recomputed when a deletion lands inside its
+# own short transaction, before it gives up and leaves the messages unqueued.
+_STALE_ENQUEUE_ATTEMPTS = 3
+
+
+async def _enqueue_session_messages(
+    db_session: AsyncSession,
+    payload: list[dict[str, Any]],
+    workspace_name: str,
+    session_name: str,
 ) -> None:
-    """Insert a stamped, key-sorted batch of queue records, retrying transient failures."""
+    """Queue work for a session's new messages, behind the lifecycle barrier.
+
+    The messages were committed by the request. This runs after it, so the
+    session, or some of the messages, can be gone by now. Work is queued only
+    for messages that are still live, under the session they were written to.
+    Nothing here creates a session: that would bring a purged name back.
+    """
+    for attempt in range(1, _STALE_ENQUEUE_ATTEMPTS + 1):
+        try:
+            # Captured first, before the session's configuration and the
+            # messages' liveness are read.
+            barrier = await capture_write_snapshot(
+                db_session, workspace_name, session_name=session_name
+            )
+        except WriteParentGoneError as gone:
+            await db_session.rollback()
+            logger.info(
+                "Not enqueueing %d message(s) for %s/%s: %s",
+                len(payload),
+                workspace_name,
+                session_name,
+                gone.detail,
+            )
+            return
+
+        live_payload = await _live_messages(db_session, barrier, payload)
+        if not live_payload:
+            await db_session.rollback()
+            logger.info(
+                "Not enqueueing for %s/%s: its new messages were deleted",
+                workspace_name,
+                session_name,
+            )
+            return
+        barrier = barrier.with_messages(
+            message["message_public_id"]
+            for message in live_payload
+            if message.get("message_public_id")
+        )
+
+        queue_records = await handle_session(
+            db_session,
+            live_payload,
+            workspace_name,
+            session_name,
+            session_uid=barrier.session.uid if barrier.session else None,
+        )
+        if not queue_records:
+            return
+
+        try:
+            await _insert_queue_records(db_session, queue_records, barrier=barrier)
+            return
+        except WriteParentGoneError as gone:
+            logger.info(
+                "Not enqueueing %d message(s) for %s/%s: %s",
+                len(live_payload),
+                workspace_name,
+                session_name,
+                gone.detail,
+            )
+            return
+        except WriteGenerationStaleError as stale:
+            if attempt == _STALE_ENQUEUE_ATTEMPTS:
+                logger.warning(
+                    "Gave up enqueueing %d message(s) for %s/%s after %d attempts: %s",
+                    len(live_payload),
+                    workspace_name,
+                    session_name,
+                    attempt,
+                    stale.detail,
+                )
+                return
+
+
+async def _live_messages(
+    db_session: AsyncSession, barrier: WriteSnapshot, payload: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The payload's messages that are still live. Ones with no public id are kept."""
+    public_ids = [
+        message["message_public_id"]
+        for message in payload
+        if message.get("message_public_id")
+    ]
+    if not public_ids:
+        return payload
+    live = set(
+        await db_session.scalars(
+            select(models.Message.public_id).where(
+                models.Message.tenant_id == barrier.tenant_id,
+                models.Message.workspace_name == barrier.workspace.name,
+                models.Message.public_id.in_(public_ids),
+                live_message_row(),
+            )
+        )
+    )
+    return [
+        message
+        for message in payload
+        if not message.get("message_public_id") or message["message_public_id"] in live
+    ]
+
+
+async def _insert_queue_records(
+    db_session: AsyncSession,
+    queue_records: list[dict[str, Any]],
+    *,
+    barrier: WriteSnapshot | None = None,
+) -> None:
+    """Insert a stamped, key-sorted batch of queue records, retrying transient failures.
+
+    With ``barrier`` the insert runs inside ``final_write``, in the transaction
+    this function commits. Each retry takes the barrier's locks again: the
+    rollback before it released them.
+
+    Raises:
+        LifecycleBarrierError: With ``barrier``, when the session or a message
+            was deleted since capture. Nothing is inserted, and it is not retried
+    """
     # region ai
     # Sorted by work_unit_key so the insert trigger's batch upserts acquire
     # row locks in canonical key order — the same order the claim's lock step
@@ -128,10 +263,17 @@ async def _insert_queue_records(
     # loses its derivation. A time limit needs a durable retry first.
     last_attempt = 2
     for attempt in range(last_attempt + 1):
+        write_barrier = (
+            final_write(db_session, barrier) if barrier is not None else nullcontext()
+        )
         try:
-            await db_session.execute(stmt, records)
+            async with write_barrier:
+                await db_session.execute(stmt, records)
             await db_session.commit()
             return
+        except LifecycleBarrierError:
+            await db_session.rollback()
+            raise
         except Exception as exc:
             await db_session.rollback()
             if attempt == last_attempt or not is_retryable_error(exc):
@@ -169,26 +311,38 @@ async def handle_session(
     payload: list[dict[str, Any]],
     workspace_name: str,
     session_name: str,
+    *,
+    session_uid: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Handle enqueueing for normal session cases, creating appropriate queue items based on configurations.
+
+    The session is read, never created: it existed when its messages were
+    written, so a missing one was deleted since, and get-or-create would bring
+    the purged name back. A session marked for deletion gets no new work.
 
     Args:
         db_session: The database session
         payload: List of message payloads
         workspace_name: Name of the workspace
         session_name: Name of the session
+        session_uid: The id the caller captured for the session. A session of
+            the same name with another id is a different session
 
     Returns:
-        List of queue records to insert
+        List of queue records to insert; empty when the session is gone
     """
-    session = (
-        await crud.get_or_create_session(
-            db_session,
-            session=schemas.SessionCreate(name=session_name),
-            workspace_name=workspace_name,
-        )
-    ).resource
+    session_stmt = select(models.Session).where(
+        models.Session.tenant_id == models.scoped_tenant_id(),
+        models.Session.workspace_name == workspace_name,
+        models.Session.name == session_name,
+        live_session_row(),
+    )
+    if session_uid is not None:
+        session_stmt = session_stmt.where(models.Session.id == session_uid)
+    session = await db_session.scalar(session_stmt)
+    if session is None or not session.is_active:
+        return []
 
     # Fetch workspace for configuration resolution
     workspace = await crud.get_workspace(db_session, workspace_name=workspace_name)
@@ -542,9 +696,17 @@ async def enqueue_dream(
     documents_since_last_dream_at_schedule: int | None = None,
     document_threshold: int | None = None,
     rebuild: bool = False,
+    barrier: WriteSnapshot | None = None,
 ) -> None:
     """
     Enqueue a dream task for immediate processing by the deriver.
+
+    The queue row is inserted behind the lifecycle barrier: a dream is not
+    queued for a workspace or peer that was deleted. A caller that decided to
+    dream earlier (the delayed dream timer, which lives in one process) passes
+    ``barrier``, the workspace and peers it captured then, so peers recreated
+    under the same names do not pass. Other callers capture in the insert's
+    transaction. A refused enqueue is dropped, not raised.
 
     Does not touch collection.internal_metadata["dream"] — both guard fields
     are written atomically in process_dream on successful completion.
@@ -561,6 +723,7 @@ async def enqueue_dream(
         dream_type: Type of dream to execute
         session_name: Name of the session to scope the dream to if specified
         rebuild: card_refresh only — rebuild the card without the prior card
+        barrier: The workspace and peers captured when the dream was decided
     """
     # region ai
     # Per-tenant work, like message_enqueue: reject_scope_observed matches peers by
@@ -643,8 +806,24 @@ async def enqueue_dream(
                 return
 
             stmt = insert(QueueItem).returning(QueueItem)
-            await db_session.execute(stmt, _stamp_tenant_id([dream_record]))
-            await db_session.commit()
+            try:
+                snapshot = barrier or await capture_write_snapshot(
+                    db_session, workspace_name, peer_names=[observer, observed]
+                )
+                async with final_write(db_session, snapshot):
+                    await db_session.execute(stmt, _stamp_tenant_id([dream_record]))
+                await db_session.commit()
+            except LifecycleBarrierError as refused:
+                await db_session.rollback()
+                logger.info(
+                    "Not enqueueing dream for %s/%s/%s (type: %s): %s",
+                    workspace_name,
+                    observer,
+                    observed,
+                    dream_type.value,
+                    refused.detail,
+                )
+                return
 
             logger.info(
                 "Enqueued dream task for %s/%s/%s (type: %s)",

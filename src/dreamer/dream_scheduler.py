@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import asyncio
 import contextlib
 from datetime import UTC, datetime
 from logging import getLogger
+from typing import TYPE_CHECKING
 
 import sentry_sdk
 from sqlalchemy import exists, select
@@ -14,25 +17,30 @@ from src.dependencies import tracked_db
 from src.schemas import DreamType
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
+if TYPE_CHECKING:
+    # src.crud imports this module (crud.representation), so the barrier is
+    # imported where it is used, as src.crud is in execute_dream.
+    from src.crud.lifecycle_barrier import WriteSnapshot
+
 logger = getLogger(__name__)
 
 
-_dream_scheduler: "DreamScheduler | None" = None
+_dream_scheduler: DreamScheduler | None = None
 
 
-def set_dream_scheduler(dream_scheduler: "DreamScheduler") -> None:
+def set_dream_scheduler(dream_scheduler: DreamScheduler) -> None:
     """Set the global dream scheduler reference."""
     global _dream_scheduler
     _dream_scheduler = dream_scheduler
 
 
-def get_dream_scheduler() -> "DreamScheduler | None":
+def get_dream_scheduler() -> DreamScheduler | None:
     """Get the global dream scheduler reference."""
     return _dream_scheduler
 
 
 class DreamScheduler:
-    _instance: "DreamScheduler | None" = None
+    _instance: DreamScheduler | None = None
     _initialized: bool = False
 
     def __new__(cls):
@@ -65,12 +73,18 @@ class DreamScheduler:
         delay_reason: str | None = None,
         documents_since_last_dream_at_schedule: int | None = None,
         document_threshold: int | None = None,
+        barrier: WriteSnapshot | None = None,
     ) -> None:
         """Schedule a dream for a collection after a delay.
 
         telemetry kwargs are captured at schedule time and threaded
         through the queue payload so DreamRunEvent can attribute the dream
         back to its scheduling context.
+
+        The timer lives in this process only: a deletion handled by another
+        replica cannot cancel it. ``barrier`` is the workspace and peers
+        captured now, by id. When the timer fires, the dream is enqueued only
+        if those same rows are still live.
         """
         if not settings.DREAM.ENABLED:
             return
@@ -95,6 +109,7 @@ class DreamScheduler:
                 delay_reason=delay_reason,
                 documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
                 document_threshold=document_threshold,
+                barrier=barrier,
             )
         )
         self.pending_dreams[work_unit_key] = task
@@ -181,6 +196,7 @@ class DreamScheduler:
         delay_reason: str | None = None,
         documents_since_last_dream_at_schedule: int | None = None,
         document_threshold: int | None = None,
+        barrier: WriteSnapshot | None = None,
     ) -> None:
         try:
             await asyncio.sleep(delay_minutes * 60)
@@ -194,6 +210,7 @@ class DreamScheduler:
                 delay_reason=delay_reason,
                 documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
                 document_threshold=document_threshold,
+                barrier=barrier,
             )
             logger.info("Executed dream for %s", work_unit_key)
 
@@ -215,6 +232,7 @@ class DreamScheduler:
         delay_reason: str | None = None,
         documents_since_last_dream_at_schedule: int | None = None,
         document_threshold: int | None = None,
+        barrier: WriteSnapshot | None = None,
     ) -> None:
         """Execute the dream by enqueueing it."""
         from src import crud
@@ -273,6 +291,7 @@ class DreamScheduler:
             delay_reason=delay_reason,
             documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
             document_threshold=document_threshold,
+            barrier=barrier,
         )
 
     async def shutdown(self) -> None:
@@ -320,6 +339,17 @@ async def schedule_backlog_dream(
             "dream_type": DreamType.OMNI.value,
         },
     )
+    from src.crud.lifecycle_barrier import capture_write_snapshot
+    from src.exceptions import WriteParentGoneError
+
+    try:
+        async with tracked_db("dream.backlog_identity", read_only=True) as db:
+            identity = await capture_write_snapshot(
+                db, workspace_name, peer_names=[observer, observed]
+            )
+    except WriteParentGoneError:
+        # The workspace or a peer was deleted while the dream ran.
+        return
     await dream_scheduler.schedule_dream(
         work_unit_key,
         workspace_name,
@@ -329,6 +359,7 @@ async def schedule_backlog_dream(
         observed=observed,
         trigger_reason="work_list_backlog",
         delay_reason="min_hours_gate",
+        barrier=identity,
     )
 
 
@@ -460,6 +491,20 @@ async def check_and_schedule_dream(
 
         dream_scheduler = get_dream_scheduler()
         if dream_scheduler:
+            from src.crud.lifecycle_barrier import capture_write_snapshot
+            from src.exceptions import WriteParentGoneError
+
+            # The workspace and peers by id, as they are now. The timer hands
+            # this to the enqueue when it fires, possibly hours later.
+            try:
+                identity = await capture_write_snapshot(
+                    db,
+                    collection.workspace_name,
+                    tenant_id=collection.tenant_id,
+                    peer_names=[collection.observer, collection.observed],
+                )
+            except WriteParentGoneError:
+                return False
             for dream_type in enabled_dream_types:
                 dream_work_unit_key = construct_work_unit_key(
                     collection.workspace_name,
@@ -481,6 +526,7 @@ async def check_and_schedule_dream(
                     delay_reason=delay_reason,
                     documents_since_last_dream_at_schedule=documents_since_last_dream,
                     document_threshold=settings.DREAM.DOCUMENT_THRESHOLD,
+                    barrier=identity,
                 )
                 logger.debug(
                     "Scheduled dream",

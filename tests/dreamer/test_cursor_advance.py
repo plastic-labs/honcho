@@ -16,6 +16,7 @@ from src.dreamer.working_memory import (
 )
 from src.schemas import DreamType
 from src.utils.queue_payload import DreamPayload
+from tests.lifecycle_barrier_graph import barrier_stand_in
 
 
 def _result(deduction: bool, induction: bool) -> DreamResult:
@@ -189,8 +190,12 @@ async def test_backlog_timer_waits_out_the_min_hours_gate(
     monkeypatch.setattr(settings.DERIVER, "SCHEDULER", scheduler_mode)
     monkeypatch.setattr(settings.DREAM, "MIN_HOURS_BETWEEN_DREAMS", 8)
     scheduler = MagicMock(schedule_dream=AsyncMock())
-    with patch(
-        "src.dreamer.dream_scheduler.get_dream_scheduler", return_value=scheduler
+    with (
+        patch(
+            "src.dreamer.dream_scheduler.get_dream_scheduler", return_value=scheduler
+        ),
+        # The timer carries the workspace and peers it captured when it was set.
+        barrier_stand_in("src.crud.lifecycle_barrier") as identity,
     ):
         await schedule_backlog_dream("w", observer="a", observed="b")
     if scheduler_mode == "api":
@@ -201,3 +206,4 @@ async def test_backlog_timer_waits_out_the_min_hours_gate(
     assert args is not None
     assert args.args[2] == 8 * 60
     assert args.kwargs["trigger_reason"] == "work_list_backlog"
+    assert args.kwargs["barrier"] is identity
