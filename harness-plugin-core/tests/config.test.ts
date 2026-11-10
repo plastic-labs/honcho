@@ -92,6 +92,11 @@ describe('checkConfig + applyFixes', () => {
     expect(baseUrlOf(after, 'a')).toBe('https://api.honcho.dev')
     expect(baseUrlOf(after, 'b')).toBe('http://localhost:8000')
   })
+
+  test('a grant under the old auth.oauth moves to oauth before auth is removed', () => {
+    const grant = { accessToken: 'at', refreshToken: 'rt', accessExpiresAt: 1, clientId: 'c', scope: 'write' }
+    expect(doctor({ hosts: { a: { schemaVersion: 2, auth: { oauth: grant } } } }).hosts.a).toEqual({ schemaVersion: 2, oauth: grant })
+  })
 })
 
 describe('configPath', () => {

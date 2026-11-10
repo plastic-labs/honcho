@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -164,6 +164,29 @@ describe('ensureFreshCredential', () => {
     const cred = await ensureFreshCredential({ path, host: 'claude_code', env: {}, fetch })
     expect(cred).toMatchObject({ token: 'hch-at-x', expired: true, error: 'connection_error' })
     expect(cred?.reauthRequired).toBeUndefined()
+  })
+})
+
+describe('withConfigLock', () => {
+  test("an owner whose lock was broken as stale leaves the new owner's lock alone", async () => {
+    const path = tmpConfig({})
+    const lock = `${path}.lock`
+    let entered!: () => void
+    let release!: () => void
+    const inside = new Promise<void>((r) => (entered = r))
+    let second!: Promise<void>
+    await withConfigLock(path, async () => {
+      utimesSync(lock, new Date(0), new Date(0)) // looks stale, as after a laptop sleep
+      second = withConfigLock(path, () => {
+        entered()
+        return new Promise<void>((r) => (release = r))
+      })
+      await inside
+    })
+    expect(existsSync(lock)).toBe(true) // still the second owner's
+    release()
+    await second
+    expect(existsSync(lock)).toBe(false)
   })
 })
 

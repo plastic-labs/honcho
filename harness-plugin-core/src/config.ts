@@ -213,6 +213,11 @@ const CLI_ROOT_KEYS = ['apiKey', 'environmentUrl', 'oauth']
 /** Old spellings inside a host block. */
 const LEGACY_HOST_KEYS = ['auth', 'endpoint', 'environmentUrl', 'workspaceId']
 
+/** A grant stored under the old `auth.oauth`, when the block has none under `oauth`. */
+function legacyGrantOf(b: Record<string, any>): Record<string, any> | undefined {
+  return b.oauth === undefined && isObj(b.auth) && isObj(b.auth.oauth) ? b.auth.oauth : undefined
+}
+
 /**
  * Problems in a config file, each with the fixes `applyFixes` (and `honcho
  * doctor`) apply. Schema-level only: keys a plugin still uses inside its own
@@ -234,6 +239,7 @@ export function checkConfig(file: unknown): ConfigIssue[] {
     const legacy = LEGACY_HOST_KEYS.filter((k) => k in hosts[h])
     if (!legacy.length) continue
     const settings = settingsOf(hosts[h])
+    const grant = legacyGrantOf(hosts[h])
     issues.push({
       path: `hosts.${h}`,
       message: `hosts.${h} uses old key names (${legacy.join(', ')})${isMigrated(hosts[h]) ? '' : `; they stay until the ${h} plugin is updated`}.`,
@@ -241,6 +247,7 @@ export function checkConfig(file: unknown): ConfigIssue[] {
         ...Object.entries(settings)
           .filter(([k]) => hosts[h][k] === undefined)
           .map(([k, value]): ConfigFix => ({ op: 'set', path: ['hosts', h, k], value })),
+        ...(grant ? [{ op: 'set', path: ['hosts', h, 'oauth'], value: grant } as ConfigFix] : []),
         ...(isMigrated(hosts[h]) ? legacy.map((k): ConfigFix => ({ op: 'delete', path: ['hosts', h, k] })) : []),
       ],
     })
@@ -333,7 +340,8 @@ export function hostMigration(
     if (value !== undefined) set[key] = value
   }
   if (f.globalOverride === true && root.workspace && block.workspace !== root.workspace) set.workspace = root.workspace
-  if (block.oauth === undefined && isObj(block.auth) && isObj(block.auth.oauth)) set.oauth = block.auth.oauth
+  const grant = legacyGrantOf(block)
+  if (grant) set.oauth = grant as HostConfig['oauth']
   const remove = [...LEGACY_HOST_KEYS, ...deadKeys].filter((k) => k in block && !(k in set))
   // Mark the block as read by a current plugin, so doctor knows it may clean up.
   if ((hasBlock || Object.keys(set).length) && !isMigrated(block)) set.schemaVersion = CONFIG_SCHEMA_VERSION

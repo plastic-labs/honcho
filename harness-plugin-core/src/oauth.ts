@@ -221,13 +221,15 @@ export async function withConfigLock<T>(path: string, fn: () => Promise<T>): Pro
       await new Promise((r) => setTimeout(r, 50 + Math.random() * 50))
     }
   }
+  const token = `${process.pid}:${Math.random().toString(36).slice(2)}`
   try {
-    writeFileSync(fd, String(process.pid))
+    writeFileSync(fd, token)
     return await fn()
   } finally {
     closeSync(fd)
+    // Remove only our own lock: if a waiter broke it as stale, the one there now is theirs.
     try {
-      unlinkSync(lock)
+      if (readFileSync(lock, 'utf-8') === token) unlinkSync(lock)
     } catch {}
   }
 }
