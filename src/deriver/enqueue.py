@@ -28,6 +28,48 @@ from src.utils.work_unit import (
 
 logger = logging.getLogger(__name__)
 
+
+class _ChunkRouter:
+    """Sends the representation records of one enqueue call to a chunk once their unit is deep.
+
+    A representation work unit is drained by one worker, in message order, so a
+    unit with thousands of pending messages keeps one worker busy while the
+    others idle. Past REPRESENTATION_CHUNK_THRESHOLD_MESSAGES pending messages,
+    a new message goes to a chunk unit instead, keyed by its position in the
+    session. A chunk is an ordinary work unit, so the claim, the heartbeat and
+    the retry budget apply to it unchanged and any worker can take it.
+
+    The chunk number comes from the message's own sequence, so two enqueue calls
+    that run at the same time agree on it without a lock. The depth is read once
+    per unit and then counted in memory: a concurrent call can leave the base
+    unit a little over the threshold, which is harmless.
+    """
+
+    def __init__(self, db_session: AsyncSession) -> None:
+        self._db_session: AsyncSession = db_session
+        self._pending: dict[str, int] = {}
+
+    async def chunk_for(self, base_key: str, seq_in_session: int) -> int | None:
+        """The chunk this message goes to, or None while its base unit is shallow."""
+        pending = self._pending.get(base_key)
+        if pending is None:
+            # queue_item_batches has one row per unit with pending items and
+            # none otherwise, so a missing row is a depth of zero.
+            pending = (
+                await self._db_session.scalar(
+                    select(models.QueueItemBatch.pending_count).where(
+                        models.QueueItemBatch.work_unit_key == base_key
+                    )
+                )
+                or 0
+            )
+        if pending >= settings.DERIVER.REPRESENTATION_CHUNK_THRESHOLD_MESSAGES:
+            self._pending[base_key] = pending
+            return seq_in_session // settings.DERIVER.REPRESENTATION_CHUNK_MESSAGES
+        self._pending[base_key] = pending + 1
+        return None
+
+
 # Caps the queue writes one process runs at once, so a burst of enqueues
 # cannot take every pooled DB connection from request handlers.
 _ENQUEUE_DB_SLOTS = asyncio.Semaphore(
@@ -201,6 +243,11 @@ async def handle_session(
     )
 
     queue_records: list[dict[str, Any]] = []
+    chunk_router = (
+        _ChunkRouter(db_session)
+        if settings.DERIVER.REPRESENTATION_CHUNK_THRESHOLD_MESSAGES > 0
+        else None
+    )
 
     for message in payload:
         message_config: MessageConfiguration | None = message.get("configuration")
@@ -217,6 +264,7 @@ async def handle_session(
                 peers_with_configuration,
                 session.id,
                 message_level_configuration,
+                chunk_router=chunk_router,
             )
         )
     return queue_records
@@ -382,6 +430,8 @@ async def generate_queue_records(
     peers_with_configuration: dict[str, list[dict[str, Any]]],
     session_id: str,
     conf: ResolvedConfiguration,
+    *,
+    chunk_router: _ChunkRouter | None = None,
 ) -> list[dict[str, Any]]:
     """
     Process a single message and generate queue records based on configurations.
@@ -392,6 +442,8 @@ async def generate_queue_records(
         peers_with_configuration: Dictionary of peer configurations
         session_id: Session ID
         configuration: Resolved configuration for this particular message
+        chunk_router: Routes the representation record to a chunk when its
+            work unit is deep; None leaves every record on its base unit
 
     Returns:
         List of queue records for this message
@@ -457,15 +509,24 @@ async def generate_queue_records(
 
     # Create a single record with all observers (if any)
     if observers:
-        records.append(
-            create_representation_record(
-                message,
-                conf,
-                observed=observed,
-                observers=observers,
-                session_id=session_id,
-            )
+        representation_record = create_representation_record(
+            message,
+            conf,
+            observed=observed,
+            observers=observers,
+            session_id=session_id,
         )
+        if chunk_router is not None:
+            chunk = await chunk_router.chunk_for(
+                representation_record["work_unit_key"], message_seq_in_session
+            )
+            if chunk is not None:
+                representation_record["work_unit_key"] = construct_work_unit_key(
+                    message["workspace_name"],
+                    representation_record["payload"],
+                    chunk=chunk,
+                )
+        records.append(representation_record)
 
     logger.debug(
         "message %s from %s created %s queue items with %s observers",
