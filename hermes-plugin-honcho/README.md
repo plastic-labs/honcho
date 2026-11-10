@@ -426,8 +426,8 @@ not injected `<memory-context>`. A match marks every user and assistant message
 in that turn with `reasoning.enabled: false`, suppressing each message's own
 reasoning observation enqueue. Honcho still stores the messages for replay and
 search, and may use them as context when reasoning about other messages.
-Non-list config values are ignored with a warning; they do not fall back from a
-host block to the root list.
+An explicit `null` is treated as empty without a warning; other non-list values
+are ignored with a warning. Neither falls back from a host block to the root list.
 
 ### Hardcoded Limits
 
