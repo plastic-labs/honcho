@@ -8,7 +8,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, delete
+from sqlalchemy import CursorResult, delete, select
 
 from src import models
 from src.config import settings
@@ -33,17 +33,27 @@ async def cleanup_queue_items() -> int:
             seconds=settings.DERIVER.QUEUE_ERROR_RETENTION_SECONDS
         )
 
+        # Skip rows another transaction holds (a session or workspace deletion
+        # deleting the same processed rows) instead of waiting on them: this
+        # gets them on a later pass, and a statement that never waits can't be
+        # a deadlock partner.
         result = cast(
             CursorResult[Any],
             await db.execute(
                 delete(models.QueueItem).where(
-                    models.QueueItem.processed
-                    & (
-                        models.QueueItem.error.is_(None)
-                        | (
-                            models.QueueItem.error.is_not(None)
-                            & (models.QueueItem.created_at < error_cutoff)
+                    models.QueueItem.id.in_(
+                        select(models.QueueItem.id)
+                        .where(
+                            models.QueueItem.processed
+                            & (
+                                models.QueueItem.error.is_(None)
+                                | (
+                                    models.QueueItem.error.is_not(None)
+                                    & (models.QueueItem.created_at < error_cutoff)
+                                )
+                            )
                         )
+                        .with_for_update(skip_locked=True)
                     )
                 )
             ),
