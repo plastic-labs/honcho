@@ -85,14 +85,14 @@ Omit `hostVersion` when the harness does not expose it; `platform` defaults to `
 
 ```ts
 import { Honcho } from '@honcho-ai/sdk'
-import { loadConfig, setTelemetryHeaders, telemetryHeaders } from '@honcho-ai/harness-plugin-core'
+import { configPath, ensureFreshCredential, loadConfig, setTelemetryHeaders, telemetryHeaders } from '@honcho-ai/harness-plugin-core'
 
 const cfg = loadConfig({ host: 'harness' })
+const cred = await ensureFreshCredential({ path: configPath(), host: 'harness', baseUrl: cfg.baseUrl })
 const honcho = new Honcho({
-  apiKey: cfg.apiKey,
+  apiKey: cred?.token,
   baseURL: cfg.baseUrl,
   workspaceId: cfg.workspace,
-  timeout: cfg.timeoutMs,
   defaultHeaders: telemetryHeaders({
     host: 'harness',
     hostVersion: '1.3.13',
