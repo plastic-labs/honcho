@@ -240,7 +240,9 @@ export function checkConfig(file: unknown): ConfigIssue[] {
     const fixes: ConfigFix[] = []
     for (const [key, value] of Object.entries(root)) {
       for (const h of names) {
-        if (hosts[h][key] === undefined || (key === 'workspace' && override && hosts[h].workspace !== value)) {
+        // A host's own value wins, under any spelling.
+        const own = settingsOf(hosts[h])[key as (typeof MOVABLE)[number]]
+        if (own === undefined || (key === 'workspace' && override && own !== value)) {
           fixes.push({ op: 'set', path: ['hosts', h, key], value })
         }
       }
