@@ -292,8 +292,10 @@ honcho workspace replay --from my-app --to-url https://honcho.internal.example.c
 ```
 
 Use `HONCHO_FROM_API_KEY` when the other instance is the source. The keys are
-read from the environment only; there is no flag for them, so a key never lands
-in your shell history or a process listing.
+read from the environment only. There is no flag for them, because command-line
+arguments are visible in process listings. A key typed in an `export` line is
+still saved in your shell history, so load it from a secrets manager or a file
+where you can.
 
 Things to know:
 
