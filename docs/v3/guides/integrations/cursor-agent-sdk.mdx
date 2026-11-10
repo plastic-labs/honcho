@@ -14,7 +14,7 @@ There are two ways to connect them:
 | Best for | An agent you use yourself | An agent that serves a team, a Slack workspace or GitHub |
 | Who records turns | The model, following the plugin's skills | Your code, after every turn |
 | People | One user peer: you | One peer per person |
-| Code to write | Two short files | Four short files |
+| Code to write | Three short files | Four short files |
 
 Both need a Honcho API key from [app.honcho.dev](https://app.honcho.dev).
 
@@ -67,6 +67,27 @@ The Honcho plugin for [Cursor](/v3/guides/integrations/cursor) and [Grok Bot](/v
 
     If `bot/hooks/memory.ts` and a `## Memory` section from `agent-sdk init` are still there, delete them.
   </Step>
+  <Step title="Deploy">
+    Allow the Honcho MCP host and declare the secret:
+
+    ```ts bot/agent.ts
+    import { defineAgent } from "@grok/agent-sdk";
+
+    export default defineAgent({
+      hosting: {
+        egressDomains: ["mcp.honcho.dev"],
+        secretNames: ["HONCHO_API_KEY"],
+      },
+    });
+    ```
+
+    ```bash
+    agent-sdk deploy
+    agent-sdk secret set <agent> HONCHO_API_KEY
+    ```
+
+    Locally, export `HONCHO_API_KEY` before `agent-sdk dev`.
+  </Step>
 </Steps>
 
 Start the agent with `agent-sdk dev` and say hello. On the first conversation the agent runs `honcho-setup` and asks what Honcho should call you. It uses the `cursor` workspace, the same one the plugin uses in the Cursor IDE and Grok Bot, so all three share what they learn about you.
@@ -91,13 +112,16 @@ npm install @honcho-ai/sdk
     import type { SessionInfo } from "@grok/agent-sdk";
     import { Honcho } from "@honcho-ai/sdk";
 
-    // Reads HONCHO_API_KEY and HONCHO_WORKSPACE_ID. Call it inside a handler:
+    // Both read HONCHO_API_KEY and HONCHO_WORKSPACE_ID. Call them inside a handler:
     // hosted secrets are not set yet when modules load.
-    export const honcho = () =>
-      new Honcho({
-        timeout: 5_000, // a slow hook holds up the next event in its session
-        defaultHeaders: { "X-Honcho-Plugin": "cursor-agent-sdk" },
-      });
+    const defaultHeaders = { "X-Honcho-Plugin": "cursor-agent-sdk" };
+
+    // For hooks: a slow hook holds up the next event in its session.
+    export const honcho = () => new Honcho({ timeout: 5_000, defaultHeaders });
+
+    // For recall: a dialectic answer can take a while, and a retry would start another one.
+    export const honchoRecall = () =>
+      new Honcho({ timeout: 60_000, maxRetries: 0, defaultHeaders });
 
     // Honcho ids allow only letters, digits, _ and -.
     export const toId = (s: string) => s.replace(/[^A-Za-z0-9_-]/g, "-");
@@ -147,14 +171,14 @@ npm install @honcho-ai/sdk
     ```ts bot/tools/recall.ts
     import { defineTool } from "@grok/agent-sdk/tools";
     import { z } from "zod";
-    import { honcho, userPeerId } from "../lib/honcho.js";
+    import { honchoRecall, userPeerId } from "../lib/honcho.js";
 
     export default defineTool({
       description:
         "Ask Honcho what it knows about the person you are talking to: preferences, past work, decisions. Call it before answering anything that depends on them.",
       inputSchema: z.object({ question: z.string() }),
       async execute({ question }, ctx) {
-        const peer = await honcho().peer(userPeerId(ctx.session));
+        const peer = await honchoRecall().peer(userPeerId(ctx.session));
         return (await peer.chat(question)) ?? "Honcho knows nothing about this person yet.";
       },
     });
