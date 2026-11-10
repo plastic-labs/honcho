@@ -120,6 +120,14 @@ def test_first_turn_waits_outlast_the_memory_managers_prefetch_timeout():
 def test_first_turn_waits_are_bounded_by_the_first_turn_knobs(turn, turn_start_kwargs):
     blocked = threading.Event()
     joins = []
+    timed_out = threading.Event()
+
+    def release_on_timeout():
+        timed_out.set()
+        blocked.set()
+
+    watchdog = threading.Timer(5.0, release_on_timeout)
+    watchdog.start()
     original_join = threading.Thread.join
 
     def record_join(thread, timeout=None):
@@ -144,6 +152,33 @@ def test_first_turn_waits_are_bounded_by_the_first_turn_knobs(turn, turn_start_k
         assert all(timeout is not None and 0 <= timeout <= 0.05 for _, timeout in joins)
     finally:
         blocked.set()
+        watchdog.cancel()
+        watchdog.join()
+    assert not timed_out.is_set(), "first-turn wait exceeded watchdog"
+
+
+def test_first_recall_bounds_in_flight_initialization():
+    provider = _provider([], first_turn_base_wait=0.05)
+    blocked = threading.Event()
+    init_thread = threading.Thread(target=blocked.wait, name="honcho-session-init", daemon=True)
+    init_thread.start()
+    watchdog = threading.Timer(5.0, blocked.set)
+    watchdog.start()
+    provider._init_thread = init_thread
+    provider._session_initialized = False
+    try:
+        with patch.object(provider, "_start_session_init_background"), patch.object(
+            init_thread, "join", wraps=init_thread.join
+        ) as join:
+            assert not provider._wait_for_first_recall(CURRENT, resumed=False)
+            assert join.call_count == 1
+            assert 0 <= join.call_args.kwargs["timeout"] <= 0.05
+            assert init_thread.is_alive()
+    finally:
+        blocked.set()
+        watchdog.cancel()
+        watchdog.join()
+        init_thread.join(timeout=1)
 
 
 def test_late_prewarm_does_not_replace_the_resumed_dialectic():
