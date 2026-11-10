@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 from collections.abc import Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from enum import Enum
 from logging import getLogger
@@ -25,12 +26,18 @@ from src.crud.dream_history import (
     record_removed,
 )
 from src.crud.lifecycle import live_document_row
-from src.crud.lifecycle_barrier import bump_collection_generations
+from src.crud.lifecycle_barrier import (
+    WriteSnapshot,
+    bump_collection_generations,
+    ensure_collections,
+    final_write,
+)
 from src.crud.peer import get_peer, reject_scope_observed
 from src.crud.session import get_session
 from src.dependencies import tracked_db
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import (
+    LifecycleBarrierError,
     ResourceNotFoundException,
     ValidationException,
     VectorNamespaceUnresolved,
@@ -689,6 +696,7 @@ async def create_documents(
     observed: str,
     deduplicate: bool = False,
     history: DreamHistoryTarget | None = None,
+    barrier: WriteSnapshot | None = None,
 ) -> CreateDocumentsResult:
     """
     Create multiple documents with optional duplicate detection.
@@ -707,10 +715,19 @@ async def create_documents(
         history: When set, record the created conclusions, and the existing
             ones that semantic dedup replaced, to this dream run in the same
             transaction
+        barrier: What the producer captured before it read its input. Every
+            producer passes it. The inserts, the reinforcements and the
+            fallback inserts for vanished reinforcement targets then run behind
+            the lifecycle barrier, in the transaction this function commits,
+            and the collection is created in that transaction if it is missing
 
     Returns:
         List of DocumentCreate schemas that were actually inserted (excludes
         duplicates and failures).
+
+    Raises:
+        LifecycleBarrierError: With ``barrier``, when a deletion made the
+            captured input stale. Nothing is written
     """
     honcho_documents: list[models.Document] = []
     accepted_documents: list[schemas.DocumentCreate] = []
@@ -994,39 +1011,52 @@ async def create_documents(
             )
 
     replaced_rows: list[models.Document] = []
+    # The barrier's parent locks are the first locks this transaction takes;
+    # everything above only read. A reinforcement target tombstoned since then
+    # comes back as a fallback insert: when a deletion erased it, the
+    # collection's generation moved and the block's exit refuses the write.
+    write_barrier = (
+        final_write(db, barrier.for_representation(observer, observed))
+        if barrier is not None
+        else nullcontext()
+    )
     try:
-        fallback_docs = await _apply_document_row_updates(
-            db,
-            row_ops,
-            workspace_name=workspace_name,
-            observer=observer,
-            observed=observed,
-            replaced_out=replaced_rows,
-        )
-        for fallback_doc in fallback_docs:
-            new_doc = _document_model_from_create(
-                fallback_doc,
+        async with write_barrier:
+            if barrier is not None:
+                await ensure_collections(db, barrier, [(observer, observed)])
+            fallback_docs = await _apply_document_row_updates(
+                db,
+                row_ops,
                 workspace_name=workspace_name,
                 observer=observer,
                 observed=observed,
+                replaced_out=replaced_rows,
             )
-            honcho_documents.append(new_doc)
-            accepted_documents.append(fallback_doc)
-            if fallback_doc.embedding:
-                docs_with_embeddings.append((new_doc, fallback_doc.embedding))
-        db.add_all(honcho_documents)
-        if history is not None:
-            await _record_created_history(
-                db,
-                history,
-                workspace_name,
-                created=honcho_documents,
-                replaced=replaced_rows,
-                replaced_by={
-                    old_id: pending_by_key.get(key)
-                    for old_id, (_, key) in replaced_by.items()
-                },
-            )
+            for fallback_doc in fallback_docs:
+                new_doc = _document_model_from_create(
+                    fallback_doc,
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                )
+                honcho_documents.append(new_doc)
+                accepted_documents.append(fallback_doc)
+                if fallback_doc.embedding:
+                    docs_with_embeddings.append((new_doc, fallback_doc.embedding))
+            db.add_all(honcho_documents)
+            if history is not None:
+                await _record_created_history(
+                    db,
+                    history,
+                    workspace_name,
+                    created=honcho_documents,
+                    replaced=replaced_rows,
+                    replaced_by={
+                        old_id: pending_by_key.get(key)
+                        for old_id, (_, key) in replaced_by.items()
+                    },
+                )
+        # After the block: it locked the collection row this updates.
         await record_explicit_documents(db, honcho_documents)
         # NOTE
         # If the process crashes after this commit but before vector upsert completes,
@@ -1122,9 +1152,10 @@ async def create_documents(
         raise ValidationException(
             "Failed to create documents due to integrity constraint violation"
         ) from e
-    except DBAPIError:
+    except (DBAPIError, LifecycleBarrierError):
         # Leave the session clean for callers that own it (e.g. a deadlock
-        # at the final commit); the queue layer classifies and retries.
+        # at the final commit, or a write the lifecycle barrier refused); the
+        # queue layer classifies and retries.
         await db.rollback()
         raise
 

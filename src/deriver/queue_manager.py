@@ -33,6 +33,13 @@ from src.crud.deriver import (
 from src.crud.deriver import (
     cleanup_stale_work_units as crud_cleanup_stale_work_units,
 )
+from src.crud.lifecycle import live_message_row
+from src.crud.lifecycle_barrier import (
+    ClaimStamp,
+    WriteSnapshot,
+    capture_write_snapshot,
+    stamp_representations,
+)
 from src.db import tenant_context
 from src.dependencies import service_db
 from src.deriver.consumer import (
@@ -43,6 +50,11 @@ from src.dreamer.dream_scheduler import (
     DreamScheduler,
     get_dream_scheduler,
     set_dream_scheduler,
+)
+from src.exceptions import (
+    WriteClaimLostError,
+    WriteGenerationStaleError,
+    WriteParentGoneError,
 )
 from src.models import QueueItem
 from src.reconciler import (
@@ -101,6 +113,23 @@ class QueueBatchResult:
     hit_batch_token_cap: bool = False
     was_flush_enabled: bool = False
     batch_max_tokens: int = 0
+    # The observers of this batch that are still live, and what the lifecycle
+    # barrier captured for the batch before its messages were read.
+    observers: list[str] = field(default_factory=list)
+    barrier: WriteSnapshot | None = None
+
+
+def _batch_observers(items_to_process: list[QueueItem]) -> list[str]:
+    """The observers a batch saves to, from its first item's payload."""
+    if not items_to_process:
+        return []
+    payload = items_to_process[0].payload
+    observers = payload.get("observers")
+    if observers is None:
+        # Legacy format: single observer string
+        legacy_observer = payload.get("observer")
+        return [legacy_observer] if legacy_observer else []
+    return list(observers)
 
 
 def _detach_queue_batch_objects(
@@ -701,8 +730,42 @@ class QueueManager:
             items: The queue items that were being processed
             work_unit_key: The work unit key for the queue items
             context: Context string describing what was being processed (e.g., "processing representation batch")
+
+        A write the lifecycle barrier refused is not a failure of the work:
+
+        - ``WriteParentGoneError``: the parent was deleted. The items are
+          dropped (marked processed, no error) and processing carries on.
+        - ``WriteClaimLostError``: this worker no longer holds the unit. The
+          items are left as they are and the unit is released.
+        - ``WriteGenerationStaleError``: a deletion changed the input. It is
+          retried like a transient error, which recomputes it from live input.
         """
-        if is_retryable_error(error):
+        if isinstance(error, WriteParentGoneError):
+            logger.info(
+                "Dropping %d queue item(s) %s for work unit %s: %s",
+                len(items),
+                context,
+                work_unit_key,
+                error.detail,
+            )
+            try:
+                await self._drop_queue_items([item.id for item in items], work_unit_key)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to drop queue items for work unit %s", work_unit_key
+                )
+                return True
+            return False
+        if isinstance(error, WriteClaimLostError):
+            logger.warning(
+                "Lost the claim on work unit %s while %s; releasing it: %s",
+                work_unit_key,
+                context,
+                error.detail,
+            )
+            return True
+
+        if is_retryable_error(error) or isinstance(error, WriteGenerationStaleError):
             try:
                 attempts = await self._get_work_unit_retry_attempts(work_unit_key) + 1
                 if attempts < MAX_RETRYABLE_ATTEMPTS:
@@ -845,17 +908,7 @@ class QueueManager:
                                 break
 
                             try:
-                                # Extract observers from the payload (handle both old and new format)
-                                payload = items_to_process[0].payload
-                                observers = payload.get("observers")
-                                if observers is None:
-                                    # Legacy format: single observer string
-                                    legacy_observer = payload.get("observer")
-                                    if legacy_observer:
-                                        observers = [legacy_observer]
-                                    else:
-                                        observers = []
-
+                                observers = batch_result.observers
                                 queue_item_message_ids = [
                                     item.message_id
                                     for item in items_to_process
@@ -874,6 +927,7 @@ class QueueManager:
                                     hit_batch_token_cap=batch_result.hit_batch_token_cap,
                                     was_flush_enabled=batch_result.was_flush_enabled,
                                     batch_max_tokens=batch_result.batch_max_tokens,
+                                    barrier=batch_result.barrier,
                                 )
                                 await self.mark_queue_items_as_processed(
                                     items_to_process, work_unit_key
@@ -1117,6 +1171,34 @@ class QueueManager:
                     batch_max_tokens=batch_max_tokens,
                 )
 
+            # Lifecycle barrier: capture the workspace, session and observed
+            # peer BEFORE the messages are read, so a deletion that lands after
+            # this is caught at the save, and one that landed before it is
+            # already absent from the read below.
+            if parsed_key.workspace_name is None or parsed_key.observed is None:
+                raise ValueError(
+                    f"work_unit_key {work_unit_key!r} names no workspace or observed peer"
+                )
+            try:
+                barrier = await capture_write_snapshot(
+                    db,
+                    parsed_key.workspace_name,
+                    tenant_id=parsed_key.tenant_id,
+                    session_name=parsed_key.session_name,
+                    peer_names=[parsed_key.observed],
+                )
+            except WriteParentGoneError as gone:
+                # The session, workspace or observed peer was deleted: the
+                # unit's remaining work has nowhere to land. Drop it without a
+                # model call.
+                await db.rollback()
+                logger.info("Dropping work unit %s: %s", work_unit_key, gone.detail)
+                await self._drop_queue_items(None, work_unit_key)
+                return QueueBatchResult(
+                    was_flush_enabled=was_flush_enabled,
+                    batch_max_tokens=batch_max_tokens,
+                )
+
             # Step 2: Build a single SQL query that:
             # 1. Finds the earliest unprocessed message for this work_unit_key
             # 2. Optionally includes the preceding message if from a different peer (for context)
@@ -1266,6 +1348,54 @@ class QueueManager:
             # Python list after detach and survives the rest of this block.
             _detach_queue_batch_objects(db, messages_context, items_to_process)
 
+            # Lifecycle barrier, second half: keep only live input.
+            #
+            # The queue rows carry the id of the session they were enqueued
+            # for, so rows for another session under the same name are work
+            # for a deleted session. A message that is tombstoned, or whose
+            # author is, is deleted content: it must not reach the prompt as
+            # a queued message or as context, and the barrier would refuse a
+            # write that read it. The same liveness predicate is used at the
+            # write, so a recomputed batch does not read it again.
+            session_uid = barrier.session.uid if barrier.session else None
+            live_message_ids = set(
+                await db.scalars(
+                    # The tenant and session are bound so the lookup seeks
+                    # the session's message index in every deployment mode.
+                    select(models.Message.id).where(
+                        models.Message.tenant_id == barrier.tenant_id,
+                        models.Message.workspace_name == parsed_key.workspace_name,
+                        models.Message.session_name == parsed_key.session_name,
+                        models.Message.id.in_([m.id for m in messages_context]),
+                        live_message_row(),
+                    )
+                )
+            )
+            dead_item_ids = [
+                item.id
+                for item in items_to_process
+                if (
+                    session_uid is not None
+                    and item.session_id is not None
+                    and item.session_id != session_uid
+                )
+                or (
+                    item.message_id is not None
+                    and item.message_id not in live_message_ids
+                )
+            ]
+            if dead_item_ids:
+                await db.rollback()
+                logger.info(
+                    "Dropping %d queue item(s) of work unit %s whose session or "
+                    + "message was deleted",
+                    len(dead_item_ids),
+                    work_unit_key,
+                )
+                await self._drop_queue_items(dead_item_ids, work_unit_key)
+                return await self.get_queue_item_batch(task_type, work_unit_key, aqs_id)
+            messages_context = [m for m in messages_context if m.id in live_message_ids]
+
             # The QUEUE-ITEM boundary (not the messages_context tail) is
             # what matters for cap detection. messages_context includes
             # non-queue interleaving context messages — if SQL kept some
@@ -1335,6 +1465,33 @@ class QueueManager:
             else:
                 hit_batch_token_cap = False
 
+            # The observers are known only from the rows just read. An observer
+            # deleted since it was enqueued is left out; the rest proceed.
+            observers: list[str] = []
+            for observer in _batch_observers(items_to_process):
+                try:
+                    barrier = await stamp_representations(
+                        db, barrier, [(observer, parsed_key.observed)]
+                    )
+                except WriteParentGoneError:
+                    logger.info(
+                        "Observer %s of work unit %s was deleted; skipping it",
+                        observer,
+                        work_unit_key,
+                    )
+                    continue
+                observers.append(observer)
+            barrier = barrier.with_messages(
+                message.public_id for message in messages_context
+            ).with_claim(
+                ClaimStamp(
+                    work_unit_key=work_unit_key,
+                    claim_id=aqs_id,
+                    tenant_id=parsed_key.tenant_id,
+                    queue_item_ids=tuple(sorted(item.id for item in items_to_process)),
+                )
+            )
+
         return QueueBatchResult(
             messages_context=messages_context,
             items_to_process=items_to_process,
@@ -1342,6 +1499,8 @@ class QueueManager:
             hit_batch_token_cap=hit_batch_token_cap,
             was_flush_enabled=was_flush_enabled,
             batch_max_tokens=batch_max_tokens,
+            observers=observers,
+            barrier=barrier,
         )
 
     async def _oldest_unprocessed_item(
@@ -1484,6 +1643,31 @@ class QueueManager:
                     workspace_name=work_unit.workspace_name,
                     task_type=work_unit.task_type,
                 )
+
+    async def _drop_queue_items(
+        self, item_ids: list[int] | None, work_unit_key: str
+    ) -> None:
+        """Mark queue items processed with no error: their parent was deleted.
+
+        ``item_ids`` None drops every unprocessed item of the work unit. Rows a
+        deletion already removed match nothing. Queue rows in id order, the
+        order deletion and completion take them in.
+        """
+        conditions = [
+            models.QueueItem.work_unit_key == work_unit_key,
+            models.QueueItem.processed.is_(False),
+        ]
+        if item_ids is not None:
+            if not item_ids:
+                return
+            conditions.append(models.QueueItem.id.in_(item_ids))
+        async with service_db("drop_queue_items") as db:
+            await db.execute(
+                update(models.QueueItem)
+                .where(models.QueueItem.id.in_(queue_ids_locked_in_order(*conditions)))
+                .values(processed=True)
+            )
+            await db.commit()
 
     async def mark_queue_item_as_errored(
         self, item: QueueItem, work_unit_key: str, error: str

@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from src import crud, models
 from src.crud.lifecycle import live_message_row
+from src.crud.lifecycle_barrier import WriteSnapshot
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
 from src.deriver.scope_backfill import (
@@ -214,6 +215,7 @@ async def process_representation_batch(
     hit_batch_token_cap: bool = False,
     was_flush_enabled: bool = False,
     batch_max_tokens: int = 0,
+    barrier: WriteSnapshot | None = None,
 ) -> None:
     """
     Prepares and processes a batch of messages for representation tasks.
@@ -229,6 +231,7 @@ async def process_representation_batch(
         hit_batch_token_cap: whether the queue batcher clamped this batch to fit
         was_flush_enabled: snapshot of DERIVER.FLUSH_ENABLED at fetch time
         batch_max_tokens: DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS snapshot
+        barrier: What the queue captured before it read this batch
     """
     if not messages or not messages[0]:
         logger.debug("process_representation_batch received no messages")
@@ -248,6 +251,7 @@ async def process_representation_batch(
         hit_batch_token_cap=hit_batch_token_cap,
         was_flush_enabled=was_flush_enabled,
         batch_max_tokens=batch_max_tokens,
+        barrier=barrier,
     )
 
 
