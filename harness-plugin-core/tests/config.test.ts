@@ -50,6 +50,13 @@ describe('saveHost', () => {
       hosts: { a: { workspace: 'w', peerName: 'alice', schemaVersion: 2 }, b: { workspace: 'other' } },
     })
   })
+
+  test('a first write takes the top level once; the patch wins for keys it names', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'hpc-')), 'config.json')
+    writeFileSync(path, JSON.stringify({ apiKey: 'k', peerName: 'u', baseUrl: 'http://localhost:8000' }))
+    await saveHost(path, 'a', { peerName: 'alice', baseUrl: undefined }) // setup chose cloud
+    expect(JSON.parse(readFileSync(path, 'utf-8')).hosts.a).toEqual({ apiKey: 'k', peerName: 'alice', schemaVersion: 2 })
+  })
 })
 
 describe('migrateHost', () => {
@@ -60,6 +67,15 @@ describe('migrateHost', () => {
     const file = JSON.parse(readFileSync(path, 'utf-8'))
     expect(file.hosts.a).toEqual({ baseUrl: 'https://api.honcho.dev', schemaVersion: 2 })
     expect(baseUrlOf(file, 'a')).toBe('https://api.honcho.dev')
+  })
+
+  test('a marked block never takes top-level values written later', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'hpc-')), 'config.json')
+    const block = { oauth: { accessToken: 'at', refreshToken: 'rt', accessExpiresAt: 1, clientId: 'c', scope: 'write' }, schemaVersion: 2 }
+    // e.g. an older honcho CLI's `honcho init` against another tenant and a local stack
+    writeFileSync(path, JSON.stringify({ apiKey: 'other-tenant', environmentUrl: 'http://localhost:8000', hosts: { a: block } }))
+    expect(await migrateHost(path, 'a')).toEqual([])
+    expect(JSON.parse(readFileSync(path, 'utf-8')).hosts.a).toEqual(block)
   })
 
   test('a grant under the old auth.oauth moves to oauth', async () => {

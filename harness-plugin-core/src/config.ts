@@ -139,13 +139,18 @@ export function loadConfig(opts: {
 
 /**
  * Merge `patch` into `hosts.<host>` under the config lock; `undefined` removes a
- * key. Touches nothing else in the file.
+ * key. The first write to a block also does `migrateHost`'s one-time copy, so the
+ * block is never marked without it; `patch` wins for every key it names. Touches
+ * nothing else in the file.
  */
 export async function saveHost(path: string, host: string, patch: Partial<HostConfig>): Promise<void> {
   await updateConfigFile(path, (file) => {
     if (isNewer(file)) throw new Error(`${path} was written by a newer Honcho plugin; update this one.`)
+    const { set, remove } = hostMigration(file, host)
     if (!isObj(file.hosts)) file.hosts = {}
     const block = isObj(file.hosts[host]) ? file.hosts[host] : (file.hosts[host] = {})
+    Object.assign(block, set)
+    for (const k of remove) delete block[k]
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) delete block[k]
       else block[k] = v
@@ -243,8 +248,9 @@ export function checkConfig(file: unknown): ConfigIssue[] {
 }
 
 /**
- * What one plugin can fix by itself: copy top-level settings into its own block
- * (its `workspace` only under `globalOverride`, or when it has no block yet),
+ * What one plugin can fix by itself: copy top-level settings into its own block,
+ * once, while the block is unmarked (its `workspace` only under `globalOverride`,
+ * or when it has no block yet),
  * rename old keys in that block, and drop `deadKeys` it no longer uses. Never
  * touches another host's block or the top level, which the honcho CLI cleans.
  */
@@ -261,7 +267,9 @@ export function hostMigration(
   const set: Record<string, unknown> = {}
   // The host's own value (an explicit cloud URL included) beats the top level.
   const own = settingsOf(block)
-  const root = rootSettingsOf(f)
+  // The top level is copied once. A marked block already took what it needed, and
+  // anything written there later (an older honcho CLI's key or URL) must not reach it.
+  const root: Settings = isMigrated(block) ? {} : rootSettingsOf(f)
   for (const key of MOVABLE) {
     if (block[key] !== undefined) continue
     const fromRoot = key === 'workspace' ? (hasBlock && f.globalOverride !== true ? undefined : root.workspace) : root[key]

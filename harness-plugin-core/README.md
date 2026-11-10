@@ -51,13 +51,13 @@ A block signs in one of two ways:
 
 Resolution, highest wins: `HONCHO_*` env (`HONCHO_PEER_NAME`, `HONCHO_WORKSPACE`, `HONCHO_AI_PEER`, `HONCHO_BASE_URL`) → `hosts.<host>` → `defaults` → built-in. `peerName` falls back to `$USER`; a plugin's setup should ask for it, offering `suggestPeerName(file)` (the name the other plugins agree on, else the old top-level one, else `$USER`). `workspace` and `aiPeer` fall back to the host name. The SDK pins `/v3`; config stores the origin.
 
-`saveHost(path, host, patch)` merges into that one block under the config lock; `undefined` removes a key.
+`saveHost(path, host, patch)` merges into that one block under the config lock; `undefined` removes a key. A first write to a block also does `migrateHost`'s one-time copy (below), and `patch` wins for every key it names.
 
-Versions: `saveHost` and `migrateHost` mark the block `"schemaVersion": 2`, which records that its plugin reads only that block. A file whose top-level `schemaVersion` is newer than this package knows is read but never written: `saveHost` throws and `migrateHost` does nothing, so an old plugin cannot rewrite a shape it does not understand.
+Versions: `saveHost` and `migrateHost` mark the block `"schemaVersion": 2`, which records that its plugin reads only that block and has already taken what it needed from the top level. A file whose top-level `schemaVersion` is newer than this package knows is read but never written: `saveHost` throws and `migrateHost` does nothing, so an old plugin cannot rewrite a shape it does not understand.
 
 ## Moving an older file
 
-A plugin fixes its own block at startup: `migrateHost(configPath(), host, deadKeys)` copies top-level `apiKey`, `peerName` and `baseUrl` into `hosts.<host>` (its `workspace` too, under `globalOverride` or when it has no block yet), renames old keys there (`auth.apiKey`, `auth.oauth`, `endpoint`, `environmentUrl`, `workspaceId`), and drops the `deadKeys` it no longer uses. The block's own value wins over the top level's, so a host that chose Honcho cloud under an old key name keeps `baseUrl: "https://api.honcho.dev"` rather than taking a self-hosted top-level URL. It returns what it changed, and writes nothing when the block is current. It never touches the top level or another host's block, since plugins on older versions may still read them.
+A plugin fixes its own block at startup: `migrateHost(configPath(), host, deadKeys)` copies top-level `apiKey`, `peerName` and `baseUrl` into `hosts.<host>` (its `workspace` too, under `globalOverride` or when it has no block yet), renames old keys there (`auth.apiKey`, `auth.oauth`, `endpoint`, `environmentUrl`, `workspaceId`), and drops the `deadKeys` it no longer uses. The block's own value wins over the top level's, so a host that chose Honcho cloud under an old key name keeps `baseUrl: "https://api.honcho.dev"` rather than taking a self-hosted top-level URL. The top level is copied once, while the block is unmarked: whatever an older honcho CLI writes there later (another tenant's key, a local URL) never reaches a marked block. It returns what it changed, and writes nothing when the block is current. It never touches the top level or another host's block, since plugins on older versions may still read them.
 
 ## Checking a config file
 
