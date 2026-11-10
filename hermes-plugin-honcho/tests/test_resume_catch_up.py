@@ -134,16 +134,17 @@ def test_first_turn_waits_are_bounded_by_the_first_turn_knobs(turn, turn_start_k
         if thread.name in {"honcho-base-first", "honcho-prewarm-dialectic", "honcho-resume-dialectic"}:
             joins.append((thread.name, timeout))
             assert timeout is not None and 0 <= timeout <= 0.05
+            original_join(thread, timeout)
+            assert thread.is_alive(), "blocked worker finished before its wait expired"
+            return
         return original_join(thread, timeout)
 
     try:
         memory = _memory(_provider([], blocked=blocked, first_turn_base_wait=0.05, first_turn_dialectic_wait=0.05))
         with patch.object(threading.Thread, "join", record_join):
-            start = time.monotonic()
             memory.on_turn_start(turn, CURRENT, **turn_start_kwargs)
             injected = memory.prefetch_all(CURRENT)
-            # Generous wall-clock ceiling catches delays outside the recorded joins.
-            assert time.monotonic() - start < 1.0
+            assert not blocked.is_set()
             assert "conclusions recalled for" not in injected
             assert DIALECTIC_ANSWER not in injected
             assert "Generic prewarm summary." not in injected
