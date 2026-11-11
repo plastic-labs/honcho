@@ -653,6 +653,14 @@ class IngestBatch(BaseModel):
 
 IngestOutcome = Literal["created", "duplicate", "rejected"]
 IngestDerivation = Literal["pending", "queued", "deferred"]
+IngestRejectionReason = Literal[
+    "stale_revision",
+    "edit_not_supported",
+    "content_conflict",
+    "session_inactive",
+    "observers_limit",
+    "name_conflict",
+]
 
 
 class IngestRecordResult(BaseModel):
@@ -660,7 +668,9 @@ class IngestRecordResult(BaseModel):
 
     index: int = Field(..., description="The record's position in the request")
     outcome: IngestOutcome
-    reason: str | None = Field(default=None, description="Why a record was rejected")
+    reason: IngestRejectionReason | None = Field(
+        default=None, description="Why a record was rejected"
+    )
     record_id: str | None = None
     message_id: str | None = None
     session_id: str | None = None

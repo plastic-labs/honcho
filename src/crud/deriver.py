@@ -603,6 +603,7 @@ async def get_deriver_metrics(
             )
         }
     pending_count, oldest_age = (await db.execute(pending)).one()
+    ingest_pending, ingest_due = await _ingest_pending_counts(db)
     embeddings_pending, embeddings_due = (
         (await db.execute(embeddings)).one() if count_embeddings else (0, 0)
     )
@@ -618,7 +619,27 @@ async def get_deriver_metrics(
         oldest_pending_age_seconds=float(oldest_age),
         embeddings_pending=int(embeddings_pending),
         embeddings_pending_due=int(embeddings_due),
+        ingest_pending=ingest_pending,
+        ingest_pending_due=ingest_due,
     )
+
+
+async def _ingest_pending_counts(db: AsyncSession) -> tuple[int, int]:
+    """Pending ingest records, and those the sweep should wake a deriver for.
+
+    Due: old enough that the sweep, not their own request, queues them, and
+    young enough to be worth waking a deriver for (see SWEEP_WAKE_WINDOW).
+    """
+    from src.deriver.ingest_enqueue import sweep_due_clause  # noqa: PLC0415
+
+    total, due = (
+        await db.execute(
+            select(func.count(), func.count().filter(sweep_due_clause())).where(
+                models.IngestRecord.derivation == "pending"
+            )
+        )
+    ).one()
+    return int(total), int(due)
 
 
 async def get_queue_status(
