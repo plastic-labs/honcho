@@ -1,101 +1,52 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { v01Reader } from './legacy/v01.js'
+import { updateConfigFile, type OAuthTokens } from './oauth.js'
 
 /** Environment map shape; structurally identical to `process.env`, without depending on `@types/node` in consumers. */
 export type Env = Record<string, string | undefined>
 
-export interface AuthConfig {
+/** One plugin's settings: `hosts.<host>` in `~/.honcho/config.json`. */
+export interface HostConfig {
   apiKey?: string
-  oauth?: { accessToken?: string; refreshToken?: string; expiresAt?: string }
-}
-
-/** Identity + connection + kill switch. Valid at root and as a host override. */
-export interface RootConfig {
+  /** This plugin's own OAuth grant; see oauth.ts. */
+  oauth?: OAuthTokens
   peerName?: string
   workspace?: string
+  aiPeer?: string
+  /** Honcho API origin; omitted means Honcho cloud. */
   baseUrl?: string
-  timeoutMs?: number
-  auth?: AuthConfig
-  enabled?: boolean
+  /** Set by the plugin once it reads only this block; `honcho doctor` waits for it. */
+  schemaVersion?: number
 }
 
-export type HostBlock = RootConfig
-
-export interface FileConfig extends RootConfig {
+/** The file. Every setting lives in a host block; nothing at the top level. */
+export interface ConfigFile {
+  $schema?: string
   schemaVersion?: number
-  hosts?: Record<string, HostBlock>
+  hosts?: Record<string, HostConfig>
 }
 
 export interface ResolvedConfig {
   host: string
   peerName: string
   workspace: string
+  aiPeer: string
   baseUrl: string
-  timeoutMs: number
-  auth: AuthConfig
-  apiKey?: string
-  enabled: boolean
+  /** Problems in the file the user should know about; see `checkConfig`. */
   warnings: string[]
 }
 
 export const DEFAULT_BASE_URL = 'https://api.honcho.dev'
-export const DEFAULT_TIMEOUT_MS = 30_000
-export const CONFIG_SCHEMA_VERSION = 1
+export const CONFIG_SCHEMA_VERSION = 2
 
-function isObj(v: unknown): v is Record<string, unknown> {
+function isObj(v: unknown): v is Record<string, any> {
   return v !== null && typeof v === 'object' && !Array.isArray(v)
 }
 
-/** Pre-schema files (no schemaVersion) → v1 keys. Host blocks included. */
-function migrate(file: unknown): Record<string, unknown> {
-  if (!isObj(file)) return {}
-  const v = file.schemaVersion
-  if (typeof v === 'number' && v >= CONFIG_SCHEMA_VERSION) return { ...file }
-  const out: Record<string, unknown> = { ...file }
-  const blocks: Record<string, unknown>[] = [out]
-  if (isObj(out.hosts)) {
-    out.hosts = Object.fromEntries(
-      Object.entries(out.hosts).map(([k, block]) => {
-        if (!isObj(block)) return [k, block]
-        const next = { ...block }
-        blocks.push(next)
-        return [k, next]
-      })
-    )
-  }
-  for (const b of blocks) {
-    if (typeof b.baseUrl !== 'string') {
-      if (typeof b.environmentUrl === 'string') b.baseUrl = b.environmentUrl
-      else if (isObj(b.endpoint) && typeof b.endpoint.baseUrl === 'string') {
-        b.baseUrl = b.endpoint.baseUrl
-      }
-    }
-    if (typeof b.workspace !== 'string' && typeof b.workspaceId === 'string') {
-      b.workspace = b.workspaceId
-    }
-    const auth: Record<string, unknown> = isObj(b.auth) ? { ...b.auth } : {}
-    if (typeof auth.apiKey !== 'string' && typeof b.apiKey === 'string') auth.apiKey = b.apiKey
-    if (!isObj(auth.oauth) && isObj(b.oauth)) auth.oauth = b.oauth
-    if (Object.keys(auth).length) b.auth = auth
-    delete b.environmentUrl
-    delete b.endpoint
-    delete b.workspaceId
-    delete b.apiKey
-    delete b.oauth
-  }
-  out.schemaVersion = 1
-  return out
-}
-
-function merge<T>(base: T, over: unknown): T {
-  if (over === undefined || over === null) return base
-  if (Array.isArray(over) || !isObj(over)) return over as T
-  const out: Record<string, unknown> = { ...(isObj(base) ? base : {}) }
-  for (const [k, v] of Object.entries(over)) {
-    if (v !== undefined) out[k] = k in out ? merge(out[k], v) : v
-  }
-  return out as T
+function str(v: unknown): string | undefined {
+  return typeof v === 'string' && v ? v : undefined
 }
 
 /** Make a value safe to pass to the SDK as `baseURL`. */
@@ -117,106 +68,40 @@ export function normalizeBaseUrl(input: string): string {
   }
 }
 
-function interpolate(value: string, env: Env, warnings: string[]): string {
-  return value.replace(/\$\{([^}]+)\}/g, (m, name: string) => {
-    const v = env[name]
-    if (!v) {
-      warnings.push(`${m} is not set`)
-      return m
-    }
-    return v
-  })
-}
-
-function walkStrings<T>(value: T, fn: (s: string) => string): T {
-  if (typeof value === 'string') return fn(value) as T
-  if (Array.isArray(value)) return value.map((x) => walkStrings(x, fn)) as T
-  if (isObj(value)) {
-    const out: Record<string, unknown> = {}
-    for (const [k, v] of Object.entries(value)) out[k] = walkStrings(v, fn)
-    return out as T
-  }
-  return value
-}
-
-/** Pull only the six root fields. Extra host keys (injection, observation, …) are ignored. */
-function pickRoot(block: unknown): RootConfig {
-  if (!isObj(block)) return {}
-  const auth: AuthConfig = isObj(block.auth) ? { ...(block.auth as AuthConfig) } : {}
-  const out: RootConfig = {}
-  if (typeof block.peerName === 'string') out.peerName = block.peerName
-  if (typeof block.workspace === 'string') out.workspace = block.workspace
-  if (typeof block.baseUrl === 'string') out.baseUrl = block.baseUrl
-  if (typeof block.timeoutMs === 'number') out.timeoutMs = block.timeoutMs
-  if (Object.keys(auth).length) out.auth = auth
-  if (typeof block.enabled === 'boolean') out.enabled = block.enabled
-  return out
-}
-
-function pickHost(hosts: Record<string, unknown> | undefined, name: string): RootConfig {
-  if (!hosts || !isObj(hosts[name])) return {}
-  return pickRoot(hosts[name])
-}
-
 /**
- * Highest wins: HONCHO_* env → overlay → hosts.<host> → root → built-in.
+ * Highest wins: `HONCHO_*` env → `hosts.<host>` → `defaults` → built-in. Only
+ * this host's block is read; a block not migrated yet is read as `migrateHost`
+ * will write it (see `effectiveBlock`), so reading first never gives a different
+ * answer. Credentials come from `pickCredential` / `ensureFreshCredential`.
  */
 export function resolveConfig(
   file: unknown,
-  opts: { host: string; env?: Env; overlay?: RootConfig }
+  opts: { host: string; env?: Env; defaults?: { workspace?: string; aiPeer?: string }; legacy?: LegacyReader }
 ): ResolvedConfig {
-  const warnings: string[] = []
   const env = opts.env ?? process.env
-  const host = opts.host
-  const raw = migrate(file)
-  if (typeof raw.schemaVersion === 'number' && raw.schemaVersion > CONFIG_SCHEMA_VERSION) {
-    warnings.push(`config schemaVersion ${raw.schemaVersion} is newer than ${CONFIG_SCHEMA_VERSION}`)
-  }
-  const hosts = isObj(raw.hosts) ? raw.hosts : undefined
-
-  let acc: RootConfig = {
-    baseUrl: DEFAULT_BASE_URL,
-    timeoutMs: DEFAULT_TIMEOUT_MS,
-    enabled: true,
-    workspace: host,
-  }
-  acc = merge(acc, pickRoot(raw))
-  acc = merge(acc, pickHost(hosts, host))
-  acc = merge(acc, pickRoot(opts.overlay))
-
-  if (env.HONCHO_API_KEY) {
-    if (acc.auth?.apiKey) warnings.push('HONCHO_API_KEY shadows auth.apiKey')
-    acc = merge(acc, { auth: { apiKey: env.HONCHO_API_KEY } })
-  }
-  if (env.HONCHO_BASE_URL || env.HONCHO_URL || env.HONCHO_ENDPOINT) {
-    const token = env.HONCHO_BASE_URL || env.HONCHO_URL || env.HONCHO_ENDPOINT || ''
-    acc.baseUrl = token === 'local' ? 'http://localhost:8000' : token
-  }
-  if (env.HONCHO_WORKSPACE || env.HONCHO_WORKSPACE_ID) {
-    acc.workspace = env.HONCHO_WORKSPACE || env.HONCHO_WORKSPACE_ID
-  }
-  if (env.HONCHO_PEER_NAME) acc.peerName = env.HONCHO_PEER_NAME
-  if (env.HONCHO_TIMEOUT_MS) {
-    const n = Number(env.HONCHO_TIMEOUT_MS)
-    if (Number.isFinite(n) && n > 0) acc.timeoutMs = n
-  }
-  if (env.HONCHO_ENABLED === 'false') acc.enabled = false
-
-  acc = walkStrings(acc, (s) => interpolate(s, env, warnings))
-  if (acc.baseUrl) acc.baseUrl = normalizeBaseUrl(acc.baseUrl)
-
-  const auth = acc.auth ?? {}
+  const { host } = opts
+  const block = effectiveBlock(file, host, opts.legacy)
   return {
     host,
-    peerName: acc.peerName || env.USER || env.USERNAME || 'user',
-    workspace: acc.workspace || host,
-    baseUrl: acc.baseUrl || DEFAULT_BASE_URL,
-    timeoutMs: acc.timeoutMs && acc.timeoutMs > 0 ? acc.timeoutMs : DEFAULT_TIMEOUT_MS,
-    auth,
-    apiKey: auth.apiKey,
-    enabled: acc.enabled !== false,
-    warnings,
+    peerName: str(env.HONCHO_PEER_NAME) ?? str(block.peerName) ?? str(env.USER) ?? str(env.USERNAME) ?? 'user',
+    workspace: str(env.HONCHO_WORKSPACE) ?? str(block.workspace) ?? opts.defaults?.workspace ?? host,
+    aiPeer: str(env.HONCHO_AI_PEER) ?? str(block.aiPeer) ?? opts.defaults?.aiPeer ?? host,
+    baseUrl: normalizeBaseUrl(str(env.HONCHO_BASE_URL) ?? str(block.baseUrl) ?? DEFAULT_BASE_URL),
+    warnings: checkConfig(file).map((i) => i.message),
   }
+}
+
+/**
+ * The name a setup screen should offer: the one every other plugin's block
+ * agrees on, else the old top-level `peerName`, else `$USER`. For the user to
+ * confirm, not to read at runtime.
+ */
+export function suggestPeerName(file: unknown, env: Env = process.env): string {
+  const f = isObj(file) ? file : {}
+  const hosts = isObj(f.hosts) ? f.hosts : {}
+  const names = new Set(Object.values(hosts).map((b) => (isObj(b) ? str(b.peerName) : undefined)).filter(Boolean))
+  if (names.size === 1) return [...names][0] as string
+  return str(f.peerName) ?? str(env.USER) ?? str(env.USERNAME) ?? 'user'
 }
 
 /**
@@ -233,20 +118,199 @@ export function configPath(env: Env = process.env): string {
   return join(home, '.honcho', 'config.json')
 }
 
+/** The parsed file, or `{}` when it is missing or unreadable. */
+export function readConfigFile(env: Env = process.env): Record<string, any> {
+  const path = configPath(env)
+  if (!existsSync(path)) return {}
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf-8'))
+    return isObj(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
 export function loadConfig(opts: {
   host: string
   env?: Env
-  overlay?: RootConfig
+  defaults?: { workspace?: string; aiPeer?: string }
+  legacy?: LegacyReader
 }): ResolvedConfig {
-  const env = opts.env ?? process.env
-  const path = configPath(env)
-  let file: unknown = {}
-  if (existsSync(path)) {
-    try {
-      file = JSON.parse(readFileSync(path, 'utf-8'))
-    } catch {
-      file = {}
+  return resolveConfig(readConfigFile(opts.env), opts)
+}
+
+/** What a plugin used before schema 2. `migrateHost` writes exactly this into its block, once. */
+export type LegacySettings = Partial<Pick<HostConfig, 'apiKey' | 'peerName' | 'workspace' | 'aiPeer' | 'baseUrl'>>
+
+/**
+ * A plugin's pre-schema-2 reader: from the whole file, what its last release
+ * would have used. One per plugin release line, in `src/legacy/`: `v01Reader` for
+ * plugins that read the file through 0.1.x of this package, and the plugins' own.
+ */
+export type LegacyReader = (file: Record<string, any>, host: string) => LegacySettings
+
+/**
+ * Merge `patch` into `hosts.<host>` under the config lock; `undefined` removes a
+ * key. A block not migrated yet is migrated first, with `legacy`. A key belongs to
+ * the server it was saved for, so a patch that moves the block to another server
+ * drops the key unless it sets one. Touches nothing else in the file.
+ */
+export async function saveHost(path: string, host: string, patch: Partial<HostConfig>, legacy?: LegacyReader): Promise<void> {
+  await updateConfigFile(path, (file) => {
+    if (isNewer(file)) throw new Error(`${path} was written by a newer Honcho plugin; update this one.`)
+    const block = writeBlock(file, host, hostMigration(file, host, [], legacy))
+    if ('baseUrl' in patch && !('apiKey' in patch) && !sameServer(patch.baseUrl, str(block.baseUrl))) delete block.apiKey
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) delete block[k]
+      else block[k] = v
     }
+    block.schemaVersion = CONFIG_SCHEMA_VERSION
+  })
+}
+
+// ── migration + checks ──────────────────────────────────────────────────────
+
+export interface ConfigIssue {
+  /** Where the problem is: `schemaVersion` or `hosts`. */
+  path: string
+  message: string
+}
+
+const MOVABLE = ['apiKey', 'peerName', 'workspace', 'aiPeer', 'baseUrl'] as const
+
+/** The file was written by a newer version of this package; leave it alone. */
+function isNewer(file: unknown): boolean {
+  return isObj(file) && typeof file.schemaVersion === 'number' && file.schemaVersion > CONFIG_SCHEMA_VERSION
+}
+
+/** A host whose plugin reads only its own block. */
+function isMigrated(block: unknown): boolean {
+  return isObj(block) && typeof block.schemaVersion === 'number' && block.schemaVersion >= CONFIG_SCHEMA_VERSION
+}
+
+/** Two URLs name the same server; missing means Honcho cloud. */
+function sameServer(a: string | undefined, b: string | undefined): boolean {
+  return normalizeBaseUrl(a ?? DEFAULT_BASE_URL) === normalizeBaseUrl(b ?? DEFAULT_BASE_URL)
+}
+
+/** Old spellings inside a host block. */
+const LEGACY_HOST_KEYS = ['auth', 'endpoint', 'environmentUrl', 'workspaceId']
+
+/** A stored grant with an access token; `null` or `{}` is no grant. */
+function isGrant(v: unknown): boolean {
+  return isObj(v) && typeof v.accessToken === 'string' && v.accessToken !== ''
+}
+
+/** A grant stored under the old `auth.oauth`, when the block has none under `oauth`. */
+function legacyGrantOf(b: Record<string, any>): Record<string, any> | undefined {
+  return !isGrant(b.oauth) && isObj(b.auth) && isObj(b.auth.oauth) ? b.auth.oauth : undefined
+}
+
+/**
+ * Problems a plugin should tell the user about. Read-only, and nothing to
+ * clean: each plugin fixes its own block with `migrateHost`, and the top level
+ * belongs to the honcho CLI.
+ */
+export function checkConfig(file: unknown): ConfigIssue[] {
+  if (!isObj(file)) return []
+  if (isNewer(file)) {
+    return [{ path: 'schemaVersion', message: `This file is schema version ${file.schemaVersion}, newer than this plugin understands; update the plugin.` }]
   }
-  return resolveConfig(file, { ...opts, env })
+  const issues: ConfigIssue[] = []
+  const hosts: Record<string, any> = isObj(file.hosts) ? file.hosts : {}
+
+  // Hosts sharing a workspace must agree on the user. Only what each block holds: an
+  // unmigrated block's peer comes from its plugin's own reader, which only that plugin knows.
+  const byWorkspace = new Map<string, Map<string, string[]>>()
+  for (const h of Object.keys(hosts).filter((k) => isObj(hosts[k]))) {
+    const block = hosts[h]
+    const peer = str(block.peerName)
+    if (!peer) continue
+    const ws = str(block.workspace) ?? h
+    const peers = byWorkspace.get(ws) ?? new Map<string, string[]>()
+    peers.set(peer, [...(peers.get(peer) ?? []), h])
+    byWorkspace.set(ws, peers)
+  }
+  for (const [ws, peers] of byWorkspace) {
+    if (peers.size < 2) continue
+    const list = [...peers].map(([p, hs]) => `${hs.join(', ')}: "${p}"`).join('; ')
+    issues.push({ path: 'hosts', message: `Hosts in workspace "${ws}" use different peerNames (${list}), so the user is split across peers.` })
+  }
+  return issues
+}
+
+/**
+ * What a plugin's block needs. Once, while it is unmarked: exactly what the
+ * plugin used before (`legacy`, `v01Reader` by default), and the mark. A block
+ * already signed in keeps its grant on Honcho cloud rather than the key and
+ * server it read before. Every time: an old `auth.oauth` grant moves to `oauth`,
+ * and old key names and `deadKeys` go. Never touches another host's block or the
+ * top level, which the honcho CLI cleans.
+ */
+export function hostMigration(
+  file: unknown,
+  host: string,
+  deadKeys: readonly string[] = [],
+  legacy: LegacyReader = v01Reader
+): { set: Partial<HostConfig>; remove: string[] } {
+  if (isNewer(file)) return { set: {}, remove: [] }
+  const f = isObj(file) ? file : {}
+  const hosts = isObj(f.hosts) ? f.hosts : {}
+  const block: Record<string, any> = isObj(hosts[host]) ? hosts[host] : {}
+  const set: Record<string, unknown> = {}
+  const drop: string[] = []
+  const grant = legacyGrantOf(block)
+  if (grant) set.oauth = grant
+  if (!isMigrated(block)) {
+    const old = { ...legacy(f, host) }
+    const signedIn = isGrant(block.oauth) || grant !== undefined
+    if (old.baseUrl && sameServer(old.baseUrl, undefined)) old.baseUrl = undefined
+    for (const key of MOVABLE) {
+      if (signedIn && (key === 'apiKey' || key === 'baseUrl')) continue
+      if (old[key] !== undefined && block[key] !== old[key]) set[key] = old[key]
+      else if (old[key] === undefined && block[key] !== undefined) drop.push(key)
+    }
+    set.schemaVersion = CONFIG_SCHEMA_VERSION
+  }
+  const remove = [...drop, ...LEGACY_HOST_KEYS, ...deadKeys].filter((k) => k in block && !(k in set))
+  return { set: set as Partial<HostConfig>, remove }
+}
+
+/** `hosts.<host>` as its plugin reads it: as stored once marked, else as `hostMigration` will leave it. */
+export function effectiveBlock(file: unknown, host: string, legacy?: LegacyReader): Record<string, any> {
+  return writeBlock(structuredClone(isObj(file) ? file : {}), host, hostMigration(file, host, [], legacy))
+}
+
+/** Apply a migration to `file`, creating the block if needed, and return the block. */
+/** `hosts.<host>` in `file`, created if missing. Refuses names that would reach `Object.prototype`. */
+export function hostBlock(file: Record<string, any>, host: string): Record<string, any> {
+  if (host === '__proto__' || host === 'constructor' || host === 'prototype') throw new Error(`invalid host name: ${host}`)
+  if (!isObj(file.hosts)) file.hosts = {}
+  return isObj(file.hosts[host]) ? file.hosts[host] : (file.hosts[host] = {})
+}
+
+function writeBlock(file: Record<string, any>, host: string, { set, remove }: { set: Partial<HostConfig>; remove: string[] }): Record<string, any> {
+  const block = hostBlock(file, host)
+  Object.assign(block, set)
+  for (const k of remove) delete block[k]
+  return block
+}
+
+/**
+ * Apply `hostMigration` under the config lock. Call it at startup, before reading
+ * the config or showing setup. Pass the plugin's own reader as `legacy` when its
+ * last release did not read the file through 0.1.x of this package. Returns the
+ * settings it moved or removed (not the mark); empty when there were none.
+ */
+export async function migrateHost(path: string, host: string, deadKeys: readonly string[] = [], legacy?: LegacyReader): Promise<string[]> {
+  // Cheap check first, so a current block never takes the lock or writes.
+  const peek = hostMigration(readConfigFile({ HONCHO_CONFIG_PATH: path }), host, deadKeys, legacy)
+  if (!Object.keys(peek.set).length && !peek.remove.length) return []
+  let changed: string[] = []
+  await updateConfigFile(path, (file) => {
+    const m = hostMigration(file, host, deadKeys, legacy)
+    changed = [...Object.keys(m.set).filter((k) => k !== 'schemaVersion'), ...m.remove.map((k) => `-${k}`)]
+    if (Object.keys(m.set).length || m.remove.length) writeBlock(file, host, m)
+  })
+  return changed
 }

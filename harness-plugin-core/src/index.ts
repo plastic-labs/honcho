@@ -1,19 +1,34 @@
 export {
+  checkConfig,
+  effectiveBlock,
+  hostMigration,
+  migrateHost,
   configPath,
   loadConfig,
   normalizeBaseUrl,
+  readConfigFile,
   resolveConfig,
+  saveHost,
+  suggestPeerName,
+  CONFIG_SCHEMA_VERSION,
   DEFAULT_BASE_URL,
-  DEFAULT_TIMEOUT_MS,
 } from './config.js'
 
+// Each plugin's pre-schema-2 reader, for `migrateHost`.
+export { v01Reader } from './legacy/v01.js'
+export { claudeHonchoReader } from './legacy/claude-honcho.js'
+export { opencodeHonchoReader } from './legacy/opencode-honcho.js'
+export { openclawHonchoReader } from './legacy/openclaw-honcho.js'
+export { piHonchoReader } from './legacy/pi-honcho.js'
+
 export type {
-  AuthConfig,
+  ConfigFile,
+  ConfigIssue,
   Env,
-  FileConfig,
-  HostBlock,
+  HostConfig,
+  LegacyReader,
+  LegacySettings,
   ResolvedConfig,
-  RootConfig,
 } from './config.js'
 
 export {
@@ -27,3 +42,23 @@ export {
 } from './telemetry.js'
 
 export type { TelemetryIdentity } from './telemetry.js'
+
+export {
+  accessValid,
+  ensureFreshCredential,
+  isCloud,
+  pickCredential,
+  pollForToken,
+  readGrant,
+  refreshAccessToken,
+  requestDeviceCode,
+  saveGrant,
+  updateConfigFile,
+  withConfigLock,
+  OAuthError,
+  OAUTH_DEVICE_URL,
+  OAUTH_SCOPE,
+  OAUTH_TOKEN_URL,
+} from './oauth.js'
+
+export type { Credential, CredentialSource, DeviceCode, OAuthTokens, OAuthTransport } from './oauth.js'
