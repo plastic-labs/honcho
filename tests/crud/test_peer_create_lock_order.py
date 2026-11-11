@@ -16,6 +16,7 @@ once it commits, and takes the existing-peer path on its retry.
 """
 
 import asyncio
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
@@ -38,7 +39,8 @@ async def paced_peer_inserts(
 ) -> AsyncIterator[str]:
     """Sleep before every peer row inserted into the test workspace."""
     workspace, _ = sample_data
-    # Nanoid names are drawn from [A-Za-z0-9_-], so the literal needs no escaping.
+    # The name goes into the trigger's SQL as a literal, so it must need no escaping.
+    assert re.fullmatch(r"[A-Za-z0-9_-]+", workspace.name), workspace.name
     async with db_engine.begin() as conn:
         await conn.exec_driver_sql(
             f"""
