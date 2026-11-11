@@ -361,6 +361,7 @@ async def process_representation_tasks_batch(
             workspace_name=latest_message.workspace_name,
             session_name=latest_message.session_name,
             observed=observed,
+            run_id=trace_id,
             queue_items_processed=len(queue_item_message_ids),
             earliest_message_id=earliest_message.public_id,
             latest_message_id=latest_message.public_id,

@@ -531,6 +531,8 @@ DREAM_BUDGET_ENABLED=false  # budget line + write window for deduction/induction
 DREAM_NOTES_MODE=off  # working notes between dreams: off | shadow | on
 DREAM_NOTES_MAX_TOKENS=3000
 # DREAM_WRITE_WINDOW_ITERATIONS=2  # default: 15% of each specialist's limit
+DREAM_HISTORY_ENABLED=true  # Representation History: record each dream's changes
+DREAM_HISTORY_RETENTION_DAYS=30
 
 # Specialist model configs (each is independent)
 DREAM_DEDUCTION_MODEL_CONFIG__TRANSPORT=openai
@@ -614,6 +616,8 @@ server does not accept its traces.
 ```bash
 # Connection (required)
 DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+# Role that owns the schema and runs migrations; defaults to DB_CONNECTION_URI
+# DB_OWNER_CONNECTION_URI=postgresql+psycopg://owner:owner@localhost:5432/postgres
 
 # Pool settings
 DB_SCHEMA=public

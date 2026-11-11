@@ -131,4 +131,4 @@ Several tools accept an optional `reasoning_level` parameter (`minimal`, `low`, 
 
 ### Dreams
 
-A **dream** is a background memory-consolidation process. It reviews conclusions, merges redundancies, and generates higher-level insights. Schedule one with `schedule_dream` after long conversations.
+A **dream** is a background memory-consolidation process. It reviews conclusions, merges redundancies, and generates higher-level insights. Schedule one with `schedule_dream` after long conversations. To see what a dream changed, use `list_dreams` to find it and `get_dream` for its created and removed conclusions and peer-card change.

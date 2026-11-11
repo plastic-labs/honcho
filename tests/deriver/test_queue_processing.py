@@ -2189,6 +2189,174 @@ class TestQueueRetry:
         assert "ValueError" in items[0].error
         assert await self._retry_attempts_on_items(db_session, work_unit_key) is None
 
+    async def test_webhook_missing_tenant_under_multi_tenant_burns_to_errored(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A webhook item with no `tenant_id` under `MULTI_TENANT` burns to
+        `errored` on the first attempt."""
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+        workspace_name = f"webhook-orphan-{generate_nanoid()}"
+        work_unit_key = f"webhook:{workspace_name}"
+
+        # region ai
+        # Built by hand rather than via publish_webhook_event /
+        # construct_work_unit_key: both refuse to construct an un-namespaced
+        # webhook work_unit_key under MULTI_TENANT (the same invariant that
+        # should make this state unreachable in production), so reaching it
+        # here means bypassing them -- this is the forgot-to-stamp bug
+        # scenario, matching the "future writer forgets the stamp" case the
+        # fail-closed check in deliver_webhook guards against.
+        #
+        # WebhookTenantUnresolved is neither a DBAPIError nor a transport
+        # error, so it is non-retryable and must burn to errored on the first
+        # attempt like any other terminal error -- not crash the worker loop,
+        # not leave the item claimed forever.
+        # endregion
+        queue_item = models.QueueItem(
+            task_type="webhook",
+            work_unit_key=work_unit_key,
+            payload={
+                "task_type": "webhook",
+                "event_type": "message.created",
+                "data": {"id": "m_1"},
+            },
+            processed=False,
+            workspace_name=workspace_name,
+            tenant_id=None,
+        )
+        db_session.add(queue_item)
+        await db_session.commit()
+
+        qm = QueueManager()
+        worker_id = "test_worker"
+        claimed_units = await qm.claim_work_units(db_session, [work_unit_key])
+        qm.worker_ownership[worker_id] = WorkerOwnership(
+            work_unit_key=work_unit_key, aqs_id=claimed_units[work_unit_key]
+        )
+        await db_session.commit()
+
+        await qm.process_work_unit(work_unit_key, worker_id)
+
+        items = await self._fetch_items(db_session, work_unit_key)
+        assert len(items) == 1
+        assert items[0].processed
+        assert items[0].error is not None
+        assert "WebhookTenantUnresolved" in items[0].error
+        assert await self._aqs_rows(db_session, work_unit_key) == 0
+
+    async def test_unprefixed_representation_key_under_multi_tenant_fails_the_unit(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A representation unit queued flag-off and processed flag-on fails
+        every item once and releases the claim, without fetching a batch."""
+        qm, work_unit_key, worker_id, _ = await self._seed_work_unit(
+            db_session, sample_session_with_peers, create_queue_payload, n_messages=2
+        )
+        monkeypatch.setattr(settings, "MULTI_TENANT", True)
+
+        # region ai
+        # The batch fetch refuses an un-prefixed key before its first await, so
+        # a loop that retried in place would never yield. The spy stops the loop
+        # after a few calls so a regression fails here instead of hanging.
+        # endregion
+        real_batch = qm.get_queue_item_batch
+        batch_calls = 0
+
+        async def spy_batch(*args: Any, **kwargs: Any) -> Any:
+            nonlocal batch_calls
+            batch_calls += 1
+            if batch_calls >= 3:
+                qm.shutdown_event.set()
+            return await real_batch(*args, **kwargs)
+
+        monkeypatch.setattr(qm, "get_queue_item_batch", spy_batch)
+
+        await qm.process_work_unit(work_unit_key, worker_id)
+
+        assert batch_calls == 0
+        items = await self._fetch_items(db_session, work_unit_key)
+        assert len(items) == 2
+        assert all(item.processed for item in items)
+        assert all(
+            item.error is not None and "no tenant prefix" in item.error
+            for item in items
+        )
+        assert await self._aqs_rows(db_session, work_unit_key) == 0
+
+    async def test_queue_empty_fires_only_on_a_confirmed_drain(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A loop that breaks on an error after a successful batch releases the
+        unit without publishing queue.empty."""
+
+        async def noop_batch(*_args: Any, **_kwargs: Any) -> None:
+            return None
+
+        qm, work_unit_key, worker_id, _ = await self._seed_work_unit(
+            db_session, sample_session_with_peers, create_queue_payload, n_messages=2
+        )
+        real_batch = qm.get_queue_item_batch
+        batch_calls = 0
+
+        async def failing_second_fetch(*args: Any, **kwargs: Any) -> Any:
+            nonlocal batch_calls
+            batch_calls += 1
+            if batch_calls == 2:
+                raise RuntimeError("transient fetch failure")
+            return await real_batch(*args, **kwargs)
+
+        monkeypatch.setattr(qm, "get_queue_item_batch", failing_second_fetch)
+        monkeypatch.setattr("src.deriver.queue_manager.RETRY_BACKOFF_SECONDS", 0)
+        publish = AsyncMock()
+        with (
+            patch(
+                "src.deriver.queue_manager.process_representation_batch",
+                side_effect=noop_batch,
+            ),
+            patch("src.deriver.queue_manager.publish_webhook_event", publish),
+        ):
+            await qm.process_work_unit(work_unit_key, worker_id)
+
+        assert batch_calls == 2
+        publish.assert_not_awaited()
+        assert await self._aqs_rows(db_session, work_unit_key) == 0
+
+    async def test_queue_empty_fires_on_a_clean_drain(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+    ) -> None:
+        """A unit processed until its fetch comes back empty publishes queue.empty."""
+
+        async def noop_batch(*_args: Any, **_kwargs: Any) -> None:
+            return None
+
+        qm, work_unit_key, worker_id, _ = await self._seed_work_unit(
+            db_session, sample_session_with_peers, create_queue_payload, n_messages=2
+        )
+        publish = AsyncMock()
+        with (
+            patch(
+                "src.deriver.queue_manager.process_representation_batch",
+                side_effect=noop_batch,
+            ),
+            patch("src.deriver.queue_manager.publish_webhook_event", publish),
+        ):
+            await qm.process_work_unit(work_unit_key, worker_id)
+
+        publish.assert_awaited_once()
+
     async def test_error_text_postgres_rejects_still_marks_item_errored(
         self,
         db_session: AsyncSession,

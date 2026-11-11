@@ -11,6 +11,30 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - `uvx honcho-cli <command>` runs the CLI. The package now also installs a `honcho-cli` executable alongside `honcho`; before, uvx stopped with "An executable named `honcho-cli` is not provided", so the documented `uvx honcho-cli` and a one-line `uvx honcho-cli install` both failed
 
+## [0.6.0] - 2026-11-10
+
+### Added
+
+- `honcho workspace replay --from <id> --to <id>`: copy a workspace by replaying it. Workspace, peer and session metadata and configuration, session membership and scopes are copied, then every message is re-sent in order with its original `created_at`, so the destination derives its own conclusions, summaries and peer cards; nothing derived is copied. `--from-url` / `--to-url` (and `HONCHO_FROM_API_KEY` / `HONCHO_TO_API_KEY`) put either side on another Honcho instance, and the configured credentials are never sent to an instance they were not issued for. `--num-sessions N` replays only the N sessions with the most recent message, `--dry-run` reads both sides without writing and says, for each session, whether a replay will create it, resume it, find it up to date, or skip it as a conflict, and a rerun resumes by skipping messages the destination already has. A destination session whose messages differ from the source is left untouched and reported. In a terminal the command prints a short report and the `queue-status` command that shows derivation on the destination; `--json` prints the same facts as one object. Both reports count the conclusions in the source (`not_copied`), because conclusions and peer cards written through the API have no source message and are not recreated. The destination session has the source's current members from its first message, so a peer that joined late observes the whole session. With a workspace-scoped key, a source that has no sessions and no peers is reported as `NOTHING_TO_REPLAY` and is not created. Per-message configuration is not stored by Honcho and cannot be replayed (#1573)
+
+### Fixed
+
+- `honcho --version`, the update check and the `X-Honcho-Host` header report the installed version. `__version__` was a hardcoded string that the 0.5.0 release did not bump, so a 0.5.0 install reported itself as 0.4.0, and the update check told 0.5.0 users that 0.5.0 was available. The version is now read from the installed package metadata (#1571)
+
+## [0.5.0] - 2026-11-05
+
+### Added
+
+- `honcho dream list` and `honcho dream inspect <id>` (Representation History): list the dreams in a workspace, newest first, or the dreams about one peer with `-p`, and see what a dream changed. `inspect` shows the conclusions it created, each with the conclusions it was derived from and where those stand now (current, removed and by which dream, or unavailable once deleted or removed longer ago than history is kept); the conclusions it removed, as they read when removed; and the peer card before and after. A dream past the retention window shows when it was pruned and keeps only the conclusions it created that still exist. Needs a workspace or admin key, and Honcho v3.6.0+ (#1542)
+
+### Changed
+
+- Requires `honcho-ai` 2.9.0 or newer, the first Python SDK with `dreams()` and `get_dream()`
+
+### Fixed
+
+- `HONCHO_API_KEY` wins over a saved OAuth grant, as the documented flag > env > file order says. Before, `HONCHO_API_KEY=<key> honcho workspace list` quietly ran as the saved OAuth identity. A run with an env key no longer refreshes or writes `~/.honcho/config.json`, and an OAuth refresh under `HONCHO_API_KEY` or `HONCHO_BASE_URL` no longer writes those values into it, which had switched every other tool sharing the file to that key's org. A refreshed grant records the host it was refreshed against, and `honcho doctor` names the env key as the credential in use (#1518)
+
 ## [0.4.0] - 2026-10-29
 
 ### Added
@@ -31,6 +55,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Requires `certifi` 2026.10.19 or newer, the first CA bundle without the emSign root behind the compromised eMudhra intermediates. Upgrading the CLI now upgrades the bundle it verifies TLS with, including under `pip install -U`, which otherwise leaves dependencies alone
 - A local stack keeps the Honcho image it pinned on first `honcho start`, so a stack set up before this release can still be running an image with the old bundle. Move to the patched image with `honcho stop`, then `honcho start --image ghcr.io/plastic-labs/honcho:v3.4.1`; data is kept
+
+## [0.2.1] - 2026-10-20
+
+### Fixed
+
+- `honcho session summaries`, `honcho session inspect`, `honcho session context` and `honcho workspace queue-status` emit nested SDK objects (summaries, context messages, per-session queue status) as JSON objects instead of Python repr strings like `"content='...' message_id='...'"` (#1324)
 
 ## [0.2.1] - 2026-10-20
 

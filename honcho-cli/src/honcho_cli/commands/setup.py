@@ -334,6 +334,8 @@ def _check_connection(base_url: str, api_key: str) -> None:
 
 def _auth_mode_detail(config: CLIConfig) -> str:
     """Human summary of which credential the CLI will use."""
+    if config.api_key_from_env:
+        return "API key (HONCHO_API_KEY)"
     tokens = config.usable_oauth()
     if tokens is not None:
         if tokens.access_valid():

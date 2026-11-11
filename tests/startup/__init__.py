@@ -1,0 +1,1 @@
+"""Startup-validator tests."""

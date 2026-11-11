@@ -13,15 +13,20 @@ the signal for when that is true.
 from __future__ import annotations
 
 import inspect
+import logging
 from pathlib import Path
+from typing import Any
 
 import cashews.backends.redis.client as cashews_client
 import pytest
+from cashews.backends.memory import Memory
 from cashews.backends.redis.client import SafeRedisCluster
+from cashews.picklers import PicklerType
 from redis.asyncio import RedisCluster
 
-# Imported for its side effect: this is what installs the shim.
-import src.cache.client  # noqa: F401  # pyright: ignore[reportUnusedImport]
+# Importing it also installs the shim.
+from src.cache import client as cache_client
+from src.config import settings
 
 # The parameters redis-py >= 8.0.0 passes to RedisCluster.initialize().
 UPSTREAM_INITIALIZE_KWARGS = ("additional_startup_nodes_info", "last_failed_node_name")
@@ -61,6 +66,41 @@ def test_shim_is_still_required():
         "SafeRedisCluster patch in src/cache/client.py is likely obsolete -- "
         "verify against the installed cashews and delete it."
     )
+
+
+@pytest.mark.asyncio
+async def test_startup_with_an_unreachable_cluster_falls_back_to_memory(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    """init_cache() retries the ping, then switches to the in-memory cache without raising."""
+    original_url = settings.CACHE.URL
+    attempts = 0
+    patched_initialize = SafeRedisCluster.initialize
+
+    async def counting_initialize(self: SafeRedisCluster, *args: Any, **kwargs: Any):
+        nonlocal attempts
+        attempts += 1
+        return await patched_initialize(self, *args, **kwargs)
+
+    monkeypatch.setattr(SafeRedisCluster, "initialize", counting_initialize)
+    monkeypatch.setattr(settings.CACHE, "ENABLED", True)
+    monkeypatch.setattr(settings.CACHE, "CLUSTER", True)
+    monkeypatch.setattr(settings.CACHE, "URL", "redis://127.0.0.1:1?suppress=true")
+    monkeypatch.setattr(settings.CACHE, "CONNECT_RETRIES", 0)
+    monkeypatch.setattr(settings.SENTRY, "ENABLED", False)
+    try:
+        with caplog.at_level(logging.ERROR, logger="src.cache.client"):
+            await cache_client.init_cache()
+
+        assert isinstance(cache_client.cache._get_backend(""), Memory)  # pyright: ignore[reportPrivateUsage]
+        assert attempts >= 2, "the startup ping is retried"
+        assert any(
+            "Failed to connect to cache" in r.getMessage() for r in caplog.records
+        ), "the connection-error branch, not the unexpected-error one"
+    finally:
+        monkeypatch.undo()
+        await cache_client.cache.close()
+        cache_client.cache.setup(original_url, pickle_type=PicklerType.SQLALCHEMY)
 
 
 def test_upstream_still_passes_the_kwargs_the_shim_forwards():

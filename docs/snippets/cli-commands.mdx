@@ -141,6 +141,52 @@ honcho doctor
 ```
 
 
+## honcho dream
+
+List dreams and inspect what each one changed in a peer's representation.
+
+<AccordionGroup>
+<Accordion title="inspect">
+Show what one dream changed.
+
+Lists the conclusions it created, each with the conclusions it was derived
+from; the conclusions it removed, as they read when removed; and the peer
+card before and after. Each source shows where it stands now: current,
+removed (and by which dream), or unavailable once deleted or removed longer
+ago than history is kept.
+
+```bash
+honcho dream inspect <run_id>
+```
+
+<ParamField path="run_id" type="string" required />
+</Accordion>
+<Accordion title="list">
+List dreams in the workspace, newest first.
+
+Pass -p to see the dreams about one peer, and --observer to narrow to one
+observer's model of that peer. `honcho dream inspect \<id>` shows what a
+dream changed.
+
+```bash
+honcho dream list
+```
+
+<ParamField path="--observer" type="string">
+  Only dreams from this observer's perspective (with -p: one representation).
+</ParamField>
+<ParamField path="--limit" type="number" default="20">
+  Dreams per page.
+</ParamField>
+<ParamField path="--page" type="number" default="1">
+  Page number, newest dreams first.
+</ParamField>
+<ParamField path="--peer" type="string">
+  Only dreams about this peer (the observed peer). Short alias: `-p`.
+</ParamField>
+</Accordion>
+</AccordionGroup>
+
 ## honcho help
 
 Show help message.
@@ -797,6 +843,42 @@ honcho workspace queue-status
 </ParamField>
 <ParamField path="--sender" type="string">
   Filter by sender peer.
+</ParamField>
+</Accordion>
+<Accordion title="replay">
+Replay a workspace's sessions into another workspace, on this or another instance.
+
+Copies workspace, peer and session settings, then re-sends every message in
+order with its original timestamp. The destination derives its own
+conclusions; conclusions and peer cards are not copied, so the ones written
+through the API are not recreated. Rerunning resumes: messages already in
+the destination are skipped.
+
+Each side uses the configured instance unless its URL is given. A side on
+another instance needs its own API key, read from HONCHO_FROM_API_KEY /
+HONCHO_TO_API_KEY; the configured credentials are never sent to it.
+
+```bash
+honcho workspace replay
+```
+
+<ParamField path="--from" type="string" required>
+  Source workspace ID.
+</ParamField>
+<ParamField path="--to" type="string">
+  Destination workspace ID. Defaults to the --from ID, which needs a different destination instance.
+</ParamField>
+<ParamField path="--from-url" type="string">
+  Source Honcho URL, when it is not the configured instance. Its API key is read from HONCHO_FROM_API_KEY.
+</ParamField>
+<ParamField path="--to-url" type="string">
+  Destination Honcho URL, when it is not the configured instance. Its API key is read from HONCHO_TO_API_KEY.
+</ParamField>
+<ParamField path="--num-sessions" type="string">
+  Replay only the N sessions with the most recent message.
+</ParamField>
+<ParamField path="--dry-run" type="boolean">
+  Show what a replay would do with each session, without writing anything.
 </ParamField>
 </Accordion>
 <Accordion title="search">

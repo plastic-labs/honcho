@@ -21,6 +21,7 @@ from cloudevents.http import CloudEvent
 
 from src._version import HONCHO_VERSION
 from src.telemetry.client_context import client_context_body
+from src.telemetry.tenant import TENANTLESS_CATEGORIES, current_tenant_id
 
 if TYPE_CHECKING:
     from src.telemetry.events.base import BaseEvent
@@ -41,8 +42,9 @@ def _should_sample(
 
     When the event carries a `run_id`, sampling decisions hash on that id —
     so every event in an agent run either passes or fails the sampler, and
-    join queries downstream don't see half-traces. Events without `run_id`
-    (summarizer, deriver — non-agentic call sites) sample independently per
+    join queries downstream don't see half-traces. Deriver and summarizer LLM
+    calls carry their batch's or summary's run id, so a call and its retries
+    pass or fail together. Events without `run_id` sample independently per
     event using the event's deterministic id. Callers that have already
     computed `event.generate_id()` can pass it as `event_id` to avoid the
     redundant sha256 hash.
@@ -298,6 +300,29 @@ class TelemetryEmitter:
             "time": event.timestamp.isoformat(),
             "dataschema": f"https://honcho.dev/schemas/{event.event_type()}/v{event.schema_version()}",
         }
+
+        # region ai
+        # Tenant identity rides the envelope as a CloudEvents extension attribute
+        # (`tenantid`: lowercase alphanumeric per the spec), never `source` — on a
+        # shared instance `source` still names the instance, and one flush batch
+        # holds many tenants' events, so the consumer must read this per event.
+        # Under MULTI_TENANT the bound tenant; flag-off the instance's TENANT_ID,
+        # and with that unset the envelope stays byte-identical and its tenant IS
+        # the namespace. Read here, at emit time,
+        # because this runs in the emitting request's or work unit's context; the
+        # flush loop that serializes the buffer later does not.
+        # A flag-on emit with no tenant bound is an emit site outside its bind
+        # scope. The event still ships, without `tenantid`, so a downstream consumer
+        # can tell it apart, and the counter makes it visible; reconciliation events
+        # are exempt because they are tenant-less by construction.
+        # endregion
+        tenant_id = current_tenant_id()
+        if tenant_id:
+            attributes["tenantid"] = tenant_id
+        elif settings.MULTI_TENANT and event.category() not in TENANTLESS_CATEGORIES:
+            prometheus_metrics.record_telemetry_event_untenanted(
+                event_type=event.event_type()
+            )
 
         # Build body and inject envelope-level identity. We do NOT mutate the event
         # instance — tests and callers that observe the event after emit() see it

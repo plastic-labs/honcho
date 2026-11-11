@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import socket
-from collections.abc import Iterable
-from typing import Any, cast
+from collections.abc import Awaitable, Callable, Iterable
+from functools import wraps
+from typing import Any, ParamSpec, TypeVar, cast
 from urllib.parse import urlparse, urlunparse
 
 import sentry_sdk
-from cashews import cache
+from cashews import Cache, cache
 from cashews.backends.redis.client import SafeRedisCluster
+from cashews.commands import PATTERN_CMDS, Command
+from cashews.exceptions import CacheBackendInteractionError
 from cashews.picklers import PicklerType
 from redis import exceptions as redis_exc
 from redis.asyncio import RedisCluster
@@ -61,17 +65,24 @@ _cache_lock = asyncio.Lock()
 async def _safe_cluster_initialize(
     self: SafeRedisCluster, *args: Any, **kwargs: Any
 ) -> SafeRedisCluster:
-    """Forward whatever redis-py passes, keeping cashews' degrade-on-error intent."""
+    """Forward whatever redis-py passes; report any init failure as ConnectionError."""
     try:
         return await RedisCluster.initialize(self, *args, **kwargs)  # pyright: ignore[reportReturnType]
     except (
         redis_exc.RedisError,
+        # Not a RedisError subclass; raised when no startup node answers.
+        redis_exc.RedisClusterException,
         socket.gaierror,
         OSError,
         TimeoutError,
-    ):
+    ) as exc:
+        # Do not return the client: a failed init leaves it with no default
+        # node (and no nodes at all if none answered), so its next command
+        # raises IndexError or AttributeError, which nothing catches.
+        # ConnectionError is what init_cache() retries and falls back on, and
+        # what the safe client and fallback_on_cache_error handle.
         logger.error("redis: can not initialize cache", exc_info=True)
-        return self
+        raise redis_exc.ConnectionError("Redis Cluster initialization failed") from exc
 
 
 # cashews evaluates `__aenter__ = initialize` at class-definition time, so the
@@ -256,6 +267,116 @@ def cache_prefix_namespace() -> str:
     return "{{" + get_cache_namespace() + "}}"
 
 
+def _tenant_scope_middleware() -> Any:
+    """Prefix every cache key with the current tenant when MULTI_TENANT is on."""
+
+    # region ai
+    # honcho's cache keys are workspace_name-scoped, and workspace_name is not unique
+    # across tenants (every tenant has a "default" workspace), so without this a
+    # cross-tenant cache hit would return another tenant's row and bypass row-level
+    # security — the cache is read before the DB. Prefixing every key with the
+    # request's tenant keeps entries (and the per-key locks) isolated across
+    # get/set/delete. No-op when MULTI_TENANT is off, so self-host keys are
+    # byte-for-byte unchanged. Modeled on cashews' own add_prefix helper.
+    # endregion
+
+    async def _middleware(
+        call: Any, cmd: Command, _backend: Any, *args: Any, **kwargs: Any
+    ) -> Any:
+        if not settings.MULTI_TENANT:
+            return await call(*args, **kwargs)
+        # ai: deferred import keeps cache.client free of a load-time dependency on db.
+        from src.db import tenant_context
+
+        tenant = tenant_context.get()
+
+        def _scope(key: str) -> str:
+            # region ai
+            # Fail closed instead of falling back to a shared 'default' bucket:
+            # 'default' is the real id of the bootstrap tenant (see the tenants
+            # seed migration), so a tenant-less caller reading/writing
+            # t:default:* would silently share that tenant's cache -- and since
+            # the cache is read before the DB, a cross-tenant hit here bypasses
+            # RLS entirely, the same class of bug tracked_db() and
+            # construct_work_unit_key() already fail closed on. Every reachable
+            # caller is tenant-bound before it can reach a cache command: those
+            # two raise first for every path that reaches this middleware
+            # (tracked_db() for every tracked_db-scoped call, and
+            # construct_work_unit_key() for the one service_db()-scoped cache
+            # write, the scope-task enqueue's cache invalidation). If this
+            # raises, some new caller reached the cache without going through
+            # either, and belongs on tracked_db(tenant_id=...) instead.
+            # endregion
+            if not tenant:
+                raise ValueError(
+                    f"cache {cmd.value} on key {key!r} requires a tenant when "
+                    + "MULTI_TENANT is on, but tenant_context is unset -- bind a "
+                    + "tenant (tracked_db(tenant_id=...), or an ambient "
+                    + "tenant_context set by the caller) before touching the "
+                    + "cache; cross-tenant cache access is not supported"
+                )
+            return f"t:{tenant}:" + key
+
+        if cmd in (Command.GET_MANY, Command.DELETE_MANY):
+            return await call(*[_scope(key) for key in args])
+        if cmd == Command.SET_MANY:
+            kwargs["pairs"] = {_scope(k): v for k, v in kwargs["pairs"].items()}
+            return await call(**kwargs)
+        as_key = "pattern" if cmd in PATTERN_CMDS else "key"
+        key = kwargs.get(as_key)
+        if key:
+            kwargs[as_key] = _scope(key)
+            return await call(**kwargs)
+        if args:
+            return await call(_scope(args[0]), *args[1:], **kwargs)
+        return await call(*args, **kwargs)
+
+    return _middleware
+
+
+# ai: registered once at import; applies to every backend cache.setup() installs.
+cache.add_middleware(_tenant_scope_middleware())
+
+# region ai
+# A second client for fleet-wide coordination keys (the deriver metrics snapshot
+# and the lease on computing it), deliberately without the tenant-scope
+# middleware: those keys belong to no tenant, and the middleware refuses any
+# command without one under MULTI_TENANT. Kept apart from `cache` so the tenant
+# cache stays fail-closed. Its keys come only from fleet_key(), never from tenant
+# input, and carry a `fleet:` segment no tenant key can produce (tenant keys are
+# `t:{tenant}:...`). They hold aggregate counts, never tenant data. It uses the
+# same backend as `cache`: Redis when that connected, else a process-local
+# in-memory store, where coordination degrades to every process for itself.
+# endregion
+fleet_cache = Cache()
+
+
+def fleet_key(name: str) -> str:
+    """A fleet-wide coordination key, hash-tagged to the instance's namespace."""
+    return f"{cache_key_namespace()}:fleet:{name}"
+
+
+async def _setup_fleet_cache(*, redis: bool) -> None:
+    await fleet_cache.close()
+    if not redis:
+        # No expiry task: the two fleet keys are read every pass, which expires
+        # them lazily, and a task bound to one event loop breaks a later one.
+        fleet_cache.setup("mem://?check_interval=0")
+        return
+    fleet_cache.setup(
+        settings.CACHE.URL,
+        cluster=settings.CACHE.CLUSTER,
+        # Raise Redis errors (the URL may say suppress=true) so the poller's
+        # fallback runs: suppressed, a failed set_lock reads as another replica
+        # holding the lease, and no replica would clean up stale claims.
+        suppress=False,
+        # One snapshot read or write per poll interval: a couple of connections.
+        max_connections=2,
+        socket_connect_timeout=settings.CACHE.CONNECT_TIMEOUT_SECONDS,
+    )
+    fleet_cache.enable()
+
+
 async def _release_default_node_connection() -> None:
     """Drop the idle connection the startup PING leaves on the cluster's default node.
 
@@ -312,6 +433,8 @@ async def init_cache() -> None:
     async with _cache_lock:
         # Close existing backends to force recreation with new ContextVars
         await cache.close()
+        await _setup_fleet_cache(redis=False)
+        connected = False
 
         if not is_cache_enabled():
             # Use in-memory cache when caching is disabled
@@ -328,6 +451,9 @@ async def init_cache() -> None:
                 settings.CACHE.URL,
                 pickle_type=PicklerType.SQLALCHEMY,
                 cluster=settings.CACHE.CLUSTER,
+                # cashews passes this to the redis-py pool: per process for a
+                # standalone client, per node for a cluster client.
+                max_connections=settings.CACHE.MAX_CONNECTIONS,
                 socket_connect_timeout=settings.CACHE.CONNECT_TIMEOUT_SECONDS,
                 retry=Retry(
                     ExponentialBackoff(cap=0.5, base=0.1),
@@ -370,6 +496,7 @@ async def init_cache() -> None:
                             "Connected to cache at %s",
                             _redact_cache_url(settings.CACHE.URL),
                         )
+                        connected = True
         except (redis_exc.TimeoutError, redis_exc.ConnectionError, TimeoutError) as e:
             logger.error(
                 "Failed to connect to cache at %s: %s. Falling back to a process-local in-memory cache; invalidations will not reach other processes",
@@ -398,6 +525,8 @@ async def init_cache() -> None:
         # than leaving one idle connection behind. A no-op on the fallback
         # path, where there is no cluster client to read.
         await _release_default_node_connection()
+        if connected:
+            await _setup_fleet_cache(redis=True)
 
 
 _TRANSIENT_CACHE_ERRORS = (
@@ -448,8 +577,47 @@ async def safe_cache_delete(key: str) -> None:
         logger.warning("Cache delete failed for key %s", key, exc_info=True)
 
 
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+# Errors that only the cache layer raises. A fetcher's own DB code never raises
+# these, so catching them cannot hide a DB error.
+_CACHE_FAILURES = (
+    redis_exc.RedisError,
+    redis_exc.RedisClusterException,
+    CacheBackendInteractionError,
+)
+
+
+def fallback_on_cache_error(
+    cached: Callable[_P, Awaitable[_R]],
+) -> Callable[_P, Awaitable[_R]]:
+    """Run a @cache / @cache.locked fetcher without the cache if the cache fails.
+
+    Put it above the cashews decorators. cashews' suppress mode does not catch
+    every Redis error (for example RedisClusterException, which is not a
+    RedisError), and an error that gets through would fail the request.
+    """
+    uncached = inspect.unwrap(cached)
+
+    @wraps(uncached)
+    async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        try:
+            return await cached(*args, **kwargs)
+        except _CACHE_FAILURES as e:
+            logger.warning(
+                "Cache failed for %s, running it without the cache: %r",
+                uncached.__qualname__,
+                e,
+            )
+            return await uncached(*args, **kwargs)
+
+    return wrapper
+
+
 async def close_cache() -> None:
     await cache.close()
+    await fleet_cache.close()
 
 
 __all__ = [
@@ -458,6 +626,9 @@ __all__ = [
     "cache",
     "cache_key_namespace",
     "cache_prefix_namespace",
+    "fleet_cache",
+    "fleet_key",
+    "fallback_on_cache_error",
     "safe_cache_delete",
     "safe_cache_get",
     "safe_cache_set",

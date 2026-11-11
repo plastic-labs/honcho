@@ -267,16 +267,11 @@ class DialecticAgent:
         if max_tokens == 0 or not self.session_name:
             return
 
-        # Fetch recent messages up to the token limit
-        stmt = await crud.get_messages(
-            workspace_name=self.workspace_name,
-            session_name=self.session_name,
-            token_limit=max_tokens,
-            reverse=False,  # chronological order
-        )
         async with tracked_db("dialectic.session_history", read_only=True) as db:
-            result = await db.execute(stmt)
-            messages = result.scalars().all()
+            # Recent messages up to the token limit, in chronological order
+            messages = await crud.get_messages_id_range(
+                db, self.workspace_name, self.session_name, token_limit=max_tokens
+            )
 
             if not messages:
                 return

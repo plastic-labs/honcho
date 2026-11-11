@@ -4,6 +4,7 @@ from .collection import (
     get_or_create_collection,
     invalidate_collection_cache,
     merge_collection_internal_metadata_value,
+    record_explicit_documents,
     update_collection_internal_metadata,
 )
 from .deriver import (
@@ -31,6 +32,14 @@ from .document import (
     query_explicit_documents_after,
     query_external_vector_document_ids,
     summarize_documents_by_level,
+)
+from .dream_history import (
+    DreamHistoryTarget,
+    close_run,
+    get_run_detail,
+    list_runs_stmt,
+    open_run,
+    prune_dream_history,
 )
 from .message import (
     create_messages,
@@ -115,10 +124,18 @@ __all__ = [
     "get_active_peers",
     "WorkspaceStats",
     "ActivePeer",
+    # Dream history
+    "DreamHistoryTarget",
+    "close_run",
+    "get_run_detail",
+    "list_runs_stmt",
+    "open_run",
+    "prune_dream_history",
     # Collection
     "get_collection",
     "get_or_create_collection",
     "update_collection_internal_metadata",
+    "record_explicit_documents",
     "get_collection_internal_metadata_value",
     "invalidate_collection_cache",
     "merge_collection_internal_metadata_value",

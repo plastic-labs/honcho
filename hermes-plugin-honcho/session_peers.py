@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +26,12 @@ def sanitize_peer_id(id_str: str) -> str:
 def assistant_peer_id_for(config: Any) -> str:
     """The agent's own peer ID from ``aiPeer``, as the session builder derives it."""
     return sanitize_peer_id(getattr(config, "ai_peer", None) or "hermes-assistant")
+
+
+def machine_owner_id() -> str | None:
+    """How Hermes names this machine's own user on Desktop, the web app and signed-in phones
+    (``uid:<n>``). None on Windows, where the owner id is a SID."""
+    return f"uid:{os.getuid()}" if hasattr(os, "getuid") else None
 
 
 class HonchoPeerUnresolvedError(RuntimeError):
@@ -80,7 +87,8 @@ class SessionPeersMixin:
 
     def _resolve_user_peer_id(self, key: str) -> str:
         """Honcho user peer ID for this manager/session. Order: pinned peerName -> alias of a
-        runtime identity -> (prefixed) runtime identity -> configured peerName. Raises
+        runtime identity -> peerName for the machine owner -> (prefixed) runtime identity ->
+        configured peerName. Raises
         HonchoPeerUnresolvedError when none applies: every peer must be one the operator declared
         or one the transport supplied, never a name derived from the session key."""
         peer_name = str(self._cfg("peer_name") or "").strip()
@@ -94,6 +102,8 @@ class SessionPeersMixin:
                 alias = aliases.get(runtime_id)
                 if isinstance(alias, str) and alias.strip():
                     return self._sanitize_id(alias.strip())
+            if peer_name and machine_owner_id() in runtime_ids:
+                return self._sanitize_id(peer_name)
             prefix = self._cfg("runtime_peer_prefix", "")
             prefix = prefix.strip() if isinstance(prefix, str) else ""
             if prefix:

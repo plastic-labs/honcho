@@ -10,7 +10,7 @@ from plugins.memory.config_schema import (
     KIND_NUMBER,
     KIND_SECRET,
     KIND_SELECT,
-    STORAGE_HONCHO_HOST_BLOCK,
+    STORAGE_PROVIDER,
 )
 
 from hermes_plugin_honcho.config_schema import CONFIG_SCHEMA as provider
@@ -30,7 +30,7 @@ INLINE_KEYS = {
 def test_honcho_is_declared():
     assert provider.name == "honcho"
     assert provider.label == "Honcho"
-    assert provider.storage == STORAGE_HONCHO_HOST_BLOCK
+    assert provider.storage == STORAGE_PROVIDER
     # Field keys are unique, and the curated inline set is present.
     keys = [field.key for field in provider.fields]
     assert len(keys) == len(set(keys))

@@ -16,6 +16,7 @@ from src.cache.client import (
     cache,
     cache_key_namespace,
     cache_prefix_namespace,
+    fallback_on_cache_error,
     safe_cache_delete,
 )
 from src.config import settings
@@ -358,7 +359,15 @@ async def get_or_create_peers(
     ]
     try:
         async with db.begin_nested():
-            db.add_all(new_peers)
+            # Added in name order, which is the order the flush inserts them: two
+            # concurrent creates naming overlapping new peers then take the
+            # unique-key locks in the same order, so neither can hold one name
+            # while waiting on the other's. `new_peers` keeps request order for
+            # the returned list and the created events.
+            in_name_order: list[models.Peer] = sorted(
+                new_peers, key=lambda peer: peer.name
+            )
+            db.add_all(in_name_order)
     except IntegrityError:
         if _retry:
             raise ConflictException(
@@ -404,6 +413,7 @@ async def get_or_create_peers(
     )
 
 
+@fallback_on_cache_error
 @cache(
     key=PEER_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
@@ -472,7 +482,7 @@ async def get_peer(
         )
 
     # Reconstruct ORM object from cached dict and merge into session
-    obj = models.Peer(**data)
+    obj = models.Peer(**models.with_cached_tenant(data))
     make_transient_to_detached(obj)
     existing_peer = await db.merge(obj, load=False)
 
@@ -497,7 +507,9 @@ async def get_peers(
             scope peers, and "all" returns everything.
     """
     stmt = select(models.Peer).where(
-        models.Peer.workspace_name == workspace_name, live_peer_row()
+        models.Peer.tenant_id == models.scoped_tenant_id(),
+        models.Peer.workspace_name == workspace_name,
+        live_peer_row(),
     )
 
     if kind is None:
@@ -610,7 +622,9 @@ async def get_sessions_for_peer(
             (models.Session.name == models.SessionPeer.session_name)
             & (models.Session.workspace_name == models.SessionPeer.workspace_name),
         )
+        .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
         .where(models.SessionPeer.peer_name == peer_name)
+        .where(models.Session.tenant_id == models.scoped_tenant_id())
         .where(models.Session.workspace_name == workspace_name)
         .where(live_session_row(), live_session_peer_row())
     )

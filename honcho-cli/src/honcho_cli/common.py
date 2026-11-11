@@ -12,6 +12,7 @@ no-op if the same flag was already set at an outer level.
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 from typing import Optional
 
@@ -20,7 +21,7 @@ import typer
 from honcho import Honcho
 
 from honcho_cli import oauth
-from honcho_cli.config import CLIConfig, OAuthTokens, get_client_kwargs
+from honcho_cli.config import ENV_MAP, CLIConfig, OAuthTokens, get_client_kwargs, identity_headers
 from honcho_cli.output import print_error, set_json_mode
 from honcho_cli.validation import validate_resource_id
 
@@ -64,10 +65,13 @@ def get_flag_overrides() -> dict[str, str | None]:
 def maybe_refresh_token(config: CLIConfig) -> None:
     """Refresh an expired OAuth access token in place and persist it.
 
-    No-op when there is no grant for the current host or the token is still
-    valid. A dead grant degrades to the saved apiKey with a warning; exits
-    only when nothing is left to authenticate with.
+    No-op when HONCHO_API_KEY is set (the env key wins, so the grant goes
+    unused), when there is no grant for the current host, or when the token is
+    still valid. A dead grant degrades to the saved apiKey with a warning;
+    exits only when nothing is left to authenticate with.
     """
+    if config.api_key_from_env:
+        return
     tokens = config.usable_oauth()
     if tokens is None or tokens.access_valid():
         return
@@ -83,15 +87,19 @@ def maybe_refresh_token(config: CLIConfig) -> None:
         if refreshed is not None:
             # rotation-safe: persist the (possibly new) refresh token before
             # it's reused; keep the old one if the server didn't rotate
-            # (refresh_token is optional)
+            # (refresh_token is optional). Only the grant is written: config
+            # carries env overrides that must not land in the shared file.
+            # Bind it to the host it was refreshed against, so a legacy
+            # hostless grant refreshed under HONCHO_BASE_URL isn't later sent
+            # to the saved environmentUrl.
             config.oauth = OAuthTokens.from_response(
                 refreshed,
                 client_id=tokens.client_id,
                 scope_fallback=tokens.scope,
                 refresh_fallback=tokens.refresh_token,
-                host=tokens.host,
+                host=config.base_url,
             )
-            config.save()
+            config.save(oauth_only=True)
             return
 
     if config.api_key:
@@ -122,6 +130,52 @@ def get_client(*, require_workspace: bool = True):
         raise typer.Exit(1)
     maybe_refresh_token(config)
     return Honcho(**get_client_kwargs(config)), config
+
+
+def same_instance(url_a: str, url_b: str) -> bool:
+    """True when two base URLs name the same Honcho instance."""
+    return url_a.rstrip("/") == url_b.rstrip("/")
+
+
+def get_endpoint_client(
+    *,
+    workspace_id: str,
+    base_url: str | None = None,
+    api_key: str | None = None,
+) -> Honcho:
+    """Create a client for one side of a command that spans two instances.
+
+    With no overrides this is the configured instance and its credentials. An
+    explicit ``api_key`` always wins. A ``base_url`` that names a different
+    instance never receives the configured credentials: they belong to another
+    host, so that side authenticates with its own ``api_key`` or, for an
+    instance with auth disabled, with nothing.
+    """
+    config = CLIConfig.load()
+    url = base_url or config.base_url
+    key = api_key
+    if not key and same_instance(url, config.base_url):
+        maybe_refresh_token(config)
+        key = config.resolved_api_key()
+
+    kwargs: dict = {
+        "base_url": url,
+        "workspace_id": workspace_id,
+        "default_headers": identity_headers(),
+    }
+    if key:
+        return Honcho(api_key=key, **kwargs)
+
+    # Given no key, the SDK reads HONCHO_API_KEY itself. Hide it while the
+    # client is built, or a key meant for the configured instance would be sent
+    # to this one.
+    env_key = ENV_MAP["api_key"]
+    hidden = os.environ.pop(env_key, None)
+    try:
+        return Honcho(**kwargs)
+    finally:
+        if hidden is not None:
+            os.environ[env_key] = hidden
 
 
 def handle_cmd_flags(

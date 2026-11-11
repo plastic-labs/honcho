@@ -52,9 +52,8 @@ async def test_cursor_moves_only_when_both_specialists_succeeded(
 ):
     monkeypatch.setattr(settings.DREAM, "BRIEF_ENABLED", True)
     advance = AsyncMock()
-    collection = MagicMock(internal_metadata={})
+    collection = MagicMock(internal_metadata={}, explicit_count=0)
     db = AsyncMock()
-    db.scalar.return_value = 0
     with (
         patch(
             "src.dreamer.orchestrator.run_dream",
@@ -90,13 +89,16 @@ async def _run_process_dream(
     advance = AsyncMock()
     update = AsyncMock()
     db = AsyncMock()
-    db.scalar.return_value = explicit_count
     with (
         patch("src.dreamer.orchestrator.run_dream", new=AsyncMock(return_value=result)),
         patch("src.dreamer.orchestrator.tracked_db") as tracked_db,
         patch(
             "src.dreamer.orchestrator.crud.get_collection",
-            new=AsyncMock(return_value=MagicMock(internal_metadata=internal_metadata)),
+            new=AsyncMock(
+                return_value=MagicMock(
+                    internal_metadata=internal_metadata, explicit_count=explicit_count
+                )
+            ),
         ),
         patch(
             "src.dreamer.orchestrator.crud.update_collection_internal_metadata",

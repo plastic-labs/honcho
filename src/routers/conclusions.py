@@ -176,7 +176,9 @@ async def delete_conclusion(
     """
     Delete a single Conclusion by ID.
 
-    This action cannot be undone.
+    Also deletes any copy Representation History kept of it, so it reads as
+    `unavailable` in every dream that references it. A conclusion a dream has
+    already removed can be deleted this way too. This action cannot be undone.
     """
     try:
         await crud.delete_document_by_id(

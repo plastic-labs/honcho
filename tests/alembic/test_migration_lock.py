@@ -14,7 +14,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import Engine, text
+from sqlalchemy import Connection, Engine, text
 
 import src.migrate
 from src.migrate import (
@@ -117,8 +117,12 @@ def test_lock_timeout_retries_until_table_is_free(
     script = ScriptDirectory.from_config(alembic_cfg)
     head = _head(alembic_cfg)
     previous = script.get_revision(head).down_revision
-    assert isinstance(previous, str)
-    command.upgrade(alembic_cfg, previous)
+    # A merge head has several parents; stop on all of them so only the head
+    # revision itself is left for the blocked upgrade.
+    parents = (previous,) if isinstance(previous, str) else tuple(previous or ())
+    assert parents
+    for parent in parents:
+        command.upgrade(alembic_cfg, parent)
 
     backoffs: list[float] = []
     real_sleep = time.sleep
@@ -141,3 +145,23 @@ def test_lock_timeout_retries_until_table_is_free(
 
     assert backoffs, "upgrade never hit lock_timeout"
     assert _current(alembic_engine) == head
+
+
+def test_reconciler_check_keeps_runner_lock_timeout(
+    alembic_cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """c4e8a2b91d57 sets its own lock_timeout and must put the runner's back."""
+    command.upgrade(alembic_cfg, "b7d2f4a81c39")
+
+    real_retry = src.migrate.run_with_lock_retry
+    seen: list[str | None] = []
+
+    def retry_and_record(connection: Connection, fn: Any, **_: Any) -> Any:
+        result = real_retry(connection, fn, lock_timeout_ms=1234)
+        seen.append(connection.scalar(text("SHOW lock_timeout")))
+        return result
+
+    monkeypatch.setattr(src.migrate, "run_with_lock_retry", retry_and_record)
+    command.upgrade(alembic_cfg, "c4e8a2b91d57")
+
+    assert seen == ["1234ms"]

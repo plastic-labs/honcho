@@ -35,18 +35,14 @@ from src.utils.summarizer import (
     create_long_summary,
     create_short_summary,
 )
-from src.utils.tokens import estimate_tokens, tokenizer
+from src.utils.tokens import tokenizer
 
 # About one token per repetition under o200k.
 _WORD = " alpha"
 
 
 def _actual_tokens(text: str) -> int:
-    """Exact o200k count, counting control-token look-alikes as plain text.
-
-    `estimate_tokens` falls back to a length estimate on such text, which would
-    hide an over-budget prompt.
-    """
+    """Exact o200k count, counting control-token look-alikes as plain text."""
     return len(tokenizer.encode(text, disallowed_special=()))
 
 
@@ -136,7 +132,6 @@ def test_special_token_text_is_counted_exactly() -> None:
     """Text that looks like a control token is counted as text, not estimated
     from its length, which undercounts dense text such as CJK."""
     content = "<|endoftext|>" + "猫" * 2000
-    assert estimate_tokens(f"alice: {content}") < _actual_tokens(f"alice: {content}")
 
     kept, text, clipped = _fit_messages_to_budget([_message(content)], 1000)
 

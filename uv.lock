@@ -1065,7 +1065,7 @@ wheels = [
 
 [[package]]
 name = "honcho"
-version = "3.5.0"
+version = "3.6.1"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
@@ -1128,6 +1128,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
+    { name = "pytest-socket" },
     { name = "pytest-xdist" },
     { name = "ruff" },
     { name = "schemathesis" },
@@ -1189,6 +1190,7 @@ dev = [
     { name = "pytest", specifier = ">=8.2.2" },
     { name = "pytest-asyncio", specifier = ">=0.23.7" },
     { name = "pytest-cov", specifier = ">=6.2.1" },
+    { name = "pytest-socket", specifier = ">=0.7.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruff", specifier = "==0.15.12" },
     { name = "schemathesis", specifier = ">=4.31.1" },
@@ -1199,7 +1201,7 @@ dev = [
 
 [[package]]
 name = "honcho-ai"
-version = "2.8.0"
+version = "2.9.0"
 source = { editable = "sdks/python" }
 dependencies = [
     { name = "certifi" },
@@ -1232,7 +1234,7 @@ dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 
 [[package]]
 name = "honcho-cli"
-version = "0.4.0"
+version = "0.6.0"
 source = { editable = "honcho-cli" }
 dependencies = [
     { name = "certifi" },
@@ -2935,6 +2937,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/68/14/eb014d26be205d38ad5ad20d9a80f7d201472e08167f0bb4361e251084a9/pytest_mock-3.15.1.tar.gz", hash = "sha256:1849a238f6f396da19762269de72cb1814ab44416fa73a8686deac10b0d87a0f", size = 34036, upload-time = "2025-09-16T16:37:27.081Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5a/cc/06253936f4a7fa2e0f48dfe6d851d9c56df896a9ab09ac019d70b760619c/pytest_mock-3.15.1-py3-none-any.whl", hash = "sha256:0a25e2eb88fe5168d535041d09a4529a188176ae608a6d249ee65abc0949630d", size = 10095, upload-time = "2025-09-16T16:37:25.734Z" },
+]
+
+[[package]]
+name = "pytest-socket"
+version = "0.8.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ba/ce/4ef7b049852c95a8727b4a7e6496f762df1ac0b47bc0320d10293f5e95ec/pytest_socket-0.8.1.tar.gz", hash = "sha256:2f57787914ad2e1308d09ce141b95c3e55741fbb4fb7b7556593a6b063e0c9c7", size = 17313, upload-time = "2026-08-19T15:16:25.653Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/87/ef/ab507f117b3d19b54e3c9c632a99c28c3b284562ec6e02e274581d530d92/pytest_socket-0.8.1-py3-none-any.whl", hash = "sha256:f9846bed1dcd96eed459e5e14795bbaf96715cf4e827891fe70773817ecb8ed4", size = 8751, upload-time = "2026-08-19T15:16:24.426Z" },
 ]
 
 [[package]]

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.9.0] - 2026-11-05
+
+### Added
+
+- `honcho.dreams()` and `honcho.getDream()` read Representation History: the dream runs over a workspace's representations, newest first and filterable by `observed` and `observer`, and one run's created conclusions with their sources, removed conclusions, and peer-card change. `pruned_at` marks a run that retention cut down to the created conclusions that still exist. New types `DreamRun` and `DreamRunDetail`. Requires Honcho v3.6.0+ (#1542)
+
 ## [2.8.0] - 2026-10-29
 
 ### Added

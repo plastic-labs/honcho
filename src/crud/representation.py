@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src import crud, exceptions, models, schemas
 from src.config import settings
+from src.crud.lifecycle import live_document_row
 from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import check_and_schedule_dream
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
@@ -497,10 +498,11 @@ class RepresentationManager:
             select(models.Document)
             .limit(top_k)
             .where(
+                models.Document.tenant_id == models.scoped_tenant_id(),
                 models.Document.workspace_name == self.workspace_name,
                 models.Document.observer == self.observer,
                 models.Document.observed == self.observed,
-                models.Document.deleted_at.is_(None),
+                live_document_row(self.workspace_name),
                 *(
                     [models.Document.id.notin_(excluded_document_ids)]
                     if excluded_document_ids
@@ -533,10 +535,11 @@ class RepresentationManager:
             select(models.Document)
             .limit(top_k)
             .where(
+                models.Document.tenant_id == models.scoped_tenant_id(),
                 models.Document.workspace_name == self.workspace_name,
                 models.Document.observer == self.observer,
                 models.Document.observed == self.observed,
-                models.Document.deleted_at.is_(None),
+                live_document_row(self.workspace_name),
                 *(
                     [
                         models.Document.session_name.in_(session_allowlist),

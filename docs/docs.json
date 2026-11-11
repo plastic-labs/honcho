@@ -374,6 +374,7 @@
             "group": "Frameworks & SDKs",
             "pages": [
               "v3/guides/integrations/vercel-ai-sdk",
+              "v3/guides/integrations/cursor-agent-sdk",
               "v3/guides/integrations/langgraph",
               "v3/guides/integrations/crewai",
               "v3/guides/community/agent0",
@@ -445,6 +446,13 @@
               "v3/api-reference/endpoint/workspaces/chat-workspace",
               "v3/api-reference/endpoint/workspaces/get-queue-status",
               "v3/api-reference/endpoint/workspaces/schedule-dream"
+            ]
+          },
+          {
+            "group": "dreams",
+            "pages": [
+              "v3/api-reference/endpoint/dreams/list-dreams",
+              "v3/api-reference/endpoint/dreams/get-dream"
             ]
           },
           {
