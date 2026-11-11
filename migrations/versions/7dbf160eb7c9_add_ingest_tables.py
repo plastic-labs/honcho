@@ -15,7 +15,7 @@ foreign key to sessions, peers or workspaces: deletion removes their rows
 explicitly, under the ingest fence. DDL only: there is nothing to backfill.
 
 Revision ID: 7dbf160eb7c9
-Revises: 4f9c2a7e8d31
+Revises: 0e32bf9d5a22
 Create Date: 2026-11-10
 """
 
@@ -29,7 +29,7 @@ from migrations.utils import column_exists, get_schema, table_exists
 
 # revision identifiers, used by Alembic.
 revision: str = "7dbf160eb7c9"
-down_revision: str | None = "4f9c2a7e8d31"
+down_revision: str | None = "0e32bf9d5a22"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
