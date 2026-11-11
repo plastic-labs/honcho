@@ -17,9 +17,10 @@ once it commits, and takes the existing-peer path on its retry.
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src import crud, models, schemas
@@ -138,3 +139,37 @@ async def test_opposite_order_creates_do_not_deadlock(
         )
         counts = {name: count for name, count in rows.tuples()}
     assert counts == {stored_name(name): 1 for name in forward}
+
+
+@pytest.mark.parametrize(
+    ("create", "stored_name"),
+    [
+        pytest.param(_create_peers, _plain_peer_name, id="peers"),
+        pytest.param(_create_scopes, scope_peer_name, id="scopes"),
+    ],
+)
+async def test_new_peers_are_inserted_in_name_order(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+    create: Create,
+    stored_name: Callable[[str], str],
+):
+    """The order the lock-order guarantee rests on, independent of any timing.
+
+    The concurrent test above can only fail when both creates overlap; this one
+    records the rows the flush inserts and checks their order directly.
+    """
+    workspace, _ = sample_data
+    inserted: list[str] = []
+
+    def record(_mapper: Any, _connection: Any, target: models.Peer) -> None:
+        if target.workspace_name == workspace.name:
+            inserted.append(target.name)
+
+    event.listen(models.Peer, "before_insert", record)
+    try:
+        await create(db_session, workspace.name, ["carol", "alice", "bob"])
+    finally:
+        event.remove(models.Peer, "before_insert", record)
+
+    assert inserted == [stored_name(name) for name in ("alice", "bob", "carol")]
