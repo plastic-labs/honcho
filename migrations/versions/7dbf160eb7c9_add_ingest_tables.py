@@ -37,6 +37,11 @@ schema = get_schema()
 
 
 def upgrade() -> None:
+    """Add workspaces.auto_enabled_at and the three ingest tables with their indexes.
+
+    Each step is skipped when its column or table already exists, so the upgrade
+    can be rerun.
+    """
     connection = op.get_bind()
     inspector = sa.inspect(connection)
 
@@ -208,6 +213,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Drop the three ingest tables and workspaces.auto_enabled_at, if present."""
     connection = op.get_bind()
     inspector = sa.inspect(connection)
 

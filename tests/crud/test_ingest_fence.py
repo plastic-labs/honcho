@@ -97,6 +97,7 @@ async def _count(db: AsyncSession, model: _IngestModel, workspace_name: str) -> 
 async def test_session_deletion_removes_only_that_sessions_ingest_rows(
     db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
 ) -> None:
+    """Session deletion removes its records and session bindings, not peer bindings."""
     workspace, peer = sample_data
     doomed = await _make_session(db_session, workspace, peer)
     kept = await _make_session(db_session, workspace, peer)
@@ -139,6 +140,7 @@ async def test_session_deletion_removes_only_that_sessions_ingest_rows(
 async def test_workspace_deletion_removes_all_its_ingest_rows(
     db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
 ) -> None:
+    """Workspace deletion removes the rows of all three ingest tables."""
     workspace, peer = sample_data
     session_name = await _make_session(db_session, workspace, peer)
     db_session.add_all(_ingest_rows(workspace.name, session_name, peer.name))
@@ -161,6 +163,7 @@ async def test_session_deletion_waits_for_a_held_session_fence(
     other_db: AsyncSession,
     sample_data: tuple[Workspace, Peer],
 ) -> None:
+    """Session deletion blocks on an ingest transaction holding its session fence."""
     workspace, peer = sample_data
     session_name = await _make_session(db_session, workspace, peer)
     # Read once: a rollback expires the ORM objects.
@@ -187,6 +190,7 @@ async def test_workspace_deletion_waits_for_a_shared_workspace_fence(
     other_db: AsyncSession,
     sample_data: tuple[Workspace, Peer],
 ) -> None:
+    """Workspace deletion blocks on any shared hold of the workspace fence."""
     workspace_name = sample_data[0].name
     await take_workspace_fence(other_db, workspace_name, mode="shared")
 
