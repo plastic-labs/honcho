@@ -3,7 +3,10 @@
 `ingest_records` holds one row per source record received through the ingest API,
 unique on its source identity, with the durable `derivation` state the ingest
 enqueuer drains. `ingest_session_bindings` and `ingest_peer_bindings` map external
-containers and people to the sessions and peers ingest created for them.
+containers and people to the sessions and peers ingest created for them, with
+the newest display name seen for each and, once a person confirms a link or move,
+when they did. Each record keeps the peer bindings of its
+author and participants, so linked people can be split again.
 `workspaces.auto_enabled_at` records when a workspace opted into auto organization.
 
 The three tables are tenant-scoped like the other data tables (tenant_id leads the
@@ -66,6 +69,8 @@ def upgrade() -> None:
                 server_default=sa.text("false"),
             ),
             sa.Column("derivation", sa.TEXT, nullable=False),
+            sa.Column("author_binding_id", sa.TEXT, nullable=True),
+            sa.Column("participant_binding_ids", JSONB, nullable=True),
             sa.Column(
                 "created_at",
                 sa.DateTime(timezone=True),
@@ -106,6 +111,13 @@ def upgrade() -> None:
             postgresql_where=sa.text("derivation = 'pending'"),
             schema=schema,
         )
+        op.create_index(
+            "ix_ingest_records_author_binding",
+            "ingest_records",
+            ["tenant_id", "workspace_name", "author_binding_id"],
+            postgresql_where=sa.text("author_binding_id IS NOT NULL"),
+            schema=schema,
+        )
 
     if not table_exists("ingest_session_bindings", inspector):
         op.create_table(
@@ -118,6 +130,9 @@ def upgrade() -> None:
             sa.Column("key_kind", sa.TEXT, nullable=False),
             sa.Column("key_value", sa.TEXT, nullable=False),
             sa.Column("session_name", sa.TEXT, nullable=False),
+            sa.Column("display_name", sa.TEXT, nullable=True),
+            sa.Column("display_name_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("confirmed_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column(
                 "created_at",
                 sa.DateTime(timezone=True),
@@ -158,6 +173,9 @@ def upgrade() -> None:
             sa.Column("key_kind", sa.TEXT, nullable=False),
             sa.Column("key_value", sa.TEXT, nullable=False),
             sa.Column("peer_name", sa.TEXT, nullable=False),
+            sa.Column("display_name", sa.TEXT, nullable=True),
+            sa.Column("display_name_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("confirmed_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column(
                 "created_at",
                 sa.DateTime(timezone=True),

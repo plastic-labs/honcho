@@ -11,7 +11,11 @@ TABLES = {
     "ingest_records": (
         models.IngestRecord,
         "uq_ingest_records_identity",
-        ["ix_ingest_records_session", "ix_ingest_records_pending"],
+        [
+            "ix_ingest_records_session",
+            "ix_ingest_records_pending",
+            "ix_ingest_records_author_binding",
+        ],
     ),
     "ingest_session_bindings": (
         models.IngestSessionBinding,
@@ -73,11 +77,11 @@ def verify_ingest_tables(verifier: MigrationVerifier) -> None:
         foreign_keys = inspector.get_foreign_keys(table, schema=verifier.schema)
         assert [fk["referred_table"] for fk in foreign_keys] == ["tenants"]
 
-    pending = next(
-        i
+    partial = {
+        i["name"]: i.get("dialect_options", {}).get("postgresql_where")
         for i in inspector.get_indexes("ingest_records", schema=verifier.schema)
-        if i["name"] == "ix_ingest_records_pending"
-    )
-    assert pending.get("dialect_options", {}).get("postgresql_where") == (
-        "(derivation = 'pending'::text)"
+    }
+    assert partial["ix_ingest_records_pending"] == "(derivation = 'pending'::text)"
+    assert partial["ix_ingest_records_author_binding"] == (
+        "(author_binding_id IS NOT NULL)"
     )
