@@ -144,6 +144,7 @@ def test_first_turn_waits_are_bounded_by_the_first_turn_knobs(turn, turn_start_k
         with patch.object(threading.Thread, "join", record_join):
             memory.on_turn_start(turn, CURRENT, **turn_start_kwargs)
             injected = memory.prefetch_all(CURRENT)
+            assert not timed_out.is_set(), "first-turn wait exceeded watchdog"
             assert not blocked.is_set()
             assert "conclusions recalled for" not in injected
             assert DIALECTIC_ANSWER not in injected
