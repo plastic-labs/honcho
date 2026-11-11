@@ -725,6 +725,15 @@ async def _note_display_name(
 
 
 def _peer_sort_key(key: BindingKey | str) -> tuple[int, str, str, str, str]:
+    """Explicit names first, in name order; then binding keys, by identity.
+
+    Explicit names are the ones another route can also create, so they go in
+    the name order every multi-peer insert uses (CLAUDE.md). Binding keys are
+    ordered by their identity, not the names they generate: a generated name
+    contains a display name that isn't part of the identity, so two batches
+    could order the same keys differently and invert their binding-row locks.
+    No other route can name a generated peer before ingest creates it.
+    """
     if isinstance(key, str):
         return (0, key, "", "", "")
     return (1, key.source, key.source_instance, key.kind, key.value)
