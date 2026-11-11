@@ -482,7 +482,32 @@ DERIVER_WORKING_REPRESENTATION_MAX_OBSERVATIONS=100
 DERIVER_REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS=512
 DERIVER_REPRESENTATION_BATCH_TARGET_INPUT_TOKENS=1024
 DERIVER_REPRESENTATION_BATCH_MAX_AGE_SECONDS=1800
+
+# Deep work units (bulk imports, `honcho workspace replay`)
+DERIVER_REPRESENTATION_CHUNK_THRESHOLD_MESSAGES=0  # 0 disables
+DERIVER_REPRESENTATION_CHUNK_MESSAGES=100
 ```
+
+**Deep work units.** One work unit holds the messages of one observed peer in one
+session, and one worker drains it in message order. A session with thousands of
+pending messages therefore keeps a single worker busy, however many workers or
+deriver processes you run. Set `DERIVER_REPRESENTATION_CHUNK_THRESHOLD_MESSAGES`
+to change that: when a work unit already has that many pending messages, new
+messages go to chunk units of `DERIVER_REPRESENTATION_CHUNK_MESSAGES` session
+messages each. A chunk is an ordinary work unit, so free workers drain chunks in
+parallel. Each chunk still runs in message order.
+
+- Chunking adds parallelism only when more than one worker is free: raise
+  `DERIVER_WORKERS` or run more deriver processes.
+- Set the two values on the API and the deriver alike. Turn chunking on only
+  after every deriver runs a version that supports it: an older deriver marks a
+  chunk's queue items as errored.
+- Conclusions from one session can be saved out of message order, and two chunks
+  can each save a near-identical conclusion. Each conclusion keeps the time of
+  its source message.
+- The `queue.empty` webhook for a session and peer fires when the last of its
+  units drains.
+- A chunk waits for the same token threshold and age flush as any work unit.
 
 **Peer Card:**
 

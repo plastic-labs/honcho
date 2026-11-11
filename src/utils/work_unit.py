@@ -26,6 +26,13 @@ TASK_TYPES: frozenset[str] = frozenset(get_args(TaskType))
 # endregion
 _TENANTLESS_TASK_TYPES = frozenset({"reconciler"})
 
+# A deep representation unit overflows into chunks (deriver/enqueue.py). A chunk
+# is an ordinary work unit whose key is the base key plus two segments:
+# `representation:{workspace}:{session}:{observed}:chunk:{n}`. Two segments, not
+# one, because a five-part representation key is already the legacy
+# `{observer}:{observed}` format and an observed peer may itself be named "chunk".
+CHUNK_SEGMENT = "chunk"
+
 
 def requires_tenant_id(task_type: str) -> bool:
     """Whether a task of this type must carry a tenant_id when MULTI_TENANT is on."""
@@ -43,6 +50,9 @@ class ParsedWorkUnit(BaseModel):
     dream_type: str | None = None
     # Set when the key was tenant-namespaced (MULTI_TENANT); None otherwise.
     tenant_id: str | None = None
+    # Set when the key names one chunk of a deep representation unit; None for
+    # the base unit and for every other task type.
+    chunk: int | None = None
 
 
 def construct_work_unit_key(
@@ -50,8 +60,13 @@ def construct_work_unit_key(
     payload: dict[str, Any] | ParsedWorkUnit,
     *,
     tenant_id: str | None = None,
+    chunk: int | None = None,
 ) -> str:
-    """Generate a work unit key, tenant-namespaced when MULTI_TENANT is on."""
+    """Generate a work unit key, tenant-namespaced when MULTI_TENANT is on.
+
+    ``chunk`` names one chunk of a deep representation unit (see
+    ``CHUNK_SEGMENT``); it is rejected for every other task type.
+    """
     # region ai
     # When MULTI_TENANT is set, a tenant-scoped task's key is prefixed with the
     # tenant_id so work units — and the batches drained from them — never span
@@ -68,7 +83,7 @@ def construct_work_unit_key(
     # tenant resolvable we raise rather than silently emit a colliding, un-namespaced
     # key. The tenant-less reconciler is returned unchanged.
     # endregion
-    base_key = _construct_base_work_unit_key(workspace_name, payload)
+    base_key = _construct_base_work_unit_key(workspace_name, payload, chunk=chunk)
     if not settings.MULTI_TENANT:
         return base_key
     task_type = base_key.split(":", 1)[0]
@@ -98,7 +113,10 @@ def construct_work_unit_key(
 
 
 def _construct_base_work_unit_key(
-    workspace_name: str, payload: dict[str, Any] | ParsedWorkUnit
+    workspace_name: str,
+    payload: dict[str, Any] | ParsedWorkUnit,
+    *,
+    chunk: int | None = None,
 ) -> str:
     """
     Generate a work unit key for a given task type, workspace name, and event type.
@@ -114,6 +132,9 @@ def _construct_base_work_unit_key(
         ValueError: If required fields are missing or task type is invalid
     """
     if isinstance(payload, ParsedWorkUnit):
+        # A parsed chunk key round-trips to the same chunk key.
+        if chunk is None:
+            chunk = payload.chunk
         payload = payload.model_dump()
 
     task_type: str | None = payload.get("task_type")
@@ -121,6 +142,13 @@ def _construct_base_work_unit_key(
         raise ValueError(
             "workspace_name and task_type are required to generate a work_unit_key"
         )
+    if chunk is not None:
+        if task_type != "representation":
+            raise ValueError(
+                f"only representation work units can be chunked, not {task_type!r}"
+            )
+        if chunk < 0:
+            raise ValueError(f"chunk must not be negative, got {chunk}")
 
     if task_type in ["representation", "summary", "dream"]:
         observer = payload.get("observer", "None")
@@ -134,7 +162,10 @@ def _construct_base_work_unit_key(
         if task_type == "representation":
             # Representation tasks don't include observer in the key since
             # we process once and save to multiple collections
-            return f"{task_type}:{workspace_name}:{session_name}:{observed}"
+            base = f"{task_type}:{workspace_name}:{session_name}:{observed}"
+            if chunk is None:
+                return base
+            return f"{base}:{CHUNK_SEGMENT}:{chunk}"
         return f"{task_type}:{workspace_name}:{session_name}:{observer}:{observed}"
 
     if task_type == "webhook":
@@ -191,6 +222,14 @@ def tenant_id_for_work_unit_key(work_unit_key: str) -> str | None:
     return _split_tenant_prefix(work_unit_key)[0]
 
 
+def base_work_unit_key(work_unit_key: str) -> str:
+    """The key of the unit a chunk overflowed from; any other key is returned as is."""
+    parsed = parse_work_unit_key(work_unit_key)
+    if parsed.chunk is None:
+        return work_unit_key
+    return work_unit_key.rsplit(":", 2)[0]
+
+
 def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
     """Parse a work unit key, transparently handling a tenant_id prefix."""
     tenant_id, base_key = _split_tenant_prefix(work_unit_key)
@@ -224,6 +263,16 @@ def _parse_base_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
                 session_name=parts[2],
                 observer=None,
                 observed=parts[3],
+            )
+        elif len(parts) == 6 and parts[4] == CHUNK_SEGMENT and parts[5].isdecimal():
+            # Chunk of a deep unit: representation:{workspace}:{session}:{observed}:chunk:{n}
+            return ParsedWorkUnit(
+                task_type=task_type,
+                workspace_name=parts[1],
+                session_name=parts[2],
+                observer=None,
+                observed=parts[3],
+                chunk=int(parts[5]),
             )
         elif len(parts) == 5:
             # Legacy format: representation:{workspace}:{session}:{observer}:{observed}

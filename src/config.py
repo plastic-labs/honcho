@@ -1042,6 +1042,21 @@ class DeriverSettings(HonchoSettings):
     # When enabled, bypasses the batch token threshold and processes work immediately
     FLUSH_ENABLED: bool = False
 
+    # A representation work unit is drained by one worker, in message order.
+    # When a unit already has this many pending messages, the messages enqueued
+    # after that go to chunk units instead: ordinary work units that other
+    # workers claim and drain in parallel. 0 turns chunking off. Set it on the
+    # API and the deriver alike, and only once every deriver runs a version
+    # that parses chunk keys: an older deriver marks a chunk's items as errored.
+    REPRESENTATION_CHUNK_THRESHOLD_MESSAGES: Annotated[
+        int, Field(default=0, ge=0, le=1_000_000)
+    ] = 0
+    # Session messages per chunk: message N of a session goes to chunk
+    # N // REPRESENTATION_CHUNK_MESSAGES.
+    REPRESENTATION_CHUNK_MESSAGES: Annotated[
+        int, Field(default=100, gt=0, le=100_000)
+    ] = 100
+
     BACKLOG_METRICS_POLL_INTERVAL_SECONDS: Annotated[int, Field(default=30, ge=1)] = 30
 
     # Per-tenant claim metrics (claims, claim wait, in-flight units), for

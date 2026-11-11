@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-from sqlalchemy import Text, and_, delete, literal, select, true, update
+from sqlalchemy import Text, and_, delete, literal, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,7 +57,9 @@ from src.utils.queue_payload import RETRY_ATTEMPTS_PAYLOAD_KEY
 from src.utils.retryable_errors import is_retryable_error
 from src.utils.sanitization import escape_unstorable
 from src.utils.work_unit import (
+    CHUNK_SEGMENT,
     ParsedWorkUnit,
+    base_work_unit_key,
     parse_work_unit_key,
     tenant_id_for_work_unit_key,
 )
@@ -841,7 +843,11 @@ class QueueManager:
                                 logger.debug(
                                     f"No more queue items to process for work unit {work_unit_key} for worker {worker_id}"
                                 )
-                                drained = await self._is_drained(work_unit_key)
+                                drained = await self._is_drained(
+                                    work_unit_key
+                                ) and not await self._has_pending_sibling_units(
+                                    work_unit_key, work_unit
+                                )
                                 break
 
                             try:
@@ -1564,6 +1570,53 @@ class QueueManager:
                 )
             )
         return not remaining
+
+    async def _has_pending_sibling_units(
+        self, work_unit_key: str, work_unit: ParsedWorkUnit
+    ) -> bool:
+        """Whether the base unit or another chunk of this unit still has pending items.
+
+        A deep representation unit is split into a base unit and chunks
+        (``enqueue._ChunkRouter``), and each drains on its own. queue.empty
+        speaks for the session and the observed peer, so it waits for all of
+        them. The unit that finishes last sees no sibling: its own batch row is
+        deleted in the transaction that marks its last items processed, before
+        this read.
+        """
+        if (
+            work_unit.chunk is None
+            and settings.DERIVER.REPRESENTATION_CHUNK_THRESHOLD_MESSAGES <= 0
+        ):
+            # Chunking is off and this is a base unit: it has no siblings, so
+            # the default configuration pays for no extra query.
+            return False
+        base_key = base_work_unit_key(work_unit_key)
+        tenant_match = (
+            models.QueueItemBatch.tenant_id.is_(None)
+            if work_unit.tenant_id is None
+            else models.QueueItemBatch.tenant_id == work_unit.tenant_id
+        )
+        async with service_db("queue_unit_siblings", read_only=True) as db:
+            return bool(
+                await db.scalar(
+                    select(
+                        select(models.QueueItemBatch.work_unit_key)
+                        .where(
+                            tenant_match,
+                            models.QueueItemBatch.task_type == "representation",
+                            models.QueueItemBatch.work_unit_key != work_unit_key,
+                            or_(
+                                models.QueueItemBatch.work_unit_key == base_key,
+                                # autoescape: names may hold "_", a LIKE wildcard
+                                models.QueueItemBatch.work_unit_key.startswith(
+                                    f"{base_key}:{CHUNK_SEGMENT}:", autoescape=True
+                                ),
+                            ),
+                        )
+                        .exists()
+                    )
+                )
+            )
 
     async def _cleanup_work_unit(
         self,

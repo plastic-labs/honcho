@@ -128,6 +128,8 @@ REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS = 512  # Min tokens a work unit acc
 REPRESENTATION_BATCH_TARGET_INPUT_TOKENS = 1024  # Max context-window tokens per deriver LLM call
 REPRESENTATION_BATCH_MAX_AGE_SECONDS = 1800
 FLUSH_ENABLED = false  # Bypass batch token threshold, process work immediately
+REPRESENTATION_CHUNK_THRESHOLD_MESSAGES = 0  # Pending messages in one work unit before new ones go to chunk units that drain in parallel; 0 disables
+REPRESENTATION_CHUNK_MESSAGES = 100  # Session messages per chunk unit
 
 [deriver.model_config]
 transport = "openai"
