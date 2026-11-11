@@ -176,7 +176,13 @@ async def get_or_create_scopes(
     ]
     try:
         async with db.begin_nested():
-            db.add_all(new_peers)
+            # Added in name order for the same reason as in
+            # `get_or_create_peers`: concurrent creates of overlapping new scopes
+            # take the unique-key locks in one order and cannot deadlock.
+            in_name_order: list[models.Peer] = sorted(
+                new_peers, key=lambda peer: peer.name
+            )
+            db.add_all(in_name_order)
     except IntegrityError:
         if _retry:
             raise ConflictException(
