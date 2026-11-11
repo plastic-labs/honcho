@@ -11,44 +11,21 @@ from pathlib import Path
 from hermes_constants import get_hermes_home
 from hermes_cli.profiles import _get_default_hermes_home
 from .attribution import HONCHO_APP_URL, attribution_url
-from .client import _first_parsed, _host_block, profile_host_key, resolve_active_host, resolve_config_path, HOST
-from .client import resolve_global_config_path, spawn_context_thread
+from .client import _host_block, profile_host_key, resolve_active_host, resolve_config_path, HOST
+from .client import resolve_global_config_path, session_scopes, spawn_context_thread
 from .session_peers import sanitize_peer_id
 from hermes_cli.config import cfg_get
 from utils import read_json_or_empty
 
 RULE = "─" * 40
-REASONING_LEVELS = ("minimal", "low", "medium", "high", "max")
 _RETRY_HINT = "  Re-run 'hermes honcho setup' to retry, or choose an API key instead.\n"
 
-# Settings a new profile host block inherits from the default block.
-_INHERITED_KEYS = (
-    "recallMode", "writeFrequency", "sessionStrategy", "contextTokens",
-    "dialecticReasoningLevel", "dialecticDynamic", "dialecticMaxChars",
-    "messageMaxChars", "dialecticMaxInputChars", "saveMessages", "observation",
-    "recallSync",
-)
-# clone_honcho_for_profile also carries the operator's runtime-to-peer routing intent.
-_CLONE_KEYS = _INHERITED_KEYS[:3] + ("sessionPeerPrefix", "sessionAiPeerPrefix") + _INHERITED_KEYS[3:] + (
-    "pinUserPeer", "userPeerAliases", "runtimePeerPrefix",
-)
+# A cloned profile's block carries the operator's runtime-to-peer routing intent from the default block.
+_CLONE_KEYS = ("pinUserPeer", "userPeerAliases", "runtimePeerPrefix")
 _IDENTITY_MAPPING_KEYS = ("pinPeerName", "pinUserPeer", "userPeerAliases", "runtimePeerPrefix")
 # Setup-wizard answer -> identity-mapping shape ("2"/pooled answers are handled inline).
 _SHAPE_CHOICES = {"1": "single", "me": "single", "just-me": "single", "3": "multi", "others": "multi",
                   "e": "raw", "edit": "raw", "raw": "raw"}
-_MODES = {
-    "hybrid": "auto-injected context + Honcho tools available (default)",
-    "context": "auto-injected context only, Honcho tools hidden",
-    "tools": "Honcho tools only, no auto-injected context",
-}
-_STRATEGIES = {
-    "per-session": "each run starts clean, Honcho injects context automatically",
-    "per-directory": "reuses session per dir, prior context auto-injected each run",
-    "per-repo": "one session per git repository",
-    "global": "single session across all directories",
-}
-
-
 # ── config access ──────────────────────────────────────────────────────────
 
 _profile_override: str | None = None
@@ -62,13 +39,14 @@ def _host_key() -> str:
 
 
 def _config_path() -> Path:
-    """Active Honcho config path for reading (instance-local, default profile, or global)."""
+    """The honcho.json of the active profile (``--target-profile``'s when given): the only file its settings live in."""
+    if _profile_override and _profile_override != "custom":
+        try:
+            from hermes_cli.profiles import get_profile_dir
+            return get_profile_dir(_profile_override) / "honcho.json"
+        except Exception:
+            pass
     return resolve_config_path()
-
-
-def _local_config_path() -> Path:
-    """Instance-local write path; ~/.honcho/config.json is only a read fallback for cross-app interop."""
-    return get_hermes_home() / "honcho.json"
 
 
 class _ReadConfig(dict):
@@ -79,9 +57,36 @@ class _ReadConfig(dict):
         self.snapshot, self.path = copy.deepcopy(raw), path
 
 
+def _profile_block(path: Path, host: str) -> dict:
+    """``hosts.<host>`` of a profile's honcho.json as the plugin reads it; {} when it holds no settings."""
+    from .host_config import effective_block, legacy_path
+    if legacy_path(path) is None:
+        return {}
+    try:
+        block = effective_block(path, host)
+    except (OSError, ValueError):
+        return {}
+    return block if any(k != "schemaVersion" for k in block) else {}
+
+
 def _read_config() -> dict:
+    """The active profile's honcho.json as a command edits it: the other host blocks as stored, the active
+    host's block as the plugin reads it (migrated, when it is not yet), and no top level, which the plugin
+    never reads. {} when the profile has no config at all."""
+    from .host_config import effective_block, legacy_path
     path = _config_path()
-    return _ReadConfig(read_json_or_empty(path), path)
+    if legacy_path(path) is None:
+        return _ReadConfig({}, path)
+    try:
+        block = effective_block(path, _host_key())
+    except (OSError, ValueError):
+        return _ReadConfig({}, path)  # a save refuses the file (ConfigWriteRefused) rather than replace it
+    raw = read_json_or_empty(path)
+    hosts = raw.get("hosts") if isinstance(raw.get("hosts"), dict) else {}
+    view: dict = {"hosts": {**hosts, _host_key(): block}}
+    if "defaultHost" in raw:
+        view["defaultHost"] = raw["defaultHost"]
+    return _ReadConfig(view, path)
 
 
 class ConfigWriteRefused(ValueError):
@@ -125,39 +130,23 @@ def _apply_edits(base: dict, edited: dict, current: dict) -> dict:
     return out
 
 
-def _overlay_local(seed: dict, local: dict) -> dict:
-    """Return ``seed`` with ``local``'s root keys and ``hosts.<h>.<k>`` keys on top. The local file wins,
-    so a grant or rotation it already holds is what the command's edits land on."""
-    out = copy.deepcopy(seed)
-    for key, value in local.items():
-        if key != "hosts":
-            out[key] = copy.deepcopy(value)
-    for host, block in (local.get("hosts") or {}).items():
-        out.setdefault("hosts", {}).setdefault(host, {}).update(copy.deepcopy(block))
-    return out
-
-
 def _write_config(cfg: dict, path: Path | None = None) -> None:
-    """Persist ``cfg`` under the token refresh's cross-process lock. The object _read_config() returned
-    has only its edits applied onto a fresh read of disk; a plain dict is written whole. A read that
-    resolved to a seed file (~/.honcho or a profile) is written whole only while ``path`` does not exist."""
-    from .oauth import _config_refresh_lock, _refresh_lock
-    from utils import atomic_json_write
-    path = path or _local_config_path()
-    # The file lock is best-effort; _refresh_lock is what keeps an in-process refresh thread out.
-    with _refresh_lock, _config_refresh_lock(path):
-        disk = _refuse_unparseable(path)
-        out = cfg
-        if isinstance(cfg, _ReadConfig):
-            if cfg.path == path:
-                out = _apply_edits(cfg.snapshot, cfg, disk)
-            elif path.exists():
-                out = _apply_edits(cfg.snapshot, cfg, _overlay_local(cfg.snapshot, disk))
-        from hermes_constants import mkdir_under_hermes_home
-        mkdir_under_hermes_home(path.parent)
-        atomic_json_write(path, out, mode=0o600)
-        if isinstance(cfg, _ReadConfig):  # a later write on the same object applies only edits made after this one
-            cfg.snapshot, cfg.path = copy.deepcopy(dict(cfg)), path
+    """Persist ``cfg`` under the config lock. The object _read_config() returned has only its edits applied
+    onto a fresh read of disk, whose active host block is migrated first and then marked; a plain dict is
+    written whole."""
+    from .host_config import SCHEMA_VERSION, locked_config, migrated_block
+    path = path or getattr(cfg, "path", None) or _config_path()
+    _refuse_unparseable(path)
+    host = _host_key()
+    with locked_config(path) as disk:
+        migrated_block(disk, host, path)
+        out = _apply_edits(cfg.snapshot, cfg, disk) if isinstance(cfg, _ReadConfig) else copy.deepcopy(cfg)
+        disk.clear()
+        disk.update(out)
+        if isinstance(block := (disk.get("hosts") or {}).get(host), dict):
+            block["schemaVersion"] = SCHEMA_VERSION
+    if isinstance(cfg, _ReadConfig):  # a later write on the same object applies only edits made after this one
+        cfg.snapshot, cfg.path = copy.deepcopy(dict(cfg)), path
 
 
 def _label(host: str) -> str:
@@ -169,7 +158,7 @@ def _mask(key: str) -> str:
 
 
 def _pref(block: dict, cfg: dict, key: str, default=None):
-    """Host-block value, falling back to the root-level value (or ``default``)."""
+    """Host-block value, else ``default`` (a _read_config() view has no top level)."""
     return block.get(key) or cfg.get(key, default)
 
 
@@ -189,21 +178,20 @@ def _save(cfg: dict) -> None:
     print(f"  Saved to {_config_path()}\n")
 
 
-def _default_block_and_key(cfg: dict) -> tuple[dict, bool]:
-    """(default host block, whether an API key is configured at root or env)."""
-    return cfg_get(cfg, "hosts", HOST, default={}), bool(cfg.get("apiKey") or os.environ.get("HONCHO_API_KEY"))
+def _default_block() -> dict:
+    """The default profile's host block as the plugin reads it; {} when it holds no settings."""
+    return _profile_block(_get_default_hermes_home() / "honcho.json", HOST)
 
 
 def _resolve_api_key(cfg: dict, block: dict | None = None, *, env: bool = True) -> str:
-    """API key for ``block`` (default: the active host's block), host -> root -> env. A self-hosted
+    """API key for ``block`` (default: the active host's block), then env. A self-hosted
     http(s) or host:port ``baseUrl`` without a key yields "local" so credential guards accept it.
     ``env=False`` counts only what is on disk: a variable can vanish from the next process."""
     block = _host_block(cfg, _host_key()) if block is None else block
-    key = (block.get("apiKey") or cfg.get("apiKey", "") or (os.environ.get("HONCHO_API_KEY", "") if env else ""))
+    key = block.get("apiKey") or (os.environ.get("HONCHO_API_KEY", "") if env else "")
     if key:
         return key
-    base_url = (block.get("baseUrl") or block.get("base_url") or cfg.get("baseUrl") or cfg.get("base_url")
-                or (os.environ.get("HONCHO_BASE_URL", "") if env else "") or "").strip()
+    base_url = (block.get("baseUrl") or (os.environ.get("HONCHO_BASE_URL", "") if env else "") or "").strip()
     if not base_url:
         return key
     from urllib.parse import urlparse
@@ -241,24 +229,27 @@ def _connect(host: str | None, *, reset: bool = False):
     from .client import HonchoClientConfig, get_honcho_client, reset_honcho_client
     if reset:
         reset_honcho_client()
-    hcfg = HonchoClientConfig.from_global_config(host=host)
+    hcfg = HonchoClientConfig.from_global_config(host=host, config_path=_config_path())
     return hcfg, get_honcho_client(hcfg)
 
 
+# The Honcho session the CLI's own reads and uploads (identity seeding, file migration) go through.
+_CLI_SESSION = "hermes-cli"
+
+
 def _session_manager(hcfg, client):
-    """(manager, session_key) with the session ensured (get_or_create is idempotent)."""
+    """(manager, session_key) with the CLI's session ensured (get_or_create is idempotent)."""
     from .session import HonchoSessionManager
     mgr = HonchoSessionManager(honcho=client, config=hcfg)
-    session_key = hcfg.resolve_session_name()
-    mgr.get_or_create(session_key)
-    return mgr, session_key
+    mgr.get_or_create(_CLI_SESSION)
+    return mgr, _CLI_SESSION
 
 
-def _ensure_peer_exists(host_key: str | None = None) -> bool:
+def _ensure_peer_exists(host_key: str | None = None, config_path: Path | None = None) -> bool:
     """Create the AI (and user) peer in Honcho if missing. Idempotent; False on failure."""
     try:
         from .client import HonchoClientConfig, get_honcho_client
-        hcfg = HonchoClientConfig.from_global_config(host=host_key)
+        hcfg = HonchoClientConfig.from_global_config(host=host_key, config_path=config_path or _config_path())
         if not hcfg.enabled or not (hcfg.api_key or hcfg.base_url):
             return False
         client = get_honcho_client(hcfg)
@@ -281,103 +272,109 @@ def _inherit_defaults(block: dict, default_block: dict, cfg: dict, keys: tuple[s
         block["peerName"] = peer_name
 
 
-def _profile_hook_write_path(cfg: dict) -> Path:
-    """Where a profile hook writes: the file the profile reads (``$HERMES_HOME/honcho.json``, or the
-    default profile's, where host blocks accumulate). A read that fell through to ~/.honcho seeds the
-    default profile's file, as a clone run from the default profile always did, so the new profile
-    never gets its own copy of every other host's credentials."""
-    path = getattr(cfg, "path", None) or _config_path()
-    return _get_default_hermes_home() / "honcho.json" if path == resolve_global_config_path() else path
-
-
 def clone_honcho_for_profile(profile_name: str, *, in_hook: bool = False) -> bool:
-    """Create a host block for a new profile, cloned from the default host block
-    (called during profile creation). False if Honcho isn't configured or the block exists.
+    """Give a new profile a host block in its own honcho.json, cloned from the default profile's block
+    (called during profile creation). False if Honcho isn't configured on the default profile or the
+    profile already has a block.
 
-    ``in_hook``: called from ``on_profile_created`` with the new profile's home bound. The block goes
-    to the file that profile reads, and the peer is created off-thread (the hook runs inside the
-    dashboard's create request)."""
-    cfg = _read_config()
-    if not cfg:
+    ``in_hook``: called from ``on_profile_created`` with the new profile's home bound; the peer is created
+    off-thread (the hook runs inside the dashboard's create request)."""
+    from .host_config import _hosts, legacy_path, locked_config, migrated_block
+    default_block = _default_block()
+    if not default_block and not os.environ.get("HONCHO_API_KEY"):
         return False
-    default_block, has_key = _default_block_and_key(cfg)
     new_host = profile_host_key(profile_name)
-    if (not default_block and not has_key) or new_host in cfg.get("hosts", {}):
+    if in_hook:
+        path = get_hermes_home() / "honcho.json"
+    else:
+        from hermes_cli.profiles import get_profile_dir
+        path = get_profile_dir(profile_name) / "honcho.json"
+    source = legacy_path(path)
+    if source is not None and new_host in _hosts(_refuse_unparseable(source)):
         return False
 
     new_block: dict = {}
-    _inherit_defaults(new_block, default_block, cfg, _CLONE_KEYS)
+    _inherit_defaults(new_block, default_block, {}, _CLONE_KEYS)
     # Carry a legacy default-block pinPeerName forward under the canonical key.
     if "pinUserPeer" not in new_block and default_block.get("pinPeerName") is not None:
         new_block["pinUserPeer"] = default_block["pinPeerName"]
     # AI peer is profile-specific (bare profile name: Honcho peer IDs allow no dots);
     # workspace is shared so all profiles see the same context.
-    new_block.update(aiPeer=profile_name, workspace=_pref(default_block, cfg, "workspace") or HOST)
-    # The default host's apiKey is not inherited; the block stays unenabled until this profile signs in.
-    if _resolve_api_key(cfg, new_block, env=False):
-        new_block["enabled"] = default_block.get("enabled", True)
-    cfg.setdefault("hosts", {})[new_host] = new_block
+    new_block.update(aiPeer=profile_name, workspace=default_block.get("workspace") or HOST)
+    _refuse_unparseable(path)
+    with locked_config(path) as file:
+        # What the profile read until now (the top level of the file 1.1.0 read for it), then the clone.
+        block = migrated_block(file, new_host, path)
+        block.update(new_block)
+        # The default host's apiKey is not inherited; the block stays unenabled until this profile signs in.
+        if _resolve_api_key({}, block, env=False):
+            block["enabled"] = default_block.get("enabled", True)
     if not in_hook:
-        _write_config(cfg)
-        _ensure_peer_exists(new_host)  # eager so the peer exists before first message
+        _ensure_peer_exists(new_host, path)  # eager so the peer exists before first message
         return True
-    _write_config(cfg, _profile_hook_write_path(cfg))
     # Off the request thread, but not a daemon: `hermes profile create` exits right after the hook, and a
     # daemon thread would die before its request. The thread carries the bound profile home with it.
-    spawn_context_thread(_ensure_peer_exists, name="honcho-profile-peer", args=(new_host,), daemon=False).start()
+    spawn_context_thread(_ensure_peer_exists, name="honcho-profile-peer", args=(new_host, path), daemon=False).start()
     return True
 
 
 def migrate_profile_host(old_name: str, new_name: str) -> list[str]:
     """Re-key a renamed profile's host block (``hermes_<old>`` or legacy ``hermes.<old>``) to
-    ``hermes_<new>`` in every honcho.json the profile could read, keeping its peer: a block without
-    ``aiPeer`` pins the old name, which its peer was created under. Returns one line per file touched.
-    Runs from ``on_profile_renamed`` with the renamed profile's home bound."""
+    ``hermes_<new>``, keeping its peer: a block without ``aiPeer`` pins the old name, which its peer was
+    created under. The profile's own honcho.json first gets the block as the profile read it, so one not
+    yet migrated keeps settings it read from another file; the default profile's file and ~/.honcho's are
+    re-keyed too, so no later profile with the old name picks up a leftover block. Returns one line per
+    file touched. Runs from ``on_profile_renamed`` with the renamed profile's home bound."""
+    from .host_config import _legacy_block, legacy_path, locked_config, migrated_block
     old_host, legacy_old_host = profile_host_key(old_name), f"{HOST}.{old_name}"
     new_host = profile_host_key(new_name)
+    own = _config_path()
     lines: list[str] = []
+    try:
+        source = legacy_path(own)
+        if source is not None and source != own and _legacy_block(_refuse_unparseable(source), old_host)[1]:
+            _refuse_unparseable(own)
+            with locked_config(own) as file:
+                migrated_block(file, old_host, own)
+    except ConfigWriteRefused as e:
+        return [f"Honcho host block not migrated: {e}"]
     seen: set[Path] = set()
-    for path in (_local_config_path(), _get_default_hermes_home() / "honcho.json", resolve_global_config_path()):
+    for path in (own, _get_default_hermes_home() / "honcho.json", resolve_global_config_path()):
         resolved = path.resolve() if path.exists() else path
         if resolved in seen or not path.is_file():
             continue
         seen.add(resolved)
         try:
-            cfg = _ReadConfig(_refuse_unparseable(path), path)
+            hosts = _refuse_unparseable(path).get("hosts")
         except ConfigWriteRefused as e:
             lines.append(f"Honcho host block not migrated: {e}")
             continue
-        hosts = cfg.get("hosts")
         if not isinstance(hosts, dict):
             continue
-        source = old_host if old_host in hosts else legacy_old_host
-        if source not in hosts:
+        source_key = old_host if old_host in hosts else legacy_old_host
+        if source_key not in hosts:
             continue
         if new_host in hosts:
             lines.append(f"⚠ Honcho host block not migrated: {new_host} already exists in {path}")
             continue
-        block = hosts.pop(source)
-        if isinstance(block, dict) and "aiPeer" not in block:
-            block = {**block, "aiPeer": old_name}
-        hosts[new_host] = block
-        _write_config(cfg, path)
-        lines.append(f"✓ Honcho host updated: {source} → {new_host}")
+        with locked_config(path) as cfg:
+            block = cfg["hosts"].pop(source_key, {})
+            if isinstance(block, dict) and "aiPeer" not in block:
+                block = {**block, "aiPeer": old_name}
+            cfg["hosts"][new_host] = block
+        lines.append(f"✓ Honcho host updated: {source_key} → {new_host}")
     return lines
 
 
 def _sync_profiles(verbose: bool) -> int:
-    """Clone host blocks for profiles lacking one; returns the count created."""
+    """Clone host blocks for profiles lacking one, each into its own honcho.json; returns the count created."""
     say = print if verbose else (lambda *a: None)
     try:
         from hermes_cli.profiles import list_profiles
         profiles = list_profiles()
     except Exception as e:
         return say(f"  Could not list profiles: {e}\n") or 0
-    cfg = _read_config()
-    if not cfg:
-        return say("  No Honcho config found. Run 'hermes honcho setup' first.\n") or 0
-    default_block, has_key = _default_block_and_key(cfg)
-    if not default_block and not has_key:
+    if not _default_block() and not os.environ.get("HONCHO_API_KEY"):
         return say("  Honcho not configured on default profile. Run 'hermes honcho setup' first.\n") or 0
 
     created = skipped = 0
@@ -423,11 +420,11 @@ def cmd_enable(args) -> None:
         return print(f"  {label}Honcho is already enabled.\n")
     block["enabled"] = True
 
-    if not block.get("aiPeer"):  # fresh profile block: clone settings from default
-        default_block = cfg_get(cfg, "hosts", HOST, default={})
-        _inherit_defaults(block, default_block, cfg, _INHERITED_KEYS)
+    if not block.get("aiPeer"):  # fresh profile block: take the user peer and workspace from default
+        default_block = _default_block()
+        _inherit_defaults(block, default_block, {}, ())
         block.setdefault("aiPeer", host.split(".", 1)[1] if "." in host else host)
-        block.setdefault("workspace", _pref(default_block, cfg, "workspace") or HOST)
+        block.setdefault("workspace", default_block.get("workspace") or HOST)
     _write_config(cfg)
     print(f"  {label}Honcho enabled.")  # before the (possibly slow) peer-creation round trip
     peer_state = f"Peer '{block.get('aiPeer', host)}' ready." if _ensure_peer_exists(host) else "Peer creation deferred (no connection)."
@@ -639,17 +636,17 @@ def _ensure_sdk_installed() -> bool:
     except ImportError:
         pass
     print("  honcho-ai is not installed.")
-    if not _yes(_prompt("Install it now? (honcho-ai==2.2.0)", default="y")):
-        print("  Skipping install. Run: pip install 'honcho-ai==2.2.0'\n")
+    if not _yes(_prompt("Install it now? (honcho-ai>=2.5.0,<3)", default="y")):
+        print("  Skipping install. Run: pip install 'honcho-ai>=2.5.0,<3'\n")
         return False
     print("  Installing honcho-ai...", flush=True)
     from tools.lazy_deps import install_specs  # env-aware: sealed hosted venvs redirect to the data volume
-    result = install_specs(["honcho-ai==2.2.0"])
+    result = install_specs(["honcho-ai>=2.5.0,<3"])
     if result.ok:
         print("  Installed.\n")
         return True
     print(f"  Cannot install: {result.reason}\n" if result.blocked else
-          f"  Install failed:\n{(result.stderr or '').strip()}\n  Run manually: uv pip install 'honcho-ai==2.2.0'\n")
+          f"  Install failed:\n{(result.stderr or '').strip()}\n  Run manually: uv pip install 'honcho-ai>=2.5.0,<3'\n")
     return False
 
 
@@ -685,11 +682,15 @@ def _apply_grant_to_host(cfg: dict, hermes_host: dict, cred) -> None:
 
 def _setup_local_auth(cfg: dict, hermes_host: dict) -> None:
     """Self-hosted Honcho may run with AUTH_USE_AUTH=true; clients then send a JWT signed with
-    the server's AUTH_JWT_SECRET as the bearer token. It is stored under the host block (not
-    top-level apiKey) so ``get_honcho_client`` treats it as an explicit local auth opt-in and
-    cloud/hybrid switching is unaffected."""
-    if new_url := _prompt("Base URL", default=cfg.get("baseUrl") or "http://localhost:8000"):
-        cfg["baseUrl"] = new_url
+    the server's AUTH_JWT_SECRET as the bearer token, stored as the block's ``apiKey``. A key the
+    block held for another server is dropped unless one is entered here."""
+    from .host_config import same_server
+    old_url = hermes_host.get("baseUrl")
+    if new_url := _prompt("Base URL", default=old_url or "http://localhost:8000"):
+        hermes_host["baseUrl"] = new_url
+    if not same_server(hermes_host.get("baseUrl"), old_url):
+        hermes_host.pop("apiKey", None)
+        hermes_host.pop("oauth", None)
     current_host_key = hermes_host.get("apiKey", "")
     print("\n  Local Honcho auth (JWT signed with the server's AUTH_JWT_SECRET).\n"
           f"  Leave blank if your server runs with AUTH_USE_AUTH=false. Current: {_mask(current_host_key)}")
@@ -698,9 +699,6 @@ def _setup_local_auth(cfg: dict, hermes_host: dict) -> None:
         hermes_host["apiKey"] = new_local_key
     elif current_host_key:
         print("  Keeping existing local JWT.")
-    elif cfg.get("apiKey", ""):
-        print("\n  Top-level API key present in config (kept for cloud/hybrid use).\n"
-              "  Local connections will skip auth automatically until a local JWT is set above.")
     else:
         print("\n  No local JWT set. Local no-auth ready.")
 
@@ -721,7 +719,7 @@ def _setup_device_login(cfg: dict, hermes_host: dict, write_path: Path, *, open_
     import webbrowser
     try:
         cred = authorize_via_device_code(
-            config_path=write_path, source="hermes-cli", apply_config=False, display=_show,
+            config_path=write_path, host=_host_key(), source="hermes-cli", apply_config=False, display=_show,
             open_url=webbrowser.open if open_browser else None, on_poll=lambda: print(".", end="", flush=True),
         )
     except KeyboardInterrupt:
@@ -752,7 +750,8 @@ def _setup_browser_login(cfg: dict, hermes_host: dict, write_path: Path) -> bool
 
     print("\n  Starting browser sign-in…")
     try:
-        cred = authorize_via_loopback(config_path=write_path, source="hermes-cli", apply_config=False, open_url=_open)
+        cred = authorize_via_loopback(config_path=write_path, host=_host_key(), source="hermes-cli",
+                                      apply_config=False, open_url=_open)
     except Exception as e:
         print(f"  OAuth sign-in failed: {e}\n" + _RETRY_HINT)
         return False
@@ -761,8 +760,12 @@ def _setup_browser_login(cfg: dict, hermes_host: dict, write_path: Path) -> bool
 
 
 def _setup_cloud_auth(cfg: dict, hermes_host: dict, write_path: Path) -> bool:
-    """Cloud auth: OAuth (browser), device code, or API key. Returns False on abort."""
-    cfg.pop("baseUrl", None)  # cloud uses SDK default
+    """Cloud auth: OAuth (browser), device code, or API key. Returns False on abort. A key the block
+    held for a self-hosted server is dropped."""
+    from .host_config import same_server
+    if not same_server(hermes_host.pop("baseUrl", None), None):  # cloud uses the SDK default
+        hermes_host.pop("apiKey", None)
+        hermes_host.pop("oauth", None)
     from .oauth import OAuthCredential, is_oauth_access_token
     existing_oauth = OAuthCredential.from_host_block(hermes_host)
     device_available = _device_login_available()
@@ -790,10 +793,9 @@ def _setup_cloud_auth(cfg: dict, hermes_host: dict, write_path: Path) -> bool:
         return _setup_browser_login(cfg, hermes_host, write_path)
     # A leftover grant on the host block would shadow the pasted key.
     stale_grant = existing_oauth is not None or is_oauth_access_token(hermes_host.get("apiKey"))
-    current = ("" if stale_grant else hermes_host.get("apiKey", "")) or cfg.get("apiKey", "")
+    current = "" if stale_grant else hermes_host.get("apiKey", "")
     print(f"\n  Current API key: {_mask(current)}")
-    if new_key := _prompt("Honcho API key (leave blank to keep current)", secret=True):
-        cfg["apiKey"] = new_key
+    new_key = _prompt("Honcho API key (leave blank to keep current)", secret=True)
     key = new_key or current
     if not key:
         print(f"\n  No API key configured. Get yours at {attribution_url(HONCHO_APP_URL, 'missing-key')}\n"
@@ -802,78 +804,6 @@ def _setup_cloud_auth(cfg: dict, hermes_host: dict, write_path: Path) -> bool:
     hermes_host.pop("oauth", None)
     hermes_host["apiKey"] = key
     return True
-
-
-def _menu(header: str, *lines: str) -> None:
-    print(f"\n  {header}:\n" + "\n".join(f"    {line}" for line in lines))
-
-
-def _choice_step(hermes_host, key, current, label, valid, fallback=None) -> None:
-    """Prompt for one of ``valid``; an invalid answer writes ``fallback`` (None = keep current)."""
-    new = _prompt(label, default=current)
-    if new in valid:
-        hermes_host[key] = new
-    elif fallback is not None:
-        hermes_host[key] = fallback
-
-
-def _setup_tuning(cfg: dict, hermes_host: dict) -> None:
-    """Wizard steps 4-8: observation, write frequency, recall, budgets, reasoning, strategy."""
-    _menu("Observation mode",
-          "directional  -- all observations on, each AI peer builds its own view (default)",
-          "unified      -- user observes self, AI observes others only")
-    _choice_step(hermes_host, "observationMode", _pref(hermes_host, cfg, "observationMode", "directional"),
-                 "Observation mode", {"unified", "directional"}, "directional")
-
-    _menu("Write frequency",
-          "async   -- background thread, no token cost (recommended)",
-          "turn    -- sync write after every turn",
-          "session -- batch write at session end only",
-          "N       -- write every N turns (e.g. 5)")
-    new_wf = _prompt("Write frequency", default=str(_pref(hermes_host, cfg, "writeFrequency", "async")))
-    hermes_host["writeFrequency"] = _first_parsed([new_wf], int, new_wf if new_wf in {"async", "turn", "session"} else "async")
-
-    _menu("Recall mode", *(f"{m:<7} -- {desc}" for m, desc in _MODES.items()))
-    raw_recall = _pref(hermes_host, cfg, "recallMode", "hybrid")
-    _choice_step(hermes_host, "recallMode", raw_recall if raw_recall in _MODES else "hybrid", "Recall mode", _MODES)
-
-    hermes_host["recallSync"] = _yes(_prompt(
-        "Wait for current-query recall (bounded by request timeout, default 5s)? (y/N)",
-        default="y" if hermes_host.get("recallSync", cfg.get("recallSync", False)) else "n"))
-
-    current_ctx_tokens = _pref(hermes_host, cfg, "contextTokens")
-    _menu("Context injection per turn (hybrid/context recall modes only)",
-          "uncapped -- no limit (default)",
-          "N        -- token limit per turn (e.g. 1200)")
-    new_ctx_tokens = _prompt("Context tokens", default=str(current_ctx_tokens) if current_ctx_tokens else "uncapped").strip()
-    if new_ctx_tokens.lower() in {"none", "uncapped", "no limit"}:
-        hermes_host.pop("contextTokens", None)
-    elif new_ctx_tokens and (val := _first_parsed([new_ctx_tokens], int, -1)) >= 0:  # non-numeric keeps current
-        hermes_host["contextTokens"] = val
-
-    _menu("Dialectic cadence",
-          "How often Honcho rebuilds its user model (LLM call on Honcho backend).",
-          "1 = every turn, 2 = every other turn, 3+ = sparser.",
-          "Recommended: 1-5.")
-    new_dialectic = _prompt("Dialectic cadence", default=str(_pref(hermes_host, cfg, "dialecticCadence") or "2"))
-    if (val := _first_parsed([new_dialectic], int, None)) is None:
-        hermes_host["dialecticCadence"] = 2
-    elif val >= 1:
-        hermes_host["dialecticCadence"] = val
-
-    _menu("Dialectic reasoning level",
-          "Depth Honcho uses when synthesizing user context on auto-injected calls.",
-          "minimal  -- quick factual lookups",
-          "low      -- straightforward questions (default)",
-          "medium   -- multi-aspect synthesis",
-          "high     -- complex behavioral patterns",
-          "max      -- thorough audit-level analysis")
-    _choice_step(hermes_host, "dialecticReasoningLevel", _pref(hermes_host, cfg, "dialecticReasoningLevel") or "low",
-                 "Reasoning level", REASONING_LEVELS, "low")
-
-    _menu("Session strategy", *(f"{s:<13} -- {desc}" for s, desc in _STRATEGIES.items()))
-    _choice_step(hermes_host, "sessionStrategy", _pref(hermes_host, cfg, "sessionStrategy", "per-session"),
-                 "Session strategy", _STRATEGIES)
 
 
 def cmd_setup(args) -> None:
@@ -885,11 +815,12 @@ def cmd_setup(args) -> None:
 
 
 def _setup_wizard(args) -> None:
+    from .host_config import legacy_path
     cfg = _read_config()
-    write_path, read_path = _local_config_path(), _config_path()
+    write_path = _config_path()
     _refuse_unparseable(write_path)  # before the questions, not after them
     print(f"\nHoncho memory setup\n{RULE}\n  Honcho gives Hermes persistent cross-session memory.\n  Config: {write_path}")
-    if read_path != write_path and read_path.exists():
+    if (read_path := legacy_path(write_path)) not in {None, write_path}:
         print(f"  (seeding from existing config at {read_path})")
     print()
     if not _ensure_sdk_installed():
@@ -903,10 +834,9 @@ def _setup_wizard(args) -> None:
 
     # --- 1. Cloud or local? ---
     print("  Deployment:\n    cloud -- Honcho cloud (api.honcho.dev)\n    local -- self-hosted Honcho server")
-    current_url = cfg.get("baseUrl") or cfg.get("base_url") or ""
+    current_url = hermes_host.get("baseUrl") or ""
     current_deploy = "local" if any(h in current_url for h in ("localhost", "127.0.0.1", "::1")) else "cloud"
     is_local = _prompt("Cloud or local?", default=current_deploy).lower() in {"local", "l"}
-    cfg.pop("base_url", None)  # legacy snake_case key
     if is_local:
         _setup_local_auth(cfg, hermes_host)
     elif not _setup_cloud_auth(cfg, hermes_host, write_path):
@@ -926,9 +856,7 @@ def _setup_wizard(args) -> None:
     print("\n  For a gateway with many users and agents, run\n"
           "  'hermes honcho peers map' to map accounts interactively.")
 
-    _setup_tuning(cfg, hermes_host)
     hermes_host["enabled"] = True
-    hermes_host.setdefault("saveMessages", True)
     _write_config(cfg)
     print(f"\n  Config written to {write_path}")
 
@@ -950,28 +878,20 @@ def _setup_wizard(args) -> None:
 
     print(f"""
   Honcho is ready.
-  Session:   {hcfg.resolve_session_name()}
   Workspace: {hcfg.workspace_id}
   User:      {hcfg.peer_name}
   AI peer:   {hcfg.ai_peer}
-  Observe:   {hcfg.observation_mode}
-  Frequency: {hcfg.write_frequency}
-  Recall:    {hcfg.recall_mode}
-  Sessions:  {hcfg.session_strategy}
+  Sessions:  one per chat, in scopes {', '.join(session_scopes(os.getcwd())) or '(none)'}
 
   Honcho tools available in chat:
-    honcho_context   -- session context: summary, representation, card, messages
+    honcho_chat      -- ask Honcho a question, synthesized answer
     honcho_search    -- semantic search over history
     honcho_profile   -- peer card, key facts
-    honcho_reasoning -- ask Honcho a question, synthesized answer
     honcho_conclude  -- persist a user fact to memory
 
   Other commands:
     hermes honcho status     -- show full config
-    hermes honcho mode       -- change recall/observation mode
-    hermes honcho tokens     -- tune context and dialectic budgets
     hermes honcho peer       -- update peer names
-    hermes honcho map <name> -- map this directory to a session name
 """)
 
 
@@ -989,17 +909,16 @@ def _active_profile_name() -> str:
 
 
 def _all_profile_host_configs() -> list[tuple[str, str, dict]]:
-    """(profile_name, host_key, host_block) for every known profile, reading honcho.json once."""
+    """(profile_name, host_key, host_block) for every known profile, each block from its own honcho.json."""
     try:
         from hermes_cli.profiles import list_profiles
         profiles = list_profiles()
     except Exception:
         return [(_active_profile_name(), _host_key(), {})]
-    cfg = _read_config()
-    # _host_block (not hosts.get) keeps legacy dot-form keys ("hermes.work") readable.
-    return [("default", HOST, cfg.get("hosts", {}).get(HOST, {}))] + [
-        (p.name, profile_host_key(p.name), _host_block(cfg, profile_host_key(p.name)))
-        for p in profiles if p.name != "default"
+    root = _get_default_hermes_home()
+    return [("default", HOST, _default_block())] + [
+        (p.name, host, _profile_block(Path(getattr(p, "path", None) or root / "profiles" / p.name) / "honcho.json", host))
+        for p in profiles if p.name != "default" for host in (profile_host_key(p.name),)
     ]
 
 
@@ -1014,13 +933,13 @@ def cmd_status(args) -> None:
         print("  honcho-ai is not installed. Run: hermes honcho setup\n")
         return
 
+    from .host_config import is_marked, legacy_path
     cfg = _read_config()
     active_path = _config_path()
-    write_path = _local_config_path()
     from .client import HonchoClientConfig, get_honcho_client
     not_found = f"  No Honcho config found at {active_path}\n  Run 'hermes honcho setup' to configure.\n"
     try:
-        hcfg = HonchoClientConfig.from_global_config(host=_host_key())
+        hcfg = HonchoClientConfig.from_global_config(host=_host_key(), config_path=active_path)
     except Exception as e:
         return print(not_found if not cfg else f"  Config error: {e}\n")
     if not cfg and not (hcfg.api_key or hcfg.base_url):  # file missing and no env-var fallback either
@@ -1043,27 +962,14 @@ def cmd_status(args) -> None:
     print(f"\nHoncho status{f' [{hcfg.host}]' if profile != 'default' else ''}\n" + RULE
           + (f"\n  Profile:        {profile}" if profile != "default" else ""))
     print(f"  Host:           {hcfg.host}\n  Enabled:        {hcfg.enabled}\n  Auth:           {auth}\n"
-          f"  Workspace:      {hcfg.workspace_id}\n  Config:         {active_path}")
-    global_path = Path.home() / ".honcho" / "config.json"
-    if write_path != active_path:
-        print(f"  Write to:       {write_path}  (profile-local)")
-    if active_path == global_path:
-        print("  Fallback:       (none — using global ~/.honcho/config.json)")
-    elif global_path.exists():
-        print(f"  Fallback:       {global_path}  (exists, cross-app interop)")
+          f"  Workspace:      {hcfg.workspace_id}\n  Config:         {active_path} (hosts.{hcfg.host})")
+    stored = (read_json_or_empty(active_path).get("hosts") or {}).get(hcfg.host)
+    if not is_marked(stored) and (source := legacy_path(active_path)) is not None:
+        print(f"  Migrating from: {source}  (copied into the host block on next start or save)")
 
-    dialectic_cadence = getattr(hcfg, "dialectic_cadence", None) or raw.get("dialecticCadence") or 1
-    reasoning_cap = raw.get("reasoningLevelCap") or hcfg.reasoning_level_cap
     print(f"""  AI peer:        {hcfg.ai_peer}
   User peer:      {hcfg.peer_name or 'not set'}
-  Session key:    {hcfg.resolve_session_name()}
-  Session strat:  {hcfg.session_strategy}
-  Recall mode:    {hcfg.recall_mode}
-  Context budget: {hcfg.context_tokens or '(uncapped)'} tokens
-  Dialectic cad:  every {dialectic_cadence} turn{'s' if dialectic_cadence != 1 else ''}
-  Reasoning:      base={hcfg.dialectic_reasoning_level}, cap={reasoning_cap}, heuristic={'on' if hcfg.reasoning_heuristic else 'off'}
-  Observation:    user(me={hcfg.user_observe_me},others={hcfg.user_observe_others}) ai(me={hcfg.ai_observe_me},others={hcfg.ai_observe_others})
-  Write freq:     {hcfg.write_frequency}""")
+  Sessions:       one per chat; scopes here: {', '.join(session_scopes(os.getcwd())) or '(none)'}""")
 
     if not (hcfg.enabled and (hcfg.api_key or hcfg.base_url)):
         return print(f"\n  Not connected ({'disabled' if not hcfg.enabled else 'no API key or base URL'})\n")
@@ -1095,18 +1001,17 @@ def _show_peer_cards(hcfg, client) -> None:
 def _cmd_status_all() -> None:
     """Show Honcho config overview across all profiles."""
     rows = _all_profile_host_configs()
-    cfg = _read_config()
     active = _active_profile_name()
     print(f"\nHoncho profiles ({len(rows)})\n{'─' * 55}\n"
           f"  {'Profile':<14} {'Host':<22} {'Enabled':<9} {'Recall':<9} {'Write'}\n"
           f"  {'─' * 14} {'─' * 22} {'─' * 9} {'─' * 9} {'─' * 9}")
     for name, host, block in rows:
-        enabled = block.get("enabled", cfg.get("enabled"))
-        if enabled is None:
-            enabled = _default_block_and_key(cfg)[1] if block else False
+        enabled = block.get("enabled")
+        if enabled is None:  # auto-enabled by a key or server, as the client resolves it
+            enabled = bool(_resolve_api_key({}, block)) if block else False
         marker = " *" if name == active else ""
         print(f"  {name + marker:<14} {host:<22} {'yes' if enabled else 'no':<9} "
-              f"{_pref(block, cfg, 'recallMode', 'hybrid'):<9} {_pref(block, cfg, 'writeFrequency', 'async')}")
+              f"{block.get('recallMode') or 'hybrid':<9} {block.get('writeFrequency') or 'async'}")
     print("\n  * active profile\n")
 
 
@@ -1407,37 +1312,11 @@ def _workspaces_flow(client, current_ws: str, cfg: dict, host: str):
 
 
 def _save_alias_map(cfg: dict, host: str, working: dict, aliases_from_root: bool) -> None:
-    """Persist the edited alias map, asking for scope when it is shared."""
-    profiles = _all_profile_host_configs()
-    write_root = aliases_from_root
-    if aliases_from_root and len(profiles) > 1:
-        scope = _prompt("Apply to all profiles (root) or only this profile? (all/this)", default="all")
-        if scope.strip().lower() in {"this", "t", "host", "only"}:
-            write_root = False
-            print(f"  This forks [{host}] from the shared root map — future root")
-            print("  edits no longer reach this profile.")
-
-    target = cfg if write_root else cfg.setdefault("hosts", {}).setdefault(host, {})
-    # An empty host map is an explicit override; popping the key would re-inherit the root aliases.
-    target["userPeerAliases"] = working
-    target_desc = f"host block [{host}]"
-    if write_root:
-        target_desc = "root config (shared by all profiles)"
-        active_ws = _host_block(cfg, host).get("workspace") or cfg.get("workspace") or host
-        other_ws: dict[str, list[str]] = {}
-        for name, hostk, block in profiles:
-            ws = block.get("workspace") or cfg.get("workspace") or hostk
-            if ws != active_ws:
-                other_ws.setdefault(ws, []).append(name)
-        for ws, names in sorted(other_ws.items()):
-            print(f"  ⚠ root aliases also apply in workspace '{ws}' (profile")
-            print(f"    {', '.join(names)}) — picked peers may not exist there.")
-
+    """Persist the edited alias map to the active host block, the only place it is read."""
+    cfg.setdefault("hosts", {}).setdefault(host, {})["userPeerAliases"] = working
     _write_config(cfg)
     print(f"\n  userPeerAliases = {working}")
-    if not working and not write_root and cfg.get("userPeerAliases"):
-        print(f"  (empty host map: root aliases no longer apply to [{host}])")
-    print(f"  written to {target_desc} in {_local_config_path()}\n")
+    print(f"  written to host block [{host}] in {_config_path()}\n")
 
 
 def cmd_peers_map(args) -> None:
@@ -1553,59 +1432,25 @@ def cmd_peers(args) -> None:
 
 # ── sessions / map ─────────────────────────────────────────────────────────
 
-def cmd_sessions(args) -> None:
-    """List known directory → session name mappings."""
-    sessions = _read_config().get("sessions", {})
-    if not sessions:
-        return print(f"  No session mappings configured.\n\n  Add one with: hermes honcho map <session-name>\n"
-                     f"  Or edit {_config_path()} directly.\n")
-    cwd = os.getcwd()
-    print(f"\nHoncho session mappings ({len(sessions)})\n" + RULE)
-    for path, name in sorted(sessions.items()):
-        print(f"  {name:<30} {path}{' ←' if path == cwd else ''}")
-    print()
-
-
-def cmd_map(args) -> None:
-    """Map current directory to a Honcho session name."""
-    if not args.session_name:
-        return cmd_sessions(args)
-    session_name = args.session_name.strip()
-    if not session_name:
-        return print("  Session name cannot be empty.\n")
-    import re
-    if (sanitized := re.sub(r'[^a-zA-Z0-9_-]', '-', session_name).strip('-')) != session_name:
-        print(f"  Session name sanitized to: {sanitized}")
-        session_name = sanitized
-    cwd = os.getcwd()
-    cfg = _read_config()
-    cfg.setdefault("sessions", {})[cwd] = session_name
-    _write_config(cfg)
-    print(f"  Mapped {cwd}\n     → {session_name}\n")
-
-
-# ── peer / mode / strategy / tokens ────────────────────────────────────────
+# ── peer ───────────────────────────────────────────────────────────────────
 
 def _show_or_set_fields(args, fields: tuple, show) -> None:
-    """Shared body of ``peer`` / ``tokens``: with no flags, ``show(block, cfg)`` prints the
-    current values; otherwise each ``(attr, key, echo, valid)`` flag that is set is written
-    (an invalid value aborts before saving)."""
+    """Body of ``peer``: with no flags, ``show(block, cfg)`` prints the current values; otherwise each
+    ``(attr, key, echo)`` flag that is set is written."""
     cfg = _read_config()
-    values = {attr: getattr(args, attr, None) for attr, _key, _echo, _valid in fields}
+    values = {attr: getattr(args, attr, None) for attr, _key, _echo in fields}
     if all(v is None for v in values.values()):
         return show(_active_block(cfg), cfg)
-    for attr, key, echo, valid in fields:
+    for attr, key, echo in fields:
         if (value := values[attr]) is None:
             continue
-        if valid is not None and value not in valid:  # only --reasoning carries a choice set
-            return print(f"  Invalid reasoning level '{value}'. Options: {', '.join(valid)}")
         value = value.strip() if isinstance(value, str) else value
         _set_field(cfg, key, value, echo.format(value))
     _save(cfg)
 
 
 def cmd_peer(args) -> None:
-    """Show or update peer names and dialectic reasoning level."""
+    """Show or update peer names."""
     def show(hermes, cfg):
         print(f"""
 Honcho peers
@@ -1614,66 +1459,8 @@ Honcho peers
     Your identity in Honcho. Messages you send build this peer's card.
   AI peer:     {_pref(hermes, cfg, 'aiPeer') or _host_key()}
     Hermes' identity in Honcho. Seed with 'hermes honcho identity <file>'.
-    Dialectic calls ask this peer questions to warm session context.
-
-  Dialectic reasoning:  {_pref(hermes, cfg, 'dialecticReasoningLevel') or 'low'}  ({', '.join(REASONING_LEVELS)})
-  Dialectic cap:        {_pref(hermes, cfg, 'dialecticMaxChars') or 600} chars
 """)
-    _show_or_set_fields(args, (("user", "peerName", "User peer -> {}", None), ("ai", "aiPeer", "AI peer   -> {}", None),
-                               ("reasoning", "dialecticReasoningLevel", "Dialectic reasoning level -> {}", REASONING_LEVELS)), show)
-
-
-def _show_or_set_choice(args, *, attr: str, key: str, noun: str, title: str, choices: dict,
-                        default: str, width: int) -> None:
-    """Shared body of ``mode`` / ``strategy``: list choices, or set one on the active host."""
-    cfg = _read_config()
-    value = getattr(args, attr, None)
-    if value is None:
-        current = _pref(_active_block(cfg), cfg, key) or default
-        print(f"\nHoncho {title}\n" + RULE)
-        print("\n".join(f"  {m:<{width}}  {desc}{' <-' if m == current else ''}" for m, desc in choices.items()))
-        return print(f"\n  Set with: hermes honcho {attr} [{'|'.join(choices)}]\n")
-    if value not in choices:
-        return print(f"  Invalid {noun} '{value}'. Options: {', '.join(choices)}\n")
-    host = _host_key()
-    cfg.setdefault("hosts", {}).setdefault(host, {})[key] = value
-    _write_config(cfg)
-    print(f"  {_label(host)}{title[0].upper() + title[1:]} -> {value}  ({choices[value]})\n")
-
-
-def cmd_mode(args) -> None:
-    """Show or set the recall mode."""
-    _show_or_set_choice(args, attr="mode", key="recallMode", noun="mode", title="recall mode",
-                        choices=_MODES, default="hybrid", width=10)
-
-
-def cmd_strategy(args) -> None:
-    """Show or set the session strategy."""
-    _show_or_set_choice(args, attr="strategy", key="sessionStrategy", noun="strategy",
-                        title="session strategy", choices=_STRATEGIES, default="per-session", width=15)
-
-
-def cmd_tokens(args) -> None:
-    """Show or set token budget settings."""
-    def show(hermes, cfg):
-        print(f"""
-Honcho budgets
-{RULE}
-
-  Context     {_pref(hermes, cfg, 'contextTokens') or '(Honcho default)'} tokens
-    Raw memory retrieval. Honcho returns stored facts/history about
-    the user and session, injected directly into the system prompt.
-
-  Dialectic   {_pref(hermes, cfg, 'dialecticMaxChars') or 600} chars, reasoning: {_pref(hermes, cfg, 'dialecticReasoningLevel') or 'low'}
-    AI-to-AI inference. Hermes asks Honcho's AI peer a question
-    (e.g. "what were we working on?") and Honcho runs its own model
-    to synthesize an answer. Used for first-turn session continuity.
-    Level controls how much reasoning Honcho spends on the answer.
-
-  Set with: hermes honcho tokens [--context N] [--dialectic N]
-""")
-    _show_or_set_fields(args, (("context", "contextTokens", "context tokens -> {}", None),
-                               ("dialectic", "dialecticMaxChars", "dialectic cap  -> {} chars", None)), show)
+    _show_or_set_fields(args, (("user", "peerName", "User peer -> {}"), ("ai", "aiPeer", "AI peer   -> {}")), show)
 
 
 # ── identity / migrate ─────────────────────────────────────────────────────
@@ -1782,7 +1569,7 @@ def cmd_migrate(args) -> None:
 Step 1  Create a Honcho account
 """)
     if has_key:
-        print(f"  Honcho API key already configured: {_mask(cfg['apiKey'])}\n  Skip to Step 2.")
+        print(f"  Honcho API key already configured: {_mask(_resolve_api_key(cfg))}\n  Skip to Step 2.")
     else:
         print(f"""  Honcho is a cloud memory service that gives Hermes persistent memory
   across sessions. You need an API key to use it.
@@ -1794,7 +1581,7 @@ Step 1  Create a Honcho account
         if _yes(_prompt("  Run 'hermes honcho setup' now?", default="y")):
             cmd_setup(args)
             cfg = _read_config()
-            has_key = bool(cfg.get("apiKey", ""))
+            has_key = bool(_resolve_api_key(cfg))
         else:
             print("\n  Run 'hermes honcho setup' when ready, then re-run this walkthrough.")
 
@@ -1866,8 +1653,8 @@ Step 5  What changes vs. OpenClaw native memory
 
   Context injection
     OpenClaw: file excerpts injected synchronously before each LLM call.
-    Hermes:   Honcho context fetched async at turn end, injected next turn.
-              First turn has no Honcho context; subsequent turns are loaded.
+    Hermes:   the user's peer card at the start of each session, and what
+              Honcho recalls about the user, fetched async, on each turn.
 
   Memory growth
     OpenClaw: you edit files manually to update memory.
@@ -1875,16 +1662,15 @@ Step 5  What changes vs. OpenClaw native memory
               automatically. Files become the seed, not the live store.
 
   Honcho tools (available to the agent during conversation)
-    honcho_context   — session context: summary, representation, card, messages
+    honcho_chat          — ask Honcho a question, synthesized answer
     honcho_search        — semantic search over stored context
     honcho_profile       — fast peer card snapshot
-    honcho_reasoning     — ask Honcho a question, synthesized answer
     honcho_conclude      — write a conclusion/fact back to memory
 
   Session naming
     OpenClaw: no persistent session concept — files are global.
-    Hermes:   per-session by default — each run gets its own session
-              Map a custom name:  hermes honcho map <session-name>
+    Hermes:   one Honcho session per chat, in scopes for its repository
+              and this machine.
 
 Step 6  Next steps
 """)
@@ -1894,10 +1680,7 @@ Step 6  Next steps
     else:
         print("""  1. hermes honcho status             — verify Honcho connection
   2. hermes                           — start a session
-     (user memory files auto-uploaded on first turn if not done above)
-  3. hermes honcho identity --show    — verify AI peer representation
-  4. hermes honcho tokens             — tune context and dialectic budgets
-  5. hermes honcho mode               — view or change memory mode""")
+  3. hermes honcho identity --show    — verify AI peer representation""")
     print()
 
 
@@ -1913,28 +1696,9 @@ _SUBCOMMANDS = (
         ("peers_action", dict(nargs="?", default=None, choices=("map",), metavar="map",
                               help="'map': interactively map gateway accounts to user peers")),
     )),
-    ("sessions", "List known Honcho session mappings", cmd_sessions, ()),
-    ("map", "Map current directory to a Honcho session name (no arg = list mappings)", cmd_map, (
-        ("session_name", dict(nargs="?", default=None,
-                              help="Session name to associate with this directory. Omit to list current mappings.")),
-    )),
-    ("peer", "Show or update peer names and dialectic reasoning level", cmd_peer, (
+    ("peer", "Show or update peer names", cmd_peer, (
         ("--user", dict(metavar="NAME", help="Set user peer name")),
         ("--ai", dict(metavar="NAME", help="Set AI peer name")),
-        ("--reasoning", dict(metavar="LEVEL", choices=REASONING_LEVELS,
-                             help="Set default dialectic reasoning level (minimal/low/medium/high/max)")),
-    )),
-    ("mode", "Show or set recall mode (hybrid/context/tools)", cmd_mode, (
-        ("mode", dict(nargs="?", metavar="MODE", choices=tuple(_MODES),
-                      help="Recall mode to set (hybrid/context/tools). Omit to show current.")),
-    )),
-    ("strategy", "Show or set session strategy (per-session/per-directory/per-repo/global)", cmd_strategy, (
-        ("strategy", dict(nargs="?", metavar="STRATEGY", choices=tuple(_STRATEGIES),
-                          help="Session strategy to set. Omit to show current.")),
-    )),
-    ("tokens", "Show or set token budget for context and dialectic", cmd_tokens, (
-        ("--context", dict(type=int, metavar="N", help="Max tokens Honcho returns from session.context() per turn")),
-        ("--dialectic", dict(type=int, metavar="N", help="Max chars of dialectic result to inject into system prompt")),
     )),
     ("identity", "Seed or show the AI peer's Honcho identity representation", cmd_identity, (
         ("file", dict(nargs="?", default=None, help="Path to file to seed from (e.g. SOUL.md). Omit to show usage.")),
@@ -1960,7 +1724,7 @@ def honcho_command(args) -> None:
     handler = cmd_status if sub is None else _HANDLERS.get(sub)
     if handler is None:
         return print(f"  Unknown honcho command: {sub}\n"
-                     "  Available: status, sessions, map, peer, mode, strategy, tokens, identity, migrate, enable, disable, sync\n")
+                     "  Available: status, peers, peer, identity, migrate, enable, disable, sync\n")
     try:
         handler(args)
     except ConfigWriteRefused as e:

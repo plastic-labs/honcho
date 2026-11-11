@@ -193,13 +193,13 @@ def test_full_loopback_flow_then_refresh(tmp_path, fake_as):
         timeout=10,
     )
 
-    # Grant installed: token stored, config deep-merged, other host preserved.
+    # Grant installed: token stored, config applied to the host's block, other host preserved.
     assert cred.access_token == "hch-at-1"
     saved = json.loads(config_path.read_text())
     assert saved["hosts"]["hermes"]["apiKey"] == "hch-at-1"
     assert saved["hosts"]["hermes"]["oauth"]["refreshToken"] == "hch-rt-1"
     assert saved["hosts"]["hermes"]["recallMode"] == "hybrid"
-    assert saved["environment"] == "production"
+    assert saved["hosts"]["hermes"]["peerName"] == "lyra" and "environment" not in saved
     assert saved["hosts"]["obsidian"] == {"workspace": "obsidian"}
 
     # Force expiry; ensure_fresh_token refreshes against the same AS and rotates.
@@ -300,7 +300,7 @@ def test_display_config_path_never_leaks_absolute_path():
 def test_cli_flow_stores_tokens_without_applying_config(tmp_path, fake_as):
     # apply_config=False (the CLI path): grant config must NOT touch settings.
     config_path = tmp_path / "honcho.json"
-    config_path.write_text(json.dumps({"hosts": {"hermes": {"saveMessages": False}}}))
+    config_path.write_text(json.dumps({"hosts": {"hermes": {"pinUserPeer": True}}}))
 
     cred = oauth_flow.authorize_via_loopback(
         config_path=config_path,
@@ -316,8 +316,8 @@ def test_cli_flow_stores_tokens_without_applying_config(tmp_path, fake_as):
     assert host["apiKey"] == cred.access_token
     assert host["oauth"]["refreshToken"] == cred.refresh_token
     # Wizard-owned setting untouched; grant config keys absent.
-    assert host["saveMessages"] is False
-    assert "recallMode" not in host
+    assert host["pinUserPeer"] is True
+    assert "recallMode" not in host and "saveMessages" not in host
     assert "environment" not in saved
     # consent peer name still surfaced (seeds the CLI wizard prompt) despite no merge
     assert cred.consent_peer_name == "lyra"

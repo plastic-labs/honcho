@@ -1,8 +1,5 @@
 """Tests for plugins/memory/honcho/session.py — HonchoSession and helpers."""
 
-import json
-import os
-import sys
 import threading
 import time
 
@@ -10,7 +7,6 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from hermes_plugin_honcho.session import (
     HonchoSession,
@@ -81,18 +77,18 @@ class TestPeerLookupHelpers:
         return mgr, session
 
 
-    def test_set_peer_card_uses_observer_target_in_ai_observe_others_mode(self):
-        # Writes must go to the same observer-target slot that reads check,
-        # so that a subsequent honcho_profile read returns what was written.
+    def test_set_peer_card_writes_the_users_own_card(self):
+        # Every peer observes only itself, so writes go to the user's own card, where reads look.
         mgr, session = self._make_cached_manager()
-        assistant_peer = MagicMock()
-        assistant_peer.set_card.return_value = ["Role: user"]
-        mgr._get_or_create_peer = MagicMock(return_value=assistant_peer)
+        user_peer = MagicMock()
+        user_peer.set_card.return_value = ["Role: user"]
+        mgr._get_or_create_peer = MagicMock(return_value=user_peer)
 
         result = mgr.set_peer_card(session.key, ["Role: user"])
 
         assert result == ["Role: user"]
-        assistant_peer.set_card.assert_called_once_with(["Role: user"], target=session.user_peer_id)
+        mgr._get_or_create_peer.assert_called_with(session.user_peer_id)
+        user_peer.set_card.assert_called_once_with(["Role: user"])
 
     def test_search_context_uses_peer_perspective_message_search(self):
         """Search spans the target peer's sessions instead of its representation."""
@@ -267,21 +263,14 @@ class TestConcludeToolDispatch:
 # ---------------------------------------------------------------------------
 
 
-class TestToolsModeInitBehavior:
-    """Verify initOnSessionStart controls session init timing in tools mode."""
+class TestInitPassesIdentity:
+    """Session init hands the gateway's user ids to the session manager."""
 
-    def _make_provider_with_config(self, recall_mode="tools", init_on_session_start=False,
-                                    peer_name=None, user_id=None, user_id_alt=None):
+    def _make_provider_with_config(self, peer_name=None, user_id=None, user_id_alt=None):
         """Create a HonchoMemoryProvider with mocked config and dependencies."""
         from hermes_plugin_honcho.client import HonchoClientConfig
 
-        cfg = HonchoClientConfig(
-            api_key="test-key",
-            enabled=True,
-            recall_mode=recall_mode,
-            init_on_session_start=init_on_session_start,
-            peer_name=peer_name,
-        )
+        cfg = HonchoClientConfig(api_key="test-key", enabled=True, peer_name=peer_name)
 
         provider = HonchoMemoryProvider()
 
@@ -304,79 +293,22 @@ class TestToolsModeInitBehavior:
              patch("hermes_plugin_honcho.session.HonchoSessionManager", return_value=mock_manager) as mock_manager_cls, \
              patch("hermes_constants.get_hermes_home", return_value=MagicMock()):
             provider.initialize(session_id="test-session-001", **init_kwargs)
+            provider._init_thread.join(timeout=5)
+            _settle_prewarm(provider)
 
         return provider, cfg, mock_manager_cls
 
-    def test_tools_lazy_default(self):
-        """tools + initOnSessionStart=false → session NOT initialized after initialize()."""
-        provider, _, _ = self._make_provider_with_config(
-            recall_mode="tools", init_on_session_start=False,
-        )
-        assert provider._session_initialized is False
-        assert provider._manager is None
-        assert provider._lazy_init_kwargs is not None
-
-
     def test_explicit_peer_name_not_overridden_by_user_id(self):
         """Explicit peerName in config must not be replaced by gateway user_id."""
-        _, cfg, _ = self._make_provider_with_config(
-            recall_mode="tools", init_on_session_start=True,
-            peer_name="Kathie", user_id="8439114563",
-        )
+        _, cfg, _ = self._make_provider_with_config(peer_name="Kathie", user_id="8439114563")
         assert cfg.peer_name == "Kathie"
 
 
     def test_user_id_alt_is_passed_to_session_manager(self):
         """Gateway alternate user IDs are available for Honcho alias matching."""
-        _, _, mock_manager_cls = self._make_provider_with_config(
-            recall_mode="tools", init_on_session_start=True,
-            peer_name=None, user_id="open-id", user_id_alt="union-id",
-        )
+        _, _, mock_manager_cls = self._make_provider_with_config(user_id="open-id", user_id_alt="union-id")
         assert mock_manager_cls.call_args.kwargs["runtime_user_peer_name"] == "open-id"
         assert mock_manager_cls.call_args.kwargs["runtime_user_peer_name_alt"] == "union-id"
-
-
-class TestPerSessionMigrateGuard:
-    """Verify migrate_memory_files is skipped under per-session strategy.
-
-    per-session creates a fresh Honcho session every Hermes run. Uploading
-    MEMORY.md/USER.md/SOUL.md to each short-lived session floods the backend
-    with duplicate content. The guard was added to prevent orphan sessions
-    containing only <prior_memory_file> wrappers.
-    """
-
-    def _make_provider_with_strategy(self, strategy, init_on_session_start=True):
-        """Create a HonchoMemoryProvider and track migrate_memory_files calls."""
-        from hermes_plugin_honcho.client import HonchoClientConfig
-        from unittest.mock import patch, MagicMock
-
-        cfg = HonchoClientConfig(
-            api_key="test-key",
-            enabled=True,
-            recall_mode="tools",
-            init_on_session_start=init_on_session_start,
-            session_strategy=strategy,
-        )
-
-        provider = HonchoMemoryProvider()
-
-        mock_manager = MagicMock()
-        mock_session = MagicMock()
-        mock_session.messages = []  # empty = new session → triggers migration path
-        mock_manager.get_or_create.return_value = mock_session
-
-        with patch("hermes_plugin_honcho.client.HonchoClientConfig.from_global_config", return_value=cfg), \
-             patch("hermes_plugin_honcho.client.get_honcho_client", return_value=MagicMock()), \
-             patch("hermes_plugin_honcho.session.HonchoSessionManager", return_value=mock_manager), \
-             patch("hermes_constants.get_hermes_home", return_value=MagicMock()):
-            provider.initialize(session_id="test-session-001")
-
-        return provider, mock_manager
-
-    def test_migrate_skipped_for_per_session(self):
-        """per-session strategy must NOT call migrate_memory_files."""
-        _, mock_manager = self._make_provider_with_strategy("per-session")
-        mock_manager.migrate_memory_files.assert_not_called()
 
 
 class TestChunkMessage:
@@ -408,49 +340,10 @@ class TestChunkMessage:
 # ---------------------------------------------------------------------------
 
 
-class TestTruncateToBudget:
-    def test_truncates_oversized_context(self):
-        """Text exceeding context_tokens budget is truncated at a word boundary."""
-        from hermes_plugin_honcho.client import HonchoClientConfig
-
-        provider = HonchoMemoryProvider()
-        provider._config = HonchoClientConfig(context_tokens=10)
-
-        long_text = "word " * 200  # ~1000 chars, well over 10*4=40 char budget
-        result = provider._truncate_to_budget(long_text)
-
-        assert len(result) <= 50  # budget_chars + ellipsis + word boundary slack
-        assert result.endswith(" …")
-
-
-    def test_context_tokens_cap_bounds_prefetch(self):
-        """With an explicit token budget, oversized prefetch is bounded."""
-        from hermes_plugin_honcho.client import HonchoClientConfig
-
-        provider = HonchoMemoryProvider()
-        provider._config = HonchoClientConfig(context_tokens=1200)
-
-        # Simulate a massive representation (10k chars)
-        huge_text = "x" * 10000
-        result = provider._truncate_to_budget(huge_text)
-
-        # 1200 tokens * 4 chars = 4800 chars + " …"
-        assert len(result) <= 4805
-
-
-# ---------------------------------------------------------------------------
-# Dialectic input guard
-# ---------------------------------------------------------------------------
-
-
 class TestDialecticInputGuard:
     def test_long_query_truncated(self):
-        """Queries exceeding dialectic_max_input_chars are truncated."""
-        from hermes_plugin_honcho.client import HonchoClientConfig
-
-        cfg = HonchoClientConfig(dialectic_max_input_chars=100)
-        mgr = HonchoSessionManager(config=cfg)
-        mgr._dialectic_max_input_chars = 100
+        """Queries over 10000 chars are truncated."""
+        mgr = HonchoSessionManager()
 
         # Create a cached session so dialectic_query doesn't bail early
         session = HonchoSession(
@@ -464,23 +357,19 @@ class TestDialecticInputGuard:
         mock_peer.chat.return_value = "answer"
         mgr._get_or_create_peer = MagicMock(return_value=mock_peer)
 
-        long_query = "word " * 100  # 500 chars, exceeds 100 limit
+        long_query = "word " * 2500  # 12500 chars, over the 10000 limit
         mgr.dialectic_query("test", long_query)
 
         # The query passed to chat() should be truncated
         actual_query = mock_peer.chat.call_args[0][0]
-        assert len(actual_query) <= 100
+        assert len(actual_query) <= 10000
 
 
 class TestDialecticInjectionCap:
-    """dialecticMaxChars applies to injection, not explicit reasoning calls."""
+    """The 600-char cap applies to injection, not explicit chat calls."""
 
     def _manager_with_long_answer(self, answer):
-        from hermes_plugin_honcho.client import HonchoClientConfig
-
-        cfg = HonchoClientConfig(dialectic_max_chars=50)
-        mgr = HonchoSessionManager(config=cfg)
-        mgr._dialectic_max_chars = 50
+        mgr = HonchoSessionManager()
 
         session = HonchoSession(
             key="test", user_peer_id="u", assistant_peer_id="a",
@@ -494,18 +383,18 @@ class TestDialecticInjectionCap:
         return mgr
 
     def test_injection_path_truncates(self):
-        """Default (auto-injection) path clips to dialecticMaxChars with an ellipsis."""
-        answer = "fact " * 100  # 500 chars, well over the 50-char cap
+        """Default (auto-injection) path clips to 600 chars with an ellipsis."""
+        answer = "fact " * 200  # 1000 chars, well over the 600-char cap
         mgr = self._manager_with_long_answer(answer)
 
         result = mgr.dialectic_query("test", "summarize")
 
-        assert len(result) <= 60  # cap + word-boundary slack + ellipsis
+        assert len(result) <= 610  # cap + word-boundary slack + ellipsis
         assert result.endswith(" …")
 
     def test_tool_path_returns_full_answer(self):
         """Explicit tool call (apply_injection_cap=False) returns the full answer."""
-        answer = "fact " * 100  # 500 chars, well over the 50-char cap
+        answer = "fact " * 200  # 1000 chars, well over the 600-char cap
         mgr = self._manager_with_long_answer(answer)
 
         result = mgr.dialectic_query("test", "summarize", apply_injection_cap=False)
@@ -538,222 +427,6 @@ def _settle_prewarm(provider):
             pass
 
 
-class TestDialecticCadenceDefaults:
-    """Regression tests for dialectic_cadence default value."""
-
-    @staticmethod
-    def _make_provider(cfg_extra=None):
-        """Create a HonchoMemoryProvider with mocked dependencies."""
-        from unittest.mock import patch, MagicMock
-        from hermes_plugin_honcho.client import HonchoClientConfig
-
-        defaults = dict(api_key="test-key", enabled=True, recall_mode="hybrid")
-        if cfg_extra:
-            defaults.update(cfg_extra)
-        cfg = HonchoClientConfig(**defaults)
-        provider = HonchoMemoryProvider()
-        mock_manager = MagicMock()
-        mock_session = MagicMock()
-        mock_session.messages = []
-        mock_manager.get_or_create.return_value = mock_session
-
-        with patch("hermes_plugin_honcho.client.HonchoClientConfig.from_global_config", return_value=cfg), \
-             patch("hermes_plugin_honcho.client.get_honcho_client", return_value=MagicMock()), \
-             patch("hermes_plugin_honcho.session.HonchoSessionManager", return_value=mock_manager), \
-             patch("hermes_constants.get_hermes_home", return_value=MagicMock()):
-            provider.initialize(session_id="test-session-001")
-
-        _settle_prewarm(provider)
-        return provider
-
-    def test_unset_falls_back_to_1(self):
-        """Unset dialecticCadence falls back to 1 (every turn) for backwards
-        compatibility with existing configs that predate the setting. The
-        setup wizard writes 2 explicitly on new configs."""
-        provider = self._make_provider()
-        assert provider._dialectic_cadence == 1
-
-
-    def test_first_turn_only_injection_disables_base_refresh(self):
-        provider = self._make_provider(
-            cfg_extra={"injection_frequency": "first-turn", "context_cadence": 1}
-        )
-        provider._turn_count = 2
-        provider._last_dialectic_turn = 2
-        provider._manager.prefetch_context.reset_mock()
-
-        provider.queue_prefetch("follow-up question")
-
-        provider._manager.prefetch_context.assert_not_called()
-
-
-class TestBaseContextSummary:
-    """Base context injection should include session summary when available."""
-
-    def test_format_includes_summary(self):
-        """Session summary should appear first in the formatted context."""
-        provider = HonchoMemoryProvider()
-        ctx = {
-            "summary": "Testing Honcho tools and dialectic depth.",
-            "representation": "Eri is a developer.",
-            "card": "Name: Eri Barrett",
-        }
-        formatted = provider._format_first_turn_context(ctx)
-        assert "## Session Summary" in formatted
-        assert formatted.index("Session Summary") < formatted.index("User Representation")
-
-
-    def test_timed_out_first_turn_context_surfaces_next_turn(self):
-        import threading
-        import time
-
-        ready = threading.Event()
-        cached = {}
-        manager = MagicMock()
-
-        def get_context(*args, **kwargs):
-            ready.wait(timeout=1)
-            return {"representation": "late user context", "card": ""}
-
-        manager.get_prefetch_context.side_effect = get_context
-        manager.set_context_result.side_effect = (
-            lambda session_key, result: cached.__setitem__(session_key, result)
-        )
-        manager.pop_context_result.side_effect = (
-            lambda session_key: cached.pop(session_key, {})
-        )
-
-        provider = HonchoMemoryProvider()
-        provider._manager = manager
-        provider._config = SimpleNamespace(timeout=0.01, context_tokens=0)
-        provider._session_key = "test"
-        provider._session_initialized = True
-        provider._recall_mode = "context"
-        provider._turn_count = 1
-        provider._last_dialectic_turn = 0
-
-        assert provider.prefetch("first question") == ""
-        ready.set()
-
-        deadline = time.monotonic() + 1
-        while "test" not in cached and time.monotonic() < deadline:
-            time.sleep(0.01)
-
-        provider._turn_count = 2
-        assert "late user context" in provider.prefetch("follow-up question")
-
-    def test_later_turn_does_not_wait_for_in_flight_dialectic(self):
-        import threading
-        import time
-
-        release = threading.Event()
-        provider = HonchoMemoryProvider()
-        provider._manager = MagicMock()
-        provider._manager.pop_context_result.return_value = {}
-        provider._config = SimpleNamespace(timeout=10.0, context_tokens=0)
-        provider._session_key = "test"
-        provider._session_initialized = True
-        provider._base_context_cache = ""
-        provider._turn_count = 2
-        provider._last_dialectic_turn = 1
-        provider._prefetch_thread = threading.Thread(
-            target=lambda: release.wait(timeout=5), daemon=True
-        )
-        provider._prefetch_thread.start()
-        provider._prefetch_thread_started_at = time.monotonic()
-
-        try:
-            started = time.perf_counter()
-            assert provider.prefetch("follow-up question") == ""
-            assert time.perf_counter() - started < 0.2
-        finally:
-            release.set()
-            provider._prefetch_thread.join(timeout=1)
-
-
-class TestDialecticDepth:
-    """Tests for the dialecticDepth multi-pass system."""
-
-    @staticmethod
-    def _make_provider(cfg_extra=None):
-        from unittest.mock import patch, MagicMock
-        from hermes_plugin_honcho.client import HonchoClientConfig
-
-        defaults = dict(api_key="test-key", enabled=True, recall_mode="hybrid")
-        if cfg_extra:
-            defaults.update(cfg_extra)
-        cfg = HonchoClientConfig(**defaults)
-        provider = HonchoMemoryProvider()
-        mock_manager = MagicMock()
-        mock_session = MagicMock()
-        mock_session.messages = []
-        mock_manager.get_or_create.return_value = mock_session
-
-        with patch("hermes_plugin_honcho.client.HonchoClientConfig.from_global_config", return_value=cfg), \
-             patch("hermes_plugin_honcho.client.get_honcho_client", return_value=MagicMock()), \
-             patch("hermes_plugin_honcho.session.HonchoSessionManager", return_value=mock_manager), \
-             patch("hermes_constants.get_hermes_home", return_value=MagicMock()):
-            provider.initialize(session_id="test-session-001")
-
-        _settle_prewarm(provider)
-        return provider
-
-    def test_default_depth_is_1(self):
-        """Default dialecticDepth should be 1 — single .chat() call."""
-        provider = self._make_provider()
-        assert provider._dialectic_depth == 1
-
-
-    def test_depth_clamped_to_3(self):
-        """dialecticDepth > 3 gets clamped to 3."""
-        provider = self._make_provider(cfg_extra={"dialectic_depth": 7})
-        assert provider._dialectic_depth == 3
-
-
-    def test_resolve_pass_level_uses_depth_levels(self):
-        """Per-pass levels from dialecticDepthLevels override proportional."""
-        provider = self._make_provider(cfg_extra={
-            "dialectic_depth": 2,
-            "dialectic_depth_levels": ["minimal", "high"],
-        })
-        assert provider._resolve_pass_level(0) == "minimal"
-        assert provider._resolve_pass_level(1) == "high"
-
-
-    def test_cold_start_prompt(self):
-        """Cold start (no base context) uses general user query."""
-        provider = self._make_provider()
-        prompt = provider._build_dialectic_prompt(0, [], is_cold=True)
-        assert "preferences" in prompt.lower()
-        assert "session" not in prompt.lower()
-
-
-    def test_signal_sufficient_short_response(self):
-        """Short responses are not sufficient signal."""
-        assert not HonchoMemoryProvider._signal_sufficient("ok")
-        assert not HonchoMemoryProvider._signal_sufficient("")
-        assert not HonchoMemoryProvider._signal_sufficient(None)
-
-
-    def test_run_dialectic_depth_single_pass(self):
-        """Depth 1 makes exactly one .chat() call."""
-        from unittest.mock import MagicMock
-        provider = self._make_provider(cfg_extra={"dialectic_depth": 1})
-        provider._manager = MagicMock()
-        provider._manager.dialectic_query.return_value = "user prefers zero-fluff"
-        provider._session_key = "test"
-        provider._base_context_cache = None  # cold start
-
-        result = provider._run_dialectic_depth("hello")
-        assert result == "user prefers zero-fluff"
-        assert provider._manager.dialectic_query.call_count == 1
-
-
-# ---------------------------------------------------------------------------
-# Trivial-prompt heuristic + dialectic cadence silent-failure guards
-# ---------------------------------------------------------------------------
-
-
 class TestTrivialPromptHeuristic:
     """Trivial prompts ('ok', 'y', slash commands) must short-circuit injection."""
 
@@ -762,7 +435,7 @@ class TestTrivialPromptHeuristic:
         from unittest.mock import patch, MagicMock
         from hermes_plugin_honcho.client import HonchoClientConfig
 
-        cfg = HonchoClientConfig(api_key="test-key", enabled=True, recall_mode="hybrid")
+        cfg = HonchoClientConfig(api_key="test-key", enabled=True)
         provider = HonchoMemoryProvider()
         mock_manager = MagicMock()
         mock_session = MagicMock()
@@ -789,7 +462,6 @@ class TestTrivialPromptHeuristic:
     def test_prefetch_skips_on_trivial_prompt(self):
         provider = self._make_provider()
         provider._session_key = "test"
-        provider._base_context_cache = "cached base"
         provider._last_dialectic_turn = 0
         provider._turn_count = 5
 
@@ -803,8 +475,6 @@ class TestTrivialPromptHeuristic:
         """A trivial turn consumes a ready result without starting new work."""
         provider = self._make_provider()
         provider._session_key = "test"
-        provider._base_context_cache = ""  # isolate the supplement path
-        provider._dialectic_cadence = 4
         provider._turn_count = 2
         # Simulate: queue_prefetch fired the dialectic at end of turn 1.
         provider._last_dialectic_turn = 1
@@ -824,8 +494,6 @@ class TestTrivialPromptHeuristic:
         discarded on a trivial turn — the fix must not resurrect stale content."""
         provider = self._make_provider()
         provider._session_key = "test"
-        provider._base_context_cache = ""
-        provider._dialectic_cadence = 4  # stale_limit = 4 * 2 = 8
         provider._last_dialectic_turn = 1
         provider._turn_count = 1 + 4 * provider._STALE_RESULT_MULTIPLIER + 1  # 10 → stale
         with provider._prefetch_lock:
@@ -849,9 +517,7 @@ class TestDialecticCadenceAdvancesOnSuccess:
         from unittest.mock import patch, MagicMock
         from hermes_plugin_honcho.client import HonchoClientConfig
 
-        cfg = HonchoClientConfig(
-            api_key="test-key", enabled=True, recall_mode="hybrid", dialectic_depth=1,
-        )
+        cfg = HonchoClientConfig(api_key="test-key", enabled=True)
         provider = HonchoMemoryProvider()
         mock_manager = MagicMock()
         mock_session = MagicMock()
@@ -915,7 +581,7 @@ class TestSessionStartDialecticPrewarm:
         from unittest.mock import patch, MagicMock
         from hermes_plugin_honcho.client import HonchoClientConfig
 
-        defaults = dict(api_key="test-key", enabled=True, recall_mode="hybrid")
+        defaults = dict(api_key="test-key", enabled=True)
         if cfg_extra:
             defaults.update(cfg_extra)
         cfg = HonchoClientConfig(**defaults)
@@ -951,7 +617,6 @@ class TestSessionStartDialecticPrewarm:
             p._prefetch_thread.join(timeout=3.0)
         p._manager.dialectic_query.reset_mock()
         p._session_key = "test-prewarm"
-        p._base_context_cache = ""
         p._turn_count = 1
 
         result = p.prefetch("hello world")
@@ -969,7 +634,7 @@ class TestDialecticLiveness:
         from unittest.mock import patch, MagicMock
         from hermes_plugin_honcho.client import HonchoClientConfig
 
-        defaults = dict(api_key="test-key", enabled=True, recall_mode="hybrid", timeout=2.0)
+        defaults = dict(api_key="test-key", enabled=True, timeout=2.0)
         if cfg_extra:
             defaults.update(cfg_extra)
         cfg = HonchoClientConfig(**defaults)
@@ -1017,7 +682,7 @@ class TestDialecticLiveness:
 
     def test_empty_streak_widens_effective_cadence(self):
         """After N empty returns, the gate waits cadence + N turns."""
-        p = self._make_provider(cfg_extra={"dialectic_cadence": 1})
+        p = self._make_provider()
         p._dialectic_empty_streak = 3
         # cadence=1, streak=3 → effective = 4
         assert p._effective_cadence() == 4
@@ -1033,11 +698,7 @@ class TestDialecticLifecycleSmoke:
         from unittest.mock import patch, MagicMock
         from hermes_plugin_honcho.client import HonchoClientConfig
 
-        defaults = dict(
-            api_key="test-key", enabled=True, recall_mode="hybrid",
-            dialectic_reasoning_level="low", reasoning_heuristic=True,
-            reasoning_level_cap="high", dialectic_depth=1,
-        )
+        defaults = dict(api_key="test-key", enabled=True)
         if cfg_extra:
             defaults.update(cfg_extra)
         cfg = HonchoClientConfig(**defaults)
@@ -1069,25 +730,19 @@ class TestDialecticLifecycleSmoke:
         )
 
     def test_full_multi_turn_session(self):
-        """Walks init → turns 1..8 → session end. Asserts at every step that
-        the plugin did exactly what it should and nothing more.
-
-        Uses dialecticCadence=3 so we can exercise skip-turns between fires
-        and the silent-failure retry path without their gates tripping each
-        other. Trivial + slash skips apply independent of cadence.
-        """
+        """Walks init → turns 1..6 → session end. Asserts at every step that
+        the plugin did exactly what it should and nothing more: a dialectic
+        on every non-trivial turn, the empty-result backoff, and the retry."""
         from unittest.mock import patch, MagicMock
-        provider, mgr, cfg = self._make_provider(
-            cfg_extra={"dialectic_cadence": 3}
-        )
+        provider, mgr, cfg = self._make_provider()
 
         # Program the dialectic responses in the exact order they'll be requested.
         # An extra or missing call fails the test — strong smoke signal.
         responses = iter([
             "prewarm: user is eri, works on hermes",      # session-start prewarm
-            "cadence fire: long query synthesis",         # turn 4 queue_prefetch
-            "",                                           # turn 7 fire: silent failure
-            "retry success: fresh synthesis",             # turn 8 queue_prefetch retry
+            "turn 4: long query synthesis",               # turn 4 queue_prefetch
+            "",                                           # turn 5 fire: silent failure
+            "retry success: fresh synthesis",             # turn 6 queue_prefetch retry
         ])
         mgr.dialectic_query.side_effect = lambda *a, **kw: next(responses)
 
@@ -1097,6 +752,7 @@ class TestDialecticLifecycleSmoke:
              patch("hermes_plugin_honcho.session.HonchoSessionManager", return_value=mgr), \
              patch("hermes_constants.get_hermes_home", return_value=MagicMock()):
             provider.initialize(session_id="smoke-test")
+            provider._init_thread.join(timeout=5)
 
         self._await_thread(provider)
         with provider._prefetch_lock:
@@ -1110,20 +766,17 @@ class TestDialecticLifecycleSmoke:
         inject1 = provider.prefetch("hey")
         assert "prewarm" in inject1, "turn 1 must surface prewarm"
         provider.sync_turn("hey", "hi there")
-        provider.queue_prefetch("hey")  # cadence gate: (1-0)<3 → skip
+        provider.queue_prefetch("hey")  # trivial: no fire
         self._await_thread(provider)
-        assert mgr.dialectic_query.call_count == 1, \
-            "turn 1 must not fire — prewarm covered it and cadence skips"
+        assert mgr.dialectic_query.call_count == 1, "turn 1 must not fire — prewarm covered it"
 
         # ---- turn 2: trivial 'ok' → skip everything ----
-        mgr.prefetch_context.reset_mock()
         provider.on_turn_start(2, "ok")
         assert provider.prefetch("ok") == "", "trivial prompt must short-circuit injection"
         provider.sync_turn("ok", "cool")
         provider.queue_prefetch("ok")
         self._await_thread(provider)
         assert mgr.dialectic_query.call_count == 1, "trivial must not fire dialectic"
-        assert mgr.prefetch_context.call_count == 0, "trivial must not fire context refresh"
 
         # ---- turn 3: slash '/help' → also skip ----
         provider.on_turn_start(3, "/help")
@@ -1131,41 +784,33 @@ class TestDialecticLifecycleSmoke:
         provider.queue_prefetch("/help")
         assert mgr.dialectic_query.call_count == 1
 
-        # ---- turn 4: long query → cadence fires + heuristic bumps ----
+        # ---- turn 4: long query → fires + heuristic bumps ----
         long_q = "walk me through " + ("x " * 100)  # ~200 chars → heuristic +1
         provider.on_turn_start(4, long_q)
         provider.prefetch(long_q)
         provider.sync_turn(long_q, "sure")
-        provider.queue_prefetch(long_q)  # (4-0)≥3 → fires
+        provider.queue_prefetch(long_q)
         self._await_thread(provider)
-        assert mgr.dialectic_query.call_count == 2, "turn 4 cadence fire"
+        assert mgr.dialectic_query.call_count == 2, "turn 4 fires"
         _, kwargs = mgr.dialectic_query.call_args
         assert kwargs.get("reasoning_level") in {"medium", "high"}, \
             f"long query must bump reasoning level above 'low'; got {kwargs.get('reasoning_level')}"
         assert provider._last_dialectic_turn == 4, "cadence tracker advances on success"
 
-        # ---- turns 5–6: cadence cooldown, no fires ----
-        for t in (5, 6):
-            provider.on_turn_start(t, "tell me more")
-            provider.queue_prefetch("tell me more")
-            self._await_thread(provider)
-        assert mgr.dialectic_query.call_count == 2, "turns 5–6 blocked by cadence window"
-
-        # ---- turn 7: fires but silent failure (empty dialectic) ----
-        provider.on_turn_start(7, "and then what")
-        provider.queue_prefetch("and then what")  # (7-4)≥3 → fires
+        # ---- turn 5: fires but silent failure (empty dialectic) ----
+        provider.on_turn_start(5, "and then what")
+        provider.queue_prefetch("and then what")
         self._await_thread(provider)
-        assert mgr.dialectic_query.call_count == 3, "turn 7 fires"
-        assert provider._last_dialectic_turn == 4, \
-            "silent failure must NOT burn the cadence window"
+        assert mgr.dialectic_query.call_count == 3, "turn 5 fires"
+        assert provider._last_dialectic_turn == 4, "silent failure must NOT burn the cadence window"
+        assert provider._effective_cadence() == 2, "an empty answer widens the cadence by one turn"
 
-        # ---- turn 8: retries because cadence didn't advance ----
-        provider.on_turn_start(8, "try again")
-        provider.queue_prefetch("try again")  # (8-4)≥3 → fires again
+        # ---- turn 6: retries once the widened cadence allows ----
+        provider.on_turn_start(6, "try again")
+        provider.queue_prefetch("try again")  # (6-4) >= 2 → fires again
         self._await_thread(provider)
-        assert mgr.dialectic_query.call_count == 4, \
-            "turn 8 retries because turn 7's empty result didn't advance cadence"
-        assert provider._last_dialectic_turn == 8, "retry success advances"
+        assert mgr.dialectic_query.call_count == 4, "turn 6 retries"
+        assert provider._last_dialectic_turn == 6, "retry success advances"
 
         # ---- session end: flush messages ----
         provider.on_session_end([])
@@ -1181,11 +826,7 @@ class TestReasoningHeuristic:
         from unittest.mock import patch, MagicMock
         from hermes_plugin_honcho.client import HonchoClientConfig
 
-        defaults = dict(
-            api_key="test-key", enabled=True, recall_mode="hybrid",
-            dialectic_reasoning_level="low", reasoning_heuristic=True,
-            reasoning_level_cap="high",
-        )
+        defaults = dict(api_key="test-key", enabled=True)
         if cfg_extra:
             defaults.update(cfg_extra)
         cfg = HonchoClientConfig(**defaults)
@@ -1200,11 +841,6 @@ class TestReasoningHeuristic:
         _settle_prewarm(provider)
         return provider
 
-
-    def test_heuristic_disabled_returns_base(self):
-        p = self._make_provider(cfg_extra={"reasoning_heuristic": False})
-        q = "x" * 500
-        assert p._apply_reasoning_heuristic("low", q) == "low"
 
 
 # ---------------------------------------------------------------------------
@@ -1249,368 +885,3 @@ class TestSetPeerCardNoneGuard:
 
 # ---------------------------------------------------------------------------
 # get_session_context cache-miss fallback respects peer param
-# ---------------------------------------------------------------------------
-
-
-class TestGetSessionContextFallback:
-    """get_session_context fallback must honour the peer param when honcho_session is absent."""
-
-    def _make_manager_with_session(self, user_peer_id="user-peer", assistant_peer_id="ai-peer"):
-        from hermes_plugin_honcho.client import HonchoClientConfig
-        from hermes_plugin_honcho.session import HonchoSessionManager
-
-        cfg = HonchoClientConfig(api_key="test-key", enabled=True)
-        mgr = HonchoSessionManager.__new__(HonchoSessionManager)
-        mgr._cache = {}
-        mgr._cache_lock = threading.RLock()
-        mgr._sessions_cache = {}
-        mgr._config = cfg
-        mgr._dialectic_dynamic = True
-        mgr._dialectic_reasoning_level = "low"
-        mgr._dialectic_max_input_chars = 10000
-        mgr._ai_observe_others = True
-        mgr._session_observation = {}
-
-        session = HonchoSession(
-            key="test",
-            honcho_session_id="sid-missing-from-sessions-cache",
-            user_peer_id=user_peer_id,
-            assistant_peer_id=assistant_peer_id,
-        )
-        mgr._cache["test"] = session
-        # Deliberately NOT adding to _sessions_cache to trigger fallback path
-        return mgr
-
-    def test_fallback_uses_user_peer_for_user(self):
-        """On cache miss, peer='user' fetches user peer context."""
-        mgr = self._make_manager_with_session()
-        fetch_calls = []
-
-        def _fake_fetch(peer_id, search_query=None, *, target=None):
-            fetch_calls.append((peer_id, target))
-            return {"representation": "user rep", "card": []}
-
-        mgr._fetch_peer_context = _fake_fetch
-
-        mgr.get_session_context("test", peer="user")
-
-        assert len(fetch_calls) == 1
-        peer_id, target = fetch_calls[0]
-        assert peer_id == "user-peer"
-        assert target == "user-peer"
-
-
-# ---------------------------------------------------------------------------
-# contextTokens must reach session.context() (salvage of #70951)
-# ---------------------------------------------------------------------------
-
-
-class TestContextTokensForwarded:
-    """Honcho picks the short or long summary from the tokens= budget. get_prefetch_context and
-    get_session_context called context(summary=True) without it, so a configured contextTokens
-    cap was ignored and every turn got the long summary."""
-
-    def _manager(self, context_tokens=4000):
-        mgr = HonchoSessionManager(context_tokens=context_tokens)
-        session = HonchoSession(key="cli:test", user_peer_id="robert", assistant_peer_id="hermes",
-                                honcho_session_id="sess-1")
-        mgr._cache[session.key] = session
-        honcho_session = MagicMock()
-        honcho_session.context.return_value = SimpleNamespace(
-            summary=SimpleNamespace(content="short summary"), peer_representation="rep", peer_card=["fact"],
-            messages=[])
-        mgr._sessions_cache[session.honcho_session_id] = honcho_session
-        mgr._fetch_peer_context = MagicMock(return_value={"representation": "", "card": []})
-        return mgr, session, honcho_session
-
-    def test_get_prefetch_context_passes_context_tokens_to_summary_call(self):
-        mgr, session, honcho_session = self._manager()
-        result = mgr.get_prefetch_context(session.key)
-        assert result["summary"] == "short summary"
-        honcho_session.context.assert_called_once_with(summary=True, tokens=4000)
-
-    def test_get_session_context_passes_context_tokens_to_cached_session_call(self):
-        mgr, session, honcho_session = self._manager()
-        result = mgr.get_session_context(session.key, peer="user")
-        assert result["summary"] == "short summary"
-        honcho_session.context.assert_called_once_with(
-            summary=True, tokens=4000, peer_target=session.user_peer_id, peer_perspective=session.assistant_peer_id)
-
-
-# ---------------------------------------------------------------------------
-# injection.sessionStart pins which base-context components render
-# ---------------------------------------------------------------------------
-
-
-_FULL_CTX = {
-    "summary": "sum", "representation": "rep", "card": "card",
-    "ai_representation": "ai-rep", "ai_card": "ai-card",
-}
-
-
-def _provider_with_raw(raw, host="hermes"):
-    from hermes_plugin_honcho.client import HonchoClientConfig, _host_block, _HostLookup
-
-    provider = HonchoMemoryProvider()
-    look = _HostLookup(_host_block(raw, host), raw)
-    provider._session_start_components = provider._resolve_session_start(look)
-    provider._injection_log_path = provider._resolve_injection_log_path(look)
-    provider._config = HonchoClientConfig(api_key="k", enabled=True, raw=raw, host=host)
-    return provider
-
-
-class TestSessionStartInjection:
-    @pytest.mark.parametrize("raw, headings", [
-        ({}, ["## Session Summary", "## User Representation", "## User Peer Card",
-              "## AI Self-Representation", "## AI Identity Card"]),
-        ({"injection": {"sessionStart": []}}, []),
-        ({"injection": {"sessionStart": ["aiCard", "summary"]}}, ["## Session Summary", "## AI Identity Card"]),
-        ({"injection": {"sessionStart": ["summary"]}, "hosts": {"hermes": {"injection": {"sessionStart": ["peerCard"]}}}},
-         ["## User Peer Card"]),
-    ], ids=["unset-renders-all-in-fixed-order", "empty-list-injects-nothing", "pin-keeps-table-order", "host-block-beats-root"])
-    def test_pin_selects_the_rendered_components(self, raw, headings):
-        formatted = _provider_with_raw(raw)._format_first_turn_context(_FULL_CTX)
-        assert [line for line in formatted.splitlines() if line.startswith("## ")] == headings
-
-    @pytest.mark.parametrize("submitted, headings", [
-        ('{"sessionStart": ["peerCard"]}', ["## User Peer Card"]),
-        ('{"sessionStart": []}', []),
-        ("", ["## Session Summary", "## User Representation", "## User Peer Card",
-              "## AI Self-Representation", "## AI Identity Card"]),
-    ], ids=["pin", "empty-list", "blank-clears-the-pin"])
-    def test_desktop_panel_writes_the_pin_the_provider_reads(self, submitted, headings):
-        from hermes_cli.web_routers.memory_providers import _apply_field_values
-        from hermes_plugin_honcho.config_schema import CONFIG_SCHEMA
-
-        host_block = {"injection": {"sessionStart": ["summary"]}}
-        _apply_field_values(CONFIG_SCHEMA, {"injection": submitted}, lambda field: host_block)
-        raw = {"hosts": {"hermes": host_block}}
-        formatted = _provider_with_raw(raw)._format_first_turn_context(_FULL_CTX)
-        assert [line for line in formatted.splitlines() if line.startswith("## ")] == headings
-
-    def test_non_list_value_is_treated_as_unset(self):
-        raw = {"injection": {"sessionStart": "summary"}}
-        assert _provider_with_raw(raw)._session_start_components is None
-
-    def test_initialize_reads_the_pin(self):
-        raw = {"injection": {"sessionStart": ["summary"]}}
-        provider = TestDialecticCadenceDefaults._make_provider(cfg_extra={"raw": raw, "host": "hermes"})
-        assert provider._session_start_components == frozenset({"summary"})
-
-
-# ---------------------------------------------------------------------------
-# the logging key switches on the injection audit. It is off by default and never raises
-# ---------------------------------------------------------------------------
-
-
-class TestInjectionAuditLog:
-    @pytest.fixture(autouse=True)
-    def _no_logging_env(self, monkeypatch):
-        monkeypatch.delenv("HONCHO_LOGGING", raising=False)
-        monkeypatch.delenv("HONCHO_INJECTION_LOG", raising=False)
-
-    @pytest.mark.parametrize("raw, env", [
-        ({}, None),
-        ({"logging": True, "hosts": {"hermes": {"logging": False}}}, None),
-        *[({"logging": value}, None) for value in ("false", "0", "no", "off", "")],
-        ({}, "off"),
-    ])
-    def test_stays_off(self, monkeypatch, raw, env):
-        if env is not None:
-            monkeypatch.setenv("HONCHO_LOGGING", env)
-        assert _provider_with_raw(raw)._injection_log_path is None
-
-    @pytest.mark.parametrize("value", [True, "true", "1", "yes", "on"])
-    def test_logging_key_switches_on_the_default_path(self, value):
-        path = _provider_with_raw({"logging": value})._injection_log_path
-        assert path is not None and path.endswith("injection.log")
-
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
-    def test_log_file_is_owner_only(self, tmp_path):
-        provider = _provider_with_raw({})
-        provider._injection_log_path = str(tmp_path / "injection.log")
-        provider._log_injection("injected", "payload")
-        assert (tmp_path / "injection.log").stat().st_mode & 0o777 == 0o600
-
-    def test_explicit_path_env_overrides_destination(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("HONCHO_INJECTION_LOG", str(tmp_path / "audit.log"))
-        assert _provider_with_raw({})._injection_log_path == str(tmp_path / "audit.log")
-
-    def test_record_carries_reason_turn_and_payload(self, tmp_path):
-        provider = _provider_with_raw({})
-        provider._injection_log_path = str(tmp_path / "nested" / "injection.log")
-        provider._turn_count = 3
-        provider._session_key = "cli:test"
-        assert provider._log_injection("injected", "## User Peer Card\nName: Eri") == "## User Peer Card\nName: Eri"
-        assert provider._log_injection("trivial-prompt") == ""
-        records = [json.loads(line) for line in (tmp_path / "nested" / "injection.log").read_text().splitlines()]
-        assert [r["reason"] for r in records] == ["injected", "trivial-prompt"]
-        assert records[0]["turn"] == 3 and records[0]["session_key"] == "cli:test"
-        assert records[0]["bytes"] == len("## User Peer Card\nName: Eri".encode()) and records[1]["bytes"] == 0
-
-    def test_unwritable_path_never_raises(self, tmp_path):
-        provider = _provider_with_raw({})
-        blocker = tmp_path / "file"
-        blocker.write_text("x")
-        provider._injection_log_path = str(blocker / "injection.log")
-        assert provider._log_injection("injected", "payload") == "payload"
-
-    def test_tools_mode_prefetch_logs_its_reason(self, tmp_path):
-        provider = _provider_with_raw({})
-        provider._injection_log_path = str(tmp_path / "injection.log")
-        provider._recall_mode = "tools"
-        assert provider.prefetch("hello") == ""
-        record = json.loads((tmp_path / "injection.log").read_text().splitlines()[0])
-        assert record["reason"] == "cron-or-tools-mode" and record["payload"] == ""
-# Observation flags are scoped per session, not manager-wide (#98936)
-# ---------------------------------------------------------------------------
-
-
-class _FakeServerPeerConfig:
-    """SessionPeerConfig stand-in for both the local build and the server read.
-
-    None means "leave unchanged", mirroring the SDK's optional fields. Doubles
-    as the injected ``honcho.session`` module's SessionPeerConfig so the test
-    runs even without the optional honcho-ai extra installed.
-    """
-
-    def __init__(self, observe_me=None, observe_others=None):
-        self.observe_me = observe_me
-        self.observe_others = observe_others
-
-
-class _FakeSdkSession:
-    """Records add_peers calls and serves per-peer server configs."""
-
-    def __init__(self, server_user_cfg, server_ai_cfg):
-        self.add_peers_calls = []
-        self._server_user_cfg = server_user_cfg
-        self._server_ai_cfg = server_ai_cfg
-
-    def add_peers(self, entries):
-        self.add_peers_calls.append(entries)
-
-    def get_peer_configuration(self, peer):
-        return self._server_user_cfg if peer == "user-peer" else self._server_ai_cfg
-
-    def context(self, summary=True, tokens=None):
-        class _Ctx:
-            messages = []
-
-        return _Ctx()
-
-
-class TestObservationPerSessionScoping:
-    """One session's server sync must not retune another session's routing."""
-
-    def _make_manager(self):
-        from hermes_plugin_honcho.session import HonchoSessionManager
-
-        mgr = HonchoSessionManager.__new__(HonchoSessionManager)
-        mgr._cache = {}
-        mgr._sessions_cache = {}
-        mgr._session_observation = {}
-        mgr._cache_lock = threading.RLock()
-        mgr._context_tokens = 1000
-        # Config snapshot defaults — manager fields must stay at these values.
-        mgr._user_observe_me = True
-        mgr._user_observe_others = True
-        mgr._ai_observe_me = True
-        mgr._ai_observe_others = True
-        mgr._authed_call = lambda label, op: op()
-        return mgr
-
-    def _session(self, mgr, key):
-        session = HonchoSession(
-            key=key,
-            honcho_session_id=f"sid-{key}",
-            user_peer_id="user-peer",
-            assistant_peer_id="ai-peer",
-        )
-        mgr._cache[key] = session
-        return session
-
-    def _setup_session(self, mgr, session_id, fake_sdk):
-        fake_module = SimpleNamespace(SessionPeerConfig=_FakeServerPeerConfig)
-        mgr._sdk_session = lambda sid: fake_sdk
-        with patch.dict(sys.modules, {"honcho.session": fake_module}):
-            return mgr._get_or_create_honcho_session(
-                session_id, "user-peer", "ai-peer"
-            )
-
-    def test_sync_back_scopes_flags_per_session(self):
-        """Server flags come back per session; manager snapshot untouched."""
-        mgr = self._make_manager()
-
-        # Session A's server config disables user observe_others...
-        _, _, flags_a = self._setup_session(
-            mgr, "sid-a",
-            _FakeSdkSession(_FakeServerPeerConfig(observe_others=False), _FakeServerPeerConfig()),
-        )
-        # ...session B's server leaves everything at the synced-in defaults.
-        _, _, flags_b = self._setup_session(
-            mgr, "sid-b",
-            _FakeSdkSession(_FakeServerPeerConfig(), _FakeServerPeerConfig()),
-        )
-
-        assert flags_a["user_observe_others"] is False
-        assert flags_b["user_observe_others"] is True
-        # The config snapshot on the manager must survive both syncs — this is
-        # the regression: last-session-wins used to overwrite it (#98936).
-        assert mgr._user_observe_others is True
-
-    def test_add_peers_reuses_synced_flags_for_existing_session(self):
-        """A re-initialized session re-applies its own synced values, not the defaults."""
-        mgr = self._make_manager()
-
-        fake = _FakeSdkSession(
-            _FakeServerPeerConfig(observe_others=False), _FakeServerPeerConfig()
-        )
-        _, _, flags = self._setup_session(mgr, "sid-a", fake)
-        mgr._session_observation["sid-a"] = flags  # what get_or_create stores next to the cache entry
-
-        # Force the full setup path again (cache cleared, e.g. after re-auth).
-        mgr._sessions_cache = {}
-        fake2 = _FakeSdkSession(
-            _FakeServerPeerConfig(observe_others=False), _FakeServerPeerConfig()
-        )
-        self._setup_session(mgr, "sid-a", fake2)
-
-        user_cfg = fake2.add_peers_calls[0][0][1]
-        assert user_cfg.observe_others is False
-
-    def test_resolve_observer_target_uses_own_session_flags(self):
-        """Recall routing reads each session's flags, so diverging sessions diverge."""
-        mgr = self._make_manager()
-        session_a = self._session(mgr, "a")
-        session_b = self._session(mgr, "b")
-        mgr._session_observation["sid-a"] = {
-            "user_observe_me": True,
-            "user_observe_others": True,
-            "ai_observe_me": True,
-            "ai_observe_others": False,
-        }
-        mgr._session_observation["sid-b"] = {
-            "user_observe_me": True,
-            "user_observe_others": True,
-            "ai_observe_me": True,
-            "ai_observe_others": True,
-        }
-
-        # Without AI cross-observation the target peer queries its own context.
-        assert mgr._resolve_observer_target(session_a, "user") == ("user-peer", None)
-        # With it, the assistant peer observes the user peer.
-        assert mgr._resolve_observer_target(session_b, "user") == ("ai-peer", "user-peer")
-
-    def test_unsynced_session_falls_back_to_config_snapshot(self):
-        """A session that never completed setup routes with the config defaults."""
-        mgr = self._make_manager()
-        session_c = self._session(mgr, "c")
-        mgr._session_observation["sid-other"] = {
-            "user_observe_me": True,
-            "user_observe_others": True,
-            "ai_observe_me": True,
-            "ai_observe_others": False,
-        }
-
-        assert mgr._ai_observes_others(session_c) is True

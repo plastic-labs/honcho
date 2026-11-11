@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import os
+import secrets
 import threading
 import time
 from contextlib import contextmanager, suppress
@@ -21,7 +22,6 @@ from pathlib import Path
 from typing import Any
 
 from agent.redact import redact_sensitive_text, register_redaction_patterns
-from utils import read_json_or_empty
 
 logger = logging.getLogger(__name__)
 
@@ -53,36 +53,61 @@ class OAuthRefreshError(Exception):
 # Serializes refresh across threads; state is re-checked under it so racers don't replay a rotated token.
 _refresh_lock = threading.Lock()
 
-def _os_lock(fh, lock: bool) -> None:
-    if os.name == "nt":
-        import msvcrt
-        fh.seek(0)
-        msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK if lock else msvcrt.LK_UNLCK, 1)
-    else:
-        import fcntl
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX if lock else fcntl.LOCK_UN)
+_LOCK_STALE_SECONDS = 30.0  # a holder this old is presumed dead (killed mid-refresh, say)
+_LOCK_WAIT_SECONDS = 60.0  # past the stale age, so a waiter always gets a dead holder's lock first
+
+
+def _lock_holder_alive(token: str) -> bool:
+    """Whether the process that wrote a lock token (``<pid>:<random>``) still runs; unknown counts as running."""
+    try:
+        pid = int(token.split(":")[0])
+    except ValueError:
+        return True
+    if pid <= 0 or os.name == "nt":  # Windows' os.kill(pid, 0) sends CTRL_C_EVENT; age alone breaks those
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
 
 @contextmanager
 def _config_refresh_lock(path: Path):
-    """Machine-wide advisory lock (``<config>.lock``) around read-refresh-persist: a sibling process sharing
-    this honcho.json must not replay the single-use refresh token. Best-effort — degrades to in-process only."""
-    fh = None
+    """Cross-process lock around a read-modify-write of honcho.json (a sibling must not replay the single-use
+    refresh token): ``<config>.lock``, created exclusively and holding ``<pid>:<random>``, as
+    @honcho-ai/harness-plugin-core takes it. Broken when its holder's process is gone or it is older than
+    30s; removed only by its holder. Best-effort when the file cannot be created at all."""
+    lock = Path(f"{path}.lock")
+    deadline = time.monotonic() + _LOCK_WAIT_SECONDS
+    fd = None
+    while fd is None:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            with suppress(OSError):
+                if not _lock_holder_alive(lock.read_text()) or time.time() - lock.stat().st_mtime > _LOCK_STALE_SECONDS:
+                    lock.unlink()
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"timed out waiting for {lock}")
+            time.sleep(0.05 + secrets.randbelow(50) / 1000)
+        except OSError:
+            logger.debug("Honcho config lock unavailable; in-process only", exc_info=True)
+            break
+    token = f"{os.getpid()}:{secrets.token_hex(6)}"
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fh = open(f"{path}.lock", "a+b")
-        _os_lock(fh, True)
-    except Exception:
-        logger.debug("Honcho OAuth cross-process lock unavailable; in-process only", exc_info=True)
-        if fh is not None:
-            fh.close()
-        fh = None
-    try:
+        if fd is not None:
+            os.write(fd, token.encode())
         yield
     finally:
-        if fh is not None:
-            with suppress(Exception):
-                _os_lock(fh, False)
-            fh.close()
+        if fd is not None:
+            os.close(fd)
+            with suppress(OSError):  # a waiter may have broken ours as stale; the lock there now is theirs
+                if lock.read_text() == token:
+                    lock.unlink()
 
 
 # Per-grant state keyed by (config path, host); single-key dict ops are atomic under the GIL.
@@ -119,9 +144,12 @@ def _read_config_strict(path: Path) -> dict[str, Any]:
         raise
 
 def _load_cred(path: Path, host: str, raw: dict[str, Any] | None = None) -> OAuthCredential | None:
-    """Credential from ``host``'s block in ``raw`` (or the file at ``path``)."""
-    source = raw if raw is not None else read_json_or_empty(path)
-    return OAuthCredential.from_host_block((source.get("hosts") or {}).get(host) or {})
+    """Credential from ``host``'s block in ``raw`` (or the file at ``path``), as the plugin reads it."""
+    from .host_config import effective_block
+    try:
+        return OAuthCredential.from_host_block(effective_block(path, host, raw))
+    except (OSError, ValueError):
+        return None
 
 def reauth_required(path: Path, host: str) -> bool:
     """True when ``host``'s OAuth grant is dead and only a new login fixes it."""
@@ -291,22 +319,15 @@ def _rotate_and_persist(
     _persist_credential(path, host, rotated, raw=raw)
     return rotated
 
-def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
-    """Recursively merge ``overlay`` into ``base`` in place (overlay wins on scalars/lists)."""
-    for key, value in overlay.items():
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            value = _deep_merge(base[key], value)
-        base[key] = value
-    return base
-
 def _persist_credential(path: Path, host: str, cred: OAuthCredential, raw: dict[str, Any] | None = None) -> None:
-    """Write ``cred`` into ``host``'s block of ``raw`` (default: a strict read of the file) and mark
-    the grant live."""
+    """Write ``cred`` into ``host``'s block of ``raw`` (default: a strict read of the file), migrating the
+    block first, and mark the grant live."""
     from utils import atomic_json_write
+    from .host_config import migrated_block, SCHEMA_VERSION
 
     raw = _read_config_strict(path) if raw is None else raw
-    block = raw.setdefault("hosts", {}).setdefault(host, {})
-    block["apiKey"], block["oauth"] = cred.access_token, cred.oauth_block()
+    block = migrated_block(raw, host, path)
+    block["apiKey"], block["oauth"], block["schemaVersion"] = cred.access_token, cred.oauth_block(), SCHEMA_VERSION
     atomic_json_write(path, raw, mode=0o600)
     key = (str(path), host)
     _expiry_cache[key] = (cred.expires_at, cred.access_token)
@@ -379,19 +400,24 @@ def install_grant(
     path: Path, host: str, grant: dict[str, Any], *,
     client_id: str, token_endpoint: str, apply_config: bool = True, now: float | None = None,
 ) -> OAuthCredential:
-    """Apply a fresh OAuth grant (an OAuthTokenResponse dict) to ``path`` for ``host``: deep-merge the
-    grant's ``config`` into the file root (preserving other hosts and root keys), then write the host's
-    ``apiKey`` and ``oauth`` block. ``apply_config=False`` stores tokens only. Holds the refresh locks so a
-    login cannot interleave with a sibling's read-modify-write."""
+    """Apply a fresh OAuth grant (an OAuthTokenResponse dict) to ``path`` for ``host``: the grant's
+    ``config`` goes into the host's block (see ``host_config.apply_granted_config``; nothing else in the
+    file changes), then the block's ``apiKey`` and ``oauth``. Signing in makes the grant the block's
+    credential and Honcho cloud its server, so any ``baseUrl`` goes. ``apply_config=False`` stores tokens
+    only. Holds the refresh locks so a login cannot interleave with a sibling's read-modify-write."""
+    from .host_config import apply_granted_config, migrated_block
+
     now = time.time() if now is None else now
     cred = OAuthCredential.from_token_response(grant, now=now, client_id=client_id, token_endpoint=token_endpoint)
     with _refresh_lock, _config_refresh_lock(path):
         raw = _read_config_strict(path)
+        block = migrated_block(raw, host, path)
         granted_config = grant.get("config")
         if isinstance(granted_config, dict):
             cred.consent_peer_name = granted_config.get("peerName")
             if apply_config:
-                _deep_merge(raw, granted_config)
+                apply_granted_config(block, granted_config, host)
+        block.pop("baseUrl", None)
         _persist_credential(path, host, cred, raw)
     return cred
 

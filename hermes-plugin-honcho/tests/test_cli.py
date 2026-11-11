@@ -9,11 +9,12 @@ import pytest
 class TestResolveApiKey:
     """Test _resolve_api_key with various config shapes."""
 
-    def test_returns_api_key_from_root(self, monkeypatch):
+    def test_returns_api_key_from_host_block_only(self, monkeypatch):
         import hermes_plugin_honcho.cli as honcho_cli
         monkeypatch.setattr(honcho_cli, "_host_key", lambda: "hermes")
         monkeypatch.delenv("HONCHO_API_KEY", raising=False)
-        assert honcho_cli._resolve_api_key({"apiKey": "root-key"}) == "root-key"
+        assert honcho_cli._resolve_api_key({"hosts": {"hermes": {"apiKey": "host-key"}}}) == "host-key"
+        assert honcho_cli._resolve_api_key({"apiKey": "root-key"}) == ""
 
 
     def test_rejects_garbage_base_url_without_scheme(self, monkeypatch):
@@ -26,7 +27,7 @@ class TestResolveApiKey:
         # host-like punctuation are rejected.  Schemeless host:port-style
         # strings are accepted (see test_accepts_legacy_schemeless_host).
         for garbage in ("true", "false", "null", "1", "12345", "localhost"):
-            assert honcho_cli._resolve_api_key({"baseUrl": garbage}) == "", \
+            assert honcho_cli._resolve_api_key({"hosts": {"hermes": {"baseUrl": garbage}}}) == "", \
                 f"expected empty for garbage {garbage!r}"
 
         # file:/// parses with scheme='file' but empty netloc, so the
@@ -42,7 +43,7 @@ class TestResolveApiKey:
         monkeypatch.setattr(honcho_cli, "_host_key", lambda: "hermes")
         monkeypatch.delenv("HONCHO_API_KEY", raising=False)
         monkeypatch.delenv("HONCHO_BASE_URL", raising=False)
-        assert honcho_cli._resolve_api_key({"baseUrl": "https://honcho.example.com"}) == "local"
+        assert honcho_cli._resolve_api_key({"hosts": {"hermes": {"baseUrl": "https://honcho.example.com"}}}) == "local"
 
 
 class TestCmdSetupLocalJwt:
@@ -54,7 +55,6 @@ class TestCmdSetupLocalJwt:
         # Avoid touching real config / SDK / filesystem.
         cfg_path = tmp_path / "honcho.json"
         monkeypatch.setattr(honcho_cli, "_read_config", lambda: dict(initial_cfg))
-        monkeypatch.setattr(honcho_cli, "_local_config_path", lambda: cfg_path)
         monkeypatch.setattr(honcho_cli, "_config_path", lambda: cfg_path)
         monkeypatch.setattr(honcho_cli, "_host_key", lambda: "hermes")
         monkeypatch.setattr(honcho_cli, "_ensure_sdk_installed", lambda: True)
@@ -81,10 +81,8 @@ class TestCmdSetupLocalJwt:
         honcho_cli.cmd_setup(SimpleNamespace())
         return written.get("cfg")
 
-    def test_local_setup_stores_jwt_under_host_block(self, monkeypatch, tmp_path):
-        """Self-hosted users supplying a JWT must have it written under hosts.<host>.apiKey,
-        not as the top-level cloud apiKey, so cloud/hybrid switching is preserved and
-        get_honcho_client treats it as an explicit local auth opt-in."""
+    def test_local_setup_stores_url_and_jwt_under_host_block(self, monkeypatch, tmp_path):
+        """A self-hosted URL and JWT are written to hosts.<host>, the only place the plugin reads."""
         cfg = self._run_setup(
             monkeypatch,
             tmp_path,
@@ -96,11 +94,9 @@ class TestCmdSetupLocalJwt:
             ],
         )
         assert cfg is not None
-        assert cfg.get("baseUrl") == "http://localhost:8000"
-        # Top-level apiKey must remain unset (cloud field).
-        assert not cfg.get("apiKey")
-        # The new local JWT belongs under the host block.
+        assert not cfg.get("baseUrl") and not cfg.get("apiKey")
         host_block = (cfg.get("hosts") or {}).get("hermes") or {}
+        assert host_block.get("baseUrl") == "http://localhost:8000"
         assert host_block.get("apiKey") == "my-local-jwt-token"
 
 
@@ -136,11 +132,10 @@ class TestCmdStatus:
 
         monkeypatch.setattr(honcho_cli, "_read_config", lambda: {"apiKey": "***"})
         monkeypatch.setattr(honcho_cli, "_config_path", lambda: cfg_path)
-        monkeypatch.setattr(honcho_cli, "_local_config_path", lambda: cfg_path)
         monkeypatch.setattr(honcho_cli, "_active_profile_name", lambda: "default")
         monkeypatch.setattr(
             "hermes_plugin_honcho.client.HonchoClientConfig.from_global_config",
-            lambda host=None: FakeConfig(),
+            lambda host=None, config_path=None: FakeConfig(),
         )
         monkeypatch.setattr(
             "hermes_plugin_honcho.client.get_honcho_client",
@@ -203,11 +198,10 @@ class TestCmdStatus:
 
         monkeypatch.setattr(honcho_cli, "_read_config", lambda: {})
         monkeypatch.setattr(honcho_cli, "_config_path", lambda: cfg_path)
-        monkeypatch.setattr(honcho_cli, "_local_config_path", lambda: cfg_path)
         monkeypatch.setattr(honcho_cli, "_active_profile_name", lambda: "default")
         monkeypatch.setattr(
             "hermes_plugin_honcho.client.HonchoClientConfig.from_global_config",
-            lambda host=None: FakeConfig(),
+            lambda host=None, config_path=None: FakeConfig(),
         )
         monkeypatch.setattr("hermes_plugin_honcho.client.get_honcho_client", lambda cfg: object())
         monkeypatch.setattr(honcho_cli, "_show_peer_cards", lambda hcfg, client: None)
@@ -220,6 +214,18 @@ class TestCmdStatus:
         assert "API key:" not in out
 
 
+def _default_profile_config(monkeypatch, cfg, profile):
+    """Write ``cfg`` as the default profile's honcho.json and create ``profile``'s home; returns a reader of
+    that profile's own honcho.json, where a clone writes its block."""
+    import hermes_plugin_honcho.cli as honcho_cli
+    from hermes_constants import get_hermes_home
+    home = get_hermes_home()
+    (home / "honcho.json").write_text(json.dumps(cfg))
+    (home / "profiles" / profile).mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(honcho_cli, "_ensure_peer_exists", lambda *a, **k: True)
+    return lambda: json.loads((home / "profiles" / profile / "honcho.json").read_text())
+
+
 class TestCloneHonchoForProfile:
     """Identity-key carryover during profile cloning.
 
@@ -230,18 +236,9 @@ class TestCloneHonchoForProfile:
     """
 
     def _setup_clone_env(self, monkeypatch, tmp_path, cfg):
+        """``cfg`` as the default profile's honcho.json; returns a reader of the new profile's own file."""
         import hermes_plugin_honcho.cli as honcho_cli
-        cfg_path = tmp_path / "config.json"
-        cfg_path.write_text("{}")
-        monkeypatch.setattr(honcho_cli, "_read_config", lambda: cfg)
-        monkeypatch.setattr(honcho_cli, "_config_path", lambda: cfg_path)
-        monkeypatch.setattr(honcho_cli, "_local_config_path", lambda: cfg_path)
-        monkeypatch.setattr(honcho_cli, "_ensure_peer_exists", lambda host_key=None: True)
-        written = {}
-        def _write(c, path=None):
-            written["cfg"] = c
-        monkeypatch.setattr(honcho_cli, "_write_config", _write)
-        return honcho_cli, written
+        return honcho_cli, _default_profile_config(monkeypatch, cfg, "coder")
 
     def test_user_peer_aliases_carry_into_cloned_profile(self, monkeypatch, tmp_path):
         cfg = {
@@ -256,7 +253,7 @@ class TestCloneHonchoForProfile:
         honcho_cli, written = self._setup_clone_env(monkeypatch, tmp_path, cfg)
         ok = honcho_cli.clone_honcho_for_profile("coder")
         assert ok is True
-        new_block = written["cfg"]["hosts"]["hermes_coder"]
+        new_block = written()["hosts"]["hermes_coder"]
         assert new_block["userPeerAliases"] == {"7654321": "eri", "discord-491827364": "eri"}
 
     def test_runtime_peer_prefix_carries_into_cloned_profile(self, monkeypatch, tmp_path):
@@ -272,24 +269,8 @@ class TestCloneHonchoForProfile:
         honcho_cli, written = self._setup_clone_env(monkeypatch, tmp_path, cfg)
         ok = honcho_cli.clone_honcho_for_profile("coder")
         assert ok is True
-        new_block = written["cfg"]["hosts"]["hermes_coder"]
+        new_block = written()["hosts"]["hermes_coder"]
         assert new_block["runtimePeerPrefix"] == "telegram_"
-
-    def test_session_ai_peer_prefix_carries_into_cloned_profile(self, monkeypatch, tmp_path):
-        cfg = {
-            "apiKey": "***",
-            "hosts": {
-                "hermes": {
-                    "sessionAiPeerPrefix": True,
-                    "peerName": "eri",
-                },
-            },
-        }
-        honcho_cli, written = self._setup_clone_env(monkeypatch, tmp_path, cfg)
-        ok = honcho_cli.clone_honcho_for_profile("coder")
-        assert ok is True
-        new_block = written["cfg"]["hosts"]["hermes_coder"]
-        assert new_block["sessionAiPeerPrefix"] is True
 
     def test_legacy_pin_peer_name_migrates_to_canonical_on_clone(self, monkeypatch, tmp_path):
         cfg = {
@@ -304,7 +285,7 @@ class TestCloneHonchoForProfile:
         honcho_cli, written = self._setup_clone_env(monkeypatch, tmp_path, cfg)
         ok = honcho_cli.clone_honcho_for_profile("coder")
         assert ok is True
-        new_block = written["cfg"]["hosts"]["hermes_coder"]
+        new_block = written()["hosts"]["hermes_coder"]
         assert new_block["pinUserPeer"] is True
         assert "pinPeerName" not in new_block
 
@@ -316,7 +297,7 @@ class TestCloneHonchoForProfile:
         honcho_cli, written = self._setup_clone_env(monkeypatch, tmp_path, cfg)
         ok = honcho_cli.clone_honcho_for_profile("coder")
         assert ok is True
-        new_block = written["cfg"]["hosts"]["hermes_coder"]
+        new_block = written()["hosts"]["hermes_coder"]
         assert "userPeerAliases" not in new_block
         assert "runtimePeerPrefix" not in new_block
         assert "pinUserPeer" not in new_block
@@ -341,13 +322,11 @@ class TestSetupWizardDeploymentShape:
         import hermes_plugin_honcho.cli as honcho_cli
 
         cfg_path = tmp_path / "config.json"
-        cfg_path.write_text("{}")
-        cfg = initial_cfg if initial_cfg is not None else {"apiKey": "***"}
-
-        monkeypatch.setattr(honcho_cli, "_read_config", lambda: cfg)
+        cfg_path.write_text(json.dumps(initial_cfg if initial_cfg is not None else {"apiKey": "***"}))
         monkeypatch.setattr(honcho_cli, "_config_path", lambda: cfg_path)
-        monkeypatch.setattr(honcho_cli, "_local_config_path", lambda: cfg_path)
         monkeypatch.setattr(honcho_cli, "_host_key", lambda: "hermes")
+        cfg = honcho_cli._read_config()  # the view the wizard edits: top-level settings already in the block
+        monkeypatch.setattr(honcho_cli, "_read_config", lambda: cfg)
         monkeypatch.setattr(honcho_cli, "_ensure_sdk_installed", lambda: True)
         monkeypatch.setattr(honcho_cli, "_write_config", lambda *a, **k: None)
         # No network probe / environment sniffing in tests.
@@ -379,7 +358,7 @@ class TestSetupWizardDeploymentShape:
 
         monkeypatch.setattr(
             "hermes_plugin_honcho.client.HonchoClientConfig.from_global_config",
-            lambda host=None: _FakeClientCfg(),
+            lambda host=None, config_path=None: _FakeClientCfg(),
         )
         monkeypatch.setattr(
             "hermes_plugin_honcho.client.reset_honcho_client",
@@ -637,20 +616,11 @@ class TestCloneCarriesPinUserPeer:
             "apiKey": "***",
             "hosts": {"hermes": {"pinUserPeer": True, "peerName": "eri"}},
         }
-        cfg_path = tmp_path / "config.json"
-        cfg_path.write_text("{}")
-        monkeypatch.setattr(honcho_cli, "_read_config", lambda: cfg)
-        monkeypatch.setattr(honcho_cli, "_config_path", lambda: cfg_path)
-        monkeypatch.setattr(honcho_cli, "_local_config_path", lambda: cfg_path)
-        monkeypatch.setattr(honcho_cli, "_ensure_peer_exists", lambda host_key=None: True)
-        written = {}
-        monkeypatch.setattr(
-            honcho_cli, "_write_config", lambda c, path=None: written.setdefault("cfg", c),
-        )
+        written = _default_profile_config(monkeypatch, cfg, "partner")
 
         ok = honcho_cli.clone_honcho_for_profile("partner")
         assert ok is True
-        new_block = written["cfg"]["hosts"]["hermes_partner"]
+        new_block = written()["hosts"]["hermes_partner"]
         assert new_block["pinUserPeer"] is True
 
 
@@ -689,7 +659,6 @@ class TestCmdSetupDeviceFlow:
 
         monkeypatch.setattr(honcho_cli, "_read_config", lambda: cfg)
         monkeypatch.setattr(honcho_cli, "_config_path", lambda: cfg_path)
-        monkeypatch.setattr(honcho_cli, "_local_config_path", lambda: cfg_path)
         monkeypatch.setattr(honcho_cli, "_host_key", lambda: "hermes")
         monkeypatch.setattr(honcho_cli, "_ensure_sdk_installed", lambda: True)
         monkeypatch.setattr(honcho_cli, "_write_config", lambda *a, **k: None)
@@ -716,7 +685,7 @@ class TestCmdSetupDeviceFlow:
 
         monkeypatch.setattr(
             "hermes_plugin_honcho.client.HonchoClientConfig.from_global_config",
-            lambda host=None: _FakeClientCfg(),
+            lambda host=None, config_path=None: _FakeClientCfg(),
         )
         monkeypatch.setattr("hermes_plugin_honcho.client.reset_honcho_client", lambda: None)
         monkeypatch.setattr("hermes_plugin_honcho.client.get_honcho_client", lambda hcfg: object())
@@ -786,7 +755,7 @@ class TestCmdSetupDeviceFlow:
 def _point_cli_at(monkeypatch, cfg_path, **attrs):
     """Route the honcho CLI's config reads and writes at ``cfg_path``; ``attrs`` replace other module names."""
     import hermes_plugin_honcho.cli as honcho_cli
-    for name, value in {"_config_path": lambda: cfg_path, "_local_config_path": lambda: cfg_path, **attrs}.items():
+    for name, value in {"_config_path": lambda: cfg_path, **attrs}.items():
         monkeypatch.setattr(honcho_cli, name, value)
     return honcho_cli
 
@@ -795,7 +764,7 @@ class TestWriteRefusesUnparseableStore:
     """An unparseable honcho.json reads as {} on the tolerant path; writing that back would drop every other host."""
 
     @pytest.mark.parametrize("run", [
-        lambda cli: cli.honcho_command(SimpleNamespace(honcho_command="mode", mode="tools", target_profile=None)),
+        lambda cli: cli.honcho_command(SimpleNamespace(honcho_command="peer", user="alice", ai=None, target_profile=None)),
         lambda cli: cli.cmd_setup(SimpleNamespace()),
     ], ids=["command", "setup"])
     def test_command_prints_one_sentence_asks_nothing_and_writes_nothing(self, monkeypatch, tmp_path, capsys, run):
@@ -812,23 +781,22 @@ class TestWriteRefusesUnparseableStore:
 class TestSetupApiKeyReplacesStaleGrant:
     """Choosing apikey after a revoked grant left hosts.<name>.oauth in place, shadowing the fresh key."""
 
-    @pytest.mark.parametrize("grant, root_key, answer, ok, host_key, root_after, shown", [
-        (True, None, "hch-v3-fresh", True, "hch-v3-fresh", "hch-v3-fresh", ""),
-        (True, "hch-v3-rootkey", "", True, "hch-v3-rootkey", "hch-v3-rootkey", "...-rootkey"),
-        (True, None, "", False, "hch-at-dead", None, "Current API key: not set"),
-        (False, None, "", True, "hch-v3-hostkey", None, ""),
-    ], ids=["new key clears oauth", "kept root key clears oauth", "dead access token not offered", "static host key kept"])
-    def test_apikey_answer(self, monkeypatch, tmp_path, capsys, grant, root_key, answer, ok, host_key, root_after, shown):
+    @pytest.mark.parametrize("grant, answer, ok, host_key, shown", [
+        (True, "hch-v3-fresh", True, "hch-v3-fresh", ""),
+        (True, "", False, "hch-at-dead", "Current API key: not set"),
+        (False, "", True, "hch-v3-hostkey", ""),
+    ], ids=["new key clears oauth", "dead access token not offered", "static host key kept"])
+    def test_apikey_answer(self, monkeypatch, tmp_path, capsys, grant, answer, ok, host_key, shown):
         host = {"apiKey": "hch-v3-hostkey"}
         if grant:
             host = {"apiKey": "hch-at-dead", "oauth": {"refreshToken": "hch-rt-dead", "expiresAt": 1,
                                                        "clientId": "hermes-agent", "tokenEndpoint": "https://api.honcho.dev/oauth/token"}}
-        cfg = {"hosts": {"hermes": host}, **({"apiKey": root_key} if root_key else {})}
+        cfg = {"hosts": {"hermes": host}}
         honcho_cli = _point_cli_at(monkeypatch, tmp_path / "honcho.json", _device_login_available=lambda: False,
                                    _headless=lambda: (False, True),
                                    _prompt=lambda label, default=None, secret=False: "apikey" if "OAuth" in label else answer)
         assert honcho_cli._setup_cloud_auth(cfg, host, tmp_path / "honcho.json") is ok
-        assert host["apiKey"] == host_key and cfg.get("apiKey") == root_after
+        assert host["apiKey"] == host_key and "apiKey" not in cfg
         assert ("oauth" in host) is (grant and not ok)
         assert shown in capsys.readouterr().out
 
@@ -844,17 +812,17 @@ class TestEnabledRequiresACredential:
     inherit the default host's apiKey, so a clone of an OAuth default block has nothing to sign with."""
 
     def _env(self, monkeypatch, tmp_path, cfg, *, env_key=None, host="hermes_dreamer", profile="dreamer"):
-        import copy
-        cfg, written = copy.deepcopy(cfg), {}
+        """``cfg`` as the profile's own honcho.json (enable reads it) and the default profile's (a clone reads it)."""
+        written = {}
         cfg_path = tmp_path / "honcho.json"
-        cfg_path.write_text("{}")
+        cfg_path.write_text(json.dumps(cfg))
         monkeypatch.delenv("HONCHO_API_KEY", raising=False)
         monkeypatch.delenv("HONCHO_BASE_URL", raising=False)
         if env_key:
             monkeypatch.setenv("HONCHO_API_KEY", env_key)
         honcho_cli = _point_cli_at(
-            monkeypatch, cfg_path, _read_config=lambda: cfg, _host_key=lambda: host, _active_profile_name=lambda: profile,
-            _ensure_peer_exists=lambda host_key=None: True, _write_config=lambda c, path=None: written.setdefault("cfg", c))
+            monkeypatch, cfg_path, _host_key=lambda: host, _active_profile_name=lambda: profile,
+            _ensure_peer_exists=lambda *a, **k: True, _write_config=lambda c, path=None: written.setdefault("cfg", c))
         return honcho_cli, written
 
     @pytest.mark.parametrize("cfg, env_key, enabled", [
@@ -865,11 +833,13 @@ class TestEnabledRequiresACredential:
         ({"baseUrl": "http://localhost:8000", **_KEYLESS_DEFAULT}, None, True),
     ], ids=["oauth default", "host-only static key", "root key", "env key only", "self-hosted url"])
     def test_clone_is_enabled_only_by_an_on_disk_credential(self, monkeypatch, tmp_path, cfg, env_key, enabled):
-        honcho_cli, written = self._env(monkeypatch, tmp_path, cfg, env_key=env_key)
+        honcho_cli, _ = self._env(monkeypatch, tmp_path, cfg, env_key=env_key)
+        written = _default_profile_config(monkeypatch, cfg, "dreamer")
         assert honcho_cli.clone_honcho_for_profile("dreamer") is True
-        block = written["cfg"]["hosts"]["hermes_dreamer"]
+        block = written()["hosts"]["hermes_dreamer"]
         assert block.get("enabled") is (True if enabled else None)
-        assert "apiKey" not in block and "oauth" not in block
+        # The top-level key the profile read before is carried into its block; the default host's own key never is.
+        assert block.get("apiKey") == cfg.get("apiKey") and "oauth" not in block
         assert block["aiPeer"] == "dreamer" and block["workspace"] == "hermes"
 
     @pytest.mark.parametrize("cfg, env_key, profile, expect, enabled", [
@@ -891,6 +861,10 @@ class TestEnabledRequiresACredential:
         assert written["cfg"]["hosts"][host]["enabled"] is True if enabled else written == {}
 
 
+# What a migration adds to a block: the mark.
+_MIGRATED = {"schemaVersion": 2}
+
+
 class TestWriteConfigMergesOntoDisk:
     """A refresh in another process may rotate the token while a command runs; the write must keep it."""
 
@@ -906,17 +880,18 @@ class TestWriteConfigMergesOntoDisk:
 
     def test_untouched_keys_take_disk_and_the_commands_edits_apply(self, monkeypatch, tmp_path):
         disk = {"apiKey": "root", "hosts": {"hermes": {"apiKey": "hch-at-old", "oauth": {"refreshToken": "hch-rt-old"},
-                                                     "recallMode": "hybrid", "runtimePeerPrefix": "tg_"}}}
+                                                     "workspace": "w", "runtimePeerPrefix": "tg_"}}}
         honcho_cli, cfg_path = self._paths(monkeypatch, tmp_path, disk)
         cfg = honcho_cli._read_config()
         self._rotate_on_disk(cfg_path)
-        cfg["hosts"]["hermes"]["recallMode"] = "tools"
+        cfg["hosts"]["hermes"]["workspace"] = "w2"
         cfg["hosts"]["hermes"].pop("runtimePeerPrefix")
-        cfg["dialecticCadence"] = 3
+        cfg["hosts"]["hermes"]["pinUserPeer"] = True
         honcho_cli._write_config(cfg)
         out = json.loads(cfg_path.read_text())
-        assert out["hosts"]["hermes"] == {"apiKey": "hch-at-new", "oauth": {"refreshToken": "hch-rt-new"}, "recallMode": "tools"}
-        assert out["apiKey"] == "root" and out["dialecticCadence"] == 3
+        assert out["hosts"]["hermes"] == {"apiKey": "hch-at-new", "oauth": {"refreshToken": "hch-rt-new"}, "workspace": "w2",
+                                          "pinUserPeer": True, **_MIGRATED}
+        assert out["apiKey"] == "root"  # the top level is never read, so never cleaned either
 
     def test_a_credential_the_command_set_wins(self, monkeypatch, tmp_path):
         disk = {"hosts": {"hermes": {"apiKey": "hch-at-old", "oauth": {"refreshToken": "hch-rt-old"}}}}
@@ -926,7 +901,7 @@ class TestWriteConfigMergesOntoDisk:
         cfg["hosts"]["hermes"]["apiKey"] = "hch-v3-pasted"
         cfg["hosts"]["hermes"].pop("oauth")
         honcho_cli._write_config(cfg)
-        assert json.loads(cfg_path.read_text())["hosts"]["hermes"] == {"apiKey": "hch-v3-pasted"}
+        assert json.loads(cfg_path.read_text())["hosts"]["hermes"] == {"apiKey": "hch-v3-pasted", **_MIGRATED}
 
     def test_a_second_write_on_the_same_read_applies_only_the_edits_made_since_the_first(self, monkeypatch, tmp_path):
         disk = {"hosts": {"hermes": {"apiKey": "hch-at-old", "oauth": {"refreshToken": "hch-rt-old"}, "workspace": "A"}}}
@@ -938,7 +913,7 @@ class TestWriteConfigMergesOntoDisk:
         cfg["hosts"]["hermes"]["workspace"] = "A"
         honcho_cli._write_config(cfg)
         out = json.loads(cfg_path.read_text())["hosts"]["hermes"]
-        assert out == {"apiKey": "hch-at-new", "oauth": {"refreshToken": "hch-rt-new"}, "workspace": "A"}
+        assert out == {"apiKey": "hch-at-new", "oauth": {"refreshToken": "hch-rt-new"}, "workspace": "A", **_MIGRATED}
 
     def test_a_grant_the_login_installed_yields_to_a_later_rotation(self, monkeypatch, tmp_path):
         import hermes_plugin_honcho.oauth as oauth
@@ -955,38 +930,17 @@ class TestWriteConfigMergesOntoDisk:
         assert out["apiKey"] == "hch-at-new" and out["oauth"] == {"refreshToken": "hch-rt-new"}
         assert out["peerName"] == "alice" and out["recallMode"] == "tools"
 
-    _SEED = {"dialecticCadence": 3, "hosts": {"hermes": {"peerName": "alice"}}}
-
-    def _seeded(self, monkeypatch, tmp_path):
-        seed, local = tmp_path / "seed.json", tmp_path / "honcho.json"
-        seed.write_text(json.dumps(self._SEED))
-        return _point_cli_at(monkeypatch, local, _config_path=lambda: seed, _host_key=lambda: "hermes"), local
-
-    def test_a_read_seeded_from_another_file_applies_only_its_edits_onto_the_local_file(self, monkeypatch, tmp_path):
-        import hermes_plugin_honcho.oauth as oauth
-        honcho_cli, local = self._seeded(monkeypatch, tmp_path)
+    def test_a_profile_without_its_own_file_writes_the_block_it_read_into_its_own(self, monkeypatch, tmp_path):
+        from hermes_constants import get_hermes_home
+        seed, local = get_hermes_home() / "honcho.json", tmp_path / "honcho.json"  # the default profile's file
+        seed.write_text(json.dumps({"pinUserPeer": True, "hosts": {"hermes": {"peerName": "alice"}}}))
+        honcho_cli = _point_cli_at(monkeypatch, local, _host_key=lambda: "hermes")
         cfg = honcho_cli._read_config()
-        grant = {"access_token": "hch-at-login", "refresh_token": "hch-rt-login", "expires_in": 3600}
-        cred = oauth.install_grant(local, "hermes", grant, client_id="c", token_endpoint="e", apply_config=False)
-        honcho_cli._apply_grant_to_host(cfg, cfg["hosts"]["hermes"], cred)
-        rotated = oauth.OAuthCredential.from_token_response(
-            {"access_token": "hch-at-new", "refresh_token": "hch-rt-new", "expires_in": 3600},
-            now=0.0, client_id="c", token_endpoint="e")
-        oauth._persist_credential(local, "hermes", rotated)
-        cfg["hosts"]["hermes"]["recallMode"] = "tools"
+        cfg["hosts"]["hermes"]["workspace"] = "w2"
         honcho_cli._write_config(cfg)
-        out = json.loads(local.read_text())
-        assert out["hosts"]["hermes"]["apiKey"] == "hch-at-new"
-        assert out["hosts"]["hermes"]["oauth"]["refreshToken"] == "hch-rt-new"
-        assert out["hosts"]["hermes"]["recallMode"] == "tools" and out["hosts"]["hermes"]["peerName"] == "alice"
-        assert out["dialecticCadence"] == 3
-
-    def test_a_read_seeded_from_another_file_is_written_whole_while_no_local_file_exists(self, monkeypatch, tmp_path):
-        honcho_cli, local = self._seeded(monkeypatch, tmp_path)
-        cfg = honcho_cli._read_config()
-        cfg["hosts"]["hermes"]["recallMode"] = "tools"
-        honcho_cli._write_config(cfg)
-        assert json.loads(local.read_text()) == {"dialecticCadence": 3, "hosts": {"hermes": {"peerName": "alice", "recallMode": "tools"}}}
+        assert json.loads(local.read_text()) == {"hosts": {"hermes": {
+            "peerName": "alice", "pinUserPeer": True, "workspace": "w2", **_MIGRATED}}}
+        assert json.loads(seed.read_text()) == {"pinUserPeer": True, "hosts": {"hermes": {"peerName": "alice"}}}
 
     @pytest.mark.parametrize("build", [lambda cli: {"hosts": {"other": {"apiKey": "o"}}}, lambda cli: dict(cli._read_config())],
                              ids=["never read", "rebuilt from the read"])

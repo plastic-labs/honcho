@@ -22,7 +22,7 @@ def honcho_json(tmp_path, monkeypatch):
 
 def test_signature_uses_neutral_keys(honcho_json):
     honcho_json(workspace="team", peerName="eri", aiPeer="hermes", pinUserPeer=True, runtimePeerPrefix="tg_",
-                userPeerAliases={"222": "bob", "111": "alice"}, sessionPeerPrefix=True, a2aSessions=False)
+                userPeerAliases={"222": "bob", "111": "alice"}, a2aSessions=False)
 
     sig = HonchoMemoryProvider().identity_signature()
 
@@ -33,7 +33,6 @@ def test_signature_uses_neutral_keys(honcho_json):
         "pin_user_identity": True,
         "runtime_identity_prefix": "tg_",
         "user_identity_aliases": [("111", "alice"), ("222", "bob")],
-        "session_prefixing": [True, False],
         "a2a_sessions": False,
     }
     assert not any(k.startswith("honcho") for k in sig)

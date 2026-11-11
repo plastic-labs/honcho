@@ -32,10 +32,12 @@ def honcho_home(tmp_path, monkeypatch):
             "hermes_my_profile": {"peerName": "bob", "aiPeer": "hermes"},
         },
     }
-    path = tmp_path / "honcho.json"
+    # The default profile's file, where 1.1.0 kept every profile's block; each profile reads its block from
+    # there until it has a honcho.json of its own.
+    from hermes_constants import get_hermes_home
+    path = get_hermes_home() / "honcho.json"
     path.write_text(json.dumps(cfg))
-    monkeypatch.setattr(honcho_cli, "_config_path", lambda: path)
-    return tmp_path
+    return path.parent
 
 
 def _peers_output(profiles):
