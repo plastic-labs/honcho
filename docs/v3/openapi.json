@@ -3896,6 +3896,87 @@
         }
       }
     },
+    "/v3/workspaces/{workspace_id}/ingest": {
+      "post": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Ingest",
+        "description": "Ingest source records as messages.\n\nHoncho maps each record to a session and peers from its source context and\ndeduplicates it on its source identity (`source_id`, or a hash of its\ncontent), so resending a batch is always safe. The response has one outcome\nper record, in request order: `created`, `duplicate`, or `rejected` with a\nreason. Only workspace and admin keys may ingest: one batch can create\nsessions and peers anywhere in the workspace.",
+        "operationId": "ingest_v3_workspaces__workspace_id__ingest_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestBatch",
+                "description": "The records to ingest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Contention outlasted the retries; nothing was written. Resending the same batch is safe.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v3/workspaces/{workspace_id}/conclusions": {
       "post": {
         "tags": [
@@ -6392,6 +6473,382 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "IngestBatch": {
+        "properties": {
+          "derive": {
+            "type": "string",
+            "enum": [
+              "now",
+              "later"
+            ],
+            "title": "Derive",
+            "description": "`later` stores the records without queuing derivation; POST /ingest/derive queues them",
+            "default": "now"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/IngestRecordCreate"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Records"
+          }
+        },
+        "type": "object",
+        "required": [
+          "records"
+        ],
+        "title": "IngestBatch",
+        "description": "A batch of source records for one workspace."
+      },
+      "IngestContainer": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Id",
+            "description": "The container's ID in the source"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "The container's display name"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id",
+            "description": "The parent container's ID, e.g. a thread's channel"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "IngestContainer",
+        "description": "Where a record lives in its source: a channel, a thread, a repository."
+      },
+      "IngestParticipant": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id",
+            "description": "The person's ID in the source, if it has one"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Name",
+            "description": "The person's display name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "IngestParticipant",
+        "description": "A person on a record. The `id` is what connects them across records."
+      },
+      "IngestRecordCreate": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "title": "Source",
+            "description": "The source type, e.g. `discord`"
+          },
+          "source_instance": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "title": "Source Instance",
+            "description": "The server, team or account inside the source"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id",
+            "description": "The record's ID in that instance. Without it, the record is identified by a hash of its content, so only identical content dedups; sources whose records can change must send it."
+          },
+          "revised_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revised At",
+            "description": "When the source last changed this record"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "The source's timestamp"
+          },
+          "container": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IngestContainer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where the record lives; omit for a standalone record"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IngestParticipant"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who wrote it; omit when there is no single author"
+          },
+          "participants": {
+            "items": {
+              "$ref": "#/components/schemas/IngestParticipant"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Participants"
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 25000,
+            "title": "Content"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "configuration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MessageConfiguration"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id",
+            "description": "An explicit session, used instead of mapping the container"
+          },
+          "peer_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peer Id",
+            "description": "An explicit author peer, used instead of mapping the author"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "source_instance",
+          "created_at",
+          "content"
+        ],
+        "title": "IngestRecordCreate",
+        "description": "One source record to ingest."
+      },
+      "IngestRecordResult": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index",
+            "description": "The record's position in the request"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "created",
+              "duplicate",
+              "rejected"
+            ],
+            "title": "Outcome"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "description": "Why a record was rejected"
+          },
+          "record_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record Id"
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Id"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "peer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peer Id"
+          },
+          "derivation": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "queued",
+                  "deferred"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derivation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "outcome"
+        ],
+        "title": "IngestRecordResult",
+        "description": "What happened to one record of the batch."
+      },
+      "IngestResponse": {
+        "properties": {
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/IngestRecordResult"
+            },
+            "type": "array",
+            "title": "Records"
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt",
+            "description": "Reserved for a consistency token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "records"
+        ],
+        "title": "IngestResponse",
+        "description": "One outcome per record, in request order."
       },
       "Message": {
         "properties": {
