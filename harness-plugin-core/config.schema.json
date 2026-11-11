@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://cdn.jsdelivr.net/npm/@honcho-ai/harness-plugin-core@0/config.schema.json",
   "title": "~/.honcho/config.json",
-  "description": "Schema version 2. Every setting lives in a host block; nothing at the top level.",
+  "description": "Schema version 2. Every plugin setting lives in its host block. The top level belongs to the honcho CLI, and plugins do not read it.",
   "type": "object",
   "properties": {
     "$schema": {
@@ -19,7 +19,7 @@
       }
     }
   },
-  "additionalProperties": false,
+  "additionalProperties": true,
   "$defs": {
     "host": {
       "type": "object",

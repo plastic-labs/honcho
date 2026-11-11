@@ -13,11 +13,18 @@ export {
   DEFAULT_BASE_URL,
 } from './config.js'
 
+// Each plugin's pre-schema-2 reader, for `migrateHost`.
+export { v01Reader } from './legacy/v01.js'
+export { claudeHonchoReader } from './legacy/claude-honcho.js'
+export { opencodeHonchoReader } from './legacy/opencode-honcho.js'
+
 export type {
   ConfigFile,
   ConfigIssue,
   Env,
   HostConfig,
+  LegacyReader,
+  LegacySettings,
   ResolvedConfig,
 } from './config.js'
 

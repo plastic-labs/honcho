@@ -89,20 +89,23 @@ describe('pickCredential', () => {
   test('HONCHO_API_KEY env beats everything', () => {
     expect(pick(file(grant('own', now() + 600)), { HONCHO_API_KEY: 'envkey' })).toMatchObject({ token: 'envkey', source: 'env' })
   })
-  test('own live grant, then apiKey, then the expired grant', () => {
+  test('own grant, live or expired, then apiKey', () => {
     expect(pick(file(grant('own', now() + 600), 'k'))).toMatchObject({ token: 'own', source: 'oauth' })
-    expect(pick(file(grant('own', now() - 10), 'k'))).toMatchObject({ token: 'k', source: 'apiKey' })
-    expect(pick(file(grant('own', now() - 10)))).toMatchObject({ token: 'own', source: 'oauth', expired: true })
+    expect(pick(file(grant('own', now() - 10), 'k'))).toMatchObject({ token: 'own', source: 'oauth', expired: true })
+    expect(pick(file(undefined, 'k'))).toMatchObject({ token: 'k', source: 'apiKey' })
     expect(pick({})).toBeNull()
   })
-  test("another plugin's grant and a root grant or key are never used", () => {
+  test("another plugin's grant, a top-level grant, and the top level of a migrated block are never used", () => {
     const f = { oauth: grant('root', now() + 600), hosts: { hermes: { oauth: grant('hermes', now() + 600) } } }
     expect(pick(f)).toBeNull()
-    expect(pick({ apiKey: 'root', auth: { apiKey: 'root' }, hosts: { claude_code: {} } })).toBeNull()
+    expect(pick({ apiKey: 'root', auth: { apiKey: 'root' }, hosts: { claude_code: { schemaVersion: 2 } } })).toBeNull()
   })
   test('OAuth is ignored off Honcho cloud', () => {
     expect(pick(file(grant('own', now() + 600), 'k'), {}, 'http://localhost:8000')).toMatchObject({ source: 'apiKey' })
     expect(pick(file(grant('own', now() + 600)), {}, 'https://api.honcho.dev/')).toMatchObject({ source: 'oauth' })
+    // Without a baseUrl, the block's own server decides.
+    const selfHosted = { hosts: { claude_code: { oauth: grant('own', now() + 600), apiKey: 'k', baseUrl: 'http://localhost:8000', schemaVersion: 2 } } }
+    expect(pick(selfHosted)).toMatchObject({ source: 'apiKey' })
   })
 })
 
@@ -149,11 +152,11 @@ describe('ensureFreshCredential', () => {
     expect(s.calls).toHaveLength(0)
   })
 
-  test('a rejected grant flags reauthRequired and falls back to apiKey', async () => {
-    const path = tmpConfig({ hosts: { claude_code: { apiKey: 'k', oauth: grant('hch-at-x', now() - 5) } } })
+  test('a rejected grant flags reauthRequired and is not swapped for an apiKey', async () => {
+    const path = tmpConfig({ hosts: { claude_code: { apiKey: 'k', oauth: grant('hch-at-x', now() - 5), schemaVersion: 2 } } })
     const s = scripted([400, { error: 'invalid_grant' }])
     const cred = await ensureFreshCredential({ path, host: 'claude_code', env: {}, fetch: s.fetch })
-    expect(cred).toMatchObject({ token: 'k', source: 'apiKey', reauthRequired: true, error: 'invalid_grant' })
+    expect(cred).toMatchObject({ token: 'hch-at-x', source: 'oauth', expired: true, reauthRequired: true, error: 'invalid_grant' })
   })
 
   test('an unreachable server is not a dead grant: the expired token is sent, no reauth', async () => {
@@ -168,6 +171,14 @@ describe('ensureFreshCredential', () => {
 })
 
 describe('withConfigLock', () => {
+  test('a lock whose holder process is gone is broken at once', async () => {
+    const path = tmpConfig({})
+    writeFileSync(`${path}.lock`, '2147483646:killed') // fresh, but no such process
+    const started = Date.now()
+    await withConfigLock(path, async () => {})
+    expect(Date.now() - started).toBeLessThan(2000)
+  })
+
   test("an owner whose lock was broken as stale leaves the new owner's lock alone", async () => {
     const path = tmpConfig({})
     const lock = `${path}.lock`

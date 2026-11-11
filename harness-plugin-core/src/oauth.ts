@@ -1,6 +1,6 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { DEFAULT_BASE_URL, normalizeBaseUrl, type Env } from './config.js'
+import { DEFAULT_BASE_URL, effectiveBlock, hostBlock, normalizeBaseUrl, type Env, type LegacyReader } from './config.js'
 
 /**
  * OAuth device sign-in for Honcho cloud (RFC 8628).
@@ -198,12 +198,26 @@ function readFile(path: string): Record<string, any> {
   return isObj(parsed) ? parsed : {}
 }
 
-export function readGrant(file: unknown, host: string): OAuthTokens | undefined {
-  if (!isObj(file)) return undefined
-  return asTokens(isObj(file.hosts) ? file.hosts[host]?.oauth : undefined)
+export function readGrant(file: unknown, host: string, legacy?: LegacyReader): OAuthTokens | undefined {
+  return asTokens(effectiveBlock(file, host, legacy).oauth)
 }
 
-/** Cross-process lock: `<config>.lock` created with O_EXCL; broken when older than 30s. */
+/** Whether the process that wrote a lock token (`<pid>:<random>`) is still running; unknown counts as running. */
+function holderAlive(token: string): boolean {
+  const pid = Number(token.split(':')[0])
+  if (!Number.isInteger(pid) || pid <= 0) return true
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return (e as { code?: string }).code === 'EPERM'
+  }
+}
+
+/**
+ * Cross-process lock: `<config>.lock` created with O_EXCL. Broken when its holder's
+ * process is gone (killed mid-refresh, say) or it is older than 30s.
+ */
 export async function withConfigLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
   const lock = `${path}.lock`
   mkdirSync(dirname(path), { recursive: true })
@@ -215,7 +229,7 @@ export async function withConfigLock<T>(path: string, fn: () => Promise<T>): Pro
     } catch (e) {
       if ((e as { code?: string }).code !== 'EEXIST') throw e
       try {
-        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) unlinkSync(lock)
+        if (!holderAlive(readFileSync(lock, 'utf-8')) || Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) unlinkSync(lock)
       } catch {}
       if (Date.now() - start > LOCK_WAIT_MS) throw new Error(`timed out waiting for ${lock}`)
       await new Promise((r) => setTimeout(r, 50 + Math.random() * 50))
@@ -251,15 +265,25 @@ export async function updateConfigFile(path: string, mutate: (file: Record<strin
 }
 
 function setGrant(file: Record<string, any>, host: string, tokens: OAuthTokens | null): void {
-  if (!isObj(file.hosts)) file.hosts = {}
-  const block = isObj(file.hosts[host]) ? file.hosts[host] : (file.hosts[host] = {})
+  const block = hostBlock(file, host)
   if (tokens) block.oauth = tokens
   else delete block.oauth
 }
 
-/** Store (or with `null`, remove) a grant. Touches only that block. */
+/**
+ * Store (or with `null`, remove) a grant. Touches only that block. Signing in
+ * makes the grant the block's credential and Honcho cloud its server, so any key
+ * and URL the block held go with it.
+ */
 export async function saveGrant(path: string, host: string, tokens: OAuthTokens | null): Promise<void> {
-  await updateConfigFile(path, (file) => setGrant(file, host, tokens))
+  await updateConfigFile(path, (file) => {
+    setGrant(file, host, tokens)
+    if (tokens) {
+      const block = hostBlock(file, host)
+      delete block.apiKey
+      delete block.baseUrl
+    }
+  })
 }
 
 // ── resolution + refresh ──────────────────────────────────────────────────────
@@ -279,27 +303,25 @@ export interface Credential {
   error?: string
 }
 
-function apiKeyOf(file: Record<string, any>, host: string): string | undefined {
-  const hb = isObj(file.hosts) ? file.hosts[host] : undefined
-  const k = hb?.apiKey
-  return typeof k === 'string' && k ? k : undefined
+/** The server a credential is for: `baseUrl` if given, else as `resolveConfig` resolves it. */
+function serverOf(block: Record<string, any>, baseUrl: string | undefined, env: Env): string | undefined {
+  return baseUrl ?? (env.HONCHO_BASE_URL || undefined) ?? (typeof block.baseUrl === 'string' && block.baseUrl ? block.baseUrl : undefined)
 }
 
 /**
- * The token to send, highest wins: HONCHO_API_KEY env → the plugin's live OAuth
- * grant (`hosts.<host>.oauth`) → `hosts.<host>.apiKey` → its expired grant. OAuth is skipped
- * unless `baseUrl` is Honcho cloud. No network.
+ * The token to send, highest wins: HONCHO_API_KEY env → the plugin's OAuth grant
+ * (`hosts.<host>.oauth`, on Honcho cloud only) → `hosts.<host>.apiKey`. An expired
+ * grant is still the credential (marked `expired`), so a dead sign-in asks the
+ * user to sign in again rather than falling back to a key. Without `baseUrl`, the
+ * server is the block's own. No network.
  */
-export function pickCredential(file: unknown, opts: { host: string; baseUrl?: string; env?: Env }): Credential | null {
+export function pickCredential(file: unknown, opts: { host: string; baseUrl?: string; env?: Env; legacy?: LegacyReader }): Credential | null {
   const env = opts.env ?? process.env
   if (env.HONCHO_API_KEY) return { token: env.HONCHO_API_KEY, source: 'env' }
-  const f = isObj(file) ? file : {}
-  const g = isCloud(opts.baseUrl) ? readGrant(f, opts.host) : undefined
-  if (g && accessValid(g, 0)) return { token: g.accessToken, source: 'oauth', expiresAt: g.accessExpiresAt }
-  const key = apiKeyOf(f, opts.host)
-  if (key) return { token: key, source: 'apiKey' }
-  if (g) return { token: g.accessToken, source: 'oauth', expiresAt: g.accessExpiresAt, expired: true }
-  return null
+  const block = effectiveBlock(file, opts.host, opts.legacy)
+  const g = isCloud(serverOf(block, opts.baseUrl, env)) ? asTokens(block.oauth) : undefined
+  if (g) return { token: g.accessToken, source: 'oauth', expiresAt: g.accessExpiresAt, ...(accessValid(g, 0) ? {} : { expired: true }) }
+  return typeof block.apiKey === 'string' && block.apiKey ? { token: block.apiKey, source: 'apiKey' } : null
 }
 
 /**
@@ -313,7 +335,7 @@ export function pickCredential(file: unknown, opts: { host: string; baseUrl?: st
  * call this before each batch of requests rather than cache a token.
  */
 export async function ensureFreshCredential(
-  opts: { host: string; baseUrl?: string; env?: Env; path: string } & OAuthTransport
+  opts: { host: string; baseUrl?: string; env?: Env; path: string; legacy?: LegacyReader } & OAuthTransport
 ): Promise<Credential | null> {
   const env = opts.env ?? process.env
   if (env.HONCHO_API_KEY) return { token: env.HONCHO_API_KEY, source: 'env' }
@@ -323,13 +345,14 @@ export async function ensureFreshCredential(
   } catch {
     file = {}
   }
-  const g = isCloud(opts.baseUrl) ? readGrant(file, opts.host) : undefined
+  const block = effectiveBlock(file, opts.host, opts.legacy)
+  const g = isCloud(serverOf(block, opts.baseUrl, env)) ? asTokens(block.oauth) : undefined
   if (!g || accessValid(g) || !g.refreshToken) return pickCredential(file, opts)
 
   let error: string | undefined
   try {
     await withConfigLock(opts.path, async () => {
-      const current = readGrant(readFile(opts.path), opts.host)
+      const current = readGrant(readFile(opts.path), opts.host, opts.legacy)
       if (!current || accessValid(current)) return // another process already refreshed
       const next = await refreshAccessToken(current, opts)
       const latest = readFile(opts.path)

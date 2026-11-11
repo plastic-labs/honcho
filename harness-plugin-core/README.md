@@ -47,17 +47,29 @@ A block signs in one of two ways:
 - `oauth`: the plugin's own sign-in to Honcho cloud, written by `saveGrant` after the device flow and refreshed by `ensureFreshCredential`. Each plugin has its own; none reads another's.
 - `apiKey`: a key from app.honcho.dev, or for a self-hosted Honcho (OAuth is cloud-only).
 
-`HONCHO_API_KEY` overrides both; with both in a block, a live `oauth` grant wins. Omit `baseUrl` for Honcho cloud. A plugin may keep keys of its own in its block.
+`HONCHO_API_KEY` overrides both. With both in a block the grant wins, even expired: a dead sign-in asks the user to sign in again rather than falling back to a key. Signing in (`saveGrant`) removes the block's `apiKey` and `baseUrl`, since it means Honcho cloud with this grant. Omit `baseUrl` for Honcho cloud. A plugin may keep keys of its own in its block.
 
 Resolution, highest wins: `HONCHO_*` env (`HONCHO_PEER_NAME`, `HONCHO_WORKSPACE`, `HONCHO_AI_PEER`, `HONCHO_BASE_URL`) → `hosts.<host>` → `defaults` → built-in. `peerName` falls back to `$USER`; a plugin's setup should ask for it, offering `suggestPeerName(file)` (the name the other plugins agree on, else the old top-level one, else `$USER`). `workspace` and `aiPeer` fall back to the host name. The SDK pins `/v3`; config stores the origin.
 
-`saveHost(path, host, patch)` merges into that one block under the config lock; `undefined` removes a key. A first write to a block also does `migrateHost`'s one-time copy (below), and `patch` wins for every key it names.
+`saveHost(path, host, patch, legacy?)` merges into that one block under the config lock; `undefined` removes a key. A block not migrated yet is migrated first (below). A key belongs to the server it was saved for: a patch that moves the block to another server drops the key unless it sets one.
 
 Versions: `saveHost` and `migrateHost` mark the block `"schemaVersion": 2`, which records that its plugin reads only that block and has already taken what it needed from the top level. A file whose top-level `schemaVersion` is newer than this package knows is read but never written: `saveHost` throws and `migrateHost` does nothing, so an old plugin cannot rewrite a shape it does not understand.
 
 ## Moving an older file
 
-A plugin fixes its own block at startup: `migrateHost(configPath(), host, deadKeys)` copies top-level `apiKey`, `peerName` and `baseUrl` into `hosts.<host>` (its `workspace` too, under `globalOverride` or when it has no block yet), renames old keys there (`auth.apiKey`, `auth.oauth`, `endpoint`, `environmentUrl`, `workspaceId`), and drops the `deadKeys` it no longer uses. The block's own value wins over the top level's, so a host that chose Honcho cloud under an old key name keeps `baseUrl: "https://api.honcho.dev"` rather than taking a self-hosted top-level URL. The top level is copied once, while the block is unmarked: whatever an older honcho CLI writes there later (another tenant's key, a local URL) never reaches a marked block. A key and the server it is for never come from two places: a block with its own OAuth grant takes neither from the top level, the top-level key goes only to a block that ends up on the top-level server (counting the server a `saveHost` patch picks), and a key a `saveHost` patch sets does not pull in the top-level URL. At the top level, `auth.apiKey` is read before `apiKey`, as in 0.1.x. It returns what it changed, and writes nothing when the block is current. It never touches the top level or another host's block, since plugins on older versions may still read them.
+Before schema 2, each plugin read this file its own way, so a plugin says what it was using with a `LegacyReader`: given the whole file, the `apiKey`, `baseUrl`, `peerName`, `workspace` and `aiPeer` its last release would have used. Each lives in its own file in `src/legacy/`, and its test compares it with fixtures recorded by running that plugin's latest published release:
+
+| Reader | For |
+| --- | --- |
+| `v01Reader` | plugins that read the file through harness-plugin-core 0.1.x (recorded from 0.1.1) |
+| `claudeHonchoReader` | claude-honcho up to 0.3.4 (`claude_code`, `cursor`, `obsidian`) |
+| `opencodeHonchoReader` | opencode-honcho up to 0.2.1 |
+
+A plugin whose last release read the file another way adds its reader there, with fixtures from that release.
+
+At startup, before anything reads the config or shows setup, a plugin calls `migrateHost(configPath(), host, deadKeys, legacy)`. Once, while the block is unmarked, it writes exactly what `legacy` says into `hosts.<host>`, so the plugin keeps the same key, server, peer and workspace, and marks the block. After that only the block counts: whatever an older honcho CLI writes to the top level later never reaches it. Every time, it also moves an old `auth.oauth` grant to `oauth` and drops old key names (`auth`, `endpoint`, `environmentUrl`, `workspaceId`) and `deadKeys`. A block already signed in keeps its grant on Honcho cloud rather than the key and server it read before. It returns what it changed, writes nothing when the block is current, and never touches the top level or another host's block.
+
+Until it runs, `resolveConfig`, `pickCredential` and `saveHost` see an unmarked block as `migrateHost` will leave it, so reading first never gives a different answer. Pass the same `legacy` to them where the plugin can run before its migration.
 
 ## Checking a config file
 
@@ -65,11 +77,11 @@ A plugin fixes its own block at startup: `migrateHost(configPath(), host, deadKe
 
 ## The top level and the honcho CLI
 
-The honcho CLI owns the top level. It keeps its own sign-in in `hosts.honcho-cli`, and its `honcho doctor` removes the old top-level keys once every installed integration reads only its own block. Anything else that writes this file follows the same rules as this package:
+The top level belongs to the honcho CLI. Today the CLI still keeps its sign-in there (`apiKey`, `environmentUrl`, `oauth`), and nothing removes the old top-level keys. Once it moves its sign-in to `hosts.honcho-cli`, `honcho doctor` will remove them after every installed integration reads only its own block. Writers of this file share these rules:
 
 1. `hosts.<host>.schemaVersion` of 2 or more means that host's plugin reads only its own block.
 2. A top-level `schemaVersion` above 2 means the file is read, never written.
-3. Writes hold `<config>.lock` (created exclusively, holding a per-writer token, stale after 30s, removed only by its holder) and replace the file by temp file + rename, mode 0600.
+3. This package's writes hold `<config>.lock` (created exclusively, holding a per-writer token, broken when its holder's process is gone or after 30s, removed only by its holder) and replace the file by temp file + rename, mode 0600. The CLI does not take the lock yet.
 
 ## Telemetry headers
 
