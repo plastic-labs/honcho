@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.dependencies import service_db
+from src.deriver.ingest_enqueue import has_pending_ingest
 from src.models import QueueItem
 from src.reconciler.backfill import BACKFILLS, Backfill, record_backfill_pending
 from src.reconciler.sync_vectors import has_pending_work
@@ -56,6 +57,9 @@ def backfill_task(backfill: Backfill) -> ReconcilerTask:
 # Task intervals
 QUEUE_CLEANUP_INTERVAL_SECONDS = 12 * 3600  # 12 hours
 DREAM_HISTORY_PRUNE_INTERVAL_SECONDS = 12 * 3600  # 12 hours
+# Ingest records left `pending` (a request that died before enqueueing them, or
+# found the session fenced) are picked up this often.
+INGEST_ENQUEUE_INTERVAL_SECONDS = 60
 
 # Task registry - add new tasks here
 RECONCILER_TASKS: dict[str, ReconcilerTask] = {
@@ -71,6 +75,13 @@ RECONCILER_TASKS: dict[str, ReconcilerTask] = {
         work_unit_key="reconciler:cleanup_queue",
         interval_seconds=QUEUE_CLEANUP_INTERVAL_SECONDS,
         payload={"reconciler_type": ReconcilerType.CLEANUP_QUEUE.value},
+    ),
+    "enqueue_ingest": ReconcilerTask(
+        name="enqueue_ingest",
+        work_unit_key="reconciler:enqueue_ingest",
+        interval_seconds=INGEST_ENQUEUE_INTERVAL_SECONDS,
+        payload={"reconciler_type": ReconcilerType.ENQUEUE_INGEST.value},
+        has_pending=has_pending_ingest,
     ),
     "prune_dream_history": ReconcilerTask(
         name="prune_dream_history",

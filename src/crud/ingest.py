@@ -46,6 +46,7 @@ from src.exceptions import (
     ResourceNotFoundException,
     ValidationException,
 )
+from src.schemas.api import IngestRejectionReason
 from src.telemetry.events import PeerCreatedEvent, SessionCreatedEvent, emit
 
 logger = getLogger(__name__)
@@ -200,17 +201,20 @@ def classify(
     stored_sha256: str,
     incoming_revised_at: datetime.datetime | None,
     incoming_sha256: str,
-) -> tuple[Literal["duplicate", "rejected"], str | None]:
-    """Classify a record against one already stored with the same identity."""
+) -> IngestRejectionReason | None:
+    """Classify a record against one already stored with the same identity.
+
+    Returns why it is rejected, or None when it is a duplicate.
+    """
     stored = _comparable(stored_revised_at)
     incoming = _comparable(incoming_revised_at)
     if incoming < stored:
-        return "rejected", "stale_revision"
+        return "stale_revision"
     if incoming > stored:
-        return "rejected", "edit_not_supported"
+        return "edit_not_supported"
     if incoming_sha256 == stored_sha256:
-        return "duplicate", None
-    return "rejected", "content_conflict"
+        return None
+    return "content_conflict"
 
 
 # ---------------------------------------------------------------------------
@@ -266,9 +270,9 @@ class IngestRaced(Exception):
 class _Refused(Exception):
     """A record, a peer or a session group can't be written, with the reason."""
 
-    reason: str
+    reason: IngestRejectionReason
 
-    def __init__(self, reason: str):
+    def __init__(self, reason: IngestRejectionReason):
         super().__init__(reason)
         self.reason = reason
 
@@ -318,14 +322,14 @@ def _prepare(batch: schemas.IngestBatch) -> list[_Record]:
     return prepared
 
 
-def _rejected(index: int, reason: str) -> schemas.IngestRecordResult:
+def _rejected(index: int, reason: IngestRejectionReason) -> schemas.IngestRecordResult:
     return schemas.IngestRecordResult(index=index, outcome="rejected", reason=reason)
 
 
 def _reject_all(
     results: dict[int, schemas.IngestRecordResult],
     records: Sequence[_Record],
-    reason: str,
+    reason: IngestRejectionReason,
 ) -> None:
     # A record that already has an outcome (a concurrent duplicate) keeps it.
     for r in records:
@@ -839,11 +843,9 @@ async def _stored_records(
 
 
 def _classified(r: _Record, row: _StoredRecord) -> schemas.IngestRecordResult:
-    verdict, reason = classify(
-        row.revised_at, row.content_sha256, r.record.revised_at, r.sha256
-    )
-    if verdict == "rejected":
-        return _rejected(r.index, reason or "rejected")
+    reason = classify(row.revised_at, row.content_sha256, r.record.revised_at, r.sha256)
+    if reason is not None:
+        return _rejected(r.index, reason)
     return schemas.IngestRecordResult(
         index=r.index,
         outcome="duplicate",
@@ -865,13 +867,13 @@ def _classified_repeat(
     row = basis.get(r.identity_tuple)
     if row is not None:
         return _classified(r, row)
-    verdict, reason = classify(
+    reason = classify(
         first.record.revised_at, first.sha256, r.record.revised_at, r.sha256
     )
-    if verdict == "rejected":
-        return _rejected(r.index, reason or "rejected")
-    if first_result.outcome == "rejected":
-        return _rejected(r.index, first_result.reason or "rejected")
+    if reason is not None:
+        return _rejected(r.index, reason)
+    if first_result.reason is not None:
+        return _rejected(r.index, first_result.reason)
     return first_result.model_copy(update={"index": r.index, "outcome": "duplicate"})
 
 

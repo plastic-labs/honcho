@@ -67,7 +67,7 @@ def test_a_new_record_becomes_a_message_in_a_mapped_session(
     [result] = _ingest(client, workspace, _record())
 
     assert result["outcome"] == "created"
-    assert result["derivation"] == "pending"
+    assert result["derivation"] == "queued"
     assert result["session_id"].startswith("dev-")
     assert result["peer_id"].startswith("jessica-")
 
@@ -1012,3 +1012,27 @@ async def test_a_confirmed_shared_session_is_not_separated(
     assert (later_one.outcome, later_two.outcome) == ("created", "created")
     assert later_one.session_id == later_two.session_id == two.session_id
     assert one.session_id != two.session_id
+
+
+def test_outcomes_are_counted(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counted: list[tuple[str, str, int]] = []
+
+    def record_ingest_records(*, outcome: str, reason: str, count: int) -> None:
+        counted.append((outcome, reason, count))
+
+    monkeypatch.setattr("src.config.settings.METRICS.ENABLED", True)
+    monkeypatch.setattr(
+        "src.routers.ingest.prometheus_metrics.record_ingest_records",
+        record_ingest_records,
+    )
+    workspace = _workspace(client)
+    record = _record()
+    _ingest(client, workspace, record, _record(), record)
+    _ingest(client, workspace, {**record, "content": "other words"})
+    assert sorted(counted) == [
+        ("created", "", 2),
+        ("duplicate", "", 1),
+        ("rejected", "content_conflict", 1),
+    ]
