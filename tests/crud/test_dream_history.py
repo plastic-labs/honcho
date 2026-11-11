@@ -8,7 +8,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
-from src.config import settings
+from src.config import DreamSettings, settings
 from src.crud.dream_history import DreamHistoryTarget
 from src.exceptions import ResourceNotFoundException
 from src.models import Peer, Workspace
@@ -454,8 +454,14 @@ def retention_window(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings.DREAM, "HISTORY_RETENTION_DAYS", 30)
 
 
+def test_history_retention_is_unset_by_default():
+    assert DreamSettings.model_fields["HISTORY_RETENTION_DAYS"].default is None
+
+
 async def test_prune_keeps_every_run_whole_without_a_retention_window(
-    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
 ):
     workspace, peer = sample_data
     workspace_name, peer_name = workspace.name, peer.name
@@ -496,7 +502,7 @@ async def test_prune_keeps_every_run_whole_without_a_retention_window(
     )
     await db_session.commit()
 
-    assert settings.DREAM.HISTORY_RETENTION_DAYS is None
+    monkeypatch.setattr(settings.DREAM, "HISTORY_RETENTION_DAYS", None)
     assert await crud.prune_dream_history() == 0
 
     db_session.expire_all()

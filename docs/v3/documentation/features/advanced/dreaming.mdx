@@ -150,7 +150,7 @@ Created conclusions and their sources are looked up when you read the run, and e
 
 ### Retention and deletion
 
-Runs and their changes are kept until you delete them: deleting a conclusion, its session or the workspace removes them from history. A self-hosted server can set a retention window with `DREAM_HISTORY_RETENTION_DAYS`. Past it, a run keeps only the conclusions it created that still exist, so you can always see which dream made a current conclusion. Its removed conclusions and peer-card change are deleted, and the run's `pruned_at` is set; `created_count`, `removed_count` and `peer_card_updated` still describe what the dream did. A run with nothing left is deleted. Set `DREAM_HISTORY_ENABLED=false` to stop recording.
+Runs and their changes are kept indefinitely; deleting conclusions, sessions or the workspace removes what history recorded of them, as described below. A self-hosted server can set a retention window with `DREAM_HISTORY_RETENTION_DAYS`. Past it, a run keeps only the conclusions it created that still exist, so you can always see which dream made a current conclusion. Its removed conclusions and peer-card change are deleted, and the run's `pruned_at` is set; `created_count`, `removed_count` and `peer_card_updated` still describe what the dream did. A run with nothing left is deleted. Set `DREAM_HISTORY_ENABLED=false` to stop recording.
 
 History follows the same deletion rules as the conclusions it describes:
 

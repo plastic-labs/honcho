@@ -4272,7 +4272,7 @@
           "dreams"
         ],
         "summary": "List Dreams",
-        "description": "List dream runs, newest first. Results are paginated.\n\nEach run records what one dream changed in a representation. Filter by\n`observed_id` for a peer's history, and add `observer_id` for a single\nrepresentation. Runs are kept until their workspace is deleted, unless the\nserver sets a retention window.",
+        "description": "List dream runs, newest first. Results are paginated.\n\nEach run records what one dream changed in a representation. Filter by\n`observed_id` for a peer's history, and add `observer_id` for a single\nrepresentation. Runs are not pruned unless the server sets a retention\nwindow.",
         "operationId": "list_dreams_v3_workspaces__workspace_id__dreams_list_post",
         "security": [
           {
@@ -6170,7 +6170,7 @@
               }
             ],
             "title": "Pruned At",
-            "description": "When retention first deleted some of this run's changes. Null unless the server sets a retention window: past it a run keeps only the created conclusions that still exist; `removed` and `peer_card` are gone. The counts stay as the dream recorded them."
+            "description": "When retention first deleted some of this run's changes. Null unless a retention window (`DREAM_HISTORY_RETENTION_DAYS`, unset by default) pruned the run, which can predate the current setting. Past the window a run keeps only the created conclusions that still exist; `removed` and `peer_card` are gone. The counts stay as the dream recorded them."
           }
         },
         "type": "object",
@@ -6282,7 +6282,7 @@
               }
             ],
             "title": "Pruned At",
-            "description": "When retention first deleted some of this run's changes. Null unless the server sets a retention window: past it a run keeps only the created conclusions that still exist; `removed` and `peer_card` are gone. The counts stay as the dream recorded them."
+            "description": "When retention first deleted some of this run's changes. Null unless a retention window (`DREAM_HISTORY_RETENTION_DAYS`, unset by default) pruned the run, which can predate the current setting. Past the window a run keeps only the created conclusions that still exist; `removed` and `peer_card` are gone. The counts stay as the dream recorded them."
           },
           "created": {
             "items": {

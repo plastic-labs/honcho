@@ -1407,9 +1407,11 @@ class DreamRun(BaseModel):
         default=None,
         description=(
             "When retention first deleted some of this run's changes. Null unless"
-            " the server sets a retention window: past it a run keeps only the"
-            " created conclusions that still exist; `removed` and `peer_card` are"
-            " gone. The counts stay as the dream recorded them."
+            " a retention window (`DREAM_HISTORY_RETENTION_DAYS`, unset by"
+            " default) pruned the run, which can predate the current setting."
+            " Past the window a run keeps only the created conclusions that still"
+            " exist; `removed` and `peer_card` are gone. The counts stay as the"
+            " dream recorded them."
         ),
     )
 
