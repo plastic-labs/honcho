@@ -51,6 +51,11 @@ def _session_key(workspace_name: str, session_name: str) -> str:
 
 
 def _tenant_part() -> str:
+    """The tenant segment of a fence key: "<tenant>:" flag-on, "" flag-off.
+
+    Raises:
+        ValueError: MULTI_TENANT is on and no tenant is bound.
+    """
     # region ai
     # Advisory locks are database-wide, not RLS-scoped, and workspace names repeat
     # across tenants ("default"), so flag-on the key carries the tenant. Flag-off
