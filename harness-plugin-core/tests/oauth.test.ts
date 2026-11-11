@@ -174,7 +174,13 @@ describe('withConfigLock', () => {
   test('a lock whose holder process is gone is broken at once', async () => {
     const path = tmpConfig({})
     writeFileSync(`${path}.lock`, '2147483646:killed') // fresh, but no such process
-    const started = Date.now()
+    let started = Date.now()
+    await withConfigLock(path, async () => {})
+    expect(Date.now() - started).toBeLessThan(2000)
+    // killed after creating the lock, before writing its token
+    writeFileSync(`${path}.lock`, '')
+    utimesSync(`${path}.lock`, new Date(Date.now() - 2000), new Date(Date.now() - 2000))
+    started = Date.now()
     await withConfigLock(path, async () => {})
     expect(Date.now() - started).toBeLessThan(2000)
   })

@@ -16,8 +16,10 @@ const SLOW_DOWN_STEP_S = 5
 const DEFAULT_DEVICE_EXPIRES_S = 600
 const REQUEST_TIMEOUT_MS = 10_000
 const REFRESH_SKEW_S = 60
-const LOCK_STALE_MS = 30_000
-const LOCK_WAIT_MS = 15_000
+// A holder makes at most one request, so a lock older than that (plus slack) is dead, and a
+// waiter outlasts that age: a stuck holder costs a wait, never a failed refresh.
+const LOCK_STALE_MS = REQUEST_TIMEOUT_MS + 5_000
+const LOCK_WAIT_MS = LOCK_STALE_MS + 5_000
 // a retry can never fix these; the grant is dead and the user must sign in again
 const PERMANENT_ERRORS = new Set(['invalid_grant', 'invalid_client', 'unauthorized_client'])
 
@@ -202,8 +204,13 @@ export function readGrant(file: unknown, host: string, legacy?: LegacyReader): O
   return asTokens(effectiveBlock(file, host, legacy).oauth)
 }
 
-/** Whether the process that wrote a lock token (`<pid>:<random>`) is still running; unknown counts as running. */
-function holderAlive(token: string): boolean {
+/**
+ * Whether the process that wrote a lock token (`<pid>:<random>`) is still running; unknown counts
+ * as running. A token is written as soon as the lock is created, so one still empty after a
+ * second belongs to a writer that died in between.
+ */
+function holderAlive(token: string, ageMs: number): boolean {
+  if (token === '') return ageMs < 1_000
   const pid = Number(token.split(':')[0])
   if (!Number.isInteger(pid) || pid <= 0) return true
   try {
@@ -216,7 +223,7 @@ function holderAlive(token: string): boolean {
 
 /**
  * Cross-process lock: `<config>.lock` created with O_EXCL. Broken when its holder's
- * process is gone (killed mid-refresh, say) or it is older than 30s.
+ * process is gone (killed mid-refresh, say) or it is older than 15s; a waiter waits up to 20s.
  */
 export async function withConfigLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
   const lock = `${path}.lock`
@@ -229,7 +236,8 @@ export async function withConfigLock<T>(path: string, fn: () => Promise<T>): Pro
     } catch (e) {
       if ((e as { code?: string }).code !== 'EEXIST') throw e
       try {
-        if (!holderAlive(readFileSync(lock, 'utf-8')) || Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) unlinkSync(lock)
+        const age = Date.now() - statSync(lock).mtimeMs
+        if (age > LOCK_STALE_MS || !holderAlive(readFileSync(lock, 'utf-8'), age)) unlinkSync(lock)
       } catch {}
       if (Date.now() - start > LOCK_WAIT_MS) throw new Error(`timed out waiting for ${lock}`)
       await new Promise((r) => setTimeout(r, 50 + Math.random() * 50))

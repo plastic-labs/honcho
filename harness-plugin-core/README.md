@@ -83,7 +83,7 @@ The top level belongs to the honcho CLI. Today the CLI still keeps its sign-in t
 
 1. `hosts.<host>.schemaVersion` of 2 or more means that host's plugin reads only its own block.
 2. A top-level `schemaVersion` above 2 means the file is read, never written.
-3. This package's writes hold `<config>.lock` (created exclusively, holding a per-writer token, broken when its holder's process is gone or after 30s, removed only by its holder) and replace the file by temp file + rename, mode 0600. The CLI does not take the lock yet.
+3. This package's writes hold `<config>.lock` (created exclusively, holding a per-writer token, broken when its holder's process is gone or after 15s, waited on for up to 20s, removed only by its holder) and replace the file by temp file + rename, mode 0600. The CLI does not take the lock yet.
 
 ## Telemetry headers
 
