@@ -1,5 +1,6 @@
 export {
   checkConfig,
+  effectiveBlock,
   hostMigration,
   migrateHost,
   configPath,
@@ -17,6 +18,8 @@ export {
 export { v01Reader } from './legacy/v01.js'
 export { claudeHonchoReader } from './legacy/claude-honcho.js'
 export { opencodeHonchoReader } from './legacy/opencode-honcho.js'
+export { openclawHonchoReader } from './legacy/openclaw-honcho.js'
+export { piHonchoReader } from './legacy/pi-honcho.js'
 
 export type {
   ConfigFile,

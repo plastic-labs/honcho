@@ -219,10 +219,11 @@ export function checkConfig(file: unknown): ConfigIssue[] {
   const issues: ConfigIssue[] = []
   const hosts: Record<string, any> = isObj(file.hosts) ? file.hosts : {}
 
-  // Hosts sharing a workspace must agree on the user.
+  // Hosts sharing a workspace must agree on the user. Only what each block holds: an
+  // unmigrated block's peer comes from its plugin's own reader, which only that plugin knows.
   const byWorkspace = new Map<string, Map<string, string[]>>()
   for (const h of Object.keys(hosts).filter((k) => isObj(hosts[k]))) {
-    const block = effectiveBlock(file, h)
+    const block = hosts[h]
     const peer = str(block.peerName)
     if (!peer) continue
     const ws = str(block.workspace) ?? h

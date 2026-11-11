@@ -9,6 +9,8 @@ import {
   migrateHost,
   normalizeBaseUrl,
   opencodeHonchoReader,
+  openclawHonchoReader,
+  piHonchoReader,
   pickCredential,
   resolveConfig,
   saveGrant,
@@ -85,6 +87,9 @@ describe('legacy readers', () => {
     ['harness-plugin-core 0.1.1', v01Reader, 'legacy-v01.json', (host) => ({ workspace: host })],
     ['claude-honcho 0.3.4', claudeHonchoReader, 'legacy-claude-honcho.json', (host) => claudeDefaults[host]],
     ['opencode-honcho 0.2.1', opencodeHonchoReader, 'legacy-opencode-honcho.json', () => ({})],
+    ['openclaw-honcho 1.7.0', openclawHonchoReader, 'legacy-openclaw-honcho.json', () => ({ workspace: 'openclaw' })],
+    // Where pi used the honcho CLI's grant (`usedCliGrant`), it recorded no key, and the reader gives none.
+    ['pi-honcho 1.0.1', piHonchoReader, 'legacy-pi-honcho.json', () => ({ workspace: 'pi', aiPeer: 'pi' })],
   ]
   for (const [release, reader, fixture, defaults] of releases) {
     test(`reads a file as ${release} did`, () => {
@@ -104,7 +109,7 @@ describe('legacy readers', () => {
 })
 
 describe('migration', () => {
-  const readers: Record<string, LegacyReader> = { v01Reader, claudeHonchoReader, opencodeHonchoReader }
+  const readers: Record<string, LegacyReader> = { v01Reader, claudeHonchoReader, opencodeHonchoReader, openclawHonchoReader, piHonchoReader }
   const tops: Record<string, Record<string, unknown>> = {
     none: {},
     cliLocal: { apiKey: 'cli', environmentUrl: LOCAL },
@@ -217,6 +222,8 @@ describe('checkConfig', () => {
     const file = { apiKey: 'k', environmentUrl: LOCAL, hosts: { a: { workspace: 'w', peerName: 'x', endpoint: {} }, b: { workspace: 'w', peerName: 'y' } } }
     expect(checkConfig(file).map((i) => i.path)).toEqual(['hosts'])
     expect(checkConfig({ schemaVersion: 3 }).map((i) => i.path)).toEqual(['schemaVersion'])
+    // Not a guess at an unmigrated block's peer from the top level.
+    expect(checkConfig({ peerName: 'top', hosts: { a: { workspace: 'w', peerName: 'x' }, b: { workspace: 'w' } } })).toEqual([])
   })
 })
 

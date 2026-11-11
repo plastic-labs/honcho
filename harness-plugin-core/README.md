@@ -64,12 +64,14 @@ Before schema 2, each plugin read this file its own way, so a plugin says what i
 | `v01Reader` | plugins that read the file through harness-plugin-core 0.1.x (recorded from 0.1.1) |
 | `claudeHonchoReader` | claude-honcho up to 0.3.4 (`claude_code`, `cursor`, `obsidian`) |
 | `opencodeHonchoReader` | opencode-honcho up to 0.2.1 |
+| `openclawHonchoReader` | openclaw-honcho up to 1.7.0, which read nothing from this file; keeps its `owner` peer |
+| `piHonchoReader` | pi-honcho up to 1.0.1; a user on the honcho CLI's grant is asked to sign in |
 
 A plugin whose last release read the file another way adds its reader there, with fixtures from that release.
 
 At startup, before anything reads the config or shows setup, a plugin calls `migrateHost(configPath(), host, deadKeys, legacy)`. Once, while the block is unmarked, it writes exactly what `legacy` says into `hosts.<host>`, so the plugin keeps the same key, server, peer and workspace, and marks the block. After that only the block counts: whatever an older honcho CLI writes to the top level later never reaches it. Every time, it also moves an old `auth.oauth` grant to `oauth` and drops old key names (`auth`, `endpoint`, `environmentUrl`, `workspaceId`) and `deadKeys`. A block already signed in keeps its grant on Honcho cloud rather than the key and server it read before. It returns what it changed, writes nothing when the block is current, and never touches the top level or another host's block.
 
-Until it runs, `resolveConfig`, `pickCredential` and `saveHost` see an unmarked block as `migrateHost` will leave it, so reading first never gives a different answer. Pass the same `legacy` to them where the plugin can run before its migration.
+Until it runs, `resolveConfig`, `pickCredential` and `saveHost` see an unmarked block as `migrateHost` will leave it, so reading first never gives a different answer. Pass the same `legacy` to them where the plugin can run before its migration. A plugin that layers its own settings over the block (OpenClaw's plugin config, say) reads it with `effectiveBlock(file, host, legacy)`.
 
 ## Checking a config file
 
