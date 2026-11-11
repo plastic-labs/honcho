@@ -32,6 +32,7 @@ from sqlalchemy_utils import (
 from src import crud, models, schemas
 from src.cache.client import cache
 from src.config import settings
+from src.crud import ingest as ingest_crud
 from src.crud.message import (
     _grep_messages_internal,  # pyright: ignore[reportPrivateUsage]
 )
@@ -308,6 +309,28 @@ async def _message_ingest(db: AsyncSession, _source_id: str) -> list[Any]:
     return [(m.content, m.seq_in_session) for m in created]
 
 
+async def _ingest_write(db: AsyncSession, _source_id: str) -> list[Any]:
+    # The whole ingest transaction: identity lookup, fence, bindings, peer and
+    # session creation, membership, claim, message insert and record update.
+    batch = schemas.IngestBatch.model_validate(
+        {
+            "records": [
+                {
+                    "source": "discord",
+                    "source_instance": "g",
+                    "source_id": "m1",
+                    "created_at": "2026-11-04T20:47:00Z",
+                    "container": {"id": "c1", "name": "dev"},
+                    "author": {"id": "u1", "name": "Jess"},
+                    "content": "new",
+                }
+            ]
+        }
+    )
+    result = await ingest_crud.ingest_batch(db, "w", batch)
+    return [r.outcome for r in result.results]
+
+
 async def _conclusion_delete(db: AsyncSession, source_id: str) -> list[Any]:
     await crud.delete_document(db, "w", source_id, observer="p", observed="p")
     deleted = await db.scalars(
@@ -329,6 +352,7 @@ _CASES: dict[str, _Case] = {
     "message grep": _message_grep,
     "message full-text search": _message_fulltext_search,
     "message ingest write": _message_ingest,
+    "ingest API write": _ingest_write,
     "conclusion soft delete": _conclusion_delete,
     "session delete": _session_delete,
 }

@@ -523,6 +523,143 @@ class MessageUploadCreate(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Ingest schemas
+# ---------------------------------------------------------------------------
+
+# An external identifier is a lookup key, so a value that can't be stored is
+# refused (422) rather than stripped into a different key.
+_ExternalId = Annotated[str, StorableOnly, Field(min_length=1, max_length=512)]
+_DisplayName = Annotated[str, NulStripped, Field(min_length=1, max_length=512)]
+
+
+class IngestParticipant(BaseModel):
+    """A person on a record. The `id` is what connects them across records."""
+
+    id: _ExternalId | None = Field(
+        default=None, description="The person's ID in the source, if it has one"
+    )
+    name: _DisplayName = Field(..., description="The person's display name")
+
+
+class IngestContainer(BaseModel):
+    """Where a record lives in its source: a channel, a thread, a repository."""
+
+    id: _ExternalId = Field(..., description="The container's ID in the source")
+    name: _DisplayName | None = Field(
+        default=None, description="The container's display name"
+    )
+    parent_id: _ExternalId | None = Field(
+        default=None, description="The parent container's ID, e.g. a thread's channel"
+    )
+
+
+class IngestRecordCreate(BaseModel):
+    """One source record to ingest."""
+
+    source: str = Field(
+        ...,
+        max_length=64,
+        pattern=RESOURCE_NAME_PATTERN,
+        description="The source type, e.g. `discord`",
+    )
+    source_instance: str = Field(
+        ...,
+        max_length=128,
+        pattern=RESOURCE_NAME_PATTERN,
+        description="The server, team or account inside the source",
+    )
+    source_id: _ExternalId | None = Field(
+        default=None,
+        description="The record's ID in that instance. Without it, the record is"
+        + " identified by a hash of its content, so only identical content dedups;"
+        + " sources whose records can change must send it.",
+    )
+    revised_at: datetime.datetime | None = Field(
+        default=None, description="When the source last changed this record"
+    )
+    created_at: datetime.datetime = Field(..., description="The source's timestamp")
+    container: IngestContainer | None = Field(
+        default=None, description="Where the record lives; omit for a standalone record"
+    )
+    author: IngestParticipant | None = Field(
+        default=None, description="Who wrote it; omit when there is no single author"
+    )
+    participants: list[IngestParticipant] = Field(default_factory=list, max_length=100)
+    content: Annotated[str, Field(max_length=settings.MAX_MESSAGE_SIZE)]
+    metadata: _SanitizedMetadata | None = None
+    configuration: MessageConfiguration | None = None
+    session_id: (
+        Annotated[
+            str,
+            StorableOnly,
+            Field(min_length=1, max_length=512, pattern=RESOURCE_NAME_PATTERN),
+        ]
+        | None
+    ) = Field(
+        default=None,
+        description="An explicit session, used instead of mapping the container",
+    )
+    peer_id: _ExternalId | None = Field(
+        default=None,
+        description="An explicit author peer, used instead of mapping the author",
+    )
+
+    _encoded_content: list[int] = PrivateAttr(default=[])
+
+    @field_validator("content", mode="after")
+    @classmethod
+    def sanitize_content(cls, v: str) -> str:
+        return strip_nul(v)
+
+    @property
+    def encoded_content(self) -> list[int]:
+        return self._encoded_content
+
+    @model_validator(mode="after")
+    def encode_content(self) -> Self:
+        encoding = tiktoken.get_encoding("o200k_base")
+        self._encoded_content = encoding.encode(self.content, disallowed_special=())
+        return self
+
+
+class IngestBatch(BaseModel):
+    """A batch of source records for one workspace."""
+
+    derive: Literal["now", "later"] = Field(
+        default="now",
+        description="`later` stores the records without queuing derivation;"
+        + " POST /ingest/derive queues them",
+    )
+    records: list[IngestRecordCreate] = Field(..., min_length=1, max_length=100)
+
+
+IngestOutcome = Literal["created", "duplicate", "rejected"]
+IngestDerivation = Literal["pending", "queued", "deferred"]
+
+
+class IngestRecordResult(BaseModel):
+    """What happened to one record of the batch."""
+
+    index: int = Field(..., description="The record's position in the request")
+    outcome: IngestOutcome
+    reason: str | None = Field(default=None, description="Why a record was rejected")
+    record_id: str | None = None
+    message_id: str | None = None
+    session_id: str | None = None
+    peer_id: str | None = None
+    derivation: IngestDerivation | None = None
+
+
+class IngestResponse(BaseModel):
+    """One outcome per record, in request order."""
+
+    records: list[IngestRecordResult]
+    receipt: str | None = Field(
+        default=None, description="Reserved for a consistency token"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Session schemas
 # ---------------------------------------------------------------------------
 

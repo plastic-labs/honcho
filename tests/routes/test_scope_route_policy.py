@@ -210,6 +210,24 @@ def _b_message(c: TestClient, ws: str, s: str, p: str):
     )
 
 
+def _b_ingest(c: TestClient, ws: str, s: str, p: str):
+    return c.post(
+        f"/v3/workspaces/{ws}/ingest",
+        json={
+            "records": [
+                {
+                    "source": "test",
+                    "source_instance": "policy",
+                    "created_at": "2026-11-04T20:47:00Z",
+                    "content": "hello",
+                    "session_id": s,
+                    "peer_id": p,
+                }
+            ]
+        },
+    )
+
+
 def _b_upload(c: TestClient, ws: str, s: str, p: str):
     return c.post(
         f"/v3/workspaces/{ws}/sessions/{s}/messages/upload",
@@ -505,6 +523,14 @@ POLICY: tuple[Case, ...] = (
         True,
         refuse_missing=True,
         build=_b_message,
+    ),
+    Case(
+        "POST",
+        f"{_W}/ingest",
+        "peer_id",
+        True,
+        refuse_missing=True,
+        build=_b_ingest,
     ),
     Case(
         "POST",
