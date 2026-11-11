@@ -1622,6 +1622,13 @@ class IngestRecord(Base, TenantPartitioned):
         Boolean, nullable=False, server_default=text("false")
     )
     derivation: Mapped[str] = mapped_column(TEXT, nullable=False)
+    # The peer bindings of the record's author and participants, as received.
+    # They say which external account wrote a message after people are linked,
+    # so a link can be split again. Null author: an explicit `peer_id`.
+    author_binding_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    participant_binding_ids: Mapped[list[str] | None] = mapped_column(
+        JSONB, nullable=True
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -1636,6 +1643,14 @@ class IngestRecord(Base, TenantPartitioned):
             "identity_kind",
             "identity",
             name="uq_ingest_records_identity",
+        ),
+        # Finding the records an external account wrote, to split a link.
+        Index(
+            "ix_ingest_records_author_binding",
+            "tenant_id",
+            "workspace_name",
+            "author_binding_id",
+            postgresql_where=text("author_binding_id IS NOT NULL"),
         ),
         # Session deletion and the enqueuer read a session's records.
         Index(
@@ -1668,8 +1683,10 @@ class IngestRecord(Base, TenantPartitioned):
 class IngestSessionBinding(Base, TenantPartitioned):
     """Maps an external container (a channel, a thread, a standalone record) to a session.
 
-    Written the first time the container is seen and not changed after, so a
-    renamed channel keeps its session.
+    The session is chosen the first time the container is seen and kept, so a
+    renamed channel keeps its session. `display_name` follows the source: it is
+    the newest name seen, by the time of the record that carried it. A binding a
+    person confirmed (`confirmed_at`) may point at any session.
     """
 
     __tablename__: str = "ingest_session_bindings"
@@ -1687,6 +1704,16 @@ class IngestSessionBinding(Base, TenantPartitioned):
     key_kind: Mapped[str] = mapped_column(TEXT, nullable=False)
     key_value: Mapped[str] = mapped_column(TEXT, nullable=False)
     session_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    display_name_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Set when a person pointed this binding at its target (a confirmed link or
+    # move). Ingest then follows it as is, instead of treating a target it didn't
+    # create as stale.
+    confirmed_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -1720,8 +1747,10 @@ class IngestSessionBinding(Base, TenantPartitioned):
 class IngestPeerBinding(Base, TenantPartitioned):
     """Maps an external person (by source ID, or a provisional name) to a peer.
 
-    Written the first time the person is seen and not changed after, so a
-    renamed user keeps their peer.
+    The peer is chosen the first time the person is seen and kept, so a renamed
+    user keeps their peer. `display_name` follows the source: it is the newest
+    name seen, by the time of the record that carried it. A binding a person
+    confirmed (`confirmed_at`, a confirmed link) may point at any peer.
     """
 
     __tablename__: str = "ingest_peer_bindings"
@@ -1739,6 +1768,16 @@ class IngestPeerBinding(Base, TenantPartitioned):
     key_kind: Mapped[str] = mapped_column(TEXT, nullable=False)
     key_value: Mapped[str] = mapped_column(TEXT, nullable=False)
     peer_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    display_name_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Set when a person pointed this binding at its target (a confirmed link or
+    # move). Ingest then follows it as is, instead of treating a target it didn't
+    # create as stale.
+    confirmed_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
