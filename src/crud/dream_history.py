@@ -487,15 +487,16 @@ async def delete_workspace_history(db: AsyncSession, workspace_name: str) -> Non
 
 
 async def prune_dream_history() -> int:
-    """Mark stale running runs interrupted and apply the retention window.
+    """Mark stale running runs interrupted and apply the retention window, if set.
 
-    Past the window, a run keeps only its `created` changes whose conclusion
-    still exists, so which dream made a live conclusion stays readable. Its
-    other changes are deleted and the run gets `pruned_at`. A run with nothing
-    left is deleted. Returns the number of runs deleted.
+    With `DREAM_HISTORY_RETENTION_DAYS` unset (the default) runs are kept
+    forever. Past a set window, a run keeps only its `created` changes whose
+    conclusion still exists, so which dream made a live conclusion stays
+    readable. Its other changes are deleted and the run gets `pruned_at`. A run
+    with nothing left is deleted. Returns the number of runs deleted.
     """
     now = datetime.datetime.now(datetime.UTC)
-    cutoff = now - datetime.timedelta(days=settings.DREAM.HISTORY_RETENTION_DAYS)
+    retention_days = settings.DREAM.HISTORY_RETENTION_DAYS
     deleted = 0
     run_key = tuple_(models.DreamRun.tenant_id, models.DreamRun.id)
     change_run_key = tuple_(
@@ -537,7 +538,10 @@ async def prune_dream_history() -> int:
             .values(status="interrupted")
         )
         await db.commit()
+        if retention_days is None:
+            return 0
 
+        cutoff = now - datetime.timedelta(days=retention_days)
         after: tuple[str, str] | None = None
         while True:
             # Runs are locked before their changes, the order workspace

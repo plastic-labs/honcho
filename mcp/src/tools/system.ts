@@ -14,7 +14,7 @@ import {
 export const DREAM_SECTION_LIMIT = 50;
 
 const DREAM_HISTORY_NOTE =
-  "History covers dreams since Representation History was enabled on the server and is kept for its retention window (30 days by default). Past the window a run keeps only the conclusions it created that still exist, and its `pruned_at` is set.";
+  "History covers dreams since Representation History was enabled on the server and is kept until deleted, unless the server sets a retention window. Past that window a run keeps only the conclusions it created that still exist, and its `pruned_at` is set.";
 
 /** The dream routes refuse peer-scoped keys; say so instead of a bare 401. */
 function dreamFailure(ctx: ToolContext, prefix: string, e: unknown) {

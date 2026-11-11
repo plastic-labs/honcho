@@ -1406,10 +1406,10 @@ class DreamRun(BaseModel):
     pruned_at: datetime.datetime | None = Field(
         default=None,
         description=(
-            "When retention first deleted some of this run's changes. Past the"
-            " retention window a run keeps only the created conclusions that still"
-            " exist; `removed` and `peer_card` are gone. The counts stay as the"
-            " dream recorded them."
+            "When retention first deleted some of this run's changes. Null unless"
+            " the server sets a retention window: past it a run keeps only the"
+            " created conclusions that still exist; `removed` and `peer_card` are"
+            " gone. The counts stay as the dream recorded them."
         ),
     )
 
@@ -1429,7 +1429,7 @@ class DreamConclusionRef(BaseModel):
             "`current`: still in the representation. `removed`: a later dream"
             " removed it; `removed_in_run` names that dream. `unavailable`: it was"
             " deleted (through the API, with its session, or by the deriver), or"
-            " the dream that removed it is past the retention window."
+            " the dream that removed it is past the server's retention window."
         )
     )
     removed_in_run: str | None = None

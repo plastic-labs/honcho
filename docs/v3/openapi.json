@@ -4272,7 +4272,7 @@
           "dreams"
         ],
         "summary": "List Dreams",
-        "description": "List dream runs, newest first. Results are paginated.\n\nEach run records what one dream changed in a representation. Filter by\n`observed_id` for a peer's history, and add `observer_id` for a single\nrepresentation. Runs are kept for the server's retention window (30 days\nby default).",
+        "description": "List dream runs, newest first. Results are paginated.\n\nEach run records what one dream changed in a representation. Filter by\n`observed_id` for a peer's history, and add `observer_id` for a single\nrepresentation. Runs are kept until their workspace is deleted, unless the\nserver sets a retention window.",
         "operationId": "list_dreams_v3_workspaces__workspace_id__dreams_list_post",
         "security": [
           {
@@ -5897,7 +5897,7 @@
               "unavailable"
             ],
             "title": "Status",
-            "description": "`current`: still in the representation. `removed`: a later dream removed it; `removed_in_run` names that dream. `unavailable`: it was deleted (through the API, with its session, or by the deriver), or the dream that removed it is past the retention window."
+            "description": "`current`: still in the representation. `removed`: a later dream removed it; `removed_in_run` names that dream. `unavailable`: it was deleted (through the API, with its session, or by the deriver), or the dream that removed it is past the server's retention window."
           },
           "removed_in_run": {
             "anyOf": [
@@ -6170,7 +6170,7 @@
               }
             ],
             "title": "Pruned At",
-            "description": "When retention first deleted some of this run's changes. Past the retention window a run keeps only the created conclusions that still exist; `removed` and `peer_card` are gone. The counts stay as the dream recorded them."
+            "description": "When retention first deleted some of this run's changes. Null unless the server sets a retention window: past it a run keeps only the created conclusions that still exist; `removed` and `peer_card` are gone. The counts stay as the dream recorded them."
           }
         },
         "type": "object",
@@ -6282,7 +6282,7 @@
               }
             ],
             "title": "Pruned At",
-            "description": "When retention first deleted some of this run's changes. Past the retention window a run keeps only the created conclusions that still exist; `removed` and `peer_card` are gone. The counts stay as the dream recorded them."
+            "description": "When retention first deleted some of this run's changes. Null unless the server sets a retention window: past it a run keeps only the created conclusions that still exist; `removed` and `peer_card` are gone. The counts stay as the dream recorded them."
           },
           "created": {
             "items": {

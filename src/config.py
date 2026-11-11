@@ -1535,11 +1535,14 @@ class DreamSettings(HonchoSettings):
         None
     )
     # Representation History: each dream's created and removed conclusions and
-    # peer-card changes, readable through the dreams API. Past the retention
-    # window the reconciler prunes a run to the created conclusions that still
+    # peer-card changes, readable through the dreams API. Kept until deleted
+    # with their session, workspace or conclusion. With a retention window set,
+    # the reconciler prunes a run past it to the created conclusions that still
     # exist, and deletes it once none do.
     HISTORY_ENABLED: bool = True
-    HISTORY_RETENTION_DAYS: Annotated[int, Field(default=30, ge=1, le=3650)] = 30
+    HISTORY_RETENTION_DAYS: Annotated[
+        int | None, Field(default=None, ge=1, le=3650)
+    ] = None
 
     @staticmethod
     def _DEDUCTION_MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:

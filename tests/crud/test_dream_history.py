@@ -449,6 +449,69 @@ async def test_deleting_the_workspace_deletes_its_history(
     assert (await db_session.scalar(select(models.DreamRunChange.id))) is None
 
 
+@pytest.fixture
+def retention_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings.DREAM, "HISTORY_RETENTION_DAYS", 30)
+
+
+async def test_prune_keeps_every_run_whole_without_a_retention_window(
+    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    workspace, peer = sample_data
+    workspace_name, peer_name = workspace.name, peer.name
+    _session_name, (coffee_id, nights_id) = await _seed(
+        db_session, workspace_name, peer_name
+    )
+    target = await _open(workspace_name, peer_name)
+    empty = await _open(workspace_name, peer_name)
+    await crud.create_documents(
+        db_session,
+        [_deductive("Ann relies on caffeine to work nights", [coffee_id, nights_id])],
+        workspace_name,
+        observer=peer_name,
+        observed=peer_name,
+        history=target,
+    )
+    await crud.delete_documents(
+        db_session,
+        workspace_name,
+        [coffee_id],
+        observer=peer_name,
+        observed=peer_name,
+        history=target,
+    )
+    await crud.set_peer_card(
+        db_session,
+        workspace_name,
+        ["IDENTITY: Name: Ann"],
+        observer=peer_name,
+        observed=peer_name,
+        history=target,
+    )
+    now = datetime.datetime.now(datetime.UTC)
+    await db_session.execute(
+        update(models.DreamRun)
+        .where(models.DreamRun.id.in_([target.run_id, empty.run_id]))
+        .values(started_at=now - datetime.timedelta(days=3650))
+    )
+    await db_session.commit()
+
+    assert settings.DREAM.HISTORY_RETENTION_DAYS is None
+    assert await crud.prune_dream_history() == 0
+
+    db_session.expire_all()
+    detail = await crud.get_run_detail(db_session, workspace_name, target.run_id)
+    assert detail.pruned_at is None
+    assert len(detail.created) == 1
+    assert [removed.id for removed in detail.removed] == [coffee_id]
+    assert detail.peer_card is not None
+    # The stale-run sweep still runs.
+    assert detail.status == "interrupted"
+    empty_detail = await crud.get_run_detail(db_session, workspace_name, empty.run_id)
+    assert empty_detail.status == "interrupted"
+
+
+@pytest.mark.usefixtures("retention_window")
 async def test_prune_deletes_old_runs_and_interrupts_stale_ones(
     db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
 ):
@@ -458,6 +521,7 @@ async def test_prune_deletes_old_runs_and_interrupts_stale_ones(
     stale = await _open(workspace_name, peer_name)
     fresh = await _open(workspace_name, peer_name)
     now = datetime.datetime.now(datetime.UTC)
+    assert settings.DREAM.HISTORY_RETENTION_DAYS is not None
     retention = datetime.timedelta(days=settings.DREAM.HISTORY_RETENTION_DAYS)
     await db_session.execute(
         update(models.DreamRun)
@@ -484,6 +548,7 @@ async def test_prune_deletes_old_runs_and_interrupts_stale_ones(
 
 async def _age_past_retention(db_session: AsyncSession, run_id: str) -> None:
     now = datetime.datetime.now(datetime.UTC)
+    assert settings.DREAM.HISTORY_RETENTION_DAYS is not None
     retention = datetime.timedelta(days=settings.DREAM.HISTORY_RETENTION_DAYS)
     await db_session.execute(
         update(models.DreamRun)
@@ -493,6 +558,7 @@ async def _age_past_retention(db_session: AsyncSession, run_id: str) -> None:
     await db_session.commit()
 
 
+@pytest.mark.usefixtures("retention_window")
 async def test_prune_keeps_what_a_dream_created_while_it_exists(
     db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
 ):
@@ -556,6 +622,7 @@ async def test_prune_keeps_what_a_dream_created_while_it_exists(
         await crud.get_run_detail(db_session, workspace_name, target.run_id)
 
 
+@pytest.mark.usefixtures("retention_window")
 async def test_prune_leaves_a_run_with_nothing_to_drop_unmarked(
     db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
 ):
@@ -583,6 +650,7 @@ async def test_prune_leaves_a_run_with_nothing_to_drop_unmarked(
     assert len(detail.created) == 1
 
 
+@pytest.mark.usefixtures("retention_window")
 async def test_prune_walks_every_batch(
     db_session: AsyncSession,
     sample_data: tuple[Workspace, Peer],

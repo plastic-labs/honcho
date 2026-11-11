@@ -3,8 +3,9 @@
 Representation History: every dream records what it changed in a peer's
 representation — the conclusions it created (with the conclusions each was
 derived from), the conclusions it removed (with their text as it read when
-removed), and the peer card before and after. Runs are kept for the server's
-retention window (30 days by default). Needs a workspace or admin key.
+removed), and the peer card before and after. Runs are kept until their
+workspace is deleted, unless the server sets a retention window. Needs a
+workspace or admin key.
 """
 
 from __future__ import annotations
@@ -125,7 +126,7 @@ def list_dreams(
         if result.pages:
             title += f" · page {result.page}/{result.pages}"
         if not result.items:
-            status("No dreams recorded in the retention window.")
+            status("No dreams recorded.")
             return
         _print_runs(result.items, title)
         if result.pages and page < result.pages:
