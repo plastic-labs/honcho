@@ -9,7 +9,9 @@ every endpoint behaves before this revision, so an upgraded deployment delivers
 exactly as before until an endpoint sets a list. ADD COLUMN with no default is a
 catalog-only change, on the partitioned parent and on each partition. An image
 from before this revision never reads or writes the column, so it can still run
-against it.
+against it, but it ignores the lists and sends every event to every endpoint.
+That is harmless while queue.empty is the only event type an endpoint can
+subscribe to; re-check the compatibility floor when the next type is added.
 """
 
 from collections.abc import Sequence
@@ -30,6 +32,7 @@ schema = get_schema()
 
 
 def upgrade() -> None:
+    """Add the nullable event_types column, unless it already exists."""
     if not column_exists("webhook_endpoints", "event_types"):
         op.add_column(
             "webhook_endpoints",
@@ -39,5 +42,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Drop the event_types column, if present."""
     if column_exists("webhook_endpoints", "event_types"):
         op.drop_column("webhook_endpoints", "event_types", schema=schema)

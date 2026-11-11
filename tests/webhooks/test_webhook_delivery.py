@@ -591,9 +591,8 @@ async def test_deliver_webhook_looks_up_endpoints_under_the_signed_tenant(
 async def test_get_webhook_urls_honours_each_endpoints_event_types(
     db_session: AsyncSession,
 ) -> None:
+    """Delivery reaches endpoints subscribed to the type, or to every type."""
     from src import models
-    from src.schemas.api import WebhookSubscribableEventType
-    from src.webhooks.events import WebhookEventType
 
     workspace = models.Workspace(name=str(generate_nanoid()))
     db_session.add(workspace)
@@ -626,7 +625,12 @@ async def test_get_webhook_urls_honours_each_endpoints_event_types(
     # test.event reaches every endpoint, so the test route can check any of them.
     assert await urls("test.event") == both
 
-    # Every event type except test.event can be subscribed to.
+
+def test_subscribable_event_types_are_every_type_but_test() -> None:
+    """The schema's subscribable types stay equal to WebhookEventType minus test."""
+    from src.schemas.api import WebhookSubscribableEventType
+    from src.webhooks.events import WebhookEventType
+
     subscribable: set[str] = set(get_args(WebhookSubscribableEventType))
     assert subscribable == {t.value for t in WebhookEventType} - {
         WebhookEventType.TEST.value

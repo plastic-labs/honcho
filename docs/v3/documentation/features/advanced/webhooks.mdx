@@ -70,7 +70,10 @@ curl -X POST "$HONCHO_URL/v3/workspaces/my-app/webhooks" \
   `event_types` replaces its list, `null` resets it to every type, and leaving
   the field out keeps the list it has.
 - The list can't be empty, and each entry must be an event type from
-  [Events](#events) other than `test.event`. Anything else returns `422`.
+  [Events](#events) other than `test.event`, spelled exactly as listed there:
+  names are case-sensitive. Anything else returns `422`.
+- The list is checked when an event is delivered, so a change also applies to
+  events that are already queued but not yet sent.
 - `test.event` always reaches every endpoint, whatever its list, so the test
   route can check any endpoint.
 

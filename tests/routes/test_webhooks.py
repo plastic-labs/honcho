@@ -2,9 +2,11 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
-from src.models import Peer, Workspace
+from src.models import Peer, WebhookEndpoint, Workspace
 
 
 @pytest.mark.asyncio
@@ -299,6 +301,7 @@ async def test_endpoint_without_event_types_receives_every_type(
 async def test_register_with_event_types(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
+    """Registering with event_types stores and returns the list."""
     workspace, _ = sample_data
     endpoint = _register(
         client,
@@ -334,6 +337,7 @@ async def test_register_rejects_bad_event_types(
 async def test_reregistering_sets_replaces_and_resets_event_types(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
+    """Registering a URL again replaces its list, resets it with null, or keeps it."""
     workspace, _ = sample_data
     url = "https://a.example.com/hook"
     created = _register(client, workspace.name, {"url": url})
@@ -354,3 +358,33 @@ async def test_reregistering_sets_replaces_and_resets_event_types(
     assert reset["event_types"] is None
     listed = client.get(f"/v3/workspaces/{workspace.name}/webhooks").json()["items"]
     assert len(listed) == 1 and listed[0]["event_types"] is None
+
+
+@pytest.mark.asyncio
+async def test_reregistering_updates_every_row_for_the_url(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Two rows for one URL (concurrent registrations) both take the new list."""
+    workspace, _ = sample_data
+    url = "https://dup.example.com/hook"
+    db_session.add_all(
+        [
+            WebhookEndpoint(workspace_name=workspace.name, url=url),
+            WebhookEndpoint(workspace_name=workspace.name, url=url),
+        ]
+    )
+    await db_session.commit()
+
+    _register(client, workspace.name, {"url": url, "event_types": ["queue.empty"]})
+
+    rows = (
+        await db_session.execute(
+            select(WebhookEndpoint.event_types)
+            .where(WebhookEndpoint.workspace_name == workspace.name)
+            .where(WebhookEndpoint.url == url)
+            .execution_options(populate_existing=True)
+        )
+    ).scalars()
+    assert list(rows) == [["queue.empty"], ["queue.empty"]]

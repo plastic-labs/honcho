@@ -46,21 +46,25 @@ async def get_or_create_webhook_endpoint(
     result = await db.execute(stmt)
     endpoints = result.scalars().all()
 
-    # Check if webhook already exists for this workspace
-    for endpoint in endpoints:
-        if endpoint.url == webhook.url:
-            if (
-                "event_types" in webhook.model_fields_set
-                and endpoint.event_types != webhook.event_types
-            ):
-                endpoint.event_types = (
-                    None if webhook.event_types is None else list(webhook.event_types)
-                )
+    # An existing registration of this URL. Nothing stops two concurrent
+    # registrations from creating two rows for one URL, so a change to the event
+    # types applies to every row with it, or the other would keep receiving
+    # every event.
+    existing = [endpoint for endpoint in endpoints if endpoint.url == webhook.url]
+    if existing:
+        if "event_types" in webhook.model_fields_set:
+            event_types: list[str] | None = (
+                None if webhook.event_types is None else list(webhook.event_types)
+            )
+            changed = [e for e in existing if e.event_types != event_types]
+            for endpoint in changed:
+                endpoint.event_types = event_types
+            if changed:
                 await db.commit()
                 logger.debug("Webhook endpoint event types updated: %s", webhook.url)
-            return GetOrCreateResult(
-                schemas.WebhookEndpoint.model_validate(endpoint), created=False
-            )
+        return GetOrCreateResult(
+            schemas.WebhookEndpoint.model_validate(existing[0]), created=False
+        )
 
     # No more than WORKSPACE_LIMIT webhooks per workspace
     if len(endpoints) >= settings.WEBHOOK.MAX_WORKSPACE_LIMIT:
