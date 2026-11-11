@@ -2,6 +2,7 @@
 
 from . import (
     test_0c67be41049b_drop_id_only_token_count_fallback,
+    test_0e32bf9d5a22_add_webhook_endpoint_event_types,
     test_05486ce795d5_make_session_name_required_on_messages,
     test_066e87ca5b07_align_schema_with_declarative_models,
     test_08894082221a_replace_collection_name_with_observer_,
@@ -48,6 +49,7 @@ __all__ = [
     "test_066e87ca5b07_align_schema_with_declarative_models",
     "test_08894082221a_replace_collection_name_with_observer_",
     "test_0c67be41049b_drop_id_only_token_count_fallback",
+    "test_0e32bf9d5a22_add_webhook_endpoint_event_types",
     "test_110bdf470272_rename_deriver_disabled_to_deriver_",
     "test_119a52b73c60_support_external_embeddings",
     "test_20f89a421aff_rename_metamessage_type_to_label",
