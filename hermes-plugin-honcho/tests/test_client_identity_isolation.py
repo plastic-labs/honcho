@@ -267,7 +267,7 @@ class TestCredentialIdentity:
         assert fp1 == fp_rotated, "access-token rotation must not change identity"
         assert fp1 != fp2, "re-auth must change identity"
 
-    def test_timeout_change_rebuilds_via_key(self, tmp_path, fake_honcho):
+    def test_timeout_change_rebuilds_via_key(self, tmp_path, fake_honcho, monkeypatch):
         """The old singleton had an explicit timeout-staleness check; with
         timeout in the key, a change produces a new identity + eviction."""
         home = _make_profile(tmp_path, "profiles/a", "w", "k")
@@ -276,9 +276,7 @@ class TestCredentialIdentity:
             cfg1 = HonchoClientConfig.from_global_config()
             c1 = get_honcho_client(cfg1)
 
-            raw = json.loads((home / "honcho.json").read_text())
-            raw["hosts"]["hermes"]["timeout"] = 77
-            (home / "honcho.json").write_text(json.dumps(raw))
+            monkeypatch.setenv("HONCHO_TIMEOUT", "77")
             cfg2 = HonchoClientConfig.from_global_config()
             c2 = get_honcho_client(cfg2)
         finally:

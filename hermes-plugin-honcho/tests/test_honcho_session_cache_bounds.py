@@ -2,7 +2,7 @@
 
 Covers the fix for unbounded RSS growth in long-running gateways: prior to
 this, ``HonchoSession.messages`` grew forever (never trimmed after a sync),
-and ``HonchoSessionManager``'s ``_cache``/``_sessions_cache``/``_context_cache``
+and ``HonchoSessionManager``'s ``_cache``/``_sessions_cache``
 had no eviction path short of an explicit ``/new`` reset.
 """
 
@@ -11,7 +11,6 @@ import time
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
-import pytest
 
 from hermes_plugin_honcho.session import (
     HonchoSession,
@@ -33,20 +32,7 @@ def _session(key="k", honcho_session_id=None):
 
 
 def _manager():
-    cfg = SimpleNamespace(
-        write_frequency="turn",
-        dialectic_reasoning_level="low",
-        dialectic_dynamic=True,
-        dialectic_max_chars=600,
-        observation_mode="directional",
-        user_observe_me=True,
-        user_observe_others=True,
-        ai_observe_me=True,
-        ai_observe_others=True,
-        message_max_chars=25000,
-        dialectic_max_input_chars=10000,
-    )
-    return HonchoSessionManager(honcho=SimpleNamespace(), config=cfg)
+    return HonchoSessionManager(honcho=SimpleNamespace(), config=SimpleNamespace())
 
 
 def test_trim_synced_messages_caps_total_length():
@@ -99,14 +85,12 @@ def test_sweep_idle_sessions_evicts_stale_entries_across_all_caches():
 
     mgr._cache = {"stale": stale, "fresh": fresh}
     mgr._sessions_cache = {"hs-stale": object(), "hs-fresh": object()}
-    mgr._context_cache = {"stale": {"x": 1}, "fresh": {"x": 1}}
 
     evicted = mgr._sweep_idle_sessions_locked()
 
     assert evicted == 1
     assert set(mgr._cache) == {"fresh"}
     assert set(mgr._sessions_cache) == {"hs-fresh"}
-    assert set(mgr._context_cache) == {"fresh"}
 
 
 def test_sweep_idle_sessions_keeps_fresh_entries():
@@ -114,7 +98,6 @@ def test_sweep_idle_sessions_keeps_fresh_entries():
     fresh = _session(key="fresh")
     mgr._cache = {"fresh": fresh}
     mgr._sessions_cache = {fresh.honcho_session_id: object()}
-    mgr._context_cache = {"fresh": {}}
 
     evicted = mgr._sweep_idle_sessions_locked()
 
@@ -175,8 +158,6 @@ def _fill_sessions(mgr, count, unsynced_keys=()):
             session.add_message("user", "pending", _synced=False)
         mgr._cache[key] = session
         mgr._sessions_cache[session.honcho_session_id] = object()
-        mgr._session_observation[session.honcho_session_id] = {"ai_observe_others": False}
-        mgr._context_cache[key] = {"representation": "r"}
 
 
 def test_size_cap_evicts_least_recently_used_sessions_with_their_entries():
@@ -191,9 +172,7 @@ def test_size_cap_evicts_least_recently_used_sessions_with_their_entries():
     assert "k2" in mgr._cache
     for gone in ("k0", "k1"):
         assert f"hs-{gone}" not in mgr._sessions_cache
-        assert f"hs-{gone}" not in mgr._session_observation
-        assert gone not in mgr._context_cache
-    assert "hs-k2" in mgr._sessions_cache and "hs-k2" in mgr._session_observation
+    assert "hs-k2" in mgr._sessions_cache
 
 
 def test_size_cap_never_evicts_a_session_with_unsynced_messages():
@@ -263,38 +242,6 @@ def test_sdk_object_hit_moves_the_key_to_the_recent_end():
     assert list(mgr._peers_cache) == ["b", "a"]
 
 
-def test_get_or_create_stores_observation_flags_with_the_entry_and_eviction_drops_them():
-    mgr = _manager()
-    mgr._config.ai_peer = "hermes"
-    mgr._config.peer_name = "operator"  # unnamed peers now fail closed instead of minting a fallback
-    flags = {"user_observe_me": True, "user_observe_others": True, "ai_observe_me": True, "ai_observe_others": False}
-    mgr._get_or_create_peer = lambda peer_id: object()
-    mgr._get_or_create_honcho_session = lambda sid, user, assistant: (object(), [], dict(flags))
-
-    session = mgr.get_or_create("cli:one")
-
-    assert mgr._session_observation[session.honcho_session_id] == flags
-    assert mgr._ai_observes_others(session) is False
-    with mgr._cache_lock:
-        mgr._evict_session_locked("cli:one", session)
-    assert session.honcho_session_id not in mgr._session_observation
-
-
-def test_cap_enforcement_drops_observation_flags_a_post_eviction_flush_stored():
-    """A flush that rebuilds an evicted session's SDK session stores its flags again; the next cap pass
-    must prune that orphan like every other per-session entry, or the dict grows one entry per evicted-then-
-    flushed session."""
-    mgr = _manager()
-    live = _session(key="live")
-    mgr._cache = {"live": live}
-    mgr._session_observation = {live.honcho_session_id: {"ai_observe_others": True}, "hs-gone": {"ai_observe_others": False}}
-
-    with mgr._cache_lock:
-        mgr._enforce_cache_caps_locked()
-
-    assert set(mgr._session_observation) == {live.honcho_session_id}
-
-
 def test_flush_does_not_resurrect_an_evicted_session():
     mgr = _manager()
     session = _session(key="gone")
@@ -312,56 +259,12 @@ def _sdk_session():
     return SimpleNamespace(add_messages=lambda messages: None)
 
 
-def test_flush_that_recreates_the_sdk_session_stores_its_observation_flags():
-    """After an eviction the flush path rebuilds the SDK session. The flags it configured must be kept."""
+def test_cached_sdk_session_is_returned_without_setup():
     mgr = _manager()
-    session = _session(key="back")
-    session.add_message("user", "hello", _synced=False)
-    flags = {"user_observe_me": False, "user_observe_others": True, "ai_observe_me": True, "ai_observe_others": False}
-    mgr._get_or_create_peer = lambda peer_id: SimpleNamespace(message=lambda content: content)
-    mgr._get_or_create_honcho_session = lambda sid, user, assistant: (_sdk_session(), [], flags)
-
-    assert mgr._flush_session(session) is True
-    assert mgr._session_observation[session.honcho_session_id] == flags
-
-
-def test_cached_sdk_session_returns_the_flags_stored_for_it():
-    mgr = _manager()
-    flags = {"user_observe_me": True, "user_observe_others": False, "ai_observe_me": True, "ai_observe_others": True}
     sdk = _sdk_session()
     mgr._sessions_cache["hs-x"] = sdk
-    mgr._session_observation["hs-x"] = flags
 
-    assert mgr._get_or_create_honcho_session("hs-x", None, None) == (sdk, [], flags)
-
-
-@pytest.mark.parametrize("synced, kept", [(False, True), (True, False)])
-def test_deferred_save_keeps_an_evicted_session_only_while_it_holds_unsynced_messages(synced, kept):
-    """write_frequency "session" defers to flush_all(), which only sees cached sessions."""
-    mgr = _manager()
-    mgr._write_frequency = "session"
-    session = _session(key="evicted")
-    session.add_message("user", "pending", _synced=synced)
-
-    mgr.save(session)
-
-    assert (mgr._cache.get("evicted") is session) is kept
-
-
-def test_deferred_save_flushes_inline_when_a_newer_object_owns_the_key():
-    mgr = _manager()
-    mgr._write_frequency = "session"
-    newer = _session(key="k")
-    mgr._cache["k"] = newer
-    stale = _session(key="k")
-    stale.add_message("user", "late", _synced=False)
-    flushed = []
-    mgr._flush_session = lambda s: flushed.append(s) or True
-
-    mgr.save(stale)
-
-    assert flushed == [stale]
-    assert mgr._cache["k"] is newer
+    assert mgr._get_or_create_honcho_session("hs-x", None, None) is sdk
 
 
 def _failing_then_recording_uploads(mgr, session):
@@ -381,9 +284,10 @@ def _failing_then_recording_uploads(mgr, session):
 
 
 def test_failed_turn_save_after_an_eviction_is_retried_by_flush_all():
-    """A clean session can be evicted while its caller still holds it. The caller's next save flushes inline in
-    turn mode, and a failed upload used to leave that object nowhere flush_all() could find it."""
+    """A clean session can be evicted while its caller still holds it. A save once shutdown began flushes inline,
+    and a failed upload used to leave that object nowhere flush_all() could find it."""
     mgr = _manager()
+    mgr._shutting_down = True
     session = _session(key="k")
     mgr._cache["k"] = session
     with mgr._cache_lock:
@@ -402,7 +306,7 @@ def test_failed_turn_save_after_an_eviction_is_retried_by_flush_all():
 
 def test_failed_collision_flush_waits_for_flush_all_without_displacing_the_newer_object():
     mgr = _manager()
-    mgr._write_frequency = "session"
+    mgr._shutting_down = True
     newer = _session(key="k")
     mgr._cache["k"] = newer
     stale = _session(key="k")
@@ -422,6 +326,7 @@ def test_failed_collision_flush_waits_for_flush_all_without_displacing_the_newer
 
 def test_a_retained_session_is_listed_once_across_repeated_failures():
     mgr = _manager()
+    mgr._shutting_down = True
     mgr._cache["k"] = _session(key="k")
     stale = _session(key="k")
     stale.add_message("user", "late")

@@ -1,12 +1,13 @@
 # Honcho Memory Provider
 
-AI-native cross-session user modeling with multi-pass dialectic reasoning, session summaries, bidirectional peer tools, and persistent conclusions.
+AI-native cross-session user modeling: one Honcho session per chat, the user's peer card at the start of each session, Honcho's answer about the user on each turn, and tools to ask, search and save.
 
 > **Honcho docs:** <https://docs.honcho.dev/v3/guides/integrations/hermes>
 
 ## Requirements
 
-- `pip install honcho-ai`
+- `honcho-ai` 2.5 or later (installed with the plugin)
+- A Honcho server with scopes and workspace chat (Honcho Cloud, or self-hosted v3.1.0+)
 - A Honcho Cloud account — connect via OAuth sign-in or an API key from
   [app.honcho.dev](https://app.honcho.dev) — or a self-hosted instance
 
@@ -35,150 +36,71 @@ echo "HONCHO_API_KEY=***" >> ~/.hermes/.env
 > memory provider — the `honcho` subcommand is registered for the active
 > provider only. On a fresh install, use `hermes memory setup honcho`.
 
-## Architecture Overview
+## How It Works
 
-### Two-Layer Context Injection
+The behaviour below is fixed: none of it has a setting.
 
-Context is injected into the **user message** at API-call time (not the system prompt) to preserve prompt caching. Only a static mode header goes in the system prompt. The injected block is wrapped in `<memory-context>` fences with a system note clarifying it's background data, not new user input.
+### One Session per Chat, with Scopes
 
-Two independent layers, each on its own cadence:
+Each Hermes chat is one Honcho session. A chat the gateway routes (a Telegram or Discord chat or thread, and a Desktop or TUI chat it carries) uses the gateway's session key, which stays put across `/new`, compression and restarts. Any other chat uses the Hermes session id: `/new`, `/resume` and `/branch` start another Honcho session, while compression and `/undo` continue the current one. Ids longer than Honcho's 100-character limit are cut with a hash suffix.
 
-**Layer 1 — Base context** (refreshed every `contextCadence` turns):
+A new session joins two Honcho scopes: its git repository and this machine's short hostname. The repository comes from the chat's working directory (`git rev-parse --git-common-dir`, so every worktree of a repo shares one scope; the directory name outside git). A messaging chat runs wherever the gateway started, so it joins the machine scope only. Scopes are sent only to a session that has no messages yet: sending them to one that has queues a copy of its memory into each scope again.
 
-1. **SESSION SUMMARY** — from `session.context(summary=True)`, placed first
-2. **User Representation** — Honcho's evolving model of the user
-3. **User Peer Card** — key facts snapshot
-4. **AI Self-Representation** — Honcho's model of the AI peer
-5. **AI Identity Card** — AI peer facts
+### What Gets Saved
 
-**Layer 2 — Dialectic supplement** (fired every `dialecticCadence` turns):
-Multi-pass `.chat()` reasoning about the user, appended after base context.
+Every user and assistant message, through a background writer. A message longer than Honcho's 25,000-character limit is split at paragraph, sentence or word boundaries, each later part marked `[continued]`; nothing is truncated. Skipped: cron and flush runs, heartbeat prompts, and the gateway's own notifications and harness turns (delegation results, compaction summaries, group-chat and discussion harnesses). Hermes itself handles slash commands without a turn.
 
-Both layers are joined, then truncated to fit `contextTokens` budget via `_truncate_to_budget` (tokens × 4 chars, word-boundary safe).
+### What Gets Injected
 
-### Current-Query Recall (opt-in)
+- **At session start**, the system prompt gets the memory directives (recall with `honcho_chat`, which scopes this chat is in, save insights with `honcho_conclude`) and the user's peer card. Hermes builds the prompt once per session and reuses it for a continuing one.
+- **On each turn**, Honcho's chat answer about the user, asked in the background after the previous turn and added to the user message in a `<memory-context>` fence. The first turn waits up to 3 seconds for the session to start and 2 more for that answer; later turns never wait. Until an answer lands the question is who the user is, then what about them matters to this conversation. The reasoning level is `low`, raised one step for a message of 120+ characters and two for 400+, at most `high`; the answer is cut at 600 characters. Short or trivial messages (`ok`, `thanks`, `/help`) start nothing, and a run of empty answers widens the gap between questions, up to 8 turns.
 
-Set `"recallSync": true` in `$HERMES_HOME/honcho.json` (at the root or under
-`hosts.hermes`), or enable **Current-query recall** in the memory settings or
-`hermes honcho setup`. An explicit host-level `false` overrides root-level `true`.
+No other context is injected: no `context()` call, session summary or representation.
 
-In `context` and `hybrid` modes, due base and dialectic retrievals use the current
-user request before inference. The whole wait, including session initialization,
-optional query rewriting and dialectic passes, uses `timeout` / `requestTimeout`
-seconds, or 5 seconds when unset, zero, negative or nonfinite. The first-turn wait
-settings continue to apply only to the default asynchronous mode.
+### Perspective
 
-Timeouts, errors, busy workers and cadence gaps omit recall instead of reusing
-another query's context. A timed-out worker keeps its slot until it exits; its
-late result is discarded. Base and dialectic retain independent cadences and
-reasoning/depth settings. A completed empty lookup consumes its cadence; failed,
-timed-out or superseded operations do not advance either cadence. Empty dialectic
-results also increase the existing backoff. No previous-query cache or generic
-user-representation/card fallback is substituted for an empty query-scoped lookup.
-Session changes, shutdown, and new turn generations discard in-flight results,
-even when turn numbers repeat. The wait deadline does not cancel an SDK HTTP call;
-the occupied worker slot bounds accumulation until that call returns.
-`injectionFrequency: "first-turn"` suppresses only later
-base retrievals. Every dialectic pass includes the current request, including when
-rewriting is disabled or empty. Generic prewarm and post-turn automatic retrieval
-are disabled; message writes continue normally. `tools` mode is unchanged.
-
-The default is `false`, preserving background recall and cache reuse across turns.
-
-### Latest-Message Query Rewrite (opt-in)
-
-When `queryRewrite: true`, dialectic pass 0 first uses the shared
-`memory_query_rewrite` auxiliary task to turn the latest message into one
-concise memory-retrieval question. The rewritten question is used for the
-dialectic request; base-context retrieval still uses the raw message as its
-search query. If rewriting times out or returns an invalid result, the plugin
-falls back to the existing cold/warm prompt below. With the flag on, the
-generic dialectic prewarm is skipped so it cannot shadow the first user
-message.
-
-**Off by default** — the rewrite adds one auxiliary-model call per dialectic
-cycle (not per pass). Select a fast, inexpensive model under `hermes model`
--> auxiliary models -> **Memory query rewrite**; its request timeout is
-`auxiliary.memory_query_rewrite.timeout` in config.yaml (default 8s). The
-task and module (`plugins/memory/query_rewrite.py`) are provider-agnostic —
-any memory provider can reuse them. `dialecticCadence` still controls how
-often the cycle runs.
-
-### Cold Start vs Warm Session Prompts
-
-When latest-message rewriting is unavailable, dialectic pass 0 automatically
-selects its fallback prompt based on session state:
-
-- **Cold** (no base context cached): "Who is this person? What are their preferences, goals, and working style? Focus on facts that would help an AI assistant be immediately useful."
-- **Warm** (base context exists): "Given what's been discussed in this session so far, what context about this user is most relevant to the current conversation? Prioritize active context over biographical facts."
-
-Not configurable — determined automatically.
-
-### Dialectic Depth (Multi-Pass Reasoning)
-
-`dialecticDepth` (1–3, clamped) controls how many `.chat()` calls fire per dialectic cycle:
-
-| Depth | Passes | Behavior |
-|-------|--------|----------|
-| 1 | single `.chat()` | Base query only (cold or warm prompt) |
-| 2 | audit + synthesis | Pass 0 result is self-audited; pass 1 does targeted synthesis. Conditional bail-out if pass 0 returns strong signal (>300 chars or structured with bullets/sections >100 chars) |
-| 3 | audit + synthesis + reconciliation | Pass 2 reconciles contradictions across prior passes into a final synthesis |
-
-### Proportional Reasoning Levels
-
-When `dialecticDepthLevels` is not set, each pass uses a proportional level relative to `dialecticReasoningLevel` (the "base"):
-
-| Depth | Pass levels |
-|-------|-------------|
-| 1 | [base] |
-| 2 | [minimal, base] |
-| 3 | [minimal, base, low] |
-
-Override with `dialecticDepthLevels`: an explicit array of reasoning level strings per pass.
-
-### Query-Adaptive Reasoning Level
-
-The auto-injected dialectic scales `dialecticReasoningLevel` by query length: +1 level at ≥120 chars, +2 at ≥400, clamped at `reasoningLevelCap` (default `"high"`). Disable with `reasoningHeuristic: false` to pin every auto call to `dialecticReasoningLevel`.
-
-### Three Orthogonal Dialectic Knobs
-
-| Knob | Controls | Type |
-|------|----------|------|
-| `dialecticCadence` | How often — minimum turns between dialectic firings | int |
-| `dialecticDepth` | How many — passes per firing (1–3) | int |
-| `dialecticReasoningLevel` | How hard — reasoning ceiling per `.chat()` call | string |
-
-### Input Sanitization
-
-`run_conversation` strips leaked `<memory-context>` blocks from user input before processing. When `saveMessages` persists a turn that included injected context, the block can reappear in subsequent turns via message history. The sanitizer removes `<memory-context>` blocks plus associated system notes.
+Every peer in a session observes itself and nobody else, so each peer's memory is its own view. Reads (the injection, `honcho_chat`, `honcho_profile`, conclusions) use the user's own view of themselves. A session that existed before this release gets these flags set when the plugin first opens it.
 
 ## Tools
 
-Five bidirectional tools. All accept an optional `peer` parameter (`"user"` or `"ai"`, default `"user"`).
-
 | Tool | LLM call? | Description |
 |------|-----------|-------------|
-| `honcho_profile` | No | Peer card — key facts snapshot |
+| `honcho_chat` | Yes | Ask Honcho about the user. `scope` limits the answer to one or more scopes' sessions; `workspace: true` asks across everyone in the workspace; `reasoning_level` defaults to `medium` |
 | `honcho_search` | No | Cross-session message search (hybrid semantic + keyword, ranked excerpts; 800 tok default, 2000 max) |
-| `honcho_context` | No | Full session context: summary, representation, card, messages |
-| `honcho_reasoning` | Yes | LLM-synthesized answer via dialectic `.chat()` |
-| `honcho_conclude` | No | Write, list/search, or delete persistent conclusions (list surfaces the ids delete needs) |
+| `honcho_profile` | No | Read or replace a peer card |
+| `honcho_conclude` | No | Write, list/search, or delete conclusions. Listing returns what Honcho derived, not the facts stated outright |
 
-Tool visibility depends on `recallMode`: hidden in `context` mode, always present in `tools` and `hybrid`.
+`honcho_search`, `honcho_profile` and `honcho_conclude` take an optional `peer` (`"user"` by default, `"ai"`, or a peer id). During a bot-authored turn the write tools refuse, because conclusions and cards describe the human.
 
 ## Config Resolution
 
-Config is read from the first file that exists:
+Each Hermes profile keeps its Honcho settings in its own file, `$HERMES_HOME/honcho.json`
+(`~/.hermes/honcho.json` for the default profile, `~/.hermes/profiles/<name>/honcho.json` for a named
+one), and in that file in one block: `hosts.<host>`. The host key is derived from the active profile:
+`hermes` (default) or `hermes_<profile>`.
 
-| Priority | Path | Scope |
-|----------|------|-------|
-| 1 | `$HERMES_HOME/honcho.json` | Profile-local (isolated Hermes instances) |
-| 2 | `~/.hermes/honcho.json` | Default profile (shared host blocks) |
-| 3 | `~/.honcho/config.json` | Global (cross-app interop) |
+The block is all the plugin reads: never the file's top level, another host's block or another file.
+For every key, resolution order is: **host block > env var > default**.
 
-Host key is derived from the active Hermes profile: `hermes` (default) or `hermes_<profile>`.
+**Migrating from 1.1.0.** Earlier releases read the first of `$HERMES_HOME/honcho.json`,
+`~/.hermes/honcho.json` and `~/.honcho/config.json` that existed, and in it each key from the host
+block if set there, else from the file's top level. The first time a profile starts (or saves a setting)
+on this release, the plugin writes exactly what that profile resolved into its own host block, top-level
+values and settings from another file included, and marks the block `"schemaVersion": 2`. Until then it
+reads the same view, so the profile's connection and identity don't change. After it, edits to the top
+level, to another profile's block or to `~/.honcho/config.json` no longer reach the profile. Three
+spellings fold into `baseUrl` on the way: `base_url`, a top-level `endpoint.baseUrl`, and
+`"environment": "local"` (`http://localhost:8000`). The settings this release fixes (sessions, recall,
+injection, observation, capture, timeouts: `sessionStrategy`, `recallMode`, `dialectic*`,
+`observationMode`, `saveMessages`, `writeFrequency`, `timeout` and the rest) are removed from the block.
 
-For every key, resolution order is: **host block > root > env var > default**.
+**Credentials.** A key belongs to the server it was saved for: changing `baseUrl` without entering a new
+key drops the old one. Signing in (OAuth or device code) makes the grant the credential and Honcho cloud
+the server, so any `baseUrl` goes. While signed in, the access token holds the `apiKey` slot, and an API
+key entered in the settings panel is ignored until you switch to one in `hermes honcho setup`.
+
+Writes take a lock beside the file (`honcho.json.lock`, the same lock `@honcho-ai/harness-plugin-core`
+takes) and replace the file atomically, mode `0600`.
 
 ## Full Configuration Reference
 
@@ -188,8 +110,7 @@ For every key, resolution order is: **host block > root > env var > default**.
 |-----|------|---------|-------------|
 | `apiKey` | string | — | API key. Falls back to `HONCHO_API_KEY` env var. When connected via OAuth, holds the auto-refreshing access token instead |
 | `oauth` | object | — | OAuth grant (refresh token, expiry, client, token endpoint). Written by the Connect/sign-in flows and rotated automatically — not hand-edited. Optional: an API key alone works without it |
-| `baseUrl` | string | — | Base URL for self-hosted Honcho. Local URLs auto-skip API key auth |
-| `environment` | string | `"production"` | SDK environment mapping |
+| `baseUrl` | string | — | Base URL for self-hosted Honcho; unset means Honcho cloud. Local URLs auto-skip API key auth |
 | `enabled` | bool | auto | Master toggle. Auto-enables when `apiKey` or `baseUrl` present |
 | `workspace` | string | host key | Honcho workspace ID. Shared environment — all profiles in the same workspace can see the same user identity and related memories |
 | `peerName` | string | — | User peer identity |
@@ -235,7 +156,7 @@ Step 8 used to derive a peer from the session key (`user-default-<dir>`). That p
 
 **Why no `pinAiPeer`?** The AI peer is already pinned by construction — `aiPeer` is the only AI-side identity setting and the resolver never overrides it. Only the user-side peer has the runtime-vs-config tension that `pinUserPeer` resolves.
 
-**Host vs root semantics.** All three keys are accepted at both root and `hosts.<host>` levels. Host-level wins. For maps and prefixes, host-level *replaces* the root value as a whole (not merge), so a host can intentionally own its identity universe or wipe it with `userPeerAliases: {}` / `runtimePeerPrefix: ""`.
+**Per profile.** All three keys live in the profile's host block, like every other setting; a value 1.1.0 read from the top level was copied into each profile's block once (see [Config Resolution](#config-resolution)).
 
 **Setup — gateway identity tree.** `hermes honcho setup` only asks about identity mapping when it detects a connected gateway platform (it inspects the gateway config; off-gateway the step is skipped because these keys do nothing without a runtime user ID). When it runs, it asks *who talks to this gateway?* and derives the keys:
 
@@ -249,171 +170,69 @@ Pick **[e]** at the prompt to set the three keys directly instead of going throu
 
 Mapping targets are picked from the workspace list (`p3`) rather than typed, so a typo cannot silently create a fresh peer; typing a name stays available for the deliberate new-peer case, and `-` clears an alias. Every assignment states its consequence: aliases move future messages only, and a runtime peer left behind keeps its history. `p<N>` alone peeks at a peer's card. `w` lists every workspace the key can reach — the wrong-workspace fallback when the peers shown aren't yours — and lets you browse one and, on explicit confirmation, repoint the profile's `workspace` at it. For a standalone workspace browser beyond mapping, [honcho-cli](https://pypi.org/project/honcho-cli/) is an optional companion (`uv tool install honcho-cli`).
 
-With multiple profiles: saving a root-cascading map asks whether the edit applies to all profiles (root) or forks this profile's host block; a root write with profiles on other workspaces warns that picked peers may not exist there; and the accounts table marks siblings that resolve the same account to a different peer (`≠ dreamer→bob`). Offline, the command degrades to typed targets over the local account list. `hermes honcho peers` without `map` stays a read-only view.
+With multiple profiles, the accounts table marks siblings that resolve the same account to a different peer (`≠ dreamer→bob`); a save changes this profile's block only. Offline, the command degrades to typed targets over the local account list. `hermes honcho peers` without `map` stays a read-only view.
 
 **Un-pinning (single → per-user).** Flipping `pinUserPeer` from `true` to `false` does not migrate data. Memory accumulated under `peerName` while pinned stays there; runtime users now resolve to fresh, empty peers. To preserve your own continuity, choose the **pooled** path — alias your runtime IDs back to `peerName` so your turns keep landing on the pooled history while other users get their own peers. The wizard offers this steer automatically when it detects you're un-pinning a previously pinned profile.
 
-### Memory & Recall
+### Bot DMs (`a2aSessions`)
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `recallMode` | string | `"hybrid"` | `"hybrid"` (auto-inject + tools), `"context"` (auto-inject only, tools hidden), `"tools"` (tools only, no injection). Legacy `"auto"` → `"hybrid"` |
-| `recallSync` | boolean | `false` | Wait for current-query automatic recall within `timeout` / `requestTimeout` (5s when unset or invalid); omit late/busy results. Context/hybrid only |
-| `observationMode` | string | `"directional"` | Preset: `"directional"` (all on) or `"unified"` (user observes self, AI observes others). Use `observation` object for granular control |
-| `observation` | object | — | Per-peer observation config (see Observation section) |
-
-### Write Behavior
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `writeFrequency` | string/int | `"async"` | `"async"` (background), `"turn"` (sync per turn), `"session"` (batch on end), or integer N (every N turns) |
-| `saveMessages` | bool | `true` | Persist messages to Honcho API. When `false`, all automatic writes are skipped — raw turns (`sync_turn`), conclusion mirroring (`on_memory_write`), and session-end/shutdown flushes — while read and tools paths stay fully functional. |
-
-### Session Resolution
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `sessionStrategy` | string | `"per-directory"` | `"per-directory"`, `"per-session"`, `"per-repo"` (git root), `"global"` |
 | `a2aSessions` | bool | `true` | Write DMs from other bots into their own session per sender bot. `false` skips bot-authored turns |
-| `sessionPeerPrefix` | bool | `false` | Prepend the user peer name to session keys |
-| `sessionAiPeerPrefix` | bool | `false` | Prepend the AI peer (`aiPeer`) to session keys — keeps sessions disjoint when multiple AI peers share a workspace |
-| `sessions` | object | `{}` | Manual directory-to-session-name mappings |
-
-#### Session Name Resolution
-
-The Honcho session name determines which conversation bucket memory lands in. Resolution follows a priority chain — first match wins:
-
-| Priority | Source | Example session name |
-|----------|--------|---------------------|
-| 1 | Messaging-platform gateway session key (Telegram, Discord, etc.) | `"agent-main-telegram-dm-8439114563"` |
-| 2 | `per-session` strategy | Hermes session ID (`20260415_a3f2b1`) |
-| 3 | Manual map (`sessions` config) | `"myproject-main"` |
-| 4 | Explicit `/title` command (non-automatic title) | `"refactor-auth"` |
-| 5 | `per-repo` strategy | Git root directory name (`hermes-agent`) |
-| 6 | `per-directory` strategy | Directory basename (`my-project`) |
-| 7 | `global` strategy | Workspace name |
-
-Messaging gateway platforms always resolve via priority 1 (per-chat isolation) regardless of `sessionStrategy`: every Telegram or Discord chat shares the gateway's launch directory, so no directory strategy could tell them apart. The strategy setting controls Hermes' own surfaces (CLI, TUI, Desktop, ACP). Those chats now run inside the gateway runtime too and carry a `local` session key (`agent:main:local:dm:local-<sha>`), but each has its own frozen workspace, so that key is skipped and priorities 2 to 7 apply as before. A `per-session` strategy still gives each of them its own Honcho session through priority 2.
-
-Directory strategies and manual mappings use the logical session workspace, not the backend process's launch directory. Desktop/TUI and ACP pass the workspace during agent construction; deferred Desktop/TUI builds use the same session cwd. With no non-empty construction cwd, Honcho uses the runtime resolver: session cwd context, scoped `terminal.cwd`, then the launch directory. No process-wide `chdir` is needed.
-
-Automatically generated Hermes titles (`derived` or `llm`) are display metadata and do not override `sessionStrategy`. An explicit user title remains an intentional session-name override for non-gateway, non-`per-session` sessions.
-
-Sessions created before title provenance was recorded retain legacy behavior: because an old automatic title cannot be distinguished from an old user title, a title with no source is treated as an explicit override.
-
-If `sessionPeerPrefix` is `true`, the user peer name is prepended: `alice-hermes-agent`.
-
-If `sessionAiPeerPrefix` is `true`, the AI peer (`aiPeer`) is prepended to the final name on **every** path — including priority 3. This is the symmetric counterpart to `sessionPeerPrefix` and exists because the gateway session key is AI-peer-agnostic: when several AI peers share one workspace, peer name, and gateway chat key, they would otherwise collide on a single session. With `aiPeer: ivy`, priority 3 becomes `ivy-agent-main-telegram-dm-8439114563`.
-
-#### Bot DMs (`a2aSessions`)
 
 In bot mode another Hermes profile can DM this agent. The relay marks that turn with author `bot:<profile>`. A gateway platform marks a bot sender with its platform user id and a bot flag. Either way the turn never reaches the human's session. With `a2aSessions: true` (default) the turn is written into `<session>:a2a:<this agent's aiPeer>:<sanitized sender id>-<8-char digest>`: the sender's message under the sender's peer, the reply under this agent's `aiPeer`. The `aiPeer` segment keeps two profiles that share a `workspace` and a session key from writing one sender's DMs into one session. A `bot:` sender is identified by its full id, `bot:<profile>` for a profile on this machine or `bot:<connection>/<profile>` for one relayed through a Desktop connection. Its peer is the `userPeerAliases` entry for that full id if one exists, else the id after `bot:` sanitized, with no `runtimePeerPrefix`. When sanitizing changed the id, or the result equals `peerName` or an alias target, a digest suffix is added the same way `runtimePeerPrefix` users get one, so a bot never lands on the operator's peer and two connections' `coder` stay apart. A platform bot resolves like any other runtime user: alias, then prefix. `pinUserPeer` never collapses a bot onto `peerName`. A bot whose peer would equal this agent's `aiPeer` is skipped, and so is every bot turn when `a2aSessions: false`. During a bot-authored turn `honcho_conclude` and `honcho_profile` refuse writes, because conclusions and cards describe the human. Recall still reads the human's session only.
 
-#### What each strategy produces
-
-- **`per-directory`** — basename of the logical session working directory. Opening Hermes in `~/code/myapp` and `~/code/other` gives two separate sessions. Same directory = same session across runs.
-- **`per-repo`** — git root directory name. All subdirectories within a repo share one session. Falls back to `per-directory` if not inside a git repo.
-- **`per-session`** — Hermes session ID (timestamp + hex). Every `hermes` invocation starts a fresh Honcho session. Falls back to `per-directory` if no session ID is available.
-- **`global`** — workspace name. One session for everything. Memory accumulates across all directories and runs.
-
 ### Multi-Profile Pattern
 
-Multiple Hermes profiles can share one workspace while maintaining separate AI identities. Config resolution is **host block > root > env var > default** — host blocks inherit from root, so shared settings only need to be declared once:
+Multiple Hermes profiles can share one workspace while maintaining separate AI identities. Each profile has its own `honcho.json` with its own host block, so a shared setting (the key, workspace, peer name) is set in each block. `~/.hermes/honcho.json` (default profile):
 
 ```json
 {
-  "apiKey": "***",
-  "workspace": "hermes",
-  "peerName": "yourname",
   "hosts": {
     "hermes": {
+      "apiKey": "***",
+      "workspace": "hermes",
+      "peerName": "yourname",
       "aiPeer": "hermes",
-      "recallMode": "hybrid",
-      "sessionStrategy": "per-directory"
-    },
-    "hermes_coder": {
-      "aiPeer": "coder",
-      "recallMode": "tools",
-      "sessionStrategy": "per-repo"
+      "schemaVersion": 2
     }
   }
 }
 ```
 
-Both profiles see the same user (`yourname`) in the same shared environment (`hermes`), but each AI peer builds its own observations, conclusions, and behavior patterns. The coder's memory stays code-oriented; the main agent's stays broad.
-
-Host key is derived from the active Hermes profile: `hermes` (default) or `hermes_<profile>` (e.g. `hermes -p coder` -> host key `hermes_coder`). Older `hermes.<profile>` host blocks are still read for compatibility and are migrated when the CLI writes profile-scoped Honcho config.
-
-The plugin keeps host blocks in step with Hermes profiles:
-
-- **Create:** a new profile whose config selects Honcho (for example `hermes profile create coder --clone`) gets a `hermes_coder` block cloned from the default block, with `aiPeer: coder`.
-- **Rename:** `hermes profile rename coder writer` re-keys `hermes_coder` to `hermes_writer` and keeps `aiPeer: coder`, so the peer and its memory carry over.
-- **Imported profiles**, and profiles created before Honcho was set up, get no block automatically. Run `hermes honcho sync` to create one for each.
-
-On current Hermes the plugin does this itself and also backs the Honcho settings panel in Desktop and the dashboard. On older Hermes, Hermes core does the same work.
-
-### Dialectic & Reasoning
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `dialecticDepth` | int | `1` | Passes per dialectic cycle (1–3, clamped). 1=single query, 2=audit+synthesis, 3=audit+synthesis+reconciliation |
-| `dialecticDepthLevels` | array | — | Optional array of reasoning level strings per pass. Overrides proportional defaults. Example: `["minimal", "low", "medium"]` |
-| `dialecticReasoningLevel` | string | `"low"` | Base reasoning level for `.chat()`: `"minimal"`, `"low"`, `"medium"`, `"high"`, `"max"` |
-| `dialecticDynamic` | bool | `true` | When `true`, model can override reasoning level per-call via `honcho_reasoning` tool. When `false`, always uses `dialecticReasoningLevel` |
-| `dialecticMaxChars` | int | `600` | Max chars of the auto-injected dialectic supplement. Applies only to auto-injection — explicit `honcho_reasoning` tool results return in full |
-| `dialecticMaxInputChars` | int | `10000` | Max chars for dialectic query input to `.chat()`. Honcho cloud limit: 10k |
-| `reasoningHeuristic` | bool | `true` | Query-adaptive: auto-scale the auto-injected dialectic's level up by query length (+1 at ≥120 chars, +2 at ≥400), clamped at `reasoningLevelCap`. `false` pins every auto call to `dialecticReasoningLevel` |
-| `reasoningLevelCap` | string | `"high"` | Ceiling for `reasoningHeuristic` scaling: `"minimal"`, `"low"`, `"medium"`, `"high"`, `"max"` |
-
-### Token Budgets
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `contextTokens` | int | SDK default | Token budget for `context()` API calls. Also gates prefetch truncation (tokens × 4 chars) |
-| `messageMaxChars` | int | `25000` | Max chars per message sent via `add_messages()`. Exceeding this triggers chunking with `[continued]` markers. Honcho cloud limit: 25k |
-
-### Cadence (Cost Control)
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `contextCadence` | int | `1` | Minimum turns between base context refreshes (session summary + representation + card) |
-| `dialecticCadence` | int | `1` | Minimum turns between dialectic `.chat()` firings |
-| `injectionFrequency` | string | `"every-turn"` | `"every-turn"` or `"first-turn"` (inject base context on the first user message only; the dialectic supplement keeps its own cadence) |
-| `injection.sessionStart` | list | unset | Which base-context sections to inject: any of `summary`, `peerRepresentation`, `peerCard`, `aiRepresentation`, `aiCard`. Unset injects all of them in that order. `[]` injects nothing. A host block with an `injection` object replaces the root pin wholesale |
-| `logging` | bool | `false` | Append one JSON record per turn to `~/.honcho/injection.log` saying what was injected and why. The file is owner-only and holds the user's representation verbatim. `HONCHO_LOGGING=1` also switches it on and `HONCHO_INJECTION_LOG=<path>` moves it |
-| `queryRewrite` | bool | `false` | Rewrite the latest message into a retrieval query before dialectic (one extra auxiliary LLM call per cycle) |
-| `firstTurnBaseWait` | float | `3.0` | Max seconds a process's first turn waits for base context / session init: turn 1, or the first turn of `hermes chat --resume`, which recalls on the previous user message. The wait runs before Hermes' prefetch timeout starts, so values above it hold. `0` disables the wait (fully async; context surfaces on later turns). Later turns never wait on a stalled init |
-| `firstTurnDialecticWait` | float | `2.0` | Max seconds a process's first turn waits for a dialectic result, after the base wait. `0` disables |
-
-### Observation (Granular)
-
-Maps 1:1 to Honcho's per-peer `SessionPeerConfig`. When present, overrides `observationMode` preset.
+`~/.hermes/profiles/coder/honcho.json`:
 
 ```json
-"observation": {
-  "user": { "observeMe": true, "observeOthers": true },
-  "ai":   { "observeMe": true, "observeOthers": true }
+{
+  "hosts": {
+    "hermes_coder": {
+      "apiKey": "***",
+      "workspace": "hermes",
+      "peerName": "yourname",
+      "aiPeer": "coder",
+      "schemaVersion": 2
+    }
+  }
 }
 ```
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `user.observeMe` | `true` | User peer self-observation (Honcho builds user representation) |
-| `user.observeOthers` | `true` | User peer observes AI messages |
-| `ai.observeMe` | `true` | AI peer self-observation (Honcho builds AI representation) |
-| `ai.observeOthers` | `true` | AI peer observes user messages (enables cross-peer dialectic) |
+Both profiles see the same user (`yourname`) in the same shared environment (`hermes`), but each AI peer builds its own memory of itself.
 
-Presets:
+Host key is derived from the active Hermes profile: `hermes` (default) or `hermes_<profile>` (e.g. `hermes -p coder` -> host key `hermes_coder`). Before this release the shared values usually sat once at the top level of `~/.hermes/honcho.json`, with every profile's block beside them; the migration copies what each profile used, top-level values included, into its own file's block once (an older `hermes.<profile>` block is renamed `hermes_<profile>` on the way). The default profile's file keeps its other blocks and its top level, which no migrated profile reads.
 
-- `"directional"` (default): all four `true`
-- `"unified"`: user `observeMe=true`, AI `observeOthers=true`, rest `false`
+The plugin keeps host blocks in step with Hermes profiles:
 
-### Hardcoded Limits
+- **Create:** a new profile whose config selects Honcho (for example `hermes profile create coder --clone`) gets a `hermes_coder` block in its own `honcho.json`, cloned from the default profile's block, with `aiPeer: coder`. The default host's own `apiKey` and grant are not copied (a key 1.1.0 kept at the top level of the default profile's file is, since the new profile already read it); otherwise sign in or set a key for the new profile.
+- **Rename:** `hermes profile rename coder writer` re-keys `hermes_coder` to `hermes_writer` in the profile's file and keeps `aiPeer: coder`, so the peer and its memory carry over.
+- **Imported profiles**, and profiles created before Honcho was set up, get no block automatically. Run `hermes honcho sync` to create one in each profile's file.
 
-| Limit | Value |
-|-------|-------|
-| Search tool max tokens | 2000 (hard cap), 800 (default) |
-| Peer card fetch tokens | 200 |
+On current Hermes the plugin does this itself and also backs the Honcho settings panel in Desktop and the dashboard. On older Hermes, Hermes core does the same work.
+
+### Injection Audit Log
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `logging` | bool | `false` | Append one JSON record per turn to `~/.honcho/injection.log` saying what was injected and why. The file is owner-only and holds what Honcho said about the user verbatim. `HONCHO_LOGGING=1` also switches it on and `HONCHO_INJECTION_LOG=<path>` moves it |
 
 ## Environment Variables
 
@@ -421,7 +240,8 @@ Presets:
 |----------|-------------|
 | `HONCHO_API_KEY` | `apiKey` |
 | `HONCHO_BASE_URL` | `baseUrl` |
-| `HONCHO_ENVIRONMENT` | `environment` |
+| `HONCHO_TIMEOUT` | Request timeout in seconds (else `honcho.timeout` in config.yaml, else 30) |
+| `HONCHO_ENVIRONMENT` | SDK environment, only when the profile has no `honcho.json` |
 | `HERMES_HONCHO_HOST` | Host key override |
 | `HONCHO_OAUTH_DASHBOARD` | OAuth authorize origin (default: cloud dashboard; local-dev `localhost:3000`) |
 | `HONCHO_OAUTH_AUTHORIZE_URL` | Full authorize URL (overrides the dashboard origin) |
@@ -450,54 +270,29 @@ Links the plugin prints to the Honcho dashboard or docs carry `utm_source=hermes
 | `hermes honcho setup` | Interactive setup wizard (only registered once Honcho is the active provider; redirects to `hermes memory setup`) |
 | `hermes honcho status` | Show resolved config for active profile |
 | `hermes honcho enable` / `disable` | Toggle Honcho for active profile |
-| `hermes honcho mode <mode>` | Change recall or observation mode |
 | `hermes honcho peer --user <name>` | Update user peer name |
 | `hermes honcho peer --ai <name>` | Update AI peer name |
-| `hermes honcho tokens --context <N>` | Set context token budget |
-| `hermes honcho tokens --dialectic <N>` | Set dialectic max chars |
-| `hermes honcho map <name>` | Map current directory to a session name |
+| `hermes honcho peers` / `peers map` | Show peer identities across profiles / map gateway accounts to peers |
+| `hermes honcho identity <file>` | Seed the AI peer's identity (e.g. from SOUL.md); `--show` prints both peers |
+| `hermes honcho migrate` | Walk through moving OpenClaw's local memory files into Honcho |
 | `hermes honcho sync` | Create host blocks for all Hermes profiles |
 
 ## Example Config
 
+`~/.hermes/honcho.json` for the default profile; a named profile's file has the same shape with its own host key (see [Multi-Profile Pattern](#multi-profile-pattern)).
+
 ```json
 {
-  "apiKey": "***",
-  "workspace": "hermes",
-  "peerName": "username",
-  "contextCadence": 2,
-  "dialecticCadence": 3,
-  "dialecticDepth": 2,
   "hosts": {
     "hermes": {
+      "apiKey": "***",
+      "workspace": "hermes",
+      "peerName": "username",
       "enabled": true,
       "aiPeer": "hermes",
-      "recallMode": "hybrid",
-      "observation": {
-        "user": { "observeMe": true, "observeOthers": true },
-        "ai": { "observeMe": true, "observeOthers": true }
-      },
-      "writeFrequency": "async",
-      "sessionStrategy": "per-directory",
-      "dialecticReasoningLevel": "low",
-      "dialecticDepth": 2,
-      "dialecticMaxChars": 600,
-      "saveMessages": true
-    },
-    "hermes_coder": {
-      "enabled": true,
-      "aiPeer": "coder",
-      "sessionStrategy": "per-repo",
-      "dialecticDepth": 1,
-      "dialecticDepthLevels": ["low"],
-      "observation": {
-        "user": { "observeMe": true, "observeOthers": false },
-        "ai": { "observeMe": true, "observeOthers": true }
-      }
+      "pinUserPeer": true,
+      "schemaVersion": 2
     }
-  },
-  "sessions": {
-    "/home/user/myproject": "myproject-main"
   }
 }
 ```

@@ -23,6 +23,14 @@ def sanitize_peer_id(id_str: str) -> str:
     return re.sub(r'[^a-zA-Z0-9_-]', '-', id_str)
 
 
+def observe_self() -> Any:
+    """How every peer joins a session: it observes itself and nobody else, so each peer's memory is its own
+    view. Reads therefore go to the peer itself, never to another peer's view of it."""
+    from honcho.session import SessionPeerConfig
+
+    return SessionPeerConfig(observe_me=True, observe_others=False)
+
+
 def assistant_peer_id_for(config: Any) -> str:
     """The agent's own peer ID from ``aiPeer``, as the session builder derives it."""
     return sanitize_peer_id(getattr(config, "ai_peer", None) or "hermes-assistant")
@@ -122,13 +130,9 @@ class SessionPeersMixin:
         return {"user": session.user_peer_id, "ai": session.assistant_peer_id}.get(normalized, normalized)
 
     def _resolve_observer_target(self, session: HonchoSession, peer: str | None) -> tuple[str, str | None]:
-        """Resolve (observer, target) peer IDs for context/search/profile queries."""
-        target_peer_id = self._resolve_peer_id(session, peer)
-        if target_peer_id == session.assistant_peer_id:
-            return session.assistant_peer_id, session.assistant_peer_id
-        if self._ai_observes_others(session):
-            return session.assistant_peer_id, target_peer_id
-        return target_peer_id, None
+        """(observer, target) for a read about ``peer``: always that peer's own view, since no peer observes
+        another (``observe_self``)."""
+        return self._resolve_peer_id(session, peer), None
 
     def _session_human_peer_ids(self, key: str | None) -> set[str]:
         """Peer IDs the session's human writes under: each runtime id and the peer resolved for ``key``."""

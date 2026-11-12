@@ -7,9 +7,7 @@ registry lookup resolves its bundled copy, not this one.
 from plugins.memory.config_schema import (
     KIND_BOOL,
     KIND_JSON,
-    KIND_NUMBER,
     KIND_SECRET,
-    KIND_SELECT,
     STORAGE_PROVIDER,
 )
 
@@ -19,11 +17,9 @@ from hermes_plugin_honcho.config_schema import CONFIG_SCHEMA as provider
 INLINE_KEYS = {
     "apiKey",
     "baseUrl",
-    "environment",
     "workspace",
     "peerName",
     "aiPeer",
-    "sessionStrategy",
 }
 
 
@@ -41,28 +37,14 @@ def test_inline_fields_are_the_curated_subset():
     assert {field.key for field in provider.inline_fields()} == INLINE_KEYS
     # The modal-only fields are a non-empty remainder.
     non_inline = {f.key for f in provider.fields} - INLINE_KEYS
-    assert {"writeFrequency", "recallMode", "userPeerAliases"} <= non_inline
+    assert {"pinUserPeer", "userPeerAliases", "a2aSessions", "logging"} <= non_inline
 
 
 def test_declares_the_new_field_kinds():
     by_key = {f.key: f for f in provider.fields}
-    assert by_key["saveMessages"].kind == KIND_BOOL
     assert by_key["a2aSessions"].kind == KIND_BOOL
     assert by_key["a2aSessions"].default == "true"
-    assert by_key["dialecticMaxChars"].kind == KIND_NUMBER
     assert by_key["userPeerAliases"].kind == KIND_JSON
-    assert by_key["recallMode"].allowed_values() == {"hybrid", "context", "tools"}
-    assert by_key["observationMode"].allowed_values() == {"directional", "unified"}
-
-
-def test_selects_constrain_their_values():
-    environment = next(f for f in provider.fields if f.key == "environment")
-    assert environment.kind == KIND_SELECT
-    # Honcho SDK only accepts local/production; "demo" is not a valid environment.
-    assert environment.allowed_values() == {"production", "local"}
-
-    strategy = next(f for f in provider.fields if f.key == "sessionStrategy")
-    assert strategy.allowed_values() == {"per-directory", "per-repo", "per-session", "global"}
 
 
 def test_api_key_is_a_secret_bound_to_env():
@@ -72,9 +54,6 @@ def test_api_key_is_a_secret_bound_to_env():
     assert api_key.env_key == "HONCHO_API_KEY"
 
 
-def test_root_scoped_fields_are_exactly_the_global_ones():
-    scopes = {f.key: f.scope for f in provider.fields}
-    root_keys = {k for k, scope in scopes.items() if scope == "root"}
-    # baseUrl, timeout and sessions live at the config root in Honcho's schema;
-    # everything else is per-profile host-scoped.
-    assert root_keys == {"baseUrl", "timeout", "sessions"}
+def test_every_field_lives_in_the_host_block():
+    # Schema 2: the plugin reads only hosts.<host>, so older Hermes' host-block storage must write there too.
+    assert {f.key for f in provider.fields if f.scope != "host"} == set()
