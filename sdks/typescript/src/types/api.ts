@@ -82,6 +82,10 @@ export interface PeerListParams {
 
 export interface PeerChatParams {
   query: string
+  /** Prefetch retrieval text; defaults to query when omitted (1–10000 characters). */
+  semantic_query?: string
+  /** Additional user instructions, not embedded for prefetch; omitted by default. */
+  reasoning_context?: string
   stream?: boolean
   session_id?: string
   target?: string
