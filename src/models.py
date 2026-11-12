@@ -1632,6 +1632,12 @@ class IngestRecord(Base, TenantPartitioned):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # When `derivation` last changed. A deferred record becomes pending long
+    # after it was created, so how long a record has waited to be enqueued is
+    # measured from here, not from created_at.
+    derivation_changed_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
     __table_args__ = (
         PrimaryKeyConstraint("tenant_id", "id"),
@@ -1666,6 +1672,14 @@ class IngestRecord(Base, TenantPartitioned):
             "workspace_name",
             "session_name",
             postgresql_where=text("derivation = 'pending'"),
+        ),
+        # The derive call walks the sessions that have deferred records.
+        Index(
+            "ix_ingest_records_deferred",
+            "tenant_id",
+            "workspace_name",
+            "session_name",
+            postgresql_where=text("derivation = 'deferred'"),
         ),
         CheckConstraint(
             "identity_kind IN ('source_id', 'content_hash')",

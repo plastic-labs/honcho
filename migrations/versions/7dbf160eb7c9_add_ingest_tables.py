@@ -82,6 +82,12 @@ def upgrade() -> None:
                 nullable=False,
                 server_default=sa.func.now(),
             ),
+            sa.Column(
+                "derivation_changed_at",
+                sa.DateTime(timezone=True),
+                nullable=False,
+                server_default=sa.func.now(),
+            ),
             sa.PrimaryKeyConstraint("tenant_id", "id"),
             sa.ForeignKeyConstraint(["tenant_id"], [f"{schema}.tenants.tenant_id"]),
             sa.UniqueConstraint(
@@ -114,6 +120,13 @@ def upgrade() -> None:
             "ingest_records",
             ["tenant_id", "workspace_name", "session_name"],
             postgresql_where=sa.text("derivation = 'pending'"),
+            schema=schema,
+        )
+        op.create_index(
+            "ix_ingest_records_deferred",
+            "ingest_records",
+            ["tenant_id", "workspace_name", "session_name"],
+            postgresql_where=sa.text("derivation = 'deferred'"),
             schema=schema,
         )
         op.create_index(
