@@ -1,5 +1,7 @@
 """CRUD helpers for sessions and session-related relationship data."""
 
+import hashlib
+import json
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
@@ -990,6 +992,41 @@ async def clone_session(
     return new_session
 
 
+async def _lock_session_membership(
+    db: AsyncSession, workspace_name: str, session_name: str
+) -> None:
+    """Serialize membership replaces and removes of one session until commit.
+
+    A replace takes row locks on ``session_peers`` in two phases over different
+    rows: it ends the memberships it does not name, then upserts the ones it
+    does. Two replaces with disjoint peer sets, or a replace and a remove of rows
+    it both ends and upserts, therefore lock in opposite orders and deadlock;
+    ordering either phase cannot help. Both callers take this lock before any
+    row lock in their transaction, so it never waits while holding one, and no
+    other path takes it.
+
+    A transaction-scoped advisory lock rather than a lock on the ``sessions``
+    row: session and workspace deletion delete ``session_peers`` before the
+    ``sessions`` row, and workspace deletion runs over active sessions, so a
+    replace that locked the session row first would invert that order.
+
+    Keyed on the tenant as well, since advisory locks are database-wide; the
+    key is a stable hash, and a collision only serializes two unrelated
+    sessions. Raises under ``MULTI_TENANT`` with no tenant bound, like every
+    tenant-scoped read.
+    """
+    key = _session_membership_lock_key(workspace_name, session_name)
+    await db.execute(select(func.pg_advisory_xact_lock(cast(key, BigInteger))))
+
+
+def _session_membership_lock_key(workspace_name: str, session_name: str) -> int:
+    """The signed 64-bit advisory key for one session's membership lock."""
+    name = json.dumps(
+        ["session-membership", models.scoped_tenant_id(), workspace_name, session_name]
+    )
+    return int.from_bytes(hashlib.sha256(name.encode()).digest()[:8], signed=True)
+
+
 async def remove_peers_from_session(
     db: AsyncSession,
     workspace_name: str,
@@ -1019,6 +1056,7 @@ async def remove_peers_from_session(
     """
     # Verify session exists
     await get_session(db, session_name, workspace_name)
+    await _lock_session_membership(db, workspace_name, session_name)
 
     # Scope membership is ended through the scopes routes, which also reconcile
     # the scope's copies. Rejected up front for a clear 422 rather than a silent
@@ -1231,6 +1269,10 @@ async def set_peers_for_session(
         raise ResourceNotFoundException(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
+
+    # Before the soft delete below: the replace's two write phases cannot be
+    # ordered against another replace or remove of this session, only serialized.
+    await _lock_session_membership(db, workspace_name, session_name)
 
     # Soft delete every *ordinary* active membership not in the incoming map.
     # Scope memberships are deliberately preserved: this route replaces the peers
