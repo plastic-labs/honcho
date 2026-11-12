@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from src import models, schemas
 from src.deriver.enqueue import create_dream_record, enqueue_dream
 from tests.deriver.conftest import independent_sessions
+from tests.lifecycle_barrier_graph import barrier_stand_in
 
 
 class TestEnqueueDreamMetadataShape:
@@ -36,6 +37,7 @@ class TestEnqueueDreamMetadataShape:
             patch(
                 "src.deriver.enqueue.tracked_db",
             ) as mock_db_ctx,
+            barrier_stand_in("src.deriver.enqueue"),
         ):
             mock_session = AsyncMock()
             mock_session.scalar = AsyncMock(return_value=False)

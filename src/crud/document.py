@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 from collections.abc import Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from enum import Enum
 from logging import getLogger
@@ -15,7 +16,7 @@ from sqlalchemy.sql.functions import func
 
 from src import models, schemas
 from src.config import settings
-from src.crud.collection import get_or_create_collection, record_explicit_documents
+from src.crud.collection import record_explicit_documents
 from src.crud.dream_history import (
     CreatedConclusion,
     DreamHistoryTarget,
@@ -25,11 +26,19 @@ from src.crud.dream_history import (
     record_removed,
 )
 from src.crud.lifecycle import live_document_row
+from src.crud.lifecycle_barrier import (
+    WriteSnapshot,
+    bump_collection_generations,
+    capture_write_snapshot,
+    ensure_collections,
+    final_write,
+)
 from src.crud.peer import get_peer, reject_scope_observed
 from src.crud.session import get_session
 from src.dependencies import tracked_db
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.exceptions import (
+    LifecycleBarrierError,
     ResourceNotFoundException,
     ValidationException,
     VectorNamespaceUnresolved,
@@ -688,6 +697,7 @@ async def create_documents(
     observed: str,
     deduplicate: bool = False,
     history: DreamHistoryTarget | None = None,
+    barrier: WriteSnapshot | None = None,
 ) -> CreateDocumentsResult:
     """
     Create multiple documents with optional duplicate detection.
@@ -706,10 +716,19 @@ async def create_documents(
         history: When set, record the created conclusions, and the existing
             ones that semantic dedup replaced, to this dream run in the same
             transaction
+        barrier: What the producer captured before it read its input. Every
+            producer passes it. The inserts, the reinforcements and the
+            fallback inserts for vanished reinforcement targets then run behind
+            the lifecycle barrier, in the transaction this function commits,
+            and the collection is created in that transaction if it is missing
 
     Returns:
         List of DocumentCreate schemas that were actually inserted (excludes
         duplicates and failures).
+
+    Raises:
+        LifecycleBarrierError: With ``barrier``, when a deletion made the
+            captured input stale. Nothing is written
     """
     honcho_documents: list[models.Document] = []
     accepted_documents: list[schemas.DocumentCreate] = []
@@ -993,39 +1012,52 @@ async def create_documents(
             )
 
     replaced_rows: list[models.Document] = []
+    # The barrier's parent locks are the first locks this transaction takes;
+    # everything above only read. A reinforcement target tombstoned since then
+    # comes back as a fallback insert: when a deletion erased it, the
+    # collection's generation moved and the block's exit refuses the write.
+    write_barrier = (
+        final_write(db, barrier.for_representation(observer, observed))
+        if barrier is not None
+        else nullcontext()
+    )
     try:
-        fallback_docs = await _apply_document_row_updates(
-            db,
-            row_ops,
-            workspace_name=workspace_name,
-            observer=observer,
-            observed=observed,
-            replaced_out=replaced_rows,
-        )
-        for fallback_doc in fallback_docs:
-            new_doc = _document_model_from_create(
-                fallback_doc,
+        async with write_barrier:
+            if barrier is not None:
+                await ensure_collections(db, barrier, [(observer, observed)])
+            fallback_docs = await _apply_document_row_updates(
+                db,
+                row_ops,
                 workspace_name=workspace_name,
                 observer=observer,
                 observed=observed,
+                replaced_out=replaced_rows,
             )
-            honcho_documents.append(new_doc)
-            accepted_documents.append(fallback_doc)
-            if fallback_doc.embedding:
-                docs_with_embeddings.append((new_doc, fallback_doc.embedding))
-        db.add_all(honcho_documents)
-        if history is not None:
-            await _record_created_history(
-                db,
-                history,
-                workspace_name,
-                created=honcho_documents,
-                replaced=replaced_rows,
-                replaced_by={
-                    old_id: pending_by_key.get(key)
-                    for old_id, (_, key) in replaced_by.items()
-                },
-            )
+            for fallback_doc in fallback_docs:
+                new_doc = _document_model_from_create(
+                    fallback_doc,
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                )
+                honcho_documents.append(new_doc)
+                accepted_documents.append(fallback_doc)
+                if fallback_doc.embedding:
+                    docs_with_embeddings.append((new_doc, fallback_doc.embedding))
+            db.add_all(honcho_documents)
+            if history is not None:
+                await _record_created_history(
+                    db,
+                    history,
+                    workspace_name,
+                    created=honcho_documents,
+                    replaced=replaced_rows,
+                    replaced_by={
+                        old_id: pending_by_key.get(key)
+                        for old_id, (_, key) in replaced_by.items()
+                    },
+                )
+        # After the block: it locked the collection row this updates.
         await record_explicit_documents(db, honcho_documents)
         # NOTE
         # If the process crashes after this commit but before vector upsert completes,
@@ -1121,9 +1153,10 @@ async def create_documents(
         raise ValidationException(
             "Failed to create documents due to integrity constraint violation"
         ) from e
-    except DBAPIError:
+    except (DBAPIError, LifecycleBarrierError):
         # Leave the session clean for callers that own it (e.g. a deadlock
-        # at the final commit); the queue layer classifies and retries.
+        # at the final commit, or a write the lifecycle barrier refused); the
+        # queue layer classifies and retries.
         await db.rollback()
         raise
 
@@ -1182,6 +1215,8 @@ async def delete_document(
             f"Document {document_id} not found or does not belong to the specified collection/session"
         )
 
+    # An erasure, not a consolidation: writes computed before it are stale.
+    await bump_collection_generations(db, workspace_name, [(observer, observed)])
     await db.commit()
 
 
@@ -1194,6 +1229,7 @@ async def delete_documents(
     observed: str,
     session_name: str | None = None,
     history: DreamHistoryTarget | None = None,
+    barrier: WriteSnapshot | None = None,
 ) -> list[tuple[str, str]]:
     """
     Soft-delete multiple documents in a single UPDATE ... RETURNING statement.
@@ -1205,6 +1241,15 @@ async def delete_documents(
 
     With ``history``, the deleted rows' content is recorded to that dream run
     in the same transaction.
+
+    This is a consolidation, not an erasure: it does not raise the
+    collection's ``deletion_generation``. With ``barrier`` (what a dream
+    captured when it started) the removal runs behind the lifecycle barrier,
+    so a dream whose reading is stale removes nothing.
+
+    Raises:
+        LifecycleBarrierError: With ``barrier``, when a deletion made the
+            dream's reading stale. Nothing is removed
     """
     if not document_ids:
         return []
@@ -1230,24 +1275,34 @@ async def delete_documents(
             models.Document.session_name,
         )
     )
-    result = await db.execute(stmt)
-    rows = result.all()
-    if history is not None:
-        await record_removed(
-            db,
-            history,
-            workspace_name,
-            [
-                RemovedConclusion(
-                    id=row.id,
-                    level=row.level,
-                    content=row.content,
-                    session_name=row.session_name,
+    write_barrier = (
+        final_write(db, barrier.for_representation(observer, observed))
+        if barrier is not None
+        else nullcontext()
+    )
+    try:
+        async with write_barrier:
+            result = await db.execute(stmt)
+            rows = result.all()
+            if history is not None:
+                await record_removed(
+                    db,
+                    history,
+                    workspace_name,
+                    [
+                        RemovedConclusion(
+                            id=row.id,
+                            level=row.level,
+                            content=row.content,
+                            session_name=row.session_name,
+                        )
+                        for row in rows
+                    ],
                 )
-                for row in rows
-            ],
-        )
-    await db.commit()
+        await db.commit()
+    except LifecycleBarrierError:
+        await db.rollback()
+        raise
     return [(row.id, row.level) for row in rows]
 
 
@@ -1281,16 +1336,23 @@ async def delete_document_by_id(
             models.Document.deleted_at.is_(None),
         )
         .values(deleted_at=func.now())
+        .returning(models.Document.observer, models.Document.observed)
     )
-    result = cast(CursorResult[Any], await db.execute(update_stmt))
+    erased_pairs = {
+        (row.observer, row.observed) for row in await db.execute(update_stmt)
+    }
     # After the document, the order a dream takes them in when it removes one.
     erased = await erase_conclusion_history(db, workspace_name, document_id)
 
-    if result.rowcount == 0 and erased == 0:
+    if not erased_pairs and erased == 0:
         raise ResourceNotFoundException(
             f"Document {document_id} not found or does not belong to workspace {workspace_name}"
         )
 
+    # An erasure, not a consolidation: a write computed from this conclusion
+    # (a reinforcement of it, a deduction resting on it, a scope copy of it)
+    # must be refused. After the document, as every collection lock is.
+    await bump_collection_generations(db, workspace_name, erased_pairs)
     await db.commit()
 
 
@@ -1316,6 +1378,8 @@ async def create_observations(
     Raises:
         ResourceNotFoundException: If any session or peer is not found
         ValidationException: If embedding generation fails or integrity constraint is violated
+        WriteParentGoneError: If a session or peer was deleted while the
+            request was being served. Nothing is created (404)
     """
     if not observations:
         return []
@@ -1358,11 +1422,10 @@ async def create_observations(
         action="No conclusion is ever formed about a scope.",
     )
 
-    # Get or create all collections
-    for observer, observed in collection_pairs:
-        await get_or_create_collection(
-            db, workspace_name, observer=observer, observed=observed
-        )
+    # The lookups above give a caller a clear 404 early. They are not the
+    # check: nothing is locked, and the embedding call below can take a while.
+    # The check is the lifecycle barrier around the insert further down, which
+    # also creates the collections (get_or_create_collection would commit).
 
     # Generate embeddings in batch
     contents = [obs.content for obs in observations]
@@ -1420,7 +1483,20 @@ async def create_observations(
         collection_embeddings[collection_key].append((doc, embedding))
 
     try:
-        db.add_all(honcho_documents)
+        # A public write obeys parent liveness like any producer. It captures
+        # in the write's own transaction: the barrier locks what was just read
+        # and holds it to the commit, so a deletion of a named session or peer
+        # either waits for this write or refuses it.
+        barrier = await capture_write_snapshot(
+            db,
+            workspace_name,
+            session_names=sessions_to_validate,
+            representations=collection_pairs,
+        )
+        async with final_write(db, barrier):
+            await ensure_collections(db, barrier, collection_pairs)
+            db.add_all(honcho_documents)
+        # After the block: it locked the collection rows this updates.
         await record_explicit_documents(db, honcho_documents)
         await db.commit()
         # Refresh all documents to get generated IDs and timestamps
@@ -1524,6 +1600,9 @@ async def create_observations(
         raise ValidationException(
             "Failed to create observations due to integrity constraint violation"
         ) from e
+    except LifecycleBarrierError:
+        await db.rollback()
+        raise
 
     logger.debug(
         "Created %d observations in workspace %s",

@@ -47,12 +47,20 @@ from src.crud.lifecycle import (
     live_session_peer_row,
     live_session_row,
 )
+from src.crud.lifecycle_barrier import (
+    begin_session_deletion,
+    bump_collection_generations,
+    capture_write_snapshot,
+    final_write,
+)
 from src.exceptions import (
     AuthenticationException,
     ConflictException,
+    LifecycleBarrierError,
     ObserverException,
     ResourceNotFoundException,
     ValidationException,
+    WriteParentGoneError,
 )
 from src.telemetry.events import SessionCreatedEvent, emit
 from src.utils.filter import apply_filter
@@ -694,6 +702,11 @@ async def delete_session(
     # Perform cascading deletes in order
     # Order is important to avoid foreign key constraint violations
     try:
+        # The deleter's side of the lifecycle barrier, before anything under
+        # the session is removed: a producer's final write holds this row FOR
+        # KEY SHARE, so it either commits before this or finds the session gone.
+        await begin_session_deletion(db, workspace_name, session_name)
+
         # Queue items, then the claim rows on their work units (the helper
         # carries the lock order). session_id is globally unique in practice;
         # the helper also pins the queue rows to the ambient tenant, and the
@@ -800,6 +813,12 @@ async def delete_session(
             ],
             batch_size=5000,
         )
+        # Every representation that lost conclusions here had a deletion: a
+        # dream or backfill that read them before this commit must not write.
+        # After the documents, in sorted key order (see the locking rules).
+        await bump_collection_generations(
+            db, workspace_name, {(doc.observer, doc.observed) for doc in documents}
+        )
 
         # Delete Message entries in batches
         messages_deleted = await _batch_delete_matching(
@@ -890,93 +909,121 @@ async def clone_session(
 
     Returns:
         The newly created session
+
+    Raises:
+        ResourceNotFoundException: If the original session does not exist, is
+            inactive, or was deleted while the clone was running. Nothing is
+            created then
+        WriteGenerationStaleError: If a deletion inside the source session
+            landed as the clone began (409). Nothing is created; retry
     """
-    # Get the original session (must be active)
-    stmt = (
-        select(models.Session)
-        .where(models.Session.workspace_name == workspace_name)
-        .where(models.Session.name == original_session_name)
-        .where(models.Session.is_active == True)  # noqa: E712
-    )
-    result = await db.execute(stmt)
-    original_session = result.scalar_one_or_none()
-    if original_session is None:
-        raise ResourceNotFoundException("Original session not found")
-
-    # If cutoff_message_id is provided, verify it belongs to the session
-    cutoff_message = None
-    if cutoff_message_id is not None:
-        stmt = select(models.Message).where(
-            models.Message.workspace_name == workspace_name,
-            models.Message.public_id == cutoff_message_id,
-            models.Message.session_name == original_session_name,
-            live_message_row(),
+    # A clone is a producer: it reads the source session and writes a new one.
+    # It runs behind the lifecycle barrier in this one transaction. The source
+    # session is locked FOR KEY SHARE before anything is read and until the
+    # commit, so a deletion of the source either waits for the whole clone,
+    # which then stands on its own, or is seen here before anything is copied.
+    try:
+        barrier = await capture_write_snapshot(
+            db, workspace_name, session_name=original_session_name
         )
-        cutoff_message = await db.scalar(stmt)
-        if not cutoff_message:
-            raise ValueError(
-                "Message not found or doesn't belong to the specified session"
+        async with final_write(db, barrier):
+            # Get the original session (must be active)
+            stmt = (
+                select(models.Session)
+                .where(models.Session.workspace_name == workspace_name)
+                .where(models.Session.name == original_session_name)
+                .where(models.Session.is_active == True)  # noqa: E712
             )
+            result = await db.execute(stmt)
+            original_session = result.scalar_one_or_none()
+            if original_session is None:
+                raise ResourceNotFoundException("Original session not found")
 
-    # Create new session
-    new_session = models.Session(
-        workspace_name=workspace_name,
-        name=generate_nanoid(),
-        h_metadata=original_session.h_metadata,
-        configuration=original_session.configuration,
-    )
-    db.add(new_session)
-    await db.flush()  # Flush to get the new session ID
+            # If cutoff_message_id is provided, verify it belongs to the session
+            cutoff_message = None
+            if cutoff_message_id is not None:
+                stmt = select(models.Message).where(
+                    models.Message.workspace_name == workspace_name,
+                    models.Message.public_id == cutoff_message_id,
+                    models.Message.session_name == original_session_name,
+                    live_message_row(),
+                )
+                cutoff_message = await db.scalar(stmt)
+                if not cutoff_message:
+                    raise ValueError(
+                        "Message not found or doesn't belong to the specified session"
+                    )
 
-    # Build query for messages to clone. Session names are only unique within a
-    # workspace, so every lookup by session name must also filter on workspace.
-    stmt = select(models.Message).where(
-        models.Message.workspace_name == workspace_name,
-        models.Message.session_name == original_session_name,
-        live_message_row(),
-    )
-    if cutoff_message_id is not None and cutoff_message is not None:
-        stmt = stmt.where(models.Message.id <= cast(cutoff_message.id, BigInteger))
-    stmt = stmt.order_by(models.Message.id)
+            # Create new session
+            new_session = models.Session(
+                workspace_name=workspace_name,
+                name=generate_nanoid(),
+                h_metadata=original_session.h_metadata,
+                configuration=original_session.configuration,
+            )
+            db.add(new_session)
+            await db.flush()  # Flush to get the new session ID
 
-    # Fetch messages to clone
-    messages_to_clone_scalars = await db.scalars(stmt)
-    messages_to_clone = messages_to_clone_scalars.all()
+            # Build query for messages to clone. Session names are only unique within a
+            # workspace, so every lookup by session name must also filter on workspace.
+            stmt = select(models.Message).where(
+                models.Message.workspace_name == workspace_name,
+                models.Message.session_name == original_session_name,
+                live_message_row(),
+            )
+            if cutoff_message_id is not None and cutoff_message is not None:
+                stmt = stmt.where(
+                    models.Message.id <= cast(cutoff_message.id, BigInteger)
+                )
+            stmt = stmt.order_by(models.Message.id)
 
-    if messages_to_clone:
-        # Prepare bulk insert data
-        new_messages = [
-            {
-                "session_name": new_session.name,
-                "content": message.content,
-                "h_metadata": message.h_metadata,
-                "workspace_name": workspace_name,
-                "peer_name": message.peer_name,
-                "token_count": message.token_count,
-                "seq_in_session": message.seq_in_session,
-            }
-            for message in messages_to_clone
-        ]
+            # Fetch messages to clone
+            messages_to_clone_scalars = await db.scalars(stmt)
+            messages_to_clone = messages_to_clone_scalars.all()
 
-        insert_stmt = insert(models.Message).returning(models.Message)
-        await db.execute(insert_stmt, new_messages)
+            if messages_to_clone:
+                # Prepare bulk insert data
+                new_messages = [
+                    {
+                        "session_name": new_session.name,
+                        "content": message.content,
+                        "h_metadata": message.h_metadata,
+                        "workspace_name": workspace_name,
+                        "peer_name": message.peer_name,
+                        "token_count": message.token_count,
+                        "seq_in_session": message.seq_in_session,
+                    }
+                    for message in messages_to_clone
+                ]
 
-    # Clone peers from original session to new session (including their configurations)
-    stmt = select(models.SessionPeer).where(
-        models.SessionPeer.tenant_id == models.scoped_tenant_id(),
-        models.SessionPeer.workspace_name == workspace_name,
-        models.SessionPeer.session_name == original_session_name,
-    )
-    result = await db.execute(stmt)
-    session_peers = result.scalars().all()
-    for session_peer in session_peers:
-        new_session_peer = models.SessionPeer(
-            session_name=new_session.name,
-            peer_name=session_peer.peer_name,
-            workspace_name=workspace_name,
-            configuration=session_peer.configuration,
-        )
-        db.add(new_session_peer)
+                insert_stmt = insert(models.Message).returning(models.Message)
+                await db.execute(insert_stmt, new_messages)
+
+            # Clone peers from original session to new session (including their configurations)
+            stmt = select(models.SessionPeer).where(
+                models.SessionPeer.tenant_id == models.scoped_tenant_id(),
+                models.SessionPeer.workspace_name == workspace_name,
+                models.SessionPeer.session_name == original_session_name,
+                # A deleted peer's membership is not carried into the clone.
+                live_session_peer_row(),
+            )
+            result = await db.execute(stmt)
+            session_peers = result.scalars().all()
+            for session_peer in session_peers:
+                new_session_peer = models.SessionPeer(
+                    session_name=new_session.name,
+                    peer_name=session_peer.peer_name,
+                    workspace_name=workspace_name,
+                    configuration=session_peer.configuration,
+                )
+                db.add(new_session_peer)
+
+    except WriteParentGoneError:
+        await db.rollback()
+        raise ResourceNotFoundException("Original session not found") from None
+    except LifecycleBarrierError:
+        await db.rollback()
+        raise
 
     await db.commit()
     emit(

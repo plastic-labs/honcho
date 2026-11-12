@@ -24,6 +24,11 @@ from nanoid import generate as generate_nanoid
 
 from src import crud
 from src.config import settings
+from src.crud.lifecycle_barrier import (
+    WriteGate,
+    capture_write_snapshot,
+    current_claim,
+)
 from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import (
     WORK_LIST_BACKLOG_KEY,
@@ -43,7 +48,7 @@ from src.dreamer.working_memory import (
     load_dream_state,
     plan_cursor_move,
 )
-from src.exceptions import SurprisalError
+from src.exceptions import LifecycleBarrierError, SurprisalError
 from src.llm.runtime import CapturedAgentSpan, start_captured_span
 from src.llm.types import LLMTelemetryContext
 from src.schemas import DreamType
@@ -166,6 +171,17 @@ async def run_dream(
 
     # Short-lived DB session for config resolution
     async with tracked_db("dream.config") as db:
+        # Lifecycle barrier: capture before the dream reads any conclusion.
+        # Every write of the dream is checked against this one snapshot.
+        gate = WriteGate(
+            await capture_write_snapshot(
+                db,
+                workspace_name,
+                session_name=session_name,
+                representations=[(observer, observed)],
+                claim=current_claim(),
+            )
+        )
         if session_name is not None:
             session = await crud.get_session(
                 db, workspace_name=workspace_name, session_name=session_name
@@ -300,6 +316,7 @@ async def run_dream(
                 queue_item_id=queue_item_id,
                 state=state,
                 history=history,
+                barrier=gate,
             )
             logger.info(
                 f"[{run_id}] Deduction completed: {deduction_result.content[:200]}..."
@@ -308,6 +325,10 @@ async def run_dream(
                 task_name, "deduction_result", deduction_result.content, "blob"
             )
             deduction_success = deduction_result.success
+        except LifecycleBarrierError:
+            # A deletion made the dream's reading stale: nothing more may be
+            # written from it, so induction does not run either.
+            raise
         except Exception as e:
             # `Exception` (not `BaseException`) — CancelledError must still
             # propagate so the worker can shut down. SpecialistExecutionError
@@ -332,6 +353,7 @@ async def run_dream(
                 queue_item_id=queue_item_id,
                 state=state,
                 history=history,
+                barrier=gate,
             )
             logger.info(
                 f"[{run_id}] Induction completed: {induction_result.content[:200]}..."
@@ -340,6 +362,8 @@ async def run_dream(
                 task_name, "induction_result", induction_result.content, "blob"
             )
             induction_success = induction_result.success
+        except LifecycleBarrierError:
+            raise
         except Exception as e:
             logger.error(f"[{run_id}] Induction specialist failed: {e}", exc_info=True)
             accumulate_metric(task_name, "induction_error", str(e), "blob")
@@ -465,6 +489,17 @@ async def run_card_refresh_dream(
 
     # Short-lived DB session for config resolution
     async with tracked_db("dream.config") as db:
+        # Lifecycle barrier: capture before the dream reads any conclusion.
+        # Every write of the dream is checked against this one snapshot.
+        gate = WriteGate(
+            await capture_write_snapshot(
+                db,
+                workspace_name,
+                session_name=session_name,
+                representations=[(observer, observed)],
+                claim=current_claim(),
+            )
+        )
         if session_name is not None:
             session = await crud.get_session(
                 db, workspace_name=workspace_name, session_name=session_name
@@ -519,6 +554,7 @@ async def run_card_refresh_dream(
                 session_id=resolved_session_id,
                 queue_item_id=queue_item_id,
                 history=history,
+                barrier=gate,
             )
             logger.info(
                 f"[{run_id}] Card refresh completed: {specialist_result.content[:200]}..."
@@ -527,6 +563,8 @@ async def run_card_refresh_dream(
                 task_name, "card_refresh_result", specialist_result.content, "blob"
             )
             specialist_success = specialist_result.success
+        except LifecycleBarrierError:
+            raise
         except Exception as e:
             # Exception (not BaseException) — CancelledError must propagate so
             # the worker can shut down; the finally still emits the run event.
@@ -763,6 +801,18 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                         + f"duration={result.total_duration_ms:.0f}ms"
                     )
 
+    except LifecycleBarrierError as e:
+        # Not a failed dream: a deletion landed while it ran. The queue drops
+        # the task when a parent is gone, and runs it again from the current
+        # memory when only its reading was stale.
+        logger.info(
+            "Dream %s for %s/%s refused by the lifecycle barrier: %s",
+            payload.dream_type,
+            payload.observer,
+            payload.observed,
+            e.detail,
+        )
+        raise
     except Exception as e:
         logger.error(
             f"Error processing dream task {payload.dream_type} for {payload.observer}/{payload.observed}: {str(e)}",

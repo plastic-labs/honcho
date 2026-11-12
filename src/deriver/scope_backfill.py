@@ -37,10 +37,24 @@ from sqlalchemy.sql.functions import func
 from src import crud, models
 from src.config import settings
 from src.crud.document import build_source_message_links
+from src.crud.lifecycle_barrier import (
+    WriteSnapshot,
+    bump_collection_generations,
+    capture_write_snapshot,
+    current_claim,
+    ensure_collections,
+    final_write,
+    stamp_representations,
+)
 from src.crud.scope import ScopeBackfillState
 from src.dependencies import tracked_db
 from src.dreamer.working_memory import EPOCH_KEY, NOTES_KEY
 from src.embedding_client import embedding_client
+from src.exceptions import (
+    LifecycleBarrierError,
+    WriteGenerationStaleError,
+    WriteParentGoneError,
+)
 from src.schemas import DreamType
 from src.utils.queue_payload import ScopeBackfillPayload, ScopeRemovalPayload
 from src.utils.scopes import is_scope_peer_name
@@ -94,6 +108,9 @@ class _CopySpec:
     source_message_ids: list[str] | None
     session_name: str
     restore_document_id: str | None = None
+    # Set by the write phase once the copy was inserted or restored. A spec
+    # whose source was consolidated away since the plan is left unwritten.
+    written: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +133,11 @@ async def process_scope_backfill(
 
     try:
         result = await _run_backfill(workspace_name, scope_peer, session_name)
+    except LifecycleBarrierError:
+        # Not a failed backfill: a deletion landed while it ran. The queue
+        # drops the task when the session or scope is gone, and runs it again
+        # from the current documents when only its plan was stale.
+        raise
     except Exception:
         await _write_backfill_status(
             workspace_name, scope_peer, session_name, state="failed"
@@ -180,6 +202,43 @@ async def _run_backfill(
     # soft-deleted) already in the scope's collections.
     plans: list[_CopySpec] = []
     async with tracked_db("scope_backfill.plan") as db:
+        # Lifecycle barrier: capture before the plan reads any document. The
+        # copies depend on the session, the scope peer, and on each sender's
+        # own (P, P) collection, whose generation tells a later write that a
+        # source it planned to copy was erased.
+        barrier = await capture_write_snapshot(
+            db,
+            workspace_name,
+            session_name=session_name,
+            peer_names=[scope_peer],
+            claim=current_claim(),
+        )
+        senders = await db.scalars(
+            select(models.Document.observer)
+            .where(
+                models.Document.tenant_id == barrier.tenant_id,
+                models.Document.workspace_name == workspace_name,
+                models.Document.session_name == session_name,
+                models.Document.level == "explicit",
+                models.Document.observer == models.Document.observed,
+                models.Document.deleted_at.is_(None),
+            )
+            .distinct()
+        )
+        for sender in sorted(set(senders)):
+            if is_scope_peer_name(sender):
+                continue
+            try:
+                barrier = await stamp_representations(
+                    db, barrier, [(sender, sender), (scope_peer, sender)]
+                )
+            except WriteParentGoneError:
+                # The sender was deleted: its conclusions are not copied.
+                continue
+        stamped_senders = {
+            c.observer for c in barrier.collections if c.observer == c.observed
+        }
+
         source_result = await db.execute(
             select(models.Document)
             .options(
@@ -214,6 +273,14 @@ async def _run_backfill(
             # defensive: never treat another scope's rows as a source.
             if not is_scope_peer_name(doc.observer)
         ]
+        if any(doc.observer not in stamped_senders for doc in source_docs):
+            # A sender's first conclusions, or a deleted sender's, appeared
+            # after the capture: this plan has no generation to check them
+            # against. Plan again.
+            raise WriteGenerationStaleError(
+                "collection",
+                f"Session {session_name} gained a sender since the backfill began",
+            )
 
         if not source_docs:
             return 0, set()
@@ -283,11 +350,16 @@ async def _run_backfill(
     for start in range(0, len(plans), BACKFILL_CHUNK_SIZE):
         chunk = plans[start : start + BACKFILL_CHUNK_SIZE]
         if not await _copy_chunk(
-            workspace_name, scope_peer, session_name, chunk, store_in_postgres
+            workspace_name,
+            scope_peer,
+            session_name,
+            chunk,
+            store_in_postgres,
+            barrier=barrier,
         ):
             return None
-        copied += len(chunk)
-        touched_observed.update(spec.observed for spec in chunk)
+        copied += sum(spec.written for spec in chunk)
+        touched_observed.update(spec.observed for spec in chunk if spec.written)
         for spec in chunk:
             spec.embedding = None
 
@@ -317,8 +389,18 @@ async def _copy_chunk(
     session_name: str,
     plans: list[_CopySpec],
     store_in_postgres: bool,
+    *,
+    barrier: WriteSnapshot,
 ) -> bool:
-    """Embed, write, and sync one chunk. False if the session left the scope."""
+    """Embed, write, and sync one chunk. False if the session left the scope.
+
+    The write runs behind the lifecycle barrier with ``barrier``, what the plan
+    captured before it read the source documents.
+
+    Raises:
+        LifecycleBarrierError: The session, the scope or a sender was deleted,
+            or a planned source was erased, since the plan. Nothing is written
+    """
     # Phase 2a (DB): pull this chunk's embeddings only.
     await _hydrate_chunk_embeddings(workspace_name, plans)
 
@@ -340,103 +422,161 @@ async def _copy_chunk(
         for spec, embedding in zip(missing, embeddings, strict=True):
             spec.embedding = embedding
 
-    # Phase 3 (DB): write the copies.
+    # Phase 3 (DB): write the copies, behind the lifecycle barrier. Nothing in
+    # this transaction commits before the end: a commit would release the
+    # barrier's locks and the membership lock ahead of the inserts.
     touched_observed = {spec.observed for spec in plans}
+    chunk_barrier = barrier.for_representations(
+        [
+            pair
+            for observed in touched_observed
+            for pair in (
+                (observed, observed),
+                (scope_peer, observed),
+            )
+        ],
+        peer_names=[scope_peer],
+    )
     new_rows: list[models.Document] = []
+    new_specs: list[_CopySpec] = []
     async with tracked_db("scope_backfill.write") as db:
-        # Row-lock active membership for this txn so a concurrent leave
-        # (``left_at``) cannot commit between the check and the inserts.
-        membership = await db.scalar(
-            select(models.SessionPeer.peer_name)
-            .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
-            .where(models.SessionPeer.workspace_name == workspace_name)
-            .where(models.SessionPeer.session_name == session_name)
-            .where(models.SessionPeer.peer_name == scope_peer)
-            .where(models.SessionPeer.left_at.is_(None))
-            .with_for_update()
-            .limit(1)
-        )
-        if membership is None:
-            return False
-
-        for observed in sorted(touched_observed):
-            await crud.get_or_create_collection(
-                db, workspace_name, observer=scope_peer, observed=observed
-            )
-
-        restore_ids: list[str] = []
-        restored_citations: list[dict[str, Any]] = []
-        for spec in plans:
-            if spec.restore_document_id is not None:
-                restore_ids.append(spec.restore_document_id)
-                restored_citations.extend(
-                    {
-                        "conclusion_id": spec.restore_document_id,
-                        "message_id": link.message_id,
-                        "position": link.position,
-                        "workspace_name": workspace_name,
-                    }
-                    for link in build_source_message_links(
-                        spec.source_message_ids, workspace_name
+        try:
+            left_the_scope = False
+            async with final_write(db, chunk_barrier):
+                # Row-lock active membership for this txn so a concurrent leave
+                # (``left_at``) cannot commit between the check and the inserts.
+                # After the barrier's parent locks: session deletion locks the
+                # session first and the membership rows after it.
+                membership = await db.scalar(
+                    select(models.SessionPeer.peer_name)
+                    .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
+                    .where(models.SessionPeer.workspace_name == workspace_name)
+                    .where(models.SessionPeer.session_name == session_name)
+                    .where(models.SessionPeer.peer_name == scope_peer)
+                    .where(models.SessionPeer.left_at.is_(None))
+                    .with_for_update()
+                    .limit(1)
+                )
+                left_the_scope = membership is None
+                if not left_the_scope:
+                    # Not get_or_create_collection: it commits.
+                    await ensure_collections(
+                        db,
+                        chunk_barrier,
+                        [(scope_peer, observed) for observed in touched_observed],
                     )
-                )
-                continue
-            row = models.Document(
-                workspace_name=workspace_name,
-                observer=scope_peer,
-                observed=spec.observed,
-                content=spec.content,
-                level="explicit",
-                times_derived=spec.times_derived,
-                internal_metadata={
-                    **spec.internal_metadata,
-                    COPIED_FROM_KEY: spec.source_id,
-                },
-                session_name=spec.session_name,
-                source_ids=spec.source_ids,
-                source_message_ids=spec.source_message_ids,
-                embedding=spec.embedding if store_in_postgres else None,
-            )
-            row.sync_state = "pending"
-            new_rows.append(row)
 
-        db.add_all(new_rows)
-        if restore_ids:
-            await db.execute(
-                update(models.Document)
-                .where(models.Document.id.in_(restore_ids))
-                .values(deleted_at=None, sync_state="pending")
-            )
-            # The source may have gained citations since this copy was
-            # removed; a restored copy takes the source's current set.
-            await db.execute(
-                delete(models.ConclusionSourceMessage).where(
-                    models.ConclusionSourceMessage.conclusion_id.in_(restore_ids)
-                )
-            )
-            if restored_citations:
-                await db.execute(
-                    insert(models.ConclusionSourceMessage), restored_citations
-                )
-        await crud.record_explicit_documents(db, new_rows)
-        await db.commit()
+                    # A source a dream consolidated away since the plan is not
+                    # copied. One that was erased also raised its collection's
+                    # generation, which fails the whole chunk at the block's
+                    # exit, so a restore never brings an erased copy back.
+                    live_sources = set(
+                        await db.scalars(
+                            select(models.Document.id).where(
+                                models.Document.tenant_id == chunk_barrier.tenant_id,
+                                models.Document.workspace_name == workspace_name,
+                                models.Document.id.in_(
+                                    [spec.source_id for spec in plans]
+                                ),
+                                models.Document.deleted_at.is_(None),
+                            )
+                        )
+                    )
+
+                    restore_ids: list[str] = []
+                    restored_citations: list[dict[str, Any]] = []
+                    for spec in plans:
+                        if spec.source_id not in live_sources:
+                            continue
+                        spec.written = True
+                        if spec.restore_document_id is not None:
+                            restore_ids.append(spec.restore_document_id)
+                            restored_citations.extend(
+                                {
+                                    "conclusion_id": spec.restore_document_id,
+                                    "message_id": link.message_id,
+                                    "position": link.position,
+                                    "workspace_name": workspace_name,
+                                }
+                                for link in build_source_message_links(
+                                    spec.source_message_ids, workspace_name
+                                )
+                            )
+                            continue
+                        row = models.Document(
+                            workspace_name=workspace_name,
+                            observer=scope_peer,
+                            observed=spec.observed,
+                            content=spec.content,
+                            level="explicit",
+                            times_derived=spec.times_derived,
+                            internal_metadata={
+                                **spec.internal_metadata,
+                                COPIED_FROM_KEY: spec.source_id,
+                            },
+                            session_name=spec.session_name,
+                            source_ids=spec.source_ids,
+                            source_message_ids=spec.source_message_ids,
+                            embedding=spec.embedding if store_in_postgres else None,
+                        )
+                        row.sync_state = "pending"
+                        new_rows.append(row)
+                        new_specs.append(spec)
+
+                    db.add_all(new_rows)
+                    if restore_ids:
+                        await db.execute(
+                            update(models.Document)
+                            .where(models.Document.id.in_(restore_ids))
+                            .values(deleted_at=None, sync_state="pending")
+                        )
+                        # The source may have gained citations since this copy
+                        # was removed; a restored copy takes the source's
+                        # current set.
+                        await db.execute(
+                            delete(models.ConclusionSourceMessage).where(
+                                models.ConclusionSourceMessage.conclusion_id.in_(
+                                    restore_ids
+                                )
+                            )
+                        )
+                        if restored_citations:
+                            await db.execute(
+                                insert(models.ConclusionSourceMessage),
+                                restored_citations,
+                            )
+            if left_the_scope:
+                await db.rollback()
+                return False
+            # After the block: it locked the collection rows this updates.
+            await crud.record_explicit_documents(db, new_rows)
+            await db.commit()
+        except LifecycleBarrierError:
+            await db.rollback()
+            for spec in plans:
+                spec.written = False
+            raise
 
         # IDs are generated client-side and remain accessible post-commit
         # (expire_on_commit=False), mirroring crud.document.create_documents.
-        for spec, row in zip(
-            [s for s in plans if s.restore_document_id is None], new_rows, strict=True
-        ):
+        for spec, row in zip(new_specs, new_rows, strict=True):
             spec.restore_document_id = row.id
 
     copied_ids = [
         spec.restore_document_id
         for spec in plans
-        if spec.restore_document_id is not None
+        if spec.written and spec.restore_document_id is not None
     ]
 
     # Phase 4: sync to the external vector store (or mark synced in pgvector
     # mode). Failures leave rows in sync_state='pending' for the reconciler.
-    await _sync_copies_to_vector_store(workspace_name, scope_peer, plans, copied_ids)
+    if copied_ids:
+        await _sync_copies_to_vector_store(
+            workspace_name,
+            scope_peer,
+            [spec for spec in plans if spec.written],
+            copied_ids,
+        )
     return True
 
 
@@ -639,6 +779,14 @@ async def process_scope_removal(
                 {"entries": [], EPOCH_KEY: epoch},
                 commit=False,
             )
+
+        # A dream that read the removed copies must not write from them. The
+        # rows are already locked by the notes write above.
+        await bump_collection_generations(
+            db,
+            workspace_name,
+            [(scope_peer, observed) for observed in removed_by_observed],
+        )
 
         # The session left the scope, so its backfill status entry is moot;
         # clearing it keeps a later re-add starting from a fresh "pending".

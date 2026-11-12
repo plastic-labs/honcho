@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from src import crud, exceptions, models, schemas
 from src.config import settings
 from src.crud.lifecycle import live_document_row
+from src.crud.lifecycle_barrier import WriteSnapshot
 from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import check_and_schedule_dream
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
@@ -89,6 +90,7 @@ class RepresentationManager:
         session_name: str,
         message_created_at: datetime.datetime,
         message_level_configuration: ResolvedConfiguration,
+        barrier: WriteSnapshot | None = None,
     ) -> crud.CreateDocumentsResult:
         """
         Save Representation objects to the collection as a set of documents.
@@ -98,10 +100,16 @@ class RepresentationManager:
             message_ids: Message ID range to link with observations
             session_name: Session name to link with existing summary context
             message_created_at: Timestamp when the message was created
+            barrier: What the deriver captured before it read the batch. The
+                save then runs behind the lifecycle barrier
 
         Returns:
             The result of document creation, including saved documents and
             deduplication counts.
+
+        Raises:
+            LifecycleBarrierError: A deletion made the batch stale. Nothing
+                is saved for this observer
         """
 
         empty_result = crud.CreateDocumentsResult()
@@ -162,6 +170,7 @@ class RepresentationManager:
                 session_name,
                 message_created_at,
                 message_level_configuration,
+                barrier,
             )
 
         create_document_duration = (time.perf_counter() - create_document_start) * 1000
@@ -183,14 +192,20 @@ class RepresentationManager:
         session_name: str,
         message_created_at: datetime.datetime,
         message_level_configuration: ResolvedConfiguration,
+        barrier: WriteSnapshot | None = None,
     ) -> crud.CreateDocumentsResult:
-        # get_or_create_collection already handles IntegrityError with rollback and a retry
-        collection = await crud.get_or_create_collection(
-            db,
-            self.workspace_name,
-            observer=self.observer,
-            observed=self.observed,
-        )
+        collection: models.Collection | None = None
+        if barrier is None:
+            # get_or_create_collection already handles IntegrityError with rollback and a retry
+            collection = await crud.get_or_create_collection(
+                db,
+                self.workspace_name,
+                observer=self.observer,
+                observed=self.observed,
+            )
+        # With a barrier the collection is created by create_documents, in the
+        # write's own transaction: get_or_create_collection commits, and a
+        # collection must not be created under a parent deleted since capture.
 
         # Prepare all documents for bulk creation
         documents_to_create: list[schemas.DocumentCreate] = []
@@ -232,10 +247,18 @@ class RepresentationManager:
             observer=self.observer,
             observed=self.observed,
             deduplicate=settings.DERIVER.DEDUPLICATE,
+            barrier=barrier,
         )
 
         if message_level_configuration.dream.enabled:
             try:
+                if collection is None:
+                    collection = await crud.get_collection(
+                        db,
+                        self.workspace_name,
+                        observer=self.observer,
+                        observed=self.observed,
+                    )
                 await check_and_schedule_dream(db, collection)
             except Exception as e:
                 logger.warning(f"Failed to check dream scheduling: {e}")

@@ -23,6 +23,7 @@ from nanoid import generate as generate_nanoid
 from src import crud
 from src.config import ConfiguredModelSettings, settings
 from src.crud.dream_history import DreamHistoryTarget
+from src.crud.lifecycle_barrier import WriteGate
 from src.dependencies import tracked_db
 from src.dreamer.working_memory import (
     UPDATE_NOTES_TOOL,
@@ -387,6 +388,7 @@ If you update it, send the full deduplicated list and remove stale entries.
         queue_item_id: int | None = None,
         state: DreamState | None = None,
         history: DreamHistoryTarget | None = None,
+        barrier: WriteGate | None = None,
     ) -> SpecialistResult:
         """
         Run the specialist agent.
@@ -576,6 +578,7 @@ If you update it, send the full deduplicated list and remove stale entries.
                     if history is not None
                     else None
                 ),
+                barrier=barrier,
                 handler_resolver=(
                     _handler_resolver(
                         max_iterations - window + 1 if budget_enabled else None,
@@ -648,6 +651,11 @@ If you update it, send the full deduplicated list and remove stale entries.
                     custom_instructions=injected_instructions.strip() or None,
                 ),
             )
+
+            # A write of this pass was refused by the lifecycle barrier: a
+            # deletion made what the dream read stale. The pass did not succeed.
+            if barrier is not None and barrier.refusal is not None:
+                raise barrier.refusal
 
             # Log metrics
             duration_ms = (time.perf_counter() - start_time) * 1000

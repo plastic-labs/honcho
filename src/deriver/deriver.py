@@ -6,9 +6,16 @@ from nanoid import generate as generate_nanoid
 
 from src import crud
 from src.config import ConfiguredModelSettings, settings
+from src.crud.lifecycle_barrier import WriteSnapshot
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
-from src.exceptions import EmptyRepresentationError, RepresentationSaveError
+from src.exceptions import (
+    EmptyRepresentationError,
+    RepresentationSaveError,
+    WriteClaimLostError,
+    WriteGenerationStaleError,
+    WriteParentGoneError,
+)
 from src.llm import HonchoLLMCallResponse, honcho_llm_call
 from src.llm.types import LLMTelemetryContext, degraded_response_parse_class
 from src.models import Message
@@ -54,6 +61,7 @@ async def process_representation_tasks_batch(
     hit_batch_token_cap: bool = False,
     was_flush_enabled: bool = False,
     batch_max_tokens: int = 0,
+    barrier: WriteSnapshot | None = None,
 ) -> None:
     """
     Process messages with minimal overhead - single LLM call, save to multiple collections.
@@ -69,6 +77,15 @@ async def process_representation_tasks_batch(
         hit_batch_token_cap: queue batcher clamped this batch to fit
         was_flush_enabled: DERIVER.FLUSH_ENABLED snapshot at batch time
         batch_max_tokens: DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS snapshot
+        barrier: What the queue captured before it read this batch. Each
+            observer's save runs behind the lifecycle barrier with it
+
+    Raises:
+        WriteGenerationStaleError: A deletion changed the batch after it was
+            read. Nothing was saved for that observer; the batch is recomputed
+        WriteParentGoneError: The session, workspace or observed peer was
+            deleted. Nothing was saved; the batch is dropped
+        WriteClaimLostError: The worker no longer holds the work unit
     """
     if not messages:
         return
@@ -244,6 +261,7 @@ async def process_representation_tasks_batch(
     agg_representation_result = crud.CreateDocumentsResult()
     successful_observer_count = 0
     save_errors: list[tuple[str, Exception]] = []
+    dropped_observers: list[WriteParentGoneError] = []
     if observations.is_empty() or not message_ids:
         logger.warning(
             "Deriver generated zero observations for messages %s:%s in %s/%s! "
@@ -272,6 +290,7 @@ async def process_representation_tasks_batch(
                         latest_message.session_name,
                         latest_message.created_at,
                         message_level_configuration,
+                        barrier,
                     )
                 )
                 agg_representation_result.exact_dup_existing_count += (
@@ -287,6 +306,19 @@ async def process_representation_tasks_batch(
                     representation_result.semantic_dup_replaced_count
                 )
                 successful_observer_count += 1
+            except WriteParentGoneError as e:
+                if e.scope not in ("peer", "collection"):
+                    # The session or workspace is gone: so is every save.
+                    raise
+                # This observer, or the observed peer, was deleted. Its
+                # conclusions are dropped; another observer may still be live.
+                logger.info(
+                    "Dropped representation for observer %s: %s", observer, e.detail
+                )
+                dropped_observers.append(e)
+            except (WriteGenerationStaleError, WriteClaimLostError):
+                # The whole batch is stale, or no longer ours to write.
+                raise
             except Exception as e:  # noqa: BLE001
                 logger.exception(
                     "Failed to save representation for observer %s", observer
@@ -402,6 +434,9 @@ async def process_representation_tasks_batch(
     )
     if retryable is not None:
         raise retryable
+    if dropped_observers and not save_errors and successful_observer_count == 0:
+        # Every observer's parent is gone: the batch has nowhere to land.
+        raise dropped_observers[0]
     if save_errors and successful_observer_count == 0:
         details = "; ".join(
             f"{observer}: {exc.__class__.__name__}: {exc}"

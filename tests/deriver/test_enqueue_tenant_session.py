@@ -17,6 +17,7 @@ from src import schemas
 from src.config import settings
 from src.db import tenant_context
 from src.deriver.enqueue import enqueue_dream, enqueue_scope_backfill
+from tests.lifecycle_barrier_graph import barrier_stand_in
 
 
 @pytest.mark.asyncio
@@ -41,6 +42,7 @@ async def test_dream_and_scope_enqueue_use_tenant_session(
         with (
             patch("src.deriver.enqueue.tracked_db", fake_tracked_db),
             patch("src.deriver.enqueue.service_db", no_service_db),
+            barrier_stand_in("src.deriver.enqueue"),
             patch(
                 "src.deriver.enqueue.crud.reject_scope_observed",
                 new_callable=AsyncMock,

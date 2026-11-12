@@ -134,6 +134,19 @@ Tables written concurrently by more than one worker — `documents` (deriver, dr
 - **A multi-row insert into `peers` adds the rows in name order.** `get_or_create_peers` and `get_or_create_scopes` sort their new peers by name before adding them, which is the order the flush inserts them, so two creates naming overlapping new peers take the unique-key locks in one order. Any new path that inserts several `peers` rows in one transaction must do the same.
 - `FOR UPDATE SKIP LOCKED` (the reconciler's claim pattern, and the deriver's own work-unit claim over `queue_item_batches` — `claim_rows_query` in `src/crud/deriver.py`) never waits, so it cannot be a deadlock partner for other SKIP LOCKED lockers — but it still locks in output order, its held locks can be the partner a blocking locker deadlocks against (the backlog triggers retry for exactly this), and holding those locks across an external call still stalls other writers. See the "never hold a DB session during external calls" rule above.
 
+#### Deletion lifecycle barrier
+
+A producer (deriver, dreamer, summarizer, card writer, scope backfill, enqueue, a public write route) reads its input, often calls a model, and only then writes. Removing its queued work does not stop that write, so every producer runs the one final-write step in `src/crud/lifecycle_barrier.py`. Rules:
+
+- **Capture before reading the input.** `capture_write_snapshot` resolves names to tenant-qualified ids (workspace, sessions, peers, collections) and reads each row's `deletion_generation`. It holds no lock, so it is carried across the model call. A deletion that commits after the capture is caught at the write; one that committed before it is already absent from the input read afterwards. Capturing after the input read leaves a window in which neither holds.
+- **Write inside `final_write(db, snapshot)`, in the producer's own transaction.** It never commits. Lock order: workspace → peers (id order) → sessions (id order) → the producer's document writes → collections (sorted key order) → queue rows → `active_queue_sessions`. Parents are locked `FOR KEY SHARE`; the collection check runs at the block's exit, after the documents. A statement that updates a snapshot's collection row (`record_explicit_documents`) goes after the block, which locked that row first.
+- **Nothing inside the block may commit.** `crud.get_or_create_collection`, `get_or_create_session` and `get_or_create_peers` commit or create: use `ensure_collections` for a missing collection, and never create a session or peer from a producer (that brings a purged name back).
+- **A refusal is not a failure.** `WriteParentGoneError`: drop the work. `WriteGenerationStaleError`: recompute it (the queue retries it like a transient error). `WriteClaimLostError`: the worker no longer holds its work unit; release it and leave the rows. Catch them where the producer owns the transaction, roll back, and re-raise. Do not swallow them in a broad `except Exception`.
+- **A producer that writes many times (a dream) shares one snapshot** through `WriteGate`. After the first refusal every later tool call is refused without touching the database, and the pass raises once its model loop returns.
+- **A deleter owns the other half.** It locks the row it deletes `FOR UPDATE` and raises its generation before removing anything under it (`begin_workspace_deletion`, `begin_session_deletion`), and raises the generation of every collection it removes conclusions from, after the documents (`bump_collection_generations`). A deletion of something with no generation of its own (a peer, a message) raises the generation of each row producers captured in its place: the message's session, and every session and collection the peer belongs to. A dream's own removal of a conclusion is consolidation, not erasure, and raises nothing.
+- **Only `deletion_generation` is compared, and ids, never names.** A session deleted and recreated under the same name has a new id and does not pass.
+- A new producer needs a test that deletes the parent between its capture and its final write and asserts that nothing was written and no purged name came back. See `tests/deriver/test_barrier_*.py`, `tests/dreamer/test_barrier_dream.py`, `tests/utils/test_summarizer_barrier.py` and `tests/crud/test_lifecycle_barrier*.py`; `tests/lifecycle_barrier_graph.py` has the shared fixtures.
+
 #### Auth scoping
 
 - **Named-scope keys (`sc` plus `w`) require explicit `allow_scope=True` on supported routes.** This grants both recall and ingestion within that scope, not peer-member write access. Recall handlers must bind their projection to the token; session routes check active scope membership. Keep the named-scope route allowlist in `tests/routes/test_auth_route_policy.py` synchronized. Never allow restricted keys to enroll unrelated existing sessions or fall back to global recall.
@@ -239,6 +252,7 @@ src/
 │   └── internal.py       # Internal-only schemas (queue payloads, etc.)
 ├── crud/                # Per-resource DB operations
 │   ├── collection.py, deriver.py, document.py, message.py
+│   ├── lifecycle.py (liveness filters), lifecycle_barrier.py (final-write step)
 │   ├── peer.py, peer_card.py, representation.py  (RepresentationManager)
 │   ├── session.py, tenant.py, webhook.py, workspace.py
 ├── routers/             # FastAPI route handlers (all under /v3)

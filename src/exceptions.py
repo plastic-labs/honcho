@@ -186,6 +186,46 @@ class VectorNamespaceUnresolved(HonchoException):
     detail = "Vector namespace could not be resolved for this tenant"
 
 
+BarrierScope = Literal[
+    "workspace", "session", "peer", "collection", "message", "document", "claim"
+]
+
+
+class LifecycleBarrierError(HonchoException):
+    """A producer's final write was refused by the deletion lifecycle barrier.
+
+    Raised by ``src.crud.lifecycle_barrier`` inside the producer's transaction,
+    before anything commits. The producer rolls back and does not write.
+    ``scope`` names the kind of row that failed the check.
+    """
+
+    status_code: int = 409
+    detail: str = "The write was refused because its input is no longer current"
+    scope: BarrierScope
+
+    def __init__(self, scope: BarrierScope, detail: str | None = None):
+        self.scope = scope
+        super().__init__(detail)
+
+
+@final
+class WriteParentGoneError(LifecycleBarrierError):
+    """A parent or source the write depends on was deleted. Drop the work."""
+
+    status_code: int = 404
+    detail: str = "Resource not found"
+
+
+@final
+class WriteGenerationStaleError(LifecycleBarrierError):
+    """A deletion changed the captured input but the parents are live. Recompute."""
+
+
+@final
+class WriteClaimLostError(LifecycleBarrierError):
+    """The worker no longer holds the claim on its work unit. Release the unit."""
+
+
 @final
 class RepresentationSaveError(HonchoException):
     """Raised when every observer's representation save fails in a batch."""
