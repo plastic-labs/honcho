@@ -27,7 +27,7 @@ async def test_list_and_get_dreams(
         trigger_reason="manual",
     )
     assert run is not None
-    await crud.set_peer_card(
+    write = await crud.set_peer_card(
         db_session,
         workspace_name,
         ["IDENTITY: Name: Maya"],
@@ -35,6 +35,8 @@ async def test_list_and_get_dreams(
         observed=maya.id,
         history=crud.DreamHistoryTarget(run_id=run.run_id, specialist="deduction"),
     )
+    await db_session.commit()
+    await write.post_commit()
     await crud.close_run(run.run_id, succeeded=True)
 
     if client_type == "async":

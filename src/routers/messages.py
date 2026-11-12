@@ -15,7 +15,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi_pagination.bases import AbstractParams
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.attributes import flag_modified
 
 from src import crud, schemas
 from src.config import settings
@@ -229,22 +228,14 @@ async def create_messages_with_file(
         created_at=form_data.created_at,
     )
 
-    # Create messages
-    message_creates = [item["message_create"] for item in all_message_data]
+    # Create messages, each carrying its file metadata in the same insert
     created_messages = await crud.create_messages(
         db,
-        messages=message_creates,
+        messages=[item["message_create"] for item in all_message_data],
         workspace_name=workspace_id,
         session_name=session_id,
+        internal_metadata=[item["file_metadata"] for item in all_message_data],
     )
-
-    # Update internal_metadata for file-related messages
-    for i, message in enumerate(created_messages):
-        file_metadata = all_message_data[i]["file_metadata"]
-        message.internal_metadata.update(file_metadata)
-        flag_modified(message, "internal_metadata")
-
-    await db.commit()
 
     # Enqueue for processing (same as regular messages)
     payloads = [

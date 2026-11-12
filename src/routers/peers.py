@@ -652,7 +652,7 @@ async def set_peer_card(
     # JSONB write, so the Dreamer and agent-tool paths are covered too. Nothing
     # expensive happens between here and there, so a duplicate early check would
     # only cost an extra query.
-    await crud.set_peer_card(
+    card_write = await crud.set_peer_card(
         db,
         workspace_id,
         peer_card=peer_card_data.peer_card,
@@ -660,6 +660,8 @@ async def set_peer_card(
         observed=observed,
         erase_history=True,
     )
+    await db.commit()
+    await card_write.post_commit()
 
     return schemas.PeerCardResponse(peer_card=peer_card_data.peer_card)
 

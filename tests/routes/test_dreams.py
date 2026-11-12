@@ -108,7 +108,7 @@ async def test_get_returns_the_run_and_its_changes(
     run_id = await _run(
         db_session, workspace_name, observer=maya, observed=maya, started_minutes_ago=1
     )
-    await crud.set_peer_card(
+    write = await crud.set_peer_card(
         db_session,
         workspace_name,
         ["IDENTITY: Name: Maya"],
@@ -116,6 +116,8 @@ async def test_get_returns_the_run_and_its_changes(
         observed=maya,
         history=crud.DreamHistoryTarget(run_id=run_id, specialist="induction"),
     )
+    await db_session.commit()
+    await write.post_commit()
     await crud.close_run(run_id, succeeded=True)
     root = f"/v3/workspaces/{workspace_name}/dreams"
 
@@ -253,7 +255,7 @@ async def test_setting_a_card_through_the_api_erases_recorded_cards(
         started_minutes_ago=1,
     )
     for run_id, observer in [(own, maya), (other_pair, "assistant")]:
-        await crud.set_peer_card(
+        write = await crud.set_peer_card(
             db_session,
             workspace_name,
             ["SSN: 123-45-6789"],
@@ -261,6 +263,8 @@ async def test_setting_a_card_through_the_api_erases_recorded_cards(
             observed=maya,
             history=crud.DreamHistoryTarget(run_id=run_id, specialist="induction"),
         )
+        await db_session.commit()
+        await write.post_commit()
     await db_session.execute(
         update(models.DreamRun)
         .where(models.DreamRun.id == own)

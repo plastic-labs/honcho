@@ -1,6 +1,6 @@
 import asyncio
 import datetime
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from logging import getLogger
@@ -677,6 +677,12 @@ class CreateDocumentsResult:
     exact_dup_existing_count: int = 0
     semantic_dup_rejected_count: int = 0
     semantic_dup_replaced_count: int = 0
+    on_commit: Callable[[], Awaitable[None]] | None = field(default=None, repr=False)
+
+    async def post_commit(self) -> None:
+        """Sync the created documents' vectors. Call only after committing."""
+        if self.on_commit is not None:
+            await self.on_commit()
 
 
 async def create_documents(
@@ -691,6 +697,11 @@ async def create_documents(
 ) -> CreateDocumentsResult:
     """
     Create multiple documents with optional duplicate detection.
+
+    Stages the documents in the caller's transaction and does not commit. The
+    caller commits, then runs ``post_commit()`` on the result, which stores the
+    embeddings in the external vector store (or marks the rows synced under
+    pgvector) and records their sync state in its own transaction.
 
     The ``deduplicate`` flag additionally enables semantic (cosine-similarity)
     dedup for documents that survive the exact deduplication check. Candidates
@@ -708,12 +719,13 @@ async def create_documents(
             transaction
 
     Returns:
-        List of DocumentCreate schemas that were actually inserted (excludes
-        duplicates and failures).
+        The DocumentCreate schemas that were actually inserted (excludes
+        duplicates and failures), the dedup counts, and the vector sync to run
+        after the caller commits.
     """
     honcho_documents: list[models.Document] = []
     accepted_documents: list[schemas.DocumentCreate] = []
-    # Store (document_model, embedding) pairs - IDs aren't available until after commit
+    # (document_model, embedding) pairs for the vector sync after the caller commits
     docs_with_embeddings: list[tuple[models.Document, list[float]]] = []
 
     # Resolve semantic dup candidates for the whole batch up front, then load
@@ -1027,13 +1039,55 @@ async def create_documents(
                 },
             )
         await record_explicit_documents(db, honcho_documents)
-        # NOTE
-        # If the process crashes after this commit but before vector upsert completes,
-        # documents will be left in sync_state='pending' with NULL embeddings.
-        # The reconciliation job will automatically re-embed and sync these documents,
-        await db.commit()
+        # Flushed here so an integrity or deadlock error surfaces from this
+        # function, not from the caller's commit.
+        await db.flush()
 
-        # Store embeddings in external vector store after documents are committed (IDs now available)
+    except IntegrityError as e:
+        await db.rollback()
+        raise ValidationException(
+            "Failed to create documents due to integrity constraint violation"
+        ) from e
+    except DBAPIError:
+        # Leave the session clean for the caller (e.g. after a deadlock at the
+        # flush); the queue layer classifies and retries.
+        await db.rollback()
+        raise
+
+    async def on_commit() -> None:
+        await _sync_created_documents(
+            db,
+            docs_with_embeddings,
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+        )
+
+    return CreateDocumentsResult(
+        created_documents=accepted_documents,
+        exact_dup_existing_count=exact_dup_existing_count,
+        exact_dup_in_batch_count=exact_dup_in_batch_count,
+        semantic_dup_rejected_count=semantic_dup_rejected_count,
+        semantic_dup_replaced_count=semantic_dup_replaced_count,
+        on_commit=on_commit,
+    )
+
+
+async def _sync_created_documents(
+    db: AsyncSession,
+    docs_with_embeddings: list[tuple[models.Document, list[float]]],
+    *,
+    workspace_name: str,
+    observer: str,
+    observed: str,
+) -> None:
+    """Store committed documents' embeddings and record their sync state.
+
+    Runs after the caller has committed the documents, as their own sync-state
+    transaction. If the process dies before this finishes, the documents stay
+    in sync_state='pending' and the reconciler re-embeds and syncs them.
+    """
+    try:
         if docs_with_embeddings:
             doc_ids = [doc.id for doc, _ in docs_with_embeddings]
             external_vector_store = get_external_vector_store()
@@ -1116,24 +1170,9 @@ async def create_documents(
                     )
                     await db.commit()
 
-    except IntegrityError as e:
-        await db.rollback()
-        raise ValidationException(
-            "Failed to create documents due to integrity constraint violation"
-        ) from e
     except DBAPIError:
-        # Leave the session clean for callers that own it (e.g. a deadlock
-        # at the final commit); the queue layer classifies and retries.
         await db.rollback()
         raise
-
-    return CreateDocumentsResult(
-        created_documents=accepted_documents,
-        exact_dup_existing_count=exact_dup_existing_count,
-        exact_dup_in_batch_count=exact_dup_in_batch_count,
-        semantic_dup_rejected_count=semantic_dup_rejected_count,
-        semantic_dup_replaced_count=semantic_dup_replaced_count,
-    )
 
 
 async def delete_document(
@@ -1358,11 +1397,14 @@ async def create_observations(
         action="No conclusion is ever formed about a scope.",
     )
 
-    # Get or create all collections
+    # Get or create all collections. Each commits before the next, and the last
+    # before the embedding call below, so no transaction stays open across it.
     for observer, observed in collection_pairs:
-        await get_or_create_collection(
+        collection_result = await get_or_create_collection(
             db, workspace_name, observer=observer, observed=observed
         )
+        await db.commit()
+        await collection_result.post_commit()
 
     # Generate embeddings in batch
     contents = [obs.content for obs in observations]
