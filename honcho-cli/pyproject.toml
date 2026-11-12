@@ -33,6 +33,8 @@ Repository = "https://github.com/plastic-labs/honcho"
 
 [project.scripts]
 honcho = "honcho_cli.main:app"
+# Same entry point under the package name, so `uvx honcho-cli <command>` works
+honcho-cli = "honcho_cli.main:app"
 
 [build-system]
 requires = ["hatchling"]
