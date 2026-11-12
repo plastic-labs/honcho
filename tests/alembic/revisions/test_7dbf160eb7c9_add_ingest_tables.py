@@ -14,6 +14,7 @@ TABLES = {
         [
             "ix_ingest_records_session",
             "ix_ingest_records_pending",
+            "ix_ingest_records_deferred",
             "ix_ingest_records_author_binding",
         ],
     ),
@@ -82,6 +83,7 @@ def verify_ingest_tables(verifier: MigrationVerifier) -> None:
         for i in inspector.get_indexes("ingest_records", schema=verifier.schema)
     }
     assert partial["ix_ingest_records_pending"] == "(derivation = 'pending'::text)"
+    assert partial["ix_ingest_records_deferred"] == "(derivation = 'deferred'::text)"
     assert partial["ix_ingest_records_author_binding"] == (
         "(author_binding_id IS NOT NULL)"
     )
