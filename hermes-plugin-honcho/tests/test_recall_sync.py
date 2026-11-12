@@ -96,6 +96,7 @@ def test_timeout_keeps_single_flight_and_late_result_cannot_publish(monkeypatch)
 
         def controlled_join(timeout=None):
             worker.join = join
+            assert timeout is not None and 0 <= timeout <= provider._config.timeout
             assert entered.wait(2)
             clock[0] += 1
 
