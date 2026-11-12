@@ -592,16 +592,6 @@ async def get_deriver_metrics(
         else 0
     )
     claimed_count = (await db.execute(claimed)).scalar_one()
-    inflight_by_tenant: dict[str, int] | None = None
-    if settings.DERIVER.TENANT_FAIRNESS_METRICS:
-        inflight_by_tenant = {
-            tenant_id or "": int(count)
-            for tenant_id, count in await db.execute(
-                select(models.ActiveQueueSession.tenant_id, func.count())
-                .where(models.ActiveQueueSession.last_updated >= stale_claim_cutoff())
-                .group_by(models.ActiveQueueSession.tenant_id)
-            )
-        }
     pending_count, oldest_age = (await db.execute(pending)).one()
     embeddings_pending, embeddings_due = (
         (await db.execute(embeddings)).one() if count_embeddings else (0, 0)
@@ -613,7 +603,6 @@ async def get_deriver_metrics(
         excluded_work_units_by_tenant=excluded_by_tenant,
         paused_tenants=int(paused_count),
         claimed_work_units=int(claimed_count),
-        inflight_units_by_tenant=inflight_by_tenant,
         pending_items=int(pending_count),
         oldest_pending_age_seconds=float(oldest_age),
         embeddings_pending=int(embeddings_pending),
