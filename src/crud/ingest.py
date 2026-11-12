@@ -20,6 +20,9 @@ This module is the ingest write transaction. In order:
 Every set of row locks is taken in a sorted order, so two batches can't deadlock
 each other. Turning `pending` records into queue work is a separate step (the
 enqueuer), so this transaction never touches a queue table.
+
+`release_deferred` is the derive call's transaction: it makes `deferred` records
+`pending`, under the same fence.
 """
 
 import datetime
@@ -30,7 +33,7 @@ from dataclasses import dataclass, field
 from logging import getLogger
 from typing import Any, Literal, NamedTuple, cast
 
-from sqlalchemy import and_, delete, or_, select, tuple_, update
+from sqlalchemy import and_, delete, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -647,6 +650,15 @@ async def _fence_sessions(
     could resolve to is fenced: its bound name and both candidates. If a name
     resolved under the fence isn't fenced yet, it is fenced and every key is
     resolved again, until nothing changes.
+
+    Fences are only ever taken in sorted order, as every other fence holder
+    (another batch, a derive call, a deletion) takes them. A new name that sorts
+    after every fence held extends the set in order; one that sorts before raises
+    `IngestRaced`, and the retry reads that binding before taking any fence.
+
+    Raises:
+        IngestRaced: A concurrent batch bound a key to a name that sorts before a
+            fence this batch already holds.
     """
     keys = list(dict.fromkeys(r.session_key for r in records))
     wanted: set[str] = set()
@@ -673,6 +685,8 @@ async def _fence_sessions(
         unfenced = set(names.values()) - fenced
         if not unfenced:
             return names
+        if fenced and min(unfenced) < max(fenced):
+            raise IngestRaced
         wanted = unfenced
 
 
@@ -1425,3 +1439,139 @@ async def after_commit(workspace_name: str, outcome: IngestResult) -> None:
     for peer_name in dict.fromkeys(outcome.created_peers):
         await safe_cache_delete(peer_cache_key(workspace_name, peer_name))
         emit(PeerCreatedEvent(workspace_name=workspace_name, peer_name=peer_name))
+
+
+# ---------------------------------------------------------------------------
+# Derive later
+# ---------------------------------------------------------------------------
+
+# Deferred records one derive call releases; the caller calls again until none
+# remain.
+DERIVE_BATCH = 1000
+
+
+@dataclass
+class Released:
+    """What one derive call's transaction released."""
+
+    # Records moved from `deferred` to `pending`.
+    pending: int
+    # Their sessions, sorted: the ones the caller enqueues next.
+    sessions: list[str]
+
+
+async def release_deferred(
+    db: AsyncSession, workspace_name: str, *, limit: int | None = None
+) -> Released:
+    """Make up to `limit` (default DERIVE_BATCH) deferred records `pending`, and commit.
+
+    Records are taken a session at a time, in session name order, and in
+    message order within a session. The fence comes first, as for an ingest
+    batch: the workspace shared, then each of their sessions. Every
+    transaction that writes a session's ingest records holds that session's
+    fence, so the update below waits on no row lock and can't deadlock.
+
+    Raises:
+        ResourceNotFoundException: The workspace doesn't exist.
+        DBAPIError: A lock timeout or another transient failure; nothing was
+            committed and the caller may retry.
+    """
+    tenant_id = models.scoped_tenant_id()
+    record = models.IngestRecord
+    workspace_id = await db.scalar(
+        select(models.Workspace.id).where(
+            models.Workspace.tenant_id == tenant_id,
+            models.Workspace.name == workspace_name,
+        )
+    )
+    if workspace_id is None:
+        raise ResourceNotFoundException(f"Workspace {workspace_name} not found")
+    if limit is None:
+        limit = DERIVE_BATCH
+
+    # Read without locks, only to know which sessions to fence. The update
+    # checks the state again under the fence, so a record another derive call
+    # released, or a deletion removed, while this one waited is skipped.
+    # Sessions are taken in name order, and each session's records in message
+    # order, so a session released across several calls is released oldest
+    # message first: summaries cover sequence windows, and the summarizer skips a
+    # message once a later summary exists, so a gap filled later is never
+    # summarized. A record whose message is gone sorts last; the enqueuer drops it.
+    picked: list[tuple[str, str]] = []
+    session_name: str | None = None
+    while len(picked) < limit:
+        session_name = await db.scalar(
+            select(func.min(record.session_name)).where(
+                record.tenant_id == tenant_id,
+                record.workspace_name == workspace_name,
+                record.derivation == "deferred",
+                *([record.session_name > session_name] if session_name else []),
+            )
+        )
+        if session_name is None:
+            break
+        message = models.Message
+        ids = (
+            await db.scalars(
+                select(record.id)
+                .outerjoin(
+                    message,
+                    (message.tenant_id == record.tenant_id)
+                    & (message.public_id == record.message_public_id),
+                )
+                .where(
+                    record.tenant_id == tenant_id,
+                    record.workspace_name == workspace_name,
+                    record.session_name == session_name,
+                    record.derivation == "deferred",
+                )
+                .order_by(message.seq_in_session.nulls_last(), record.id)
+                .limit(limit - len(picked))
+            )
+        ).all()
+        picked.extend((record_id, session_name) for record_id in ids)
+    if not picked:
+        await db.commit()
+        return Released(pending=0, sessions=[])
+
+    await take_workspace_fence(db, workspace_name, mode="shared")
+    await take_session_fences(db, workspace_name, {session for _, session in picked})
+    released = (
+        (
+            await db.execute(
+                update(record)
+                .where(
+                    record.tenant_id == tenant_id,
+                    record.id.in_([record_id for record_id, _ in picked]),
+                    record.derivation == "deferred",
+                )
+                # The statement's time, not the transaction's (now()): time spent
+                # waiting for the fences isn't time spent pending.
+                .values(
+                    derivation="pending",
+                    derivation_changed_at=func.statement_timestamp(),
+                )
+                .returning(record.session_name)
+                .execution_options(synchronize_session=False)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    await db.commit()
+    return Released(pending=len(released), sessions=sorted(set(released)))
+
+
+async def count_deferred(db: AsyncSession, workspace_name: str) -> int:
+    """How many of the workspace's records are still `deferred`."""
+    record = models.IngestRecord
+    count = await db.scalar(
+        select(func.count())
+        .select_from(record)
+        .where(
+            record.tenant_id == models.scoped_tenant_id(),
+            record.workspace_name == workspace_name,
+            record.derivation == "deferred",
+        )
+    )
+    return int(count or 0)
