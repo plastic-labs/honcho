@@ -1,13 +1,29 @@
 import logging
 import math
 import os
+import re
 import tomllib
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, cast, get_args
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
-from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    AliasChoices,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    ModelWrapValidatorHandler,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
     BaseSettings,
@@ -71,6 +87,22 @@ ThinkingEffortLevel = Literal[
 # "json_object" injects the schema into the prompt for OpenAI-compatible
 # providers that don't support json_schema (Structured Outputs).
 StructuredOutputMode = Literal["json_schema", "json_object"]
+
+# How a model takes thinking config. `budget`: `{"type": "enabled",
+# "budget_tokens": N}`. `adaptive`: `{"type": "adaptive"}` plus
+# `output_config.effort`; a budget is rejected.
+ThinkingMode = Literal["budget", "adaptive"]
+
+# How a model treats a forced tool_choice ({"type": "any"} / {"type": "tool"}):
+# - "conflicts_with_thinking": accepted, but not alongside extended thinking
+# - "skips_thinking": accepted with thinking on; that turn simply skips thinking
+# - "rejected": a 400 whether or not thinking is on
+ForcedToolChoice = Literal["conflicts_with_thinking", "skips_thinking", "rejected"]
+
+# Which request field carries the output token cap on the OpenAI transport.
+# OpenAI's reasoning models reject `max_tokens` and take
+# `max_completion_tokens`.
+MaxTokensParam = Literal["max_tokens", "max_completion_tokens"]
 
 
 PROVIDER_TIMEOUT_ERROR_TEXT = (
@@ -214,7 +246,11 @@ def _validate_structured_output_mode(
 
 
 class FallbackModelSettings(BaseModel):
-    """Independent fallback model configuration. No inheritance from primary."""
+    """Independent fallback model configuration. No inheritance from primary.
+
+    `model_ref` names a `MODELS` catalog entry in place of `model` and
+    `transport`; see `_expand_model_ref`.
+    """
 
     model: str
     transport: ModelTransport
@@ -234,7 +270,16 @@ class FallbackModelSettings(BaseModel):
 
     structured_output_mode: StructuredOutputMode | None = None
 
+    # The request doesn't read this field; each feature picks the cap it
+    # sends, and sends the same cap to the fallback. The deriver and the dream
+    # specialists send their primary's value (the dream specialists only when
+    # it is above 0), the summarizer only requires it to be at least its short
+    # and long caps, and the dialectic doesn't read it. A fallback's own value
+    # is never read.
     max_output_tokens: int | None = None
+    # Input plus output tokens this model accepts in one request. Optional and
+    # only checked at startup: see `AppSettings._check_budgets_fit_context_windows`.
+    context_window: Annotated[int, Field(gt=0)] | None = None
     stop_sequences: list[str] | None = None
 
     cache_policy: PromptCachePolicy | None = None
@@ -244,7 +289,7 @@ class FallbackModelSettings(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_legacy_model_format(cls, data: Any) -> Any:
-        return _normalize_model_transport(data)
+        return _normalize_model_transport(_expand_model_ref(data))
 
     @property
     def reasoning_effort(self) -> ThinkingEffortLevel | None:
@@ -258,7 +303,11 @@ class FallbackModelSettings(BaseModel):
 
 
 class ConfiguredModelSettings(BaseModel):
-    """Operator-configurable persisted model settings."""
+    """Operator-configurable persisted model settings.
+
+    `model_ref` names a `MODELS` catalog entry in place of `model` and
+    `transport`; see `_expand_model_ref`. The fallback can name one too.
+    """
 
     model: str
     transport: ModelTransport
@@ -280,7 +329,16 @@ class ConfiguredModelSettings(BaseModel):
 
     structured_output_mode: StructuredOutputMode | None = None
 
+    # The request doesn't read this field; each feature picks the cap it
+    # sends, and sends the same cap to the fallback. The deriver and the dream
+    # specialists send their primary's value (the dream specialists only when
+    # it is above 0), the summarizer only requires it to be at least its short
+    # and long caps, and the dialectic doesn't read it. A fallback's own value
+    # is never read.
     max_output_tokens: int | None = None
+    # Input plus output tokens this model accepts in one request. Optional and
+    # only checked at startup: see `AppSettings._check_budgets_fit_context_windows`.
+    context_window: Annotated[int, Field(gt=0)] | None = None
     stop_sequences: list[str] | None = None
 
     cache_policy: PromptCachePolicy | None = None
@@ -290,7 +348,7 @@ class ConfiguredModelSettings(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_legacy_model_format(cls, data: Any) -> Any:
-        return _normalize_model_transport(data)
+        return _normalize_model_transport(_expand_model_ref(data))
 
     @property
     def reasoning_effort(self) -> ThinkingEffortLevel | None:
@@ -302,6 +360,371 @@ class ConfiguredModelSettings(BaseModel):
         _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
         _validate_structured_output_mode(self.transport, self.structured_output_mode)
         return self
+
+
+class ModelCapabilitySettings(BaseModel):
+    """A catalog entry's capability profile: what the model accepts in a request.
+
+    The profile is inferred from `infer_from`, or from the entry's `model`
+    when that is unset, using the model id alone, whatever the transport.
+    Set `infer_from` to the real model id when `model` is a proxy alias
+    (`summarizer` -> `claude-haiku-5-5`). Any field set here replaces the
+    inferred value. See `src.llm.capabilities.ModelCapabilities` for what each
+    field means.
+    """
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+    infer_from: str | None = None
+    thinking: ThinkingMode | None = None
+    supports_prefill: bool | None = None
+    forced_tool_choice: ForcedToolChoice | None = None
+    preserved_thinking: bool | None = None
+    user_after_tool: bool | None = None
+    max_tokens_param: MaxTokensParam | None = None
+
+
+class ModelCatalogEntry(FallbackModelSettings):
+    """One named model in the `MODELS` catalog.
+
+    Holds what belongs to the model rather than to a call site: the route
+    (`model`, `transport`, `overrides`), request defaults such as
+    `structured_output_mode` or `thinking_effort`, and the capability profile.
+    A slot or fallback that names the entry with `model_ref` gets all of it;
+    any field the slot also sets wins. The profile applies to every request
+    sent to this transport and model.
+    """
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+    capabilities: ModelCapabilitySettings = Field(
+        default_factory=ModelCapabilitySettings
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_model_format(cls, data: Any) -> Any:
+        if isinstance(data, dict) and any(
+            str(key).lower() == "model_ref" for key in cast(dict[Any, Any], data)
+        ):
+            raise ValueError("a MODELS entry can't set model_ref; set model instead")
+        return _normalize_model_transport(data)
+
+
+# Single underscores only: `__` is the env-var delimiter (MODELS__<name>__FIELD).
+_MODEL_CATALOG_NAME = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*")
+
+
+def _check_model_catalog_names(value: Any) -> Any:
+    """Catalog names are lowercase, so each name has one env-var spelling."""
+    names: list[Any] = (
+        list(cast(dict[Any, Any], value)) if isinstance(value, dict) else []
+    )
+    for name in names:
+        if not isinstance(name, str) or not _MODEL_CATALOG_NAME.fullmatch(name):
+            raise ValueError(
+                f"MODELS name {name!r} must be lowercase letters, digits and "
+                + "single underscores between them, starting with a letter"
+            )
+    return cast(Any, value)
+
+
+def _check_model_catalog_profiles(
+    catalog: dict[str, "ModelCatalogEntry"],
+) -> dict[str, "ModelCatalogEntry"]:
+    """Entries that send to the same transport and model share a profile."""
+    seen: dict[tuple[str, str], tuple[str, ModelCapabilitySettings]] = {}
+    for name, entry in catalog.items():
+        key = (entry.transport, entry.model)
+        if key not in seen:
+            seen[key] = (name, entry.capabilities)
+            continue
+        other_name, other_profile = seen[key]
+        if other_profile != entry.capabilities:
+            raise ValueError(
+                f"MODELS entries {other_name!r} and {name!r} both send to "
+                + f"{entry.transport}/{entry.model} but declare different "
+                + "capabilities; give them the same capabilities"
+            )
+    return catalog
+
+
+ModelCatalog = Annotated[
+    dict[str, ModelCatalogEntry],
+    BeforeValidator(_check_model_catalog_names),
+    AfterValidator(_check_model_catalog_profiles),
+]
+_MODEL_CATALOG_ADAPTER: TypeAdapter[dict[str, ModelCatalogEntry]] = TypeAdapter(
+    ModelCatalog
+)
+
+
+# The catalog `model_ref` resolves against while `AppSettings` validates (its
+# child settings are built inside that validation). Unset, references resolve
+# against the loaded `settings.MODELS`.
+_ACTIVE_MODEL_CATALOG: ContextVar[Mapping[str, ModelCatalogEntry] | None] = ContextVar(
+    "_ACTIVE_MODEL_CATALOG", default=None
+)
+
+
+@contextmanager
+def using_model_catalog(
+    catalog: Mapping[str, ModelCatalogEntry],
+) -> Generator[None]:
+    """Resolve `model_ref` against `catalog` for settings built in this block."""
+    token = _ACTIVE_MODEL_CATALOG.set(catalog)
+    try:
+        yield
+    finally:
+        _ACTIVE_MODEL_CATALOG.reset(token)
+
+
+def _current_model_catalog() -> Mapping[str, ModelCatalogEntry]:
+    active = _ACTIVE_MODEL_CATALOG.get()
+    if active is not None:
+        return active
+    loaded: AppSettings | None = globals().get("settings")
+    return loaded.MODELS if loaded is not None else {}
+
+
+def _has_model_ref(data: Mapping[str, Any]) -> bool:
+    """Whether `data` sets a non-blank `model_ref`, in whatever key case."""
+    return any(
+        key.lower() == "model_ref" and value not in (None, "")
+        for key, value in data.items()
+    )
+
+
+_CREDENTIAL_KEYS = frozenset({"api_key", "api_key_env"})
+
+
+def _expand_model_ref(data: Any) -> Any:
+    """Replace `model_ref` with the catalog entry it names.
+
+    The result is the entry's fields, with every field the slot sets on top,
+    so a slot that names an entry validates exactly like one that spells the
+    entry out. `overrides` merges key by key, and so does
+    `overrides.provider_params`; a nested value such as `extra_body` is
+    replaced whole. The slot can't also set `model` or `transport`: the entry
+    is the model. A null or empty `model_ref` is the same as none. A slot
+    that sets `api_key` or `api_key_env` replaces the entry's credential
+    (both fields), so the slot's choice is the one used.
+    """
+    if not isinstance(data, dict):
+        return data
+    raw: dict[str, Any] = {
+        str(key): value for key, value in cast(dict[Any, Any], data).items()
+    }
+    ref_key = next((key for key in raw if key.lower() == "model_ref"), None)
+    if ref_key is None:
+        return cast(dict[Any, Any], data)
+    ref = raw.pop(ref_key)
+    if ref is None or ref == "":
+        return raw
+    if not isinstance(ref, str):
+        raise ValueError("model_ref must be the name of a MODELS entry")
+
+    clashing = sorted(
+        key
+        for key, value in raw.items()
+        if key.lower() in {"model", "transport"} and value is not None
+    )
+    if clashing:
+        raise ValueError(
+            f"model_ref {ref!r} already sets the model; remove "
+            + " and ".join(clashing)
+            + " or remove model_ref"
+        )
+
+    catalog = _current_model_catalog()
+    entry = catalog.get(ref.lower())
+    if entry is None:
+        known = ", ".join(sorted(catalog)) or "none defined"
+        raise ValueError(
+            f"model_ref {ref!r} is not in the MODELS catalog (entries: {known})"
+        )
+
+    expanded: dict[str, Any] = entry.model_dump(
+        exclude={"capabilities"}, exclude_none=True
+    )
+    if any(key.lower() == "reasoning_effort" for key in raw):
+        # The slot's alias spelling must beat the entry's field name.
+        expanded.pop("thinking_effort", None)
+
+    slot_overrides = raw.pop("overrides", None)
+    if isinstance(slot_overrides, BaseModel):
+        slot_overrides = slot_overrides.model_dump(exclude_unset=True)
+    if isinstance(slot_overrides, dict):
+        slot_over = cast(dict[str, Any], slot_overrides)
+        entry_over: dict[str, Any] = dict(expanded.get("overrides", {}))
+        if any(
+            key.lower() in _CREDENTIAL_KEYS and value is not None
+            for key, value in slot_over.items()
+        ):
+            # A key and its env var name are one setting: a literal key is
+            # read first, so an entry's key would beat the slot's env var.
+            entry_over = {
+                key: value
+                for key, value in entry_over.items()
+                if key.lower() not in _CREDENTIAL_KEYS
+            }
+        merged_over = {**entry_over, **slot_over}
+        entry_params = entry_over.get("provider_params")
+        slot_params = slot_over.get("provider_params")
+        if isinstance(entry_params, dict) and isinstance(slot_params, dict):
+            merged_over["provider_params"] = {
+                **cast(dict[str, Any], entry_params),
+                **cast(dict[str, Any], slot_params),
+            }
+        expanded["overrides"] = merged_over
+    elif slot_overrides is not None:
+        expanded["overrides"] = slot_overrides
+
+    return {**expanded, **raw}
+
+
+_EFFORT_KEYS = frozenset({"thinking_effort", "reasoning_effort"})
+_MODEL_SELECTOR_KEYS = frozenset({"model_ref", "model", "transport"})
+
+
+def _without_keys(data: Mapping[str, Any], names: frozenset[str]) -> dict[str, Any]:
+    return {key: value for key, value in data.items() if str(key).lower() not in names}
+
+
+def _sets_any(data: Mapping[str, Any], names: frozenset[str]) -> bool:
+    return any(str(key).lower() in names for key in data)
+
+
+def _matching_mapping(higher: Mapping[str, Any], key: str) -> dict[str, Any]:
+    """`higher`'s mapping under `key`, in whatever key case (merged if several)."""
+    found: dict[str, Any] = {}
+    for higher_key, value in higher.items():
+        if str(higher_key).lower() == key.lower() and isinstance(value, Mapping):
+            found.update(cast(Mapping[str, Any], value))
+    return found
+
+
+def _yield_model_config(
+    lower: Mapping[str, Any],
+    higher: Mapping[str, Any],
+    *,
+    catalog_entry: bool = False,
+) -> dict[str, Any]:
+    """One model config (a slot, a fallback or a catalog entry) from `lower`,
+    minus what `higher` sets another way. See `_yield_to_higher_source`."""
+    result = dict(lower)
+    if _has_model_ref(higher):
+        result = _without_keys(result, _MODEL_SELECTOR_KEYS)
+    elif _sets_any(higher, frozenset({"model_ref", "model"})):
+        result = _without_keys(result, frozenset({"model_ref"}))
+
+    uses_catalog = catalog_entry or _has_model_ref(higher) or _has_model_ref(result)
+    if uses_catalog and _sets_any(higher, _EFFORT_KEYS):
+        result = _without_keys(result, _EFFORT_KEYS)
+
+    for key, value in list(result.items()):
+        if not isinstance(value, Mapping):
+            continue
+        higher_value = _matching_mapping(higher, str(key))
+        if not higher_value:
+            continue
+        lower_value = cast(Mapping[str, Any], value)
+        if str(key).lower() == "fallback":
+            result[key] = _yield_model_config(lower_value, higher_value)
+        elif (
+            str(key).lower() == "overrides"
+            and uses_catalog
+            and _sets_any(higher_value, _CREDENTIAL_KEYS)
+        ):
+            # Only the credential keys; `provider_params` is provider payload.
+            result[key] = _without_keys(lower_value, _CREDENTIAL_KEYS)
+    return result
+
+
+def _yield_to_higher_source(
+    lower: Mapping[str, Any], higher: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Drop what `lower` sets that a higher-precedence source sets another way.
+
+    Settings sources are merged key by key before validation, so two spellings
+    of one setting from different sources both survive the merge, and the
+    validator can no longer tell which came from the higher source. Where a
+    model config uses the catalog, this removes the lower source's spelling
+    first:
+
+    * `model_ref` against `model`/`transport`: a higher `model_ref` replaces
+      the lower `model`, `transport` and `model_ref`; a higher `model`
+      replaces a lower `model_ref`.
+    * In a catalog entry, or a slot that names one: `thinking_effort` and its
+      alias `reasoning_effort` are one setting, and so are `overrides.api_key`
+      and `overrides.api_key_env`.
+
+    Only model configs are touched: `*MODEL_CONFIG` fields (at any depth, so
+    dialectic levels too), their `fallback`, and the entries of `MODELS`.
+    Entry names and provider payloads such as `provider_params` are left
+    alone. A config that doesn't use the catalog is returned unchanged; its
+    different spellings still merge side by side, and the field validators
+    then pick one in their own order, whichever source it came from.
+    """
+    result = dict(lower)
+    for key, value in list(result.items()):
+        if not isinstance(value, Mapping):
+            continue
+        higher_value = _matching_mapping(higher, str(key))
+        if not higher_value:
+            continue
+        lower_value = cast(Mapping[str, Any], value)
+        name = str(key).lower()
+        if name == "models":
+            result[key] = {
+                entry_name: (
+                    _yield_model_config(
+                        cast(Mapping[str, Any], entry),
+                        _matching_mapping(higher_value, str(entry_name)),
+                        catalog_entry=True,
+                    )
+                    if isinstance(entry, Mapping)
+                    else entry
+                )
+                for entry_name, entry in lower_value.items()
+            }
+        elif name.endswith("model_config"):
+            result[key] = _yield_model_config(lower_value, higher_value)
+        else:
+            result[key] = _yield_to_higher_source(lower_value, higher_value)
+    return result
+
+
+class _YieldToHigherSources(PydanticBaseSettingsSource):
+    """A settings source minus what a higher-precedence source sets another way.
+
+    pydantic-settings calls sources from highest precedence down and hands
+    each one the merged values of the sources above it, so this is the last
+    point where it's known which source a key came from. See
+    `_yield_to_higher_source` for what's dropped.
+    """
+
+    def __init__(self, source: PydanticBaseSettingsSource) -> None:
+        super().__init__(source.settings_cls)
+        self._source: PydanticBaseSettingsSource = source
+        # pydantic-settings records each source's values under this name.
+        self.__name__: str = getattr(source, "__name__", type(source).__name__)
+
+    def _set_current_state(self, state: dict[str, Any]) -> None:
+        super()._set_current_state(state)
+        self._source._set_current_state(state)
+
+    def _set_settings_sources_data(self, states: dict[str, dict[str, Any]]) -> None:
+        super()._set_settings_sources_data(states)
+        self._source._set_settings_sources_data(states)
+
+    def get_field_value(
+        self, field: FieldInfo, field_name: str
+    ) -> tuple[Any, str, bool]:
+        return self._source.get_field_value(field, field_name)
+
+    def __call__(self) -> dict[str, Any]:
+        return _yield_to_higher_source(self._source(), self.current_state)
 
 
 class ResolvedFallbackConfig(BaseModel):
@@ -618,9 +1041,12 @@ def _fill_defaults_for_nested_field(
     which would then be rejected by the OpenAI backend (OpenAI uses
     ``reasoning.effort``, not a token budget). Explicit thinking params in
     the env override are preserved.
+
+    An override that names a catalog entry (``model_ref``) gets no defaults:
+    the entry supplies the model, and a default model would clash with it.
     """
     raw: Any = data.get(field_name) or data.get(field_name.lower())
-    if not isinstance(raw, dict):
+    if not isinstance(raw, dict) or _has_model_ref(cast(dict[str, Any], raw)):
         return data
 
     default_obj = default_factory()
@@ -702,7 +1128,13 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         toml_data = TOML_CONFIG.get(section, {})
 
         # Convert keys to uppercase to match field names
-        return {key.upper(): value for key, value in toml_data.items()}
+        values = {key.upper(): value for key, value in toml_data.items()}
+        # The model catalog is the root [models] table, not [app.models].
+        if section == "app":
+            values.pop("MODELS", None)
+            if "models" in TOML_CONFIG:
+                values["MODELS"] = TOML_CONFIG["models"]
+        return values
 
 
 class HonchoSettings(BaseSettings):
@@ -723,10 +1155,10 @@ class HonchoSettings(BaseSettings):
         # Correct precedence: init > env > .env > toml > secrets > defaults
         return (
             init_settings,
-            env_settings,
-            dotenv_settings,
-            TomlConfigSettingsSource(settings_cls),
-            file_secret_settings,
+            _YieldToHigherSources(env_settings),
+            _YieldToHigherSources(dotenv_settings),
+            _YieldToHigherSources(TomlConfigSettingsSource(settings_cls)),
+            _YieldToHigherSources(file_secret_settings),
         )
 
 
@@ -1224,9 +1656,15 @@ class DialecticSettings(HonchoSettings):
                 # ("MODEL_CONFIG"), but TOML overrides arrive as lowercase
                 # ("model_config").  Check both casings in the override and
                 # resolve the base value from whichever casing is present.
+                # A level that names a catalog entry (model_ref) gets no
+                # default model config: the entry supplies the model.
                 for mc_key in ("MODEL_CONFIG", "model_config"):
-                    if mc_key in level_override and isinstance(
-                        level_override[mc_key], dict
+                    if (
+                        mc_key in level_override
+                        and isinstance(level_override[mc_key], dict)
+                        and not _has_model_ref(
+                            cast(dict[str, Any], level_override[mc_key])
+                        )
                     ):
                         base_mc: dict[str, Any] = dict(
                             base.get("MODEL_CONFIG") or base.get("model_config") or {}
@@ -1764,6 +2202,10 @@ class AppSettings(HonchoSettings):
         Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_-]+$"),
     ] = None
 
+    # Named models that model slots and fallbacks refer to with `model_ref`
+    # (env `MODELS__<NAME>__...`, TOML `[models.<name>]`).
+    MODELS: ModelCatalog = Field(default_factory=dict)
+
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)
     AUTH: AuthSettings = Field(default_factory=AuthSettings)
@@ -1782,6 +2224,99 @@ class AppSettings(HonchoSettings):
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
     VECTOR_STORE: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
     TRACE_VIEWER: TraceViewerSettings = Field(default_factory=TraceViewerSettings)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _resolve_model_refs_against_catalog(
+        cls, data: Any, handler: ModelWrapValidatorHandler["AppSettings"]
+    ) -> "AppSettings":
+        """Validate MODELS first, then the rest with `model_ref` resolving to it.
+
+        The child settings (DERIVER, DIALECTIC, ...) are built inside this
+        validation, so they see this catalog rather than an earlier one. An
+        invalid catalog fails here, before any slot reports a reference to it.
+        """
+        raw_catalog: Any = {}
+        if isinstance(data, dict):
+            typed_data = cast(dict[str, Any], data)
+            raw_catalog = typed_data.get("MODELS", typed_data.get("models", {}))
+        try:
+            catalog = _MODEL_CATALOG_ADAPTER.validate_python(raw_catalog)
+        except ValidationError as exc:
+            problems = "; ".join(
+                "MODELS"
+                + "".join(f".{part}" for part in error["loc"])
+                + f": {error['msg'].removeprefix('Value error, ')}"
+                for error in exc.errors()
+            )
+            raise ValueError(problems) from exc
+        token = _ACTIVE_MODEL_CATALOG.set(catalog)
+        try:
+            return handler(data)
+        finally:
+            _ACTIVE_MODEL_CATALOG.reset(token)
+
+    @model_validator(mode="after")
+    def _check_budgets_fit_context_windows(self) -> "AppSettings":
+        """Each feature's input budget plus the output cap it sends must fit
+        the `context_window` of its model and of its fallback, where declared.
+
+        The fallback is sent the same caps as the primary. The dream
+        specialists have no input budget, so their slots aren't checked. An
+        output cap set through `provider_params.extra_body` replaces the cap in
+        the request, but isn't checked here.
+        """
+        deriver_output = (
+            self.DERIVER.MODEL_CONFIG.max_output_tokens or self.LLM.DEFAULT_MAX_TOKENS
+        )
+        checks: list[tuple[str, ConfiguredModelSettings, int, int]] = [
+            (
+                "DERIVER.MODEL_CONFIG",
+                self.DERIVER.MODEL_CONFIG,
+                self.DERIVER.MAX_INPUT_TOKENS,
+                deriver_output,
+            ),
+            (
+                "SUMMARY.MODEL_CONFIG",
+                self.SUMMARY.MODEL_CONFIG,
+                self.SUMMARY.MAX_INPUT_TOKENS,
+                max(self.SUMMARY.MAX_TOKENS_SHORT, self.SUMMARY.MAX_TOKENS_LONG),
+            ),
+        ]
+        for level, level_settings in self.DIALECTIC.LEVELS.items():
+            output = (
+                level_settings.MAX_OUTPUT_TOKENS
+                if level_settings.MAX_OUTPUT_TOKENS is not None
+                else self.DIALECTIC.MAX_OUTPUT_TOKENS
+            )
+            checks.append(
+                (
+                    f"DIALECTIC.LEVELS.{level}.MODEL_CONFIG",
+                    level_settings.MODEL_CONFIG,
+                    self.DIALECTIC.MAX_INPUT_TOKENS,
+                    output,
+                )
+            )
+
+        problems: list[str] = []
+        for where, slot, input_budget, output_cap in checks:
+            models: list[tuple[str, ConfiguredModelSettings | FallbackModelSettings]]
+            models = [(where, slot)]
+            if slot.fallback is not None:
+                models.append((f"{where}.fallback", slot.fallback))
+            for path, model in models:
+                window = model.context_window
+                needed = input_budget + output_cap
+                if window is None or needed <= window:
+                    continue
+                problems.append(
+                    f"{path}: {model.transport}/{model.model} has a context_window "
+                    + f"of {window}, but the input budget ({input_budget}) plus the "
+                    + f"output cap ({output_cap}) is {needed}"
+                )
+        if problems:
+            raise ValueError("; ".join(problems))
+        return self
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:
