@@ -229,3 +229,61 @@ async def test_list_rejects_nul_in_a_filter(
     )
 
     assert response.status_code == 422
+
+
+async def test_setting_a_card_through_the_api_erases_recorded_cards(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace, peer = sample_data
+    workspace_name, maya = workspace.name, peer.name
+    db_session.add(models.Peer(name="assistant", workspace_name=workspace_name))
+    await db_session.commit()
+    # Old enough that a 30-day window would have pruned it; none is set.
+    own = await _run(
+        db_session, workspace_name, observer=maya, observed=maya, started_minutes_ago=0
+    )
+    other_pair = await _run(
+        db_session,
+        workspace_name,
+        observer="assistant",
+        observed=maya,
+        started_minutes_ago=1,
+    )
+    for run_id, observer in [(own, maya), (other_pair, "assistant")]:
+        await crud.set_peer_card(
+            db_session,
+            workspace_name,
+            ["SSN: 123-45-6789"],
+            observer=observer,
+            observed=maya,
+            history=crud.DreamHistoryTarget(run_id=run_id, specialist="induction"),
+        )
+    await db_session.execute(
+        update(models.DreamRun)
+        .where(models.DreamRun.id == own)
+        .values(
+            started_at=datetime.datetime.now(datetime.UTC)
+            - datetime.timedelta(days=400)
+        )
+    )
+    await db_session.commit()
+    root = f"/v3/workspaces/{workspace_name}"
+
+    # The user rewrites the card rather than clearing it.
+    response = client.put(
+        f"{root}/peers/{maya}/card", json={"peer_card": ["IDENTITY: Name: Maya"]}
+    )
+    assert response.status_code == 200
+
+    monkeypatch.setattr(settings.DREAM, "HISTORY_RETENTION_DAYS", None)
+    await crud.prune_dream_history()
+    detail = client.get(f"{root}/dreams/{own}").json()
+    assert detail["peer_card"] is None
+    # The run still says the dream changed the card.
+    assert detail["peer_card_updated"] is True
+    # Another observer's card for the same peer is a different representation.
+    other = client.get(f"{root}/dreams/{other_pair}").json()
+    assert other["peer_card"]["after"] == ["SSN: 123-45-6789"]

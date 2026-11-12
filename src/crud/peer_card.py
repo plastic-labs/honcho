@@ -9,7 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import exceptions, models, schemas
 from src.cache.client import safe_cache_delete
-from src.crud.dream_history import DreamHistoryTarget, record_peer_card
+from src.crud.dream_history import (
+    DreamHistoryTarget,
+    erase_peer_card_history,
+    record_peer_card,
+)
 from src.crud.peer import (
     get_or_create_peers,
     get_peer,
@@ -62,6 +66,7 @@ async def set_peer_card(
     observer: str,
     observed: str,
     history: DreamHistoryTarget | None = None,
+    erase_history: bool = False,
 ) -> None:
     """
     Set peer card for a peer.
@@ -76,6 +81,9 @@ async def set_peer_card(
         observer: Peer name of the observer
         history: When set, record the card before and after to this dream run
             in the same transaction
+        erase_history: Delete the cards dreams recorded for this
+            representation, in the same transaction. Set for a card the user
+            writes, so text they replaced does not stay readable in history.
 
     """
     # A scope may be the card's *observer* — the Dreamer writes (scope, observed)
@@ -132,6 +140,10 @@ async def set_peer_card(
     if result.rowcount == 0:
         raise exceptions.ResourceNotFoundException(
             f"Peer {observer} not found in workspace {workspace_name}"
+        )
+    if erase_history:
+        await erase_peer_card_history(
+            db, workspace_name, observer=observer, observed=observed
         )
     await db.commit()
     await peers_result.post_commit()

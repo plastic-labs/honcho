@@ -38,8 +38,8 @@ async def list_dreams(
 
     Each run records what one dream changed in a representation. Filter by
     `observed_id` for a peer's history, and add `observer_id` for a single
-    representation. Runs are kept for the server's retention window (30 days
-    by default).
+    representation. Runs are not pruned unless the server sets a retention
+    window.
     """
     stmt = crud.list_runs_stmt(
         workspace_id,

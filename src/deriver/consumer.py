@@ -395,8 +395,8 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
     - sync_vectors: Syncs pending documents/message embeddings to vector store
       and cleans up soft-deleted documents.
     - cleanup_queue: Removes old processed queue items.
-    - prune_dream_history: Deletes Representation History runs past the
-      retention window.
+    - prune_dream_history: Marks stale Representation History runs
+      interrupted and, when a retention window is set, prunes runs past it.
     - backfill (and legacy per-backfill types): Runs one cycle of a
       registered backfill.
 
