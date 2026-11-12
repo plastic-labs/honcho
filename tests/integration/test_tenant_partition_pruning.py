@@ -316,11 +316,10 @@ async def _message_ingest(db: AsyncSession, _source_id: str) -> list[Any]:
     return [(m.content, m.seq_in_session) for m in created]
 
 
-async def _ingest_write(db: AsyncSession, _source_id: str) -> list[Any]:
-    # The whole ingest transaction: identity lookup, fence, bindings, peer and
-    # session creation, membership, claim, message insert and record update.
-    batch = schemas.IngestBatch.model_validate(
+def _ingest_batch(derive: str = "now") -> schemas.IngestBatch:
+    return schemas.IngestBatch.model_validate(
         {
+            "derive": derive,
             "records": [
                 {
                     "source": "discord",
@@ -331,11 +330,24 @@ async def _ingest_write(db: AsyncSession, _source_id: str) -> list[Any]:
                     "author": {"id": "u1", "name": "Jess"},
                     "content": "new",
                 }
-            ]
+            ],
         }
     )
-    result = await ingest_crud.ingest_batch(db, "w", batch)
+
+
+async def _ingest_write(db: AsyncSession, _source_id: str) -> list[Any]:
+    # The whole ingest transaction: identity lookup, fence, bindings, peer and
+    # session creation, membership, claim, message insert and record update.
+    result = await ingest_crud.ingest_batch(db, "w", _ingest_batch())
     return [r.outcome for r in result.results]
+
+
+async def _ingest_derive(db: AsyncSession, _source_id: str) -> list[Any]:
+    # A deferred record released by the derive call's transaction, and the count
+    # of what's left.
+    await ingest_crud.ingest_batch(db, "w", _ingest_batch(derive="later"))
+    released = await ingest_crud.release_deferred(db, "w")
+    return [released.pending, await ingest_crud.count_deferred(db, "w")]
 
 
 async def _conclusion_delete(db: AsyncSession, source_id: str) -> list[Any]:
@@ -360,6 +372,7 @@ _CASES: dict[str, _Case] = {
     "message full-text search": _message_fulltext_search,
     "message ingest write": _message_ingest,
     "ingest API write": _ingest_write,
+    "ingest derive": _ingest_derive,
     "conclusion soft delete": _conclusion_delete,
     "session delete": _session_delete,
 }
