@@ -460,6 +460,8 @@ async def create_messages(
     messages: list[schemas.MessageCreate],
     workspace_name: str,
     session_name: str,
+    *,
+    internal_metadata: Sequence[dict[str, Any]] | None = None,
 ) -> list[models.Message]:
     """
     Bulk create messages for a session while maintaining order.
@@ -469,6 +471,8 @@ async def create_messages(
         messages: List of messages to create
         workspace_name: Name of the workspace
         session_name: Name of the session to create messages in
+        internal_metadata: Internal metadata for each message, in the same
+            order as ``messages``, written with the insert
 
     Returns:
         List of created message objects
@@ -515,6 +519,9 @@ async def create_messages(
         or 0
     )
 
+    if internal_metadata is not None and len(internal_metadata) != len(messages):
+        raise ValueError("internal_metadata must have one entry per message")
+
     # Create list of message objects (this will trigger the before_insert event)
     message_objects: list[models.Message] = []
     for offset, message in enumerate(messages, start=1):
@@ -529,6 +536,11 @@ async def create_messages(
             token_count=len(message.encoded_message),
             created_at=message.created_at,  # Use provided created_at if available
             seq_in_session=message_seq_in_session,
+            internal_metadata=(
+                dict(internal_metadata[offset - 1])
+                if internal_metadata is not None
+                else {}
+            ),
         )
         message_objects.append(message_obj)
 

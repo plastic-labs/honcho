@@ -46,6 +46,10 @@ _TENANT_SESSION = (
 )
 ALLOWED: dict[tuple[str, str], str] = {
     ("crud/document.py", "create_documents"): _TENANT_SESSION,
+    ("crud/document.py", "_sync_created_documents"): (
+        "runs on create_documents' own session from its post_commit(); "
+        + _TENANT_SESSION
+    ),
     ("crud/document.py", "_apply_document_row_updates"): _TENANT_SESSION,
     ("crud/document.py", "delete_document"): _TENANT_SESSION,
     ("crud/document.py", "delete_documents"): _TENANT_SESSION,

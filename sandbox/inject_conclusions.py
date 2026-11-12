@@ -285,9 +285,11 @@ async def seed_explicit(
     explicit = plan.by_level["explicit"]
 
     async with internals.tracked_db("sandbox.seed_explicit") as db:
-        await crud.get_or_create_collection(
+        collection = await crud.get_or_create_collection(
             db, workspace, observer=plan.observer, observed=plan.observed
         )
+        await db.commit()
+        await collection.post_commit()
         if not explicit:
             return []
 
@@ -418,6 +420,8 @@ async def seed_derived(
                 # deriver already wrote, making the fixture's counts depend on the provider.
                 deduplicate=False,
             )
+            await db.commit()
+            await result.post_commit()
             assert_clean(result, len(conclusions), f"{plan} {level}")
             stored[level] = len(result.created_documents)
 

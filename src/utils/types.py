@@ -280,6 +280,24 @@ class GetOrCreateResult(Generic[T]):
             await self.on_commit()
 
 
+@dataclass
+class PostCommit:
+    """Work a write helper defers until its caller has committed.
+
+    Write helpers stage their changes in the caller's transaction and never
+    commit. Cache updates and other side effects that must only happen once the
+    change is durable come back as one of these; the caller commits, then runs
+    ``post_commit()``.
+    """
+
+    on_commit: Callable[[], Awaitable[None]] | None = field(default=None, repr=False)
+
+    async def post_commit(self) -> None:
+        """Run the deferred work. Call only after the transaction committed."""
+        if self.on_commit is not None:
+            await self.on_commit()
+
+
 TaskType = Literal[
     "webhook",
     "summary",

@@ -184,13 +184,16 @@ class RepresentationManager:
         message_created_at: datetime.datetime,
         message_level_configuration: ResolvedConfiguration,
     ) -> crud.CreateDocumentsResult:
-        # get_or_create_collection already handles IntegrityError with rollback and a retry
-        collection = await crud.get_or_create_collection(
+        # get_or_create_collection handles a lost create race itself
+        collection_result = await crud.get_or_create_collection(
             db,
             self.workspace_name,
             observer=self.observer,
             observed=self.observed,
         )
+        await db.commit()
+        await collection_result.post_commit()
+        collection = collection_result.resource
 
         # Prepare all documents for bulk creation
         documents_to_create: list[schemas.DocumentCreate] = []
@@ -233,6 +236,8 @@ class RepresentationManager:
             observed=self.observed,
             deduplicate=settings.DERIVER.DEDUPLICATE,
         )
+        await db.commit()
+        await accepted_documents_result.post_commit()
 
         if message_level_configuration.dream.enabled:
             try:

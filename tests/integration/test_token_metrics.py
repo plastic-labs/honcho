@@ -47,6 +47,7 @@ from src.utils.summarizer import (
     estimate_short_summary_prompt_tokens,
     summarize_if_needed,
 )
+from src.utils.types import PostCommit
 
 # =============================================================================
 # Fixtures
@@ -659,7 +660,9 @@ class TestConcurrentSummarySaves:
 
         async def save(summary: Summary) -> None:
             async with session_factory() as db:
-                await _save_summary(db, summary, workspace.name, session.name)
+                write = await _save_summary(db, summary, workspace.name, session.name)
+                await db.commit()
+                await write.post_commit()
 
         with patch.object(crud, "get_session", side_effect=get_session_then_wait):
             await asyncio.wait_for(
@@ -732,12 +735,12 @@ class TestCombinedBoundaryRetry:
 
         async def save_failing_long_once(
             db: AsyncSession, summary: Summary, *args: Any, **kwargs: Any
-        ) -> None:
+        ) -> PostCommit:
             nonlocal long_save_failures
             if summary["summary_type"] == SummaryType.LONG.value and long_save_failures:
                 long_save_failures -= 1
                 raise OperationalError("UPDATE sessions", {}, FakePGError())
-            await real_save(db, summary, *args, **kwargs)
+            return await real_save(db, summary, *args, **kwargs)
 
         async def run_boundary() -> None:
             await summarize_if_needed(

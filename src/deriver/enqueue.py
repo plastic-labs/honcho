@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 from sqlalchemy import exists, insert, select
@@ -94,10 +95,13 @@ async def enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> No
             )
 
             if queue_records:
-                await _insert_queue_records(db_session, queue_records)
+                await _commit_with_retry(
+                    db_session,
+                    lambda: _insert_queue_records(db_session, queue_records),
+                )
 
         except Exception as e:
-            # Reached only after _insert_queue_records has exhausted its
+            # Reached only after _commit_with_retry has exhausted its
             # transient-error retries; enqueue stays fire-and-forget by
             # contract, so the failure surfaces here rather than to a caller.
             logger.exception("Failed to enqueue message(s)!")
@@ -107,29 +111,21 @@ async def enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> No
                 sentry_sdk.capture_exception(e)
 
 
-async def _insert_queue_records(
-    db_session: AsyncSession, queue_records: list[dict[str, Any]]
+async def _commit_with_retry(
+    db_session: AsyncSession, stage: Callable[[], Awaitable[None]]
 ) -> None:
-    """Insert a stamped, key-sorted batch of queue records, retrying transient failures."""
+    """Run ``stage`` and commit, rerunning the whole transaction on a transient failure."""
     # region ai
-    # Sorted by work_unit_key so the insert trigger's batch upserts acquire
-    # row locks in canonical key order — the same order the claim's lock step
-    # and the statement-trigger recomputes use — making trigger-vs-claim
-    # deadlock by lock-order inversion impossible. The bounded retry covers
-    # residual transient failures (deadlock, serialization, lost connection):
-    # before it, a deadlock-victim enqueue was swallowed by the caller's
-    # catch-all and the batch was silently never derived.
+    # The bounded retry covers transient failures (deadlock, serialization,
+    # lost connection): without it, a deadlock-victim enqueue is swallowed by
+    # the caller's catch-all and the batch is silently never derived. A retry
+    # rolls back and reruns every write ``stage`` makes, so ``stage`` must hold
+    # the transaction's writes, not just the last one.
     # endregion
-    records = sorted(
-        _stamp_tenant_id(queue_records), key=lambda record: record["work_unit_key"]
-    )
-    stmt = insert(QueueItem).returning(QueueItem)
-    # No lock_timeout here: the message is already committed, so giving up
-    # loses its derivation. A time limit needs a durable retry first.
     last_attempt = 2
     for attempt in range(last_attempt + 1):
         try:
-            await db_session.execute(stmt, records)
+            await stage()
             await db_session.commit()
             return
         except Exception as exc:
@@ -137,6 +133,24 @@ async def _insert_queue_records(
             if attempt == last_attempt or not is_retryable_error(exc):
                 raise
             await asyncio.sleep(0.1 * (attempt + 1))
+
+
+async def _insert_queue_records(
+    db_session: AsyncSession, queue_records: list[dict[str, Any]]
+) -> None:
+    """Insert a stamped, key-sorted batch of queue records in the caller's transaction."""
+    # region ai
+    # Sorted by work_unit_key so the insert trigger's batch upserts acquire
+    # row locks in canonical key order — the same order the claim's lock step
+    # and the statement-trigger recomputes use — making trigger-vs-claim
+    # deadlock by lock-order inversion impossible.
+    # endregion
+    records = sorted(
+        _stamp_tenant_id(queue_records), key=lambda record: record["work_unit_key"]
+    )
+    # No lock_timeout here: the message is already committed, so giving up
+    # loses its derivation. A time limit needs a durable retry first.
+    await db_session.execute(insert(QueueItem).returning(QueueItem), records)
 
 
 def _stamp_tenant_id(records: list[dict[str, Any]]) -> list[dict[str, Any]]:

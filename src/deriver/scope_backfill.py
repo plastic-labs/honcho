@@ -359,10 +359,14 @@ async def _copy_chunk(
         if membership is None:
             return False
 
-        for observed in sorted(touched_observed):
+        # Created in this transaction, so the membership lock above holds
+        # until the copies commit.
+        collection_results = [
             await crud.get_or_create_collection(
                 db, workspace_name, observer=scope_peer, observed=observed
             )
+            for observed in sorted(touched_observed)
+        ]
 
         restore_ids: list[str] = []
         restored_citations: list[dict[str, Any]] = []
@@ -420,6 +424,8 @@ async def _copy_chunk(
                 )
         await crud.record_explicit_documents(db, new_rows)
         await db.commit()
+        for collection_result in collection_results:
+            await collection_result.post_commit()
 
         # IDs are generated client-side and remain accessible post-commit
         # (expire_on_commit=False), mirroring crud.document.create_documents.
