@@ -1066,7 +1066,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         List dream runs in the workspace, newest first (Representation History).
 
         Each run records what one dream changed in a representation. Runs are
-        kept for the server's retention window (30 days by default).
+        not pruned unless the server sets a retention window.
 
         Args:
             observed: Only runs about this peer (ID string or Peer object).

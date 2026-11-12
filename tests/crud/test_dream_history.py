@@ -449,6 +449,29 @@ async def test_deleting_the_workspace_deletes_its_history(
     assert (await db_session.scalar(select(models.DreamRunChange.id))) is None
 
 
+async def test_a_dream_writing_the_card_keeps_earlier_recorded_cards(
+    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    workspace, peer = sample_data
+    workspace_name, peer_name = workspace.name, peer.name
+    first = await _open(workspace_name, peer_name)
+    second = await _open(workspace_name, peer_name)
+    for target, card in [(first, ["IDENTITY: Ann"]), (second, ["IDENTITY: Ann B."])]:
+        await crud.set_peer_card(
+            db_session,
+            workspace_name,
+            card,
+            observer=peer_name,
+            observed=peer_name,
+            history=target,
+        )
+
+    db_session.expire_all()
+    detail = await crud.get_run_detail(db_session, workspace_name, first.run_id)
+    assert detail.peer_card is not None
+    assert detail.peer_card.after == ["IDENTITY: Ann"]
+
+
 @pytest.fixture
 def retention_window(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings.DREAM, "HISTORY_RETENTION_DAYS", 30)
