@@ -111,6 +111,19 @@ def _goose_dir() -> Path:
     return _xdg_config() / "goose"
 
 
+def _chatgpt_desktop_present() -> bool:
+    """ChatGPT Desktop: its app bundle on macOS, its Store package on Windows."""
+    if sys.platform == "darwin":
+        return any(_exists(d / "ChatGPT.app") for d in (Path("/Applications"), _home() / "Applications"))
+    if sys.platform == "win32":
+        packages = _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / "Packages"
+        try:
+            return any(packages.glob("OpenAI.ChatGPT-Desktop_*"))
+        except OSError:
+            return False
+    return False
+
+
 def _dsh_present() -> bool:
     """``dsh`` is also Debian's distributed shell; only count DeepSeek's npm one."""
     exe = shutil.which("dsh")
@@ -329,6 +342,10 @@ AGENTS: tuple[Agent, ...] = (
     Agent(
         id="claude-desktop", name="Claude Desktop", kind="suggest", docs_url=f"{MCP_DOCS}#claude-desktop",
         paths=lambda: [_app_support() / "Claude"] if sys.platform in ("darwin", "win32") else [],
+    ),
+    Agent(
+        id="chatgpt-desktop", name="ChatGPT Desktop", kind="suggest",
+        docs_url=f"{MCP_DOCS}#chatgpt-desktop", present=_chatgpt_desktop_present,
     ),
     Agent(
         id="windsurf", name="Windsurf", kind="suggest", docs_url=f"{MCP_DOCS}#windsurf",
