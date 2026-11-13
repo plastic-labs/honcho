@@ -59,6 +59,25 @@ After saving, fully quit and relaunch Claude Desktop. The Honcho tools should ap
 
 For best results, create a project and paste these [instructions](https://raw.githubusercontent.com/plastic-labs/honcho/refs/heads/main/mcp/instructions.md) into the "Project Instructions" field so Claude knows how to use the memory tools.
 
+### ChatGPT Desktop
+
+ChatGPT Desktop supports remote MCP servers natively over Streamable HTTP, so there is no config file to edit:
+
+1. Open ChatGPT Desktop and go to **Settings** (**ChatGPT** menu → **Settings**).
+2. In the sidebar under **Integrations**, click **Plugins**.
+3. Click **Add** (top right) and choose **Add MCP server**.
+4. In **Name**, enter `Honcho`.
+5. Under **Type**, select **Streamable HTTP**.
+6. In **URL**, enter `https://mcp.honcho.dev`.
+7. Under **Headers**, add:
+   - Key: `Authorization`
+   - Value: `Bearer hch-your-key-here`
+8. Click **Save**.
+
+<Note>
+Replace `hch-your-key-here` with your real key, but keep the word `Bearer` and the single space after it.
+</Note>
+
 ### Claude Code
 
 ```bash
