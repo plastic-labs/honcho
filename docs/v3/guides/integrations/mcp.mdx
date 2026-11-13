@@ -69,9 +69,9 @@ ChatGPT Desktop supports remote MCP servers natively over Streamable HTTP, so th
 4. In **Name**, enter `Honcho`.
 5. Under **Type**, select **Streamable HTTP**.
 6. In **URL**, enter `https://mcp.honcho.dev`.
-7. Under **Headers**, add:
-   - Key: `Authorization`
-   - Value: `Bearer hch-your-key-here`
+7. Under **Headers**, add two headers:
+   - Key: `Authorization`, Value: `Bearer hch-your-key-here`
+   - Key: `X-Honcho-Plugin`, Value: `chatgpt-desktop`
 8. Click **Save**.
 
 <Note>
