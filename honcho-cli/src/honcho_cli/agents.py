@@ -112,9 +112,9 @@ def _goose_dir() -> Path:
 
 
 def _chatgpt_desktop_present() -> bool:
-    """ChatGPT Desktop's data dir: com.openai.chat on macOS, a Store package on Windows."""
+    """ChatGPT Desktop: its app bundle on macOS, its Store package on Windows."""
     if sys.platform == "darwin":
-        return _exists(_app_support() / "com.openai.chat")
+        return any(_exists(d / "ChatGPT.app") for d in (Path("/Applications"), _home() / "Applications"))
     if sys.platform == "win32":
         packages = _env_path("LOCALAPPDATA", _home() / "AppData" / "Local") / "Packages"
         try:
