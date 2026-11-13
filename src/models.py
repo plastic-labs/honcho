@@ -300,9 +300,10 @@ class Workspace(Base, TenantPartitioned):
     deletion_generation: Mapped[int] = mapped_column(
         Integer, default=0, server_default=text("0")
     )
-    # When the workspace opted into auto organization. Set once and never cleared:
-    # it is a column, not a configuration key, because PUT /workspaces replaces the
-    # whole configuration and would drop a key it was not sent.
+    # When the workspace was created as an auto workspace. Set at creation and
+    # never changed: a workspace is auto from the start or not at all. It is a
+    # column, not a configuration key, because PUT /workspaces replaces the whole
+    # configuration and would drop a key it was not sent.
     auto_enabled_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -1629,6 +1630,12 @@ class IngestRecord(Base, TenantPartitioned):
     participant_binding_ids: Mapped[list[str] | None] = mapped_column(
         JSONB, nullable=True
     )
+    # The record's `container`, `author` and `participants` exactly as received
+    # (after request validation), written for every record ingest claims, even
+    # one with an explicit session or author. Bindings keep only the newest
+    # names, so this is the only place that says what a record was posted under
+    # at the time.
+    source_context: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -1722,6 +1729,10 @@ class IngestSessionBinding(Base, TenantPartitioned):
     display_name_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # The container's parent in the source (a thread's channel), as the
+    # `parent_id` a record sent. Filled the first time a record carries one and
+    # never overwritten. Null: no record has named a parent yet.
+    parent_key_value: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     # Set when a person pointed this binding at its target (a confirmed link or
     # move). Ingest then follows it as is, instead of treating a target it didn't
     # create as stale.

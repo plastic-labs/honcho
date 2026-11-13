@@ -4,10 +4,12 @@
 unique on its source identity, with the durable `derivation` state the ingest
 enqueuer drains. `ingest_session_bindings` and `ingest_peer_bindings` map external
 containers and people to the sessions and peers ingest created for them, with
-the newest display name seen for each and, once a person confirms a link or move,
-when they did. Each record keeps the peer bindings of its
-author and participants, so linked people can be split again.
-`workspaces.auto_enabled_at` records when a workspace opted into auto organization.
+the newest display name seen for each, a container's parent in the source, and,
+once a person confirms a link or move, when they did. Each record keeps the peer
+bindings of its author and participants, so linked people can be split again,
+and its source context (container, author and participants) as received.
+`workspaces.auto_enabled_at` records when a workspace was created as an auto
+workspace.
 
 The three tables are tenant-scoped like the other data tables (tenant_id leads the
 primary key and every unique key), minus physical partitioning. They have no
@@ -76,6 +78,7 @@ def upgrade() -> None:
             sa.Column("derivation", sa.TEXT, nullable=False),
             sa.Column("author_binding_id", sa.TEXT, nullable=True),
             sa.Column("participant_binding_ids", JSONB, nullable=True),
+            sa.Column("source_context", JSONB, nullable=True),
             sa.Column(
                 "created_at",
                 sa.DateTime(timezone=True),
@@ -150,6 +153,7 @@ def upgrade() -> None:
             sa.Column("session_name", sa.TEXT, nullable=False),
             sa.Column("display_name", sa.TEXT, nullable=True),
             sa.Column("display_name_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("parent_key_value", sa.TEXT, nullable=True),
             sa.Column("confirmed_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column(
                 "created_at",
