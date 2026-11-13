@@ -36,6 +36,7 @@ from src.routers import (
     conclusions,
     deriver_metrics,
     dreams,
+    ingest,
     keys,
     messages,
     peers,
@@ -237,6 +238,7 @@ app.include_router(peers.router, prefix="/v3")
 app.include_router(sessions.router, prefix="/v3")
 app.include_router(scopes.router, prefix="/v3")
 app.include_router(messages.router, prefix="/v3")
+app.include_router(ingest.router, prefix="/v3")
 app.include_router(conclusions.router, prefix="/v3")
 app.include_router(dreams.router, prefix="/v3")
 app.include_router(keys.router, prefix="/v3")

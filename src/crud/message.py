@@ -498,6 +498,37 @@ async def create_messages(
         workspace_name=workspace_name,
     )
 
+    message_objects = await insert_messages_locked(
+        db, messages, workspace_name, session_name
+    )
+
+    await db.commit()
+
+    return message_objects
+
+
+async def insert_messages_locked(
+    db: AsyncSession,
+    messages: list[schemas.MessageCreate],
+    workspace_name: str,
+    session_name: str,
+) -> list[models.Message]:
+    """Insert messages at the end of a session under its sequence lock. Does not commit.
+
+    Takes the session's ``_ingest_lock`` for the rest of the transaction, assigns
+    ``seq_in_session`` in list order after the session's last message, and adds a
+    pending embedding row per chunk when embedding is on. The session and every
+    author must already exist and be members.
+
+    Args:
+        db: Database session, in the transaction that will commit the messages
+        messages: Messages to insert, in order
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+
+    Returns:
+        The message objects, flushed or pending flush
+    """
     await db.execute(text("SET LOCAL lock_timeout = '5s'"))
     await db.execute(*_ingest_lock(workspace_name, session_name))
 
@@ -563,8 +594,6 @@ async def create_messages(
                     )
             if pending_rows:
                 db.add_all(pending_rows)
-
-    await db.commit()
 
     return message_objects
 

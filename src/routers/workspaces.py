@@ -38,7 +38,17 @@ router = APIRouter(
 )
 
 
-@router.post("", response_model=schemas.Workspace)
+@router.post(
+    "",
+    response_model=schemas.Workspace,
+    responses={
+        409: {
+            "model": schemas.ErrorResponse,
+            "description": "`auto: true` was sent for an existing workspace that"
+            + " isn't an auto workspace",
+        }
+    },
+)
 async def get_or_create_workspace(
     response: Response,
     workspace: schemas.WorkspaceCreate = Body(
@@ -52,6 +62,9 @@ async def get_or_create_workspace(
 
     If workspace_id is provided as a query parameter, it uses that (must match JWT workspace_id).
     Otherwise, it uses the workspace_id from the JWT.
+
+    `auto: true` creates an auto workspace, which the ingest API writes to. Only
+    a new workspace can be made auto.
     """
     # If workspace_id provided in query, check if it matches jwt or user is admin
     if workspace.name:
