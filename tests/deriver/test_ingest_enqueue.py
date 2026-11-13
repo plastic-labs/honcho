@@ -19,7 +19,7 @@ from src.deriver.ingest_enqueue import enqueue_session, sweep_pending_ingest
 
 def _workspace(client: TestClient) -> str:
     name = f"ws-{generate_nanoid(size=10).replace('_', 'a')}"
-    response = client.post("/v3/workspaces", json={"id": name})
+    response = client.post("/v3/workspaces", json={"id": name, "auto": True})
     assert response.status_code in (200, 201), response.text
     return name
 
@@ -162,11 +162,11 @@ async def test_records_with_reasoning_off_get_no_representation_work(
 @pytest.mark.asyncio
 async def test_a_fenced_session_is_left_for_the_sweep(
     db_engine: AsyncEngine,
-    sample_data: tuple[models.Workspace, models.Peer],
+    auto_data: tuple[models.Workspace, models.Peer],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A held fence skips the session; the sweep queues it once the fence is free."""
-    workspace = sample_data[0].name
+    workspace = auto_data[0].name
     factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with factory() as db:
         batch = schemas.IngestBatch.model_validate({"records": [_record()]})
@@ -193,9 +193,9 @@ async def test_a_fenced_session_is_left_for_the_sweep(
 
 @pytest.mark.asyncio
 async def test_a_record_whose_message_is_gone_is_dropped(
-    db_session: AsyncSession, sample_data: tuple[models.Workspace, models.Peer]
+    db_session: AsyncSession, auto_data: tuple[models.Workspace, models.Peer]
 ) -> None:
-    workspace = sample_data[0].name
+    workspace = auto_data[0].name
     batch = schemas.IngestBatch.model_validate({"records": [_record()]})
     [created] = (await ingest_crud.ingest_batch(db_session, workspace, batch)).results
     assert created.session_id is not None
@@ -229,11 +229,11 @@ def test_a_repeat_in_the_same_batch_is_reported_queued_too(
 @pytest.mark.asyncio
 async def test_the_sweep_gets_past_a_session_it_cannot_queue(
     db_engine: AsyncEngine,
-    sample_data: tuple[models.Workspace, models.Peer],
+    auto_data: tuple[models.Workspace, models.Peer],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With one session per run, a fenced session doesn't take every run."""
-    workspace = sample_data[0].name
+    workspace = auto_data[0].name
     monkeypatch.setattr(
         ingest_enqueue, "SWEEP_MIN_AGE", ingest_enqueue.SWEEP_MIN_AGE * 0
     )
@@ -273,11 +273,11 @@ async def test_the_sweep_gets_past_a_session_it_cannot_queue(
 @pytest.mark.asyncio
 async def test_pending_records_count_as_deriver_work(
     db_session: AsyncSession,
-    sample_data: tuple[models.Workspace, models.Peer],
+    auto_data: tuple[models.Workspace, models.Peer],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Stranded records keep a deriver running, since its sweep queues them."""
-    workspace = sample_data[0].name
+    workspace = auto_data[0].name
     batch = schemas.IngestBatch.model_validate({"records": [_record()]})
     await ingest_crud.ingest_batch(db_session, workspace, batch)
 
