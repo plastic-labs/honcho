@@ -25,7 +25,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import ColumnElement, and_, delete, exists, select, tuple_, update
+from sqlalchemy import (
+    ColumnElement,
+    and_,
+    delete,
+    exists,
+    func,
+    select,
+    tuple_,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -48,8 +57,9 @@ logger = logging.getLogger(__name__)
 _BATCH_SIZE = 500
 _ATTEMPTS = 3
 
-# The sweep leaves records this new alone: the request that wrote them is
-# enqueueing them right after its own commit.
+# The sweep leaves records that became pending this recently alone: the request
+# that made them pending (an ingest batch or a derive call) is enqueueing them
+# right after its own commit.
 SWEEP_MIN_AGE = datetime.timedelta(seconds=30)
 # Pending records younger than this count as deriver work, so a fleet scaled to
 # zero wakes up to sweep them. Older ones (a session that keeps failing to
@@ -193,7 +203,9 @@ async def _enqueue_batch(
             .where(
                 record.tenant_id == tenant_id, record.id.in_([row[0] for row in live])
             )
-            .values(derivation="queued")
+            .values(
+                derivation="queued", derivation_changed_at=func.statement_timestamp()
+            )
         )
     if orphaned_ids:
         await db.execute(
@@ -263,17 +275,20 @@ async def _queue_records(
 def sweep_due_clause() -> ColumnElement[bool]:
     """Pending records a sweep should be scheduled, and a deriver woken, for.
 
-    Old enough that the sweep, not their own request, queues them; young enough
-    (SWEEP_WAKE_WINDOW) that a session failing forever can't keep scheduling
-    sweeps or holding derivers awake. Older pending records are still found by
-    any sweep that runs, since its discovery has no upper bound.
+    Pending long enough that the sweep, not the request that made them pending,
+    queues them; recently enough (SWEEP_WAKE_WINDOW) that a session failing
+    forever can't keep scheduling sweeps or holding derivers awake. Older
+    pending records are still found by any sweep that runs, since its discovery
+    has no upper bound. Both are measured from when the record became pending,
+    not from when it was ingested: a deferred record is made pending by a derive
+    call, possibly long after.
     """
     now = datetime.datetime.now(datetime.UTC)
     record = models.IngestRecord
     return and_(
         record.derivation == "pending",
-        record.created_at < now - SWEEP_MIN_AGE,
-        record.created_at >= now - SWEEP_WAKE_WINDOW,
+        record.derivation_changed_at < now - SWEEP_MIN_AGE,
+        record.derivation_changed_at >= now - SWEEP_WAKE_WINDOW,
     )
 
 
@@ -308,7 +323,7 @@ async def sweep_pending_ingest() -> SweepResult:
     key = (record.tenant_id, record.workspace_name, record.session_name)
     statement = (
         select(*key)
-        .where(record.derivation == "pending", record.created_at < cutoff)
+        .where(record.derivation == "pending", record.derivation_changed_at < cutoff)
         .group_by(*key)
         .order_by(*key)
         .limit(_SWEEP_SESSIONS)

@@ -449,6 +449,13 @@
             ]
           },
           {
+            "group": "ingest",
+            "pages": [
+              "v3/api-reference/endpoint/ingest/ingest-records",
+              "v3/api-reference/endpoint/ingest/derive"
+            ]
+          },
+          {
             "group": "dreams",
             "pages": [
               "v3/api-reference/endpoint/dreams/list-dreams",

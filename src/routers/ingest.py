@@ -5,10 +5,15 @@ one outcome per record. The write runs in src/crud/ingest.py; this module
 authorizes it, retries it on transient lock failures, and does the post-commit
 work the message route does (events, metrics, immediate embedding), then queues
 the new records' derivation (src/deriver/ingest_enqueue.py).
+
+`POST /v3/workspaces/{workspace_id}/ingest/derive` releases records ingested with
+`derive: "later"` and queues them the same way.
 """
 
 import logging
 from collections import Counter
+from collections.abc import Awaitable, Callable, Iterable
+from typing import TypeVar
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Path
 from sqlalchemy.exc import DBAPIError
@@ -16,7 +21,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import schemas
 from src.config import settings
-from src.crud.ingest import IngestRaced, IngestResult, after_commit, ingest_batch
+from src.crud.ingest import (
+    IngestRaced,
+    after_commit,
+    count_deferred,
+    ingest_batch,
+    release_deferred,
+)
 from src.dependencies import db
 from src.deriver.ingest_enqueue import enqueue_session
 from src.dreamer.dream_scheduler import get_dream_scheduler
@@ -33,23 +44,59 @@ router = APIRouter(prefix="/workspaces/{workspace_id}/ingest", tags=["ingest"])
 _RETRYABLE_SQLSTATES = frozenset({"40P01", "40001", "55P03"})
 _ATTEMPTS = 3
 
+_T = TypeVar("_T")
+
 
 def _sqlstate(error: DBAPIError) -> str | None:
     original = getattr(error, "orig", None)
     return getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
 
 
+async def _with_retries(
+    db: AsyncSession, workspace_name: str, write: Callable[[], Awaitable[_T]]
+) -> _T:
+    """Run a write transaction, retrying it whole on transient lock failures.
+
+    Raises:
+        HTTPException: 503 once the retries are spent; nothing was committed.
+    """
+    for attempt in range(1, _ATTEMPTS + 1):
+        try:
+            return await write()
+        except DBAPIError as error:
+            await db.rollback()
+            if _sqlstate(error) not in _RETRYABLE_SQLSTATES:
+                raise
+            reason = _sqlstate(error)
+        except IngestRaced:
+            await db.rollback()
+            reason = "a concurrent batch bound the same source"
+        logger.info(
+            "Ingest attempt %d/%d in workspace %s hit contention (%s)",
+            attempt,
+            _ATTEMPTS,
+            workspace_name,
+            reason,
+        )
+    raise HTTPException(
+        status_code=503,
+        detail="Ingest could not finish because of lock contention; nothing was"
+        + " written. Resend the same request.",
+        headers={"Retry-After": "1"},
+    )
+
+
 async def _enqueue(
-    db: AsyncSession, workspace_name: str, outcome: IngestResult
+    db: AsyncSession, workspace_name: str, session_names: Iterable[str]
 ) -> set[str]:
-    """Queue the new records' work now; return the sessions fully queued.
+    """Queue the sessions' pending records now; return the sessions fully queued.
 
     A session whose fence is held (another batch or a deletion on it) or whose
     enqueue fails keeps its records `pending`, and the reconciler's sweep queues
-    them; the batch itself has committed either way.
+    them; the records' own transaction has committed either way.
     """
     queued: set[str] = set()
-    for session_name in sorted(outcome.created_messages):
+    for session_name in sorted(set(session_names)):
         try:
             enqueued = await enqueue_session(db, workspace_name, session_name)
         except Exception:
@@ -120,39 +167,15 @@ async def ingest(
     Only workspace and admin keys may ingest: one batch can create sessions and
     peers anywhere in the workspace.
     """
-    outcome: IngestResult | None = None
-    for attempt in range(1, _ATTEMPTS + 1):
-        try:
-            outcome = await ingest_batch(db, workspace_id, batch)
-            break
-        except DBAPIError as error:
-            await db.rollback()
-            if _sqlstate(error) not in _RETRYABLE_SQLSTATES:
-                raise
-            reason = _sqlstate(error)
-        except IngestRaced:
-            await db.rollback()
-            reason = "a concurrent batch bound the same source"
-        logger.info(
-            "Ingest attempt %d/%d in workspace %s hit contention (%s)",
-            attempt,
-            _ATTEMPTS,
-            workspace_id,
-            reason,
-        )
-    if outcome is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Ingest could not finish because of lock contention; nothing was"
-            + " written. Resend the same batch.",
-            headers={"Retry-After": "1"},
-        )
+    outcome = await _with_retries(
+        db, workspace_id, lambda: ingest_batch(db, workspace_id, batch)
+    )
 
     await after_commit(workspace_id, outcome)
     await _cancel_dreams(workspace_id, outcome.authors)
     queued: set[str] = set()
     if batch.derive == "now":
-        queued = await _enqueue(db, workspace_id, outcome)
+        queued = await _enqueue(db, workspace_id, outcome.created_messages)
     # Everything pending in a fully queued session is queued now, including a
     # duplicate of a record this batch or an earlier one left pending.
     results = [
@@ -185,3 +208,36 @@ async def ingest(
             embed_task_gate.try_schedule(background_tasks, message_ids)
 
     return schemas.IngestResponse(records=results)
+
+
+@router.post(
+    "/derive",
+    response_model=schemas.IngestDeriveResponse,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    responses={
+        404: {"model": schemas.ErrorResponse, "description": "Workspace not found"},
+        503: {
+            "model": schemas.ErrorResponse,
+            "description": "Contention outlasted the retries; nothing was released."
+            + " Calling again is safe.",
+        },
+    },
+)
+async def derive(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    db: AsyncSession = db,
+) -> schemas.IngestDeriveResponse:
+    """Derive records that were ingested with `derive: "later"`.
+
+    Each call releases up to 1,000 deferred records, a session at a time, and
+    queues their derivation. Call again until `remaining` is 0. Configuration
+    and observers are resolved when a record is queued, not when it was
+    ingested. Only workspace and admin keys may call it.
+    """
+    released = await _with_retries(
+        db, workspace_id, lambda: release_deferred(db, workspace_id)
+    )
+    await _enqueue(db, workspace_id, released.sessions)
+    remaining = await count_deferred(db, workspace_id)
+    await db.commit()
+    return schemas.IngestDeriveResponse(pending=released.pending, remaining=remaining)

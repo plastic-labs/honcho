@@ -3997,6 +3997,76 @@
         }
       }
     },
+    "/v3/workspaces/{workspace_id}/ingest/derive": {
+      "post": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Derive",
+        "description": "Derive records that were ingested with `derive: \"later\"`.\n\nEach call releases up to 1,000 deferred records, a session at a time, and\nqueues their derivation. Call again until `remaining` is 0. Configuration\nand observers are resolved when a record is queued, not when it was\ningested. Only workspace and admin keys may call it.",
+        "operationId": "derive_v3_workspaces__workspace_id__ingest_derive_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestDeriveResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Contention outlasted the retries; nothing was released. Calling again is safe.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v3/workspaces/{workspace_id}/conclusions": {
       "post": {
         "tags": [
@@ -6567,6 +6637,27 @@
         ],
         "title": "IngestContainer",
         "description": "Where a record lives in its source: a channel, a thread, a repository."
+      },
+      "IngestDeriveResponse": {
+        "properties": {
+          "pending": {
+            "type": "integer",
+            "title": "Pending",
+            "description": "Deferred records this call released for derivation. They are queued before the response, or shortly after by a background sweep when their session was busy."
+          },
+          "remaining": {
+            "type": "integer",
+            "title": "Remaining",
+            "description": "Records in the workspace still deferred after this call"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pending",
+          "remaining"
+        ],
+        "title": "IngestDeriveResponse",
+        "description": "What one derive call released. Call again until `remaining` is 0."
       },
       "IngestParticipant": {
         "properties": {
