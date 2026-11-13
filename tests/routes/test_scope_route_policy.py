@@ -44,6 +44,7 @@ system through the deriver, dreamer, and queue, which have no route table to
 enumerate; a gap there would not be caught here.
 """
 
+import datetime
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
@@ -952,6 +953,8 @@ async def test_refusing_position_allows_unflagged_squatter(
     session_name, _ = _setup(client, test_workspace.name)
     squatter = scope_peer_name(str(generate_nanoid()))
     db_session.add(models.Peer(workspace_name=test_workspace.name, name=squatter))
+    # Ingest writes only to auto workspaces; the flag changes nothing else here.
+    test_workspace.auto_enabled_at = datetime.datetime.now(datetime.UTC)
     await db_session.commit()
 
     # Give it a membership so config and removal have a row to act on.

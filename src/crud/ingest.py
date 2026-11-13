@@ -41,6 +41,7 @@ from src.crud.message import insert_messages_locked
 from src.crud.peer import peer_cache_key, reject_scope_observed
 from src.crud.session import session_cache_key, upsert_session_peers
 from src.exceptions import (
+    ConflictException,
     ObserverException,
     ResourceNotFoundException,
     ValidationException,
@@ -340,6 +341,7 @@ async def ingest_batch(
         ValidationException: An explicit `peer_id` is a scope, is a reserved scope
             name that doesn't exist, or doesn't exist and isn't a valid new name.
         ResourceNotFoundException: The workspace doesn't exist.
+        ConflictException: The workspace isn't an auto workspace.
         DBAPIError: A deadlock, serialization failure or lock timeout.
         IngestRaced: A concurrent batch bound one of this batch's sources first.
             For these two, nothing was committed and the caller retries the whole
@@ -378,14 +380,21 @@ async def ingest_batch(
     session_names = await _fence_sessions(db, tenant_id, workspace_name, remaining)
 
     # Re-read under the fence: a workspace deleted while we waited is gone now.
-    workspace_id = await db.scalar(
-        select(models.Workspace.id).where(
-            models.Workspace.tenant_id == tenant_id,
-            models.Workspace.name == workspace_name,
+    workspace = (
+        await db.execute(
+            select(models.Workspace.id, models.Workspace.auto_enabled_at).where(
+                models.Workspace.tenant_id == tenant_id,
+                models.Workspace.name == workspace_name,
+            )
         )
-    )
-    if workspace_id is None:
+    ).one_or_none()
+    if workspace is None:
         raise ResourceNotFoundException(f"Workspace {workspace_name} not found")
+    if workspace.auto_enabled_at is None:
+        raise ConflictException(
+            f"Workspace {workspace_name} isn't an auto workspace. Ingest writes"
+            + " only to auto workspaces: create one with auto: true."
+        )
     remaining = await _classify_stored(
         db, tenant_id, workspace_name, remaining, results, basis
     )
@@ -396,6 +405,7 @@ async def ingest_batch(
         groups.setdefault(r.session_name, []).append(r)
 
     newest_names = _newest_display_names(remaining)
+    parents = _first_parents(remaining)
 
     # 1. Sessions and their bindings, in sorted order, each in a savepoint. Sessions
     # come before peers, as on the message route, so the two can't cycle on a new
@@ -426,6 +436,8 @@ async def ingest_batch(
                         binding_id,
                         newest_names[key],
                     )
+                if key in parents:
+                    await _note_parent(db, tenant_id, binding_id, parents[key])
             created_here[session_name] = created
         except _Refused as refused:
             await savepoint.rollback()
@@ -692,6 +704,55 @@ def _newest_display_names(
         for key, person in zip(r.participant_keys, r.record.participants, strict=True):
             see(key, person.name, at)
     return newest
+
+
+def _source_context(record: schemas.IngestRecordCreate) -> dict[str, Any]:
+    """A record's container, author and participants as received."""
+    return {
+        "container": record.container.model_dump(mode="json")
+        if record.container is not None
+        else None,
+        "author": record.author.model_dump(mode="json")
+        if record.author is not None
+        else None,
+        "participants": [p.model_dump(mode="json") for p in record.participants],
+    }
+
+
+def _first_parents(records: Sequence[_Record]) -> dict[BindingKey, str]:
+    """Per container binding key, the parent ID of its oldest record that sent one."""
+    first: dict[BindingKey, tuple[datetime.datetime, str]] = {}
+    for r in records:
+        container = r.record.container
+        if (
+            container is None
+            or container.parent_id is None
+            or not isinstance(r.session_key, BindingKey)
+        ):
+            continue
+        at = _comparable(r.record.created_at)
+        if r.session_key not in first or at < first[r.session_key][0]:
+            first[r.session_key] = (at, container.parent_id)
+    return {key: parent for key, (_, parent) in first.items()}
+
+
+async def _note_parent(
+    db: AsyncSession, tenant_id: str, binding_id: str, parent: str
+) -> None:
+    """Record a container's parent if its binding has none yet.
+
+    Set once and never overwritten. A row that already has one isn't written,
+    so it isn't locked.
+    """
+    await db.execute(
+        update(models.IngestSessionBinding)
+        .where(
+            models.IngestSessionBinding.tenant_id == tenant_id,
+            models.IngestSessionBinding.id == binding_id,
+            models.IngestSessionBinding.parent_key_value.is_(None),
+        )
+        .values(parent_key_value=parent)
+    )
 
 
 async def _note_display_name(
@@ -1313,6 +1374,7 @@ async def _write_group(
                     dict.fromkeys(peer_bindings[k] for k in r.participant_keys)
                 )
                 or None,
+                source_context=_source_context(r.record),
             )
             .on_conflict_do_nothing(constraint="uq_ingest_records_identity")
             .returning(models.IngestRecord.id)

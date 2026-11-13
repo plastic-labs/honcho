@@ -56,6 +56,10 @@ async def _cancel_dreams(workspace_name: str, authors: set[str]) -> None:
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
     responses={
         404: {"model": schemas.ErrorResponse, "description": "Workspace not found"},
+        409: {
+            "model": schemas.ErrorResponse,
+            "description": "The workspace isn't an auto workspace",
+        },
         503: {
             "model": schemas.ErrorResponse,
             "description": "Contention outlasted the retries; nothing was written."
@@ -75,8 +79,9 @@ async def ingest(
     deduplicates it on its source identity (`source_id`, or a hash of its
     content), so resending a batch is always safe. The response has one outcome
     per record, in request order: `created`, `duplicate`, or `rejected` with a
-    reason. Only workspace and admin keys may ingest: one batch can create
-    sessions and peers anywhere in the workspace.
+    reason. The workspace must be an auto workspace (created with `auto: true`).
+    Only workspace and admin keys may ingest: one batch can create sessions and
+    peers anywhere in the workspace.
     """
     outcome: IngestResult | None = None
     for attempt in range(1, _ATTEMPTS + 1):
