@@ -8,6 +8,7 @@ This directory contains benchmarking tools for evaluating Honcho's long-term mem
 - **BEAM**: Beyond a Million Tokens - comprehensive long-term memory evaluation across 10 memory abilities
 - **LoCoMo**: Long conversation memory benchmark across multi-hop and temporal questions
 - **OOLONG**: Long-context aggregation benchmark with `synth` and `real` variants
+- **Auto workspaces**: identity linking, grouping and bot detection for the auto-workspaces organizer, scored against a rules-only baseline (see [auto_workspaces/README.md](auto_workspaces/README.md))
 
 ## Benchmark Workflow
 
