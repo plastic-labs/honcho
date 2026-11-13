@@ -9,6 +9,7 @@ from src import crud, models
 from src.crud.lifecycle import live_message_row
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
+from src.deriver.ingest_enqueue import sweep_pending_ingest
 from src.deriver.scope_backfill import (
     process_scope_backfill,
     process_scope_removal,
@@ -397,6 +398,7 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
     - cleanup_queue: Removes old processed queue items.
     - prune_dream_history: Deletes Representation History runs past the
       retention window.
+    - enqueue_ingest: Queues ingest records left `pending`.
     - backfill (and legacy per-backfill types): Runs one cycle of a
       registered backfill.
 
@@ -456,6 +458,18 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
         pruned_count = await crud.prune_dream_history()
         if pruned_count > 0:
             logger.info("Pruned %d dream history runs", pruned_count)
+    elif reconciler_type == ReconcilerType.ENQUEUE_INGEST:
+        swept = await sweep_pending_ingest()
+        if swept.sessions:
+            logger.info(
+                "Ingest sweep: %d sessions, %d records queued, %d orphaned, "
+                + "%d sessions fenced, %d failed",
+                swept.sessions,
+                swept.queued,
+                swept.orphaned,
+                swept.skipped,
+                swept.failed,
+            )
     elif (
         backfill := resolve_backfill(reconciler_type, payload.backfill_name)
     ) is not None:

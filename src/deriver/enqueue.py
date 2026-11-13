@@ -120,9 +120,7 @@ async def _insert_queue_records(
     # before it, a deadlock-victim enqueue was swallowed by the caller's
     # catch-all and the batch was silently never derived.
     # endregion
-    records = sorted(
-        _stamp_tenant_id(queue_records), key=lambda record: record["work_unit_key"]
-    )
+    records = _prepare_queue_records(queue_records)
     stmt = insert(QueueItem).returning(QueueItem)
     # No lock_timeout here: the message is already committed, so giving up
     # loses its derivation. A time limit needs a durable retry first.
@@ -137,6 +135,34 @@ async def _insert_queue_records(
             if attempt == last_attempt or not is_retryable_error(exc):
                 raise
             await asyncio.sleep(0.1 * (attempt + 1))
+
+
+async def insert_queue_records_in_transaction(
+    db_session: AsyncSession, queue_records: list[dict[str, Any]]
+) -> None:
+    """Insert a batch of queue records in the caller's transaction.
+
+    Same records, order and tenant stamping as `_insert_queue_records`, without
+    its commit or retry: for a caller that commits the queue work together with
+    other writes (the ingest enqueuer) and retries the whole transaction itself.
+    """
+    if queue_records:
+        await db_session.execute(
+            insert(QueueItem), _prepare_queue_records(queue_records)
+        )
+
+
+def _prepare_queue_records(
+    queue_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Stamp each record's tenant and sort by work_unit_key.
+
+    The sort makes the insert trigger's batch upserts take row locks in the
+    canonical key order the claim also uses.
+    """
+    return sorted(
+        _stamp_tenant_id(queue_records), key=lambda record: record["work_unit_key"]
+    )
 
 
 def _stamp_tenant_id(records: list[dict[str, Any]]) -> list[dict[str, Any]]:

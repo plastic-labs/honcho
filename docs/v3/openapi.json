@@ -6763,7 +6763,15 @@
           "reason": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "stale_revision",
+                  "edit_not_supported",
+                  "content_conflict",
+                  "session_inactive",
+                  "observers_limit",
+                  "name_conflict"
+                ]
               },
               {
                 "type": "null"

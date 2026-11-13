@@ -22,6 +22,7 @@ class ReconcilerType(str, Enum):
     PRUNE_DREAM_HISTORY = "prune_dream_history"
     BACKFILL_DOCUMENT_SOURCES = "backfill_document_sources"
     BACKFILL = "backfill"
+    ENQUEUE_INGEST = "enqueue_ingest"
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +167,11 @@ class DeriverMetrics(BaseModel):
     oldest_pending_age_seconds: float = 0.0
     embeddings_pending: int = 0
     embeddings_pending_due: int = 0
+    # Ingest records committed but not yet turned into queue work, and those the
+    # reconciler's sweep should wake a deriver for (old enough to be the sweep's,
+    # recent enough that a session failing forever can't keep derivers awake).
+    ingest_pending: int = 0
+    ingest_pending_due: int = 0
 
 
 class QueueStatusRow(BaseModel):

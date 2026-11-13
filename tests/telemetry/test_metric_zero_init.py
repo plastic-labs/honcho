@@ -13,7 +13,7 @@ Asserts that:
 # endregion
 
 from collections.abc import Iterator
-from typing import Literal, cast
+from typing import Literal, cast, get_args
 from uuid import uuid4
 
 import pytest
@@ -21,6 +21,7 @@ from prometheus_client import REGISTRY
 
 from src.config import REASONING_LEVELS, settings
 from src.dreamer.specialists import BaseSpecialist
+from src.schemas.api import IngestRejectionReason
 from src.telemetry.events import ALL_EVENT_TYPES, HIGH_VOLUME_EVENT_TYPES
 from src.telemetry.events.base import BaseEvent
 from src.telemetry.prometheus.metrics import (
@@ -185,6 +186,7 @@ _API_DERIVER_METRIC_GAUGES = (
     "dreams_due",
     "message_embeddings_pending",
     "message_embeddings_pending_due",
+    "ingest_records_pending",
 )
 
 
@@ -220,6 +222,22 @@ def test_api_init_materializes_dialectic_and_embed():
     assert sample("embed_now_tasks_in_flight") == 0.0  # gauge, explicit .set(0)
     for gauge in _API_DERIVER_METRIC_GAUGES:
         assert sample(gauge) == 0.0, f"{gauge} was not zero-initialized"
+
+
+@pytest.mark.usefixtures("metrics_enabled")
+def test_api_init_materializes_every_ingest_outcome():
+    """Each outcome, and each rejection reason, exists at 0 on the API process."""
+    prometheus_metrics.initialize_bounded_metrics(instance_type="api")
+    assert sample("ingest_records_total", outcome="created", reason="") == 0.0
+    assert sample("ingest_records_total", outcome="duplicate", reason="") == 0.0
+    for reason in get_args(IngestRejectionReason):
+        assert sample("ingest_records_total", outcome="rejected", reason=reason) == 0.0
+
+
+@pytest.mark.usefixtures("metrics_enabled")
+def test_deriver_init_does_not_touch_ingest_records():
+    prometheus_metrics.initialize_bounded_metrics(instance_type="deriver")
+    assert sample("ingest_records_total", outcome="created", reason="") is None
 
 
 @pytest.mark.usefixtures("metrics_enabled")

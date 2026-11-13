@@ -53,6 +53,8 @@ def outstanding_work_seconds(
         stats.eligible_work_units > 0
         or stats.claimed_work_units > 0
         or stats.embeddings_pending_due > 0
+        # The sweep that queues stranded ingest records runs in a deriver.
+        or stats.ingest_pending_due > 0
         or dreams_due > 0
     ):
         return active_work_seconds()
@@ -280,6 +282,7 @@ class DeriverMetricsPoller:
             oldest_pending_age_seconds=stats.oldest_pending_age_seconds,
             embeddings_pending=stats.embeddings_pending,
             embeddings_pending_due=stats.embeddings_pending_due,
+            ingest_pending=stats.ingest_pending,
         )
         if settings.MULTI_TENANT:
             metrics.set_paused_tenants(count=stats.paused_tenants)
