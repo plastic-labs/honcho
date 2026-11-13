@@ -34,7 +34,7 @@ export const IntegrationsCatalog = () => {
       name: "MCP Server",
       icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/modelcontextprotocol.svg",
       href: "/v3/guides/integrations/mcp",
-      desc: "Any MCP client — Claude Desktop, Cursor, Windsurf, VS Code, Zed, Goose, Cline.",
+      desc: "Any MCP client — Claude Desktop, ChatGPT Desktop, Cursor, Windsurf, VS Code, Zed, Goose, Cline.",
     },
   ];
 
@@ -47,6 +47,7 @@ export const IntegrationsCatalog = () => {
         { name: "Hermes Agent", icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/hermesagent.svg", href: "/v3/guides/integrations/hermes", desc: "Cross-session memory and user modeling for Nous Research's Hermes agent.", status: "official" },
         { name: "OpenClaw", icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/openclaw.svg", href: "/v3/guides/integrations/openclaw", desc: "Memory across WhatsApp, Telegram, Discord, Slack, and every other OpenClaw channel.", status: "official" },
         { name: "Claude Desktop", icon: "https://cdn.jsdelivr.net/npm/simple-icons@16.33.0/icons/claude.svg", href: "/v3/guides/integrations/mcp#claude-desktop", desc: "Give Claude Desktop memory of you across every chat.", status: "official", via: "MCP" },
+        { name: "ChatGPT Desktop", icon: "https://cdn.jsdelivr.net/npm/simple-icons@15.22.0/icons/openai.svg", href: "/v3/guides/integrations/mcp#chatgpt-desktop", desc: "Give ChatGPT Desktop memory of you across every chat.", status: "official", via: "MCP" },
         { name: "Grok Bot", icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/grok.svg", href: "/v3/guides/integrations/grok-bot", desc: "A shared memory of you for every Bot on the account, from the Cursor Marketplace plugin.", status: "official" },
         { name: "Goose", icon: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@1.95.1/icons/goose.svg", href: "/v3/guides/integrations/mcp#goose", desc: "Add Honcho to Goose as a remote extension.", status: "official", via: "MCP" },
       ],
@@ -130,7 +131,7 @@ export const IntegrationsCatalog = () => {
       return <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400">Unmaintained</span>;
     }
     if (via) {
-      return <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary dark:text-primary-light">via {via}</span>;
+      return <span className="whitespace-nowrap text-[11px] font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary dark:text-primary-light">via {via}</span>;
     }
     return null;
   };
@@ -140,7 +141,7 @@ export const IntegrationsCatalog = () => {
       <div className="h-full flex flex-col gap-1.5 rounded-xl border border-zinc-950/10 dark:border-white/10 p-4 transition-colors hover:border-primary dark:hover:border-primary-light">
         <div className="flex items-center gap-2.5">
           <Icon icon={item.icon} size={18} />
-          <span className="font-semibold text-zinc-950 dark:text-white">{item.name}</span>
+          <span className="whitespace-nowrap font-semibold text-zinc-950 dark:text-white">{item.name}</span>
           <span className="ml-auto">{pill(item.status, item.via)}</span>
         </div>
         <p className="m-0 text-sm leading-snug text-zinc-600 dark:text-zinc-400">{item.desc}</p>
