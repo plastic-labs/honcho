@@ -300,6 +300,13 @@ class Workspace(Base, TenantPartitioned):
     deletion_generation: Mapped[int] = mapped_column(
         Integer, default=0, server_default=text("0")
     )
+    # When the workspace was created as an auto workspace. Set at creation and
+    # never changed: a workspace is auto from the start or not at all. It is a
+    # column, not a configuration key, because PUT /workspaces replaces the whole
+    # configuration and would drop a key it was not sent.
+    auto_enabled_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     sessions = relationship(
         "Session", back_populates="workspace", cascade="all, delete, delete-orphan"
@@ -1566,6 +1573,261 @@ class DreamRunChange(Base, TenantPartitioned):
         ),
         CheckConstraint(
             "kind IN ('created', 'removed', 'peer_card')", name="kind_valid"
+        ),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
+    )
+
+
+# region ai
+# The ingest tables carry no foreign key to sessions, peers or workspaces, like
+# `queue`. A foreign key would take a key-share lock on the parent row inside the
+# ingest transaction, and deletion locks those rows in the opposite order. Session
+# and workspace deletion remove these rows explicitly instead, under the ingest
+# fence (src/crud/ingest_fence.py). The tenants FK stays: every tenant table has
+# it, and it is what refuses deleting a tenant that still has data.
+# endregion
+
+
+@final
+class IngestRecord(Base, TenantPartitioned):
+    """One source record received through the ingest API, keyed by its source identity.
+
+    The unique identity is what makes ingest safe to retry. `derivation` is the
+    durable outbox state: `pending` rows are turned into queue work by the
+    ingest enqueuer, `deferred` rows wait for an explicit derive call.
+    """
+
+    __tablename__: str = "ingest_records"
+
+    tenant_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
+    )
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    source: Mapped[str] = mapped_column(TEXT, nullable=False)
+    source_instance: Mapped[str] = mapped_column(TEXT, nullable=False)
+    identity_kind: Mapped[str] = mapped_column(TEXT, nullable=False)
+    identity: Mapped[str] = mapped_column(TEXT, nullable=False)
+    # Set in the same transaction as the claim, once the message row exists.
+    message_public_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    session_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(TEXT, nullable=False)
+    revised_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    configuration: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    reasoning_disabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    derivation: Mapped[str] = mapped_column(TEXT, nullable=False)
+    # The peer bindings of the record's author and participants, as received.
+    # They say which external account wrote a message after people are linked,
+    # so a link can be split again. Null author: an explicit `peer_id`.
+    author_binding_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    participant_binding_ids: Mapped[list[str] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    # The record's `container`, `author` and `participants` exactly as received
+    # (after request validation), written for every record ingest claims, even
+    # one with an explicit session or author. Bindings keep only the newest
+    # names, so this is the only place that says what a record was posted under
+    # at the time.
+    source_context: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    # When `derivation` last changed. A deferred record becomes pending long
+    # after it was created, so how long a record has waited to be enqueued is
+    # measured from here, not from created_at.
+    derivation_changed_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        PrimaryKeyConstraint("tenant_id", "id"),
+        UniqueConstraint(
+            "tenant_id",
+            "workspace_name",
+            "source",
+            "source_instance",
+            "identity_kind",
+            "identity",
+            name="uq_ingest_records_identity",
+        ),
+        # Finding the records an external account wrote, to split a link.
+        Index(
+            "ix_ingest_records_author_binding",
+            "tenant_id",
+            "workspace_name",
+            "author_binding_id",
+            postgresql_where=text("author_binding_id IS NOT NULL"),
+        ),
+        # Session deletion and the enqueuer read a session's records.
+        Index(
+            "ix_ingest_records_session",
+            "tenant_id",
+            "workspace_name",
+            "session_name",
+        ),
+        # The reconciler's sweep for records still waiting to be enqueued.
+        Index(
+            "ix_ingest_records_pending",
+            "tenant_id",
+            "workspace_name",
+            "session_name",
+            postgresql_where=text("derivation = 'pending'"),
+        ),
+        # The derive call walks the sessions that have deferred records.
+        Index(
+            "ix_ingest_records_deferred",
+            "tenant_id",
+            "workspace_name",
+            "session_name",
+            postgresql_where=text("derivation = 'deferred'"),
+        ),
+        CheckConstraint(
+            "identity_kind IN ('source_id', 'content_hash')",
+            name="identity_kind_valid",
+        ),
+        CheckConstraint(
+            "derivation IN ('pending', 'queued', 'deferred')",
+            name="derivation_valid",
+        ),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
+    )
+
+
+@final
+class IngestSessionBinding(Base, TenantPartitioned):
+    """Maps an external container (a channel, a thread, a standalone record) to a session.
+
+    The session is chosen the first time the container is seen and kept, so a
+    renamed channel keeps its session. `display_name` follows the source: it is
+    the newest name seen, by the time of the record that carried it. A binding a
+    person confirmed (`confirmed_at`) may point at any session.
+    """
+
+    __tablename__: str = "ingest_session_bindings"
+
+    tenant_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
+    )
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    source: Mapped[str] = mapped_column(TEXT, nullable=False)
+    source_instance: Mapped[str] = mapped_column(TEXT, nullable=False)
+    key_kind: Mapped[str] = mapped_column(TEXT, nullable=False)
+    key_value: Mapped[str] = mapped_column(TEXT, nullable=False)
+    session_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    display_name_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # The container's parent in the source (a thread's channel), as the
+    # `parent_id` a record sent. Filled the first time a record carries one and
+    # never overwritten. Null: no record has named a parent yet.
+    parent_key_value: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    # Set when a person pointed this binding at its target (a confirmed link or
+    # move). Ingest then follows it as is, instead of treating a target it didn't
+    # create as stale.
+    confirmed_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        PrimaryKeyConstraint("tenant_id", "id"),
+        UniqueConstraint(
+            "tenant_id",
+            "workspace_name",
+            "source",
+            "source_instance",
+            "key_kind",
+            "key_value",
+            name="uq_ingest_session_bindings_key",
+        ),
+        # Session deletion removes the bindings that point at the session.
+        Index(
+            "ix_ingest_session_bindings_session",
+            "tenant_id",
+            "workspace_name",
+            "session_name",
+        ),
+        CheckConstraint(
+            "key_kind IN ('container', 'standalone')", name="key_kind_valid"
+        ),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
+    )
+
+
+@final
+class IngestPeerBinding(Base, TenantPartitioned):
+    """Maps an external person (by source ID, or a provisional name) to a peer.
+
+    The peer is chosen the first time the person is seen and kept, so a renamed
+    user keeps their peer. `display_name` follows the source: it is the newest
+    name seen, by the time of the record that carried it. A binding a person
+    confirmed (`confirmed_at`, a confirmed link) may point at any peer.
+    """
+
+    __tablename__: str = "ingest_peer_bindings"
+
+    tenant_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
+    )
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    source: Mapped[str] = mapped_column(TEXT, nullable=False)
+    source_instance: Mapped[str] = mapped_column(TEXT, nullable=False)
+    key_kind: Mapped[str] = mapped_column(TEXT, nullable=False)
+    key_value: Mapped[str] = mapped_column(TEXT, nullable=False)
+    peer_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    display_name_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Set when a person pointed this binding at its target (a confirmed link or
+    # move). Ingest then follows it as is, instead of treating a target it didn't
+    # create as stale.
+    confirmed_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        PrimaryKeyConstraint("tenant_id", "id"),
+        UniqueConstraint(
+            "tenant_id",
+            "workspace_name",
+            "source",
+            "source_instance",
+            "key_kind",
+            "key_value",
+            name="uq_ingest_peer_bindings_key",
+        ),
+        # Finding the bindings that point at a peer.
+        Index(
+            "ix_ingest_peer_bindings_peer",
+            "tenant_id",
+            "workspace_name",
+            "peer_name",
+        ),
+        CheckConstraint(
+            "key_kind IN ('external_id', 'provisional_name', 'source_peer')",
+            name="key_kind_valid",
         ),
         {"postgresql_partition_by": "HASH (tenant_id)"},
     )

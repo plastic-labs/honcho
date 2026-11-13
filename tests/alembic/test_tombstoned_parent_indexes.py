@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import Connection, Engine, create_engine, event, text
+from sqlalchemy import Connection, Engine, create_engine, event, insert, text
 from sqlalchemy.orm import Session
 
 from src import models
@@ -192,6 +192,18 @@ def _assert_indexes(engine: Engine, partitioned: bool) -> None:
         )
 
 
+def _add_workspace(db: Session, tenant_id: str, name: str) -> None:
+    """Insert a workspace with only the columns this revision's schema has.
+
+    A Core insert on the table sends the given columns plus those with Python
+    defaults, so a nullable column a later revision adds to the model (and this
+    revision's schema lacks) is left out, where an ORM add would send it.
+    """
+    db.execute(
+        insert(models.Workspace.__table__).values(tenant_id=tenant_id, name=name)
+    )
+
+
 def test_registered_revision_pipeline(
     alembic_cfg: Config, alembic_engine: Engine
 ) -> None:
@@ -213,7 +225,7 @@ def test_upgrade_scope_retry_and_downgrade(
     with Session(alembic_engine) as db:
         db.merge(models.Tenant(tenant_id="default"))
         db.flush()
-        db.add(models.Workspace(tenant_id="default", name="index-workspace"))
+        _add_workspace(db, "default", "index-workspace")
         db.flush()
         db.add_all(
             [
@@ -283,7 +295,7 @@ def test_tombstone_sets_keep_tenant_and_workspace_scope(
         db.flush()
         for tenant in ("default", "other"):
             for workspace in ("shared", "second"):
-                db.add(models.Workspace(tenant_id=tenant, name=workspace))
+                _add_workspace(db, tenant, workspace)
         db.flush()
         for model in (models.Peer, models.Session):
             for tenant in ("default", "other"):
