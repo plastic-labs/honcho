@@ -245,6 +245,13 @@ class WorkspaceCreate(WorkspaceBase):
     configuration: WorkspaceConfiguration = Field(
         default_factory=WorkspaceConfiguration
     )
+    auto: bool = Field(
+        default=False,
+        description="Create the workspace as an auto workspace, which the ingest"
+        + " API writes to. Only a new workspace can be made auto: asking for it on"
+        + " an existing workspace that isn't auto is a 409. It can't be turned"
+        + " off.",
+    )
 
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
 
@@ -278,10 +285,21 @@ class Workspace(WorkspaceBase):
     )
     configuration: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime.datetime
+    auto: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("auto", "auto_enabled_at"),
+        description="Whether the workspace is an auto workspace",
+    )
 
     model_config = ConfigDict(  # pyright: ignore
         from_attributes=True, populate_by_name=True
     )
+
+    @field_validator("auto", mode="before")
+    @classmethod
+    def _enabled(cls, value: object) -> bool:
+        """`auto` is a bool, or read from the row's `auto_enabled_at`."""
+        return value if isinstance(value, bool) else value is not None
 
 
 # ---------------------------------------------------------------------------

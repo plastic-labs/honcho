@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import datetime
 import logging
 import os
 import re
@@ -751,6 +752,16 @@ async def sample_data(
     await db_session.commit()
 
     yield test_workspace, test_peer
+
+
+@pytest_asyncio.fixture
+async def auto_data(
+    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+) -> tuple[Workspace, Peer]:
+    """`sample_data` with its workspace made an auto workspace, which ingest needs."""
+    sample_data[0].auto_enabled_at = datetime.datetime.now(datetime.UTC)
+    await db_session.commit()
+    return sample_data
 
 
 @pytest_asyncio.fixture(autouse=True)

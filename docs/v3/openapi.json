@@ -28,7 +28,7 @@
           "workspaces"
         ],
         "summary": "Get Or Create Workspace",
-        "description": "Get a Workspace by ID.\n\nIf workspace_id is provided as a query parameter, it uses that (must match JWT workspace_id).\nOtherwise, it uses the workspace_id from the JWT.",
+        "description": "Get a Workspace by ID.\n\nIf workspace_id is provided as a query parameter, it uses that (must match JWT workspace_id).\nOtherwise, it uses the workspace_id from the JWT.\n\n`auto: true` creates an auto workspace, which the ingest API writes to. Only\na new workspace can be made auto.",
         "operationId": "get_or_create_workspace_v3_workspaces_post",
         "requestBody": {
           "content": {
@@ -48,6 +48,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`auto: true` was sent for an existing workspace that isn't an auto workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -3902,7 +3912,7 @@
           "ingest"
         ],
         "summary": "Ingest",
-        "description": "Ingest source records as messages.\n\nHoncho maps each record to a session and peers from its source context and\ndeduplicates it on its source identity (`source_id`, or a hash of its\ncontent), so resending a batch is always safe. The response has one outcome\nper record, in request order: `created`, `duplicate`, or `rejected` with a\nreason. Only workspace and admin keys may ingest: one batch can create\nsessions and peers anywhere in the workspace.",
+        "description": "Ingest source records as messages.\n\nHoncho maps each record to a session and peers from its source context and\ndeduplicates it on its source identity (`source_id`, or a hash of its\ncontent), so resending a batch is always safe. The response has one outcome\nper record, in request order: `created`, `duplicate`, or `rejected` with a\nreason. The workspace must be an auto workspace (created with `auto: true`).\nOnly workspace and admin keys may ingest: one batch can create sessions and\npeers anywhere in the workspace.",
         "operationId": "ingest_v3_workspaces__workspace_id__ingest_post",
         "security": [
           {
@@ -3946,6 +3956,16 @@
           },
           "404": {
             "description": "Workspace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The workspace isn't an auto workspace",
             "content": {
               "application/json": {
                 "schema": {
@@ -8728,6 +8748,12 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "auto": {
+            "type": "boolean",
+            "title": "Auto",
+            "description": "Whether the workspace is an auto workspace",
+            "default": false
           }
         },
         "type": "object",
@@ -8917,6 +8943,12 @@
           },
           "configuration": {
             "$ref": "#/components/schemas/WorkspaceConfiguration"
+          },
+          "auto": {
+            "type": "boolean",
+            "title": "Auto",
+            "description": "Create the workspace as an auto workspace, which the ingest API writes to. Only a new workspace can be made auto: asking for it on an existing workspace that isn't auto is a 409. It can't be turned off.",
+            "default": false
           }
         },
         "type": "object",

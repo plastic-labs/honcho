@@ -67,6 +67,66 @@ WORKSPACE_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}"
 WORKSPACE_LOCK_PREFIX = f"{cache_prefix_namespace()}:lock:v2"
 
 
+# auto_enabled_at has its own entry, under the workspace key so delete_workspace's
+# delete_match clears it too. Putting it in the workspace entry would change that
+# entry's format: a release whose model has no auto_enabled_at couldn't rebuild
+# it, and an entry that release wrote would read as auto off. The entry is keyed
+# by the workspace's immutable id as well as its name: the flag never changes
+# within one workspace's life, so an entry needs no invalidation, and one a
+# read filled for a deleted workspace can't answer for a new workspace that
+# reuses the name.
+WORKSPACE_AUTO_CACHE_KEY_TEMPLATE = (
+    WORKSPACE_CACHE_KEY_TEMPLATE + ":auto:{workspace_id}"
+)
+
+
+def _cached_row(workspace: models.Workspace) -> dict[str, Any]:
+    """A workspace as the dict the workspace cache stores."""
+    return {
+        "id": workspace.id,
+        "name": workspace.name,
+        "h_metadata": workspace.h_metadata,
+        "internal_metadata": workspace.internal_metadata,
+        "configuration": workspace.configuration,
+        "created_at": workspace.created_at,
+    }
+
+
+@fallback_on_cache_error
+@cache(
+    key=WORKSPACE_AUTO_CACHE_KEY_TEMPLATE,
+    ttl=f"{settings.CACHE.DEFAULT_TTL_SECONDS}s",
+    prefix=cache_prefix_namespace(),
+    condition=NOT_NONE,
+)
+async def _fetch_auto_enabled_at(
+    db: AsyncSession, workspace_name: str, workspace_id: str
+) -> dict[str, Any] | None:
+    """`{"auto_enabled_at": ...}` for the workspace, or None if there's none."""
+    row = (
+        await db.execute(
+            select(models.Workspace.auto_enabled_at).where(
+                models.Workspace.tenant_id == models.scoped_tenant_id(),
+                models.Workspace.name == workspace_name,
+                models.Workspace.id == workspace_id,
+                live_workspace_row(),
+            )
+        )
+    ).first()
+    return None if row is None else {"auto_enabled_at": row[0]}
+
+
+async def _from_cached_row(db: AsyncSession, data: dict[str, Any]) -> models.Workspace:
+    """Rebuild a workspace from its cached dict, detached, ready to merge."""
+    auto = await _fetch_auto_enabled_at(db, data["name"], data["id"])
+    obj = models.Workspace(
+        **models.with_cached_tenant(data),
+        auto_enabled_at=auto["auto_enabled_at"] if auto else None,
+    )
+    make_transient_to_detached(obj)
+    return obj
+
+
 def workspace_cache_key(workspace_name: str) -> str:
     """Generate cache key for workspace."""
     return (
@@ -107,23 +167,25 @@ async def _select_workspace(
     )
     if obj is None:
         return None
-    return {
-        "id": obj.id,
-        "name": obj.name,
-        "h_metadata": obj.h_metadata,
-        "internal_metadata": obj.internal_metadata,
-        "configuration": obj.configuration,
-        "created_at": obj.created_at,
-    }
+    return _cached_row(obj)
 
 
 async def _existing_workspace_result(
-    db: AsyncSession, data: dict[str, Any]
+    db: AsyncSession, data: dict[str, Any], *, auto: bool = False
 ) -> GetOrCreateResult[models.Workspace]:
-    """Reconstruct a workspace from its fetched dict and merge it into the session."""
-    obj = models.Workspace(**models.with_cached_tenant(data))
-    make_transient_to_detached(obj)
-    existing_workspace = await db.merge(obj, load=False)
+    """Reconstruct a workspace from its fetched dict and merge it into the session.
+
+    Raises:
+        ConflictException: `auto` was asked for and the workspace isn't auto. A
+            workspace is auto only if it was created that way.
+    """
+    existing_workspace = await db.merge(await _from_cached_row(db, data), load=False)
+    if auto and existing_workspace.auto_enabled_at is None:
+        raise ConflictException(
+            f"Workspace {existing_workspace.name} exists and isn't an auto"
+            + " workspace. A workspace is auto only if it is created with"
+            + " auto: true; use a new workspace name."
+        )
     return GetOrCreateResult(existing_workspace, created=False)
 
 
@@ -142,7 +204,8 @@ async def get_or_create_workspace(
         GetOrCreateResult containing the workspace and whether it was created
 
     Raises:
-        ConflictException: If we fail to get or create the workspace
+        ConflictException: If we fail to get or create the workspace, or
+            `auto` is asked for on an existing workspace that isn't auto
     """
 
     if not workspace.name:
@@ -152,13 +215,14 @@ async def get_or_create_workspace(
     data = await _fetch_workspace(db, workspace.name)
     if data is not None:
         logger.debug("Found existing workspace: %s", workspace.name)
-        return await _existing_workspace_result(db, data)
+        return await _existing_workspace_result(db, data, auto=workspace.auto)
 
     # Workspace doesn't exist, create a new one
     honcho_workspace = models.Workspace(
         name=workspace.name,
         h_metadata=workspace.metadata,
         configuration=workspace.configuration.model_dump(exclude_none=True),
+        auto_enabled_at=datetime.now(UTC) if workspace.auto else None,
     )
     try:
         async with db.begin_nested():
@@ -167,14 +231,7 @@ async def get_or_create_workspace(
 
         # Capture cache data eagerly so the closure holds a plain dict, not the ORM object
         _cache_key = workspace_cache_key(workspace.name)
-        _cache_data = {
-            "id": honcho_workspace.id,
-            "name": honcho_workspace.name,
-            "h_metadata": honcho_workspace.h_metadata,
-            "internal_metadata": honcho_workspace.internal_metadata,
-            "configuration": honcho_workspace.configuration,
-            "created_at": honcho_workspace.created_at,
-        }
+        _cache_data = _cached_row(honcho_workspace)
 
         async def _after_commit():
             await safe_cache_set(
@@ -197,7 +254,7 @@ async def get_or_create_workspace(
             raise ConflictException(
                 f"Unable to create or get workspace: {workspace.name}"
             ) from None
-        return await _existing_workspace_result(db, data)
+        return await _existing_workspace_result(db, data, auto=workspace.auto)
 
 
 async def get_all_workspaces(
@@ -247,9 +304,7 @@ async def get_workspace(
         raise ResourceNotFoundException(f"Workspace {workspace_name} not found")
 
     # Reconstruct ORM object from cached dict and merge into session
-    obj = models.Workspace(**models.with_cached_tenant(data))
-    make_transient_to_detached(obj)
-    existing_workspace = await db.merge(obj, load=False)
+    existing_workspace = await db.merge(await _from_cached_row(db, data), load=False)
 
     return existing_workspace
 

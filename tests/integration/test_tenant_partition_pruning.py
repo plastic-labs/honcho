@@ -14,6 +14,7 @@ the hook, the count is small and the same for the two databases.
 
 from __future__ import annotations
 
+import datetime
 import pickle
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from typing import Any
@@ -83,7 +84,13 @@ def _seed(url: str) -> dict[str, str]:
                 with OrmSession(engine) as db:
                     db.add(models.Tenant(tenant_id=tenant))
                     db.flush()
-                    db.add(models.Workspace(name="w"))
+                    # Auto, so the ingest cases can write to it.
+                    db.add(
+                        models.Workspace(
+                            name="w",
+                            auto_enabled_at=datetime.datetime.now(datetime.UTC),
+                        )
+                    )
                     db.flush()
                     db.add(models.Peer(name="p", workspace_name="w"))
                     db.flush()

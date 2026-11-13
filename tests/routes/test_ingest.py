@@ -14,12 +14,12 @@ from src import models, schemas
 from src.crud import ingest as ingest_crud
 from src.crud.ingest_fence import take_session_fences, take_workspace_fence
 from src.crud.session import upsert_session_peers
-from src.exceptions import ObserverException
+from src.exceptions import ConflictException, ObserverException
 
 
 def _workspace(client: TestClient) -> str:
     name = f"ws-{generate_nanoid(size=10).replace('_', 'a')}"
-    response = client.post("/v3/workspaces", json={"id": name})
+    response = client.post("/v3/workspaces", json={"id": name, "auto": True})
     assert response.status_code in (200, 201), response.text
     return name
 
@@ -293,10 +293,10 @@ def test_a_refused_session_rejects_only_its_own_records(
 @pytest.mark.asyncio
 async def test_a_failure_mid_transaction_writes_nothing(
     db_session: AsyncSession,
-    sample_data: tuple[models.Workspace, models.Peer],
+    auto_data: tuple[models.Workspace, models.Peer],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    workspace = sample_data[0].name
+    workspace = auto_data[0].name
 
     async def boom(*_args: Any, **_kwargs: Any) -> Any:
         raise RuntimeError("fail after the claims and bindings")
@@ -319,9 +319,9 @@ async def test_a_failure_mid_transaction_writes_nothing(
 
 @pytest.mark.asyncio
 async def test_concurrent_overlapping_batches_create_each_record_once(
-    db_engine: AsyncEngine, sample_data: tuple[models.Workspace, models.Peer]
+    db_engine: AsyncEngine, auto_data: tuple[models.Workspace, models.Peer]
 ) -> None:
-    workspace = sample_data[0].name
+    workspace = auto_data[0].name
     shared = [_record(container={"id": f"c{i % 3}"}) for i in range(6)]
     batches = [
         schemas.IngestBatch.model_validate({"records": shared}),
@@ -419,10 +419,10 @@ def test_an_explicit_peer_ingest_cannot_use_refuses_the_request(
 
 @pytest.mark.asyncio
 async def test_stale_bindings_are_replaced(
-    db_session: AsyncSession, sample_data: tuple[models.Workspace, models.Peer]
+    db_session: AsyncSession, auto_data: tuple[models.Workspace, models.Peer]
 ) -> None:
     """A binding whose session or peer is gone maps afresh, as a first sighting."""
-    workspace = sample_data[0].name
+    workspace = auto_data[0].name
 
     async def ingest(record: dict[str, Any]) -> schemas.IngestRecordResult:
         batch = schemas.IngestBatch.model_validate({"records": [record]})
@@ -459,10 +459,10 @@ async def test_stale_bindings_are_replaced(
 
 @pytest.mark.asyncio
 async def test_the_fence_covers_the_bound_session_after_a_rename(
-    db_engine: AsyncEngine, sample_data: tuple[models.Workspace, models.Peer]
+    db_engine: AsyncEngine, auto_data: tuple[models.Workspace, models.Peer]
 ) -> None:
     """A renamed container's records wait on the session they really write."""
-    workspace = sample_data[0].name
+    workspace = auto_data[0].name
     factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with factory() as db:
         batch = schemas.IngestBatch.model_validate({"records": [_record()]})
@@ -533,10 +533,10 @@ def test_a_raced_batch_is_retried_and_then_refused_with_503(
 
 @pytest.mark.asyncio
 async def test_batches_recovering_one_stale_peer_binding_agree_on_one_peer(
-    db_engine: AsyncEngine, sample_data: tuple[models.Workspace, models.Peer]
+    db_engine: AsyncEngine, auto_data: tuple[models.Workspace, models.Peer]
 ) -> None:
     """A batch waits for one already recovering the binding, then reuses its peer."""
-    workspace = sample_data[0].name
+    workspace = auto_data[0].name
     factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     author = {"id": "user-7", "name": "Alice"}
     async with factory() as db:
@@ -603,10 +603,10 @@ async def test_batches_recovering_one_stale_peer_binding_agree_on_one_peer(
 
 @pytest.mark.asyncio
 async def test_bindings_keep_the_newest_display_name(
-    db_session: AsyncSession, sample_data: tuple[models.Workspace, models.Peer]
+    db_session: AsyncSession, auto_data: tuple[models.Workspace, models.Peer]
 ) -> None:
     """A rename updates the display name; an older record arriving late doesn't."""
-    workspace = sample_data[0].name
+    workspace = auto_data[0].name
 
     async def ingest(**over: Any) -> None:
         batch = schemas.IngestBatch.model_validate({"records": [_record(**over)]})
@@ -649,11 +649,151 @@ async def test_bindings_keep_the_newest_display_name(
 
 
 @pytest.mark.asyncio
-async def test_records_keep_their_author_and_participant_bindings(
+async def test_records_keep_their_source_context_as_sent(
+    db_session: AsyncSession, auto_data: tuple[models.Workspace, models.Peer]
+) -> None:
+    """Bindings keep only the newest names; each record keeps what it was sent with."""
+    workspace = auto_data[0].name
+    first = _record(
+        source_id="a",
+        container={"id": "chan-1", "name": "dev", "parent_id": "cat-1"},
+        participants=[{"id": "user-2", "name": "Aakash"}, {"name": "guest"}],
+    )
+    renamed = _record(
+        source_id="b",
+        created_at="2026-11-05T10:00:00Z",
+        container={"id": "chan-1", "name": "dev-renamed"},
+        author={"id": "user-1", "name": "Jess D"},
+    )
+    authorless = _record(source_id="c", author=None, container=None)
+    batch = schemas.IngestBatch.model_validate(
+        {"records": [first, renamed, authorless]}
+    )
+    await ingest_crud.ingest_batch(db_session, workspace, batch)
+
+    stored = dict(
+        (
+            await db_session.execute(
+                select(
+                    models.IngestRecord.identity, models.IngestRecord.source_context
+                ).where(models.IngestRecord.workspace_name == workspace)
+            )
+        )
+        .tuples()
+        .all()
+    )
+    assert stored["a"] == {
+        "container": {"id": "chan-1", "name": "dev", "parent_id": "cat-1"},
+        "author": {"id": "user-1", "name": "Jessica"},
+        "participants": [
+            {"id": "user-2", "name": "Aakash"},
+            {"id": None, "name": "guest"},
+        ],
+    }
+    assert stored["b"] == {
+        "container": {"id": "chan-1", "name": "dev-renamed", "parent_id": None},
+        "author": {"id": "user-1", "name": "Jess D"},
+        "participants": [],
+    }
+    assert stored["c"] == {"container": None, "author": None, "participants": []}
+
+    # A duplicate sent with other names keeps what the record was first sent with.
+    resent = schemas.IngestBatch.model_validate(
+        {"records": [{**first, "participants": [{"id": "user-9", "name": "X"}]}]}
+    )
+    [result] = (await ingest_crud.ingest_batch(db_session, workspace, resent)).results
+    assert result.outcome == "duplicate"
+    kept = await db_session.scalar(
+        select(models.IngestRecord.source_context).where(
+            models.IngestRecord.workspace_name == workspace,
+            models.IngestRecord.identity == "a",
+        )
+    )
+    assert kept == stored["a"]
+
+
+@pytest.mark.asyncio
+async def test_a_container_keeps_the_first_parent_it_was_sent(
+    db_session: AsyncSession, auto_data: tuple[models.Workspace, models.Peer]
+) -> None:
+    """Filled by the first record that names a parent, then never overwritten."""
+    workspace = auto_data[0].name
+
+    async def ingest(*records: dict[str, Any]) -> None:
+        batch = schemas.IngestBatch.model_validate({"records": list(records)})
+        await ingest_crud.ingest_batch(db_session, workspace, batch)
+
+    async def parent() -> str | None:
+        return await db_session.scalar(
+            select(models.IngestSessionBinding.parent_key_value).where(
+                models.IngestSessionBinding.workspace_name == workspace,
+                models.IngestSessionBinding.key_value == "thread-1",
+            )
+        )
+
+    thread = {"id": "thread-1", "name": "sso-rollout"}
+    await ingest(_record(source_id="a", container=thread))
+    assert await parent() is None
+
+    # In one batch, the oldest record that names a parent wins.
+    await ingest(
+        _record(
+            source_id="b",
+            created_at="2026-11-06T10:00:00Z",
+            container={**thread, "parent_id": "chan-later"},
+        ),
+        _record(
+            source_id="c",
+            created_at="2026-11-05T10:00:00Z",
+            container={**thread, "parent_id": "chan-dev"},
+        ),
+    )
+    assert await parent() == "chan-dev"
+
+    await ingest(_record(source_id="d", container={**thread, "parent_id": "chan-x"}))
+    assert await parent() == "chan-dev"
+
+
+def test_ingest_on_a_workspace_that_isnt_auto_is_409(client: TestClient) -> None:
+    """Ingest writes only to auto workspaces, so nothing lands in a regular one."""
+    workspace = f"ws-{generate_nanoid(size=10).replace('_', 'a')}"
+    assert client.post("/v3/workspaces", json={"id": workspace}).status_code == 201
+    response = client.post(
+        f"/v3/workspaces/{workspace}/ingest", json={"records": [_record()]}
+    )
+    assert response.status_code == 409, response.text
+    assert "auto" in response.json()["detail"]
+    sessions = client.post(f"/v3/workspaces/{workspace}/sessions/list", json={})
+    assert sessions.json()["items"] == []
+    peers = client.post(f"/v3/workspaces/{workspace}/peers/list", json={})
+    assert peers.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_workspace_that_isnt_auto_gets_no_ingest_rows(
     db_session: AsyncSession, sample_data: tuple[models.Workspace, models.Peer]
 ) -> None:
-    """Which account wrote a record survives linking people, so a link can split."""
     workspace = sample_data[0].name
+    batch = schemas.IngestBatch.model_validate({"records": [_record()]})
+    with pytest.raises(ConflictException):
+        await ingest_crud.ingest_batch(db_session, workspace, batch)
+    await db_session.rollback()
+    for model in (
+        models.IngestRecord,
+        models.IngestSessionBinding,
+        models.IngestPeerBinding,
+        models.Message,
+        models.Session,
+    ):
+        assert await _count(db_session, model, workspace) == 0
+
+
+@pytest.mark.asyncio
+async def test_records_keep_their_author_and_participant_bindings(
+    db_session: AsyncSession, auto_data: tuple[models.Workspace, models.Peer]
+) -> None:
+    """Which account wrote a record survives linking people, so a link can split."""
+    workspace = auto_data[0].name
     batch = schemas.IngestBatch.model_validate(
         {
             "records": [
@@ -701,10 +841,10 @@ async def test_records_keep_their_author_and_participant_bindings(
 
 @pytest.mark.asyncio
 async def test_ingest_follows_bindings_a_person_confirmed(
-    db_session: AsyncSession, sample_data: tuple[models.Workspace, models.Peer]
+    db_session: AsyncSession, auto_data: tuple[models.Workspace, models.Peer]
 ) -> None:
     """A confirmed link or move is used as is; an unconfirmed one is stale."""
-    workspace = sample_data[0].name
+    workspace = auto_data[0].name
 
     async def ingest(**over: Any) -> schemas.IngestRecordResult:
         batch = schemas.IngestBatch.model_validate({"records": [_record(**over)]})
@@ -771,11 +911,11 @@ async def test_ingest_follows_bindings_a_person_confirmed(
 
 @pytest.mark.asyncio
 async def test_one_confirmed_binding_does_not_vouch_for_another(
-    db_session: AsyncSession, sample_data: tuple[models.Workspace, models.Peer]
+    db_session: AsyncSession, auto_data: tuple[models.Workspace, models.Peer]
 ) -> None:
     """A channel never lands in an explicit session just because another
     channel a person moved there shares the batch."""
-    workspace = sample_data[0].name
+    workspace = auto_data[0].name
 
     async def ingest(*records: dict[str, Any]) -> list[schemas.IngestRecordResult]:
         batch = schemas.IngestBatch.model_validate({"records": list(records)})
@@ -841,10 +981,10 @@ def test_containers_whose_short_names_collide_keep_separate_sessions(
 
 @pytest.mark.asyncio
 async def test_a_confirmed_shared_session_is_not_separated(
-    db_session: AsyncSession, sample_data: tuple[models.Workspace, models.Peer]
+    db_session: AsyncSession, auto_data: tuple[models.Workspace, models.Peer]
 ) -> None:
     """Colliding channels a person put in one session both keep going there."""
-    workspace = sample_data[0].name
+    workspace = auto_data[0].name
 
     async def ingest(*records: dict[str, Any]) -> list[schemas.IngestRecordResult]:
         batch = schemas.IngestBatch.model_validate({"records": list(records)})
