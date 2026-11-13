@@ -41,7 +41,18 @@ and an organizer gets `Dataset.blind()`: no case or unit labels, no truth.
 
 **Replayed data** (the internal Discord and activity workspaces) is exported to
 the same format outside the repository, never committed: it holds internal
-conversations and the team's names.
+conversations and the team's names. `from_export.py` turns a Discord connector
+export into a dataset, with who each account is from a people file kept beside
+it; `--only` keeps one category or a few channels, so an early run that
+derives costs cents, not dollars:
+
+```bash
+python -m tests.bench.auto_workspaces.from_export --export EXPORT_DIR \
+    --people people.json --out DATASET_DIR [--only growth]
+```
+
+Discord alone has one account per person, so it tests bots, not identity:
+identity needs a second source.
 
 ## Replay through ingest
 
