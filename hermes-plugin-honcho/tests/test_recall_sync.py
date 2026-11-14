@@ -78,11 +78,32 @@ def test_two_queries_never_consume_previous_query_caches(tmp_path, monkeypatch):
     assert provider._manager.pending_context == {}
 
 
-def test_timeout_keeps_single_flight_and_late_result_cannot_publish():
+def test_timeout_keeps_single_flight_and_late_result_cannot_publish(monkeypatch):
+    from types import SimpleNamespace
+    from hermes_plugin_honcho import recall_sync
+
     provider = make_provider()
     provider._config.timeout = 0.02
     entered, release = threading.Event(), threading.Event()
     calls = []
+    clock = [0.0]
+    monkeypatch.setattr(recall_sync, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    spawn = recall_sync.spawn_context_thread
+
+    def controlled_spawn(*args, **kwargs):
+        worker = spawn(*args, **kwargs)
+        join = worker.join
+
+        def controlled_join(timeout=None):
+            worker.join = join
+            assert timeout is not None and 0 <= timeout <= provider._config.timeout
+            assert entered.wait(2)
+            clock[0] += 1
+
+        worker.join = controlled_join
+        return worker
+
+    monkeypatch.setattr(recall_sync, "spawn_context_thread", controlled_spawn)
 
     def blocked(session, query, **kwargs):
         calls.append(query)
@@ -112,6 +133,7 @@ def test_timeout_keeps_single_flight_and_late_result_cannot_publish():
     assert provider._manager.pending_context == {}
     assert provider._manager.prompts == []
     assert provider._last_context_turn == provider._last_dialectic_turn == -999
+    monkeypatch.setattr(recall_sync, "spawn_context_thread", spawn)
     provider._manager.get_prefetch_context = lambda session, query, **kwargs: {"card": query}
     assert "Debug the compiler" in provider.prefetch("Debug the compiler")
 

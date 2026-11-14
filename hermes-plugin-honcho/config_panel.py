@@ -12,7 +12,7 @@ from typing import Any
 from hermes_constants import mkdir_under_hermes_home
 from utils import atomic_json_write
 
-from .client import _host_block, resolve_active_host, resolve_config_path
+from .client import _host_block, _parse_string_list, resolve_active_host, resolve_config_path
 from .config_schema import CONFIG_SCHEMA
 from .oauth import ACCESS_TOKEN_PREFIX, _config_refresh_lock, _read_config_strict, _refresh_lock
 
@@ -27,6 +27,9 @@ def read_fields() -> dict[str, Any]:
     block = _host_block(raw, host)
     values: dict[str, Any] = {}
     for field in CONFIG_SCHEMA.fields:
+        if field.key == "observationOptOutPhrases":
+            values[field.key] = _parse_string_list(block, raw, field.key)
+            continue
         for source in ((block, raw) if field.scope == "host" else (raw,)):
             stored = next((source[k] for k in (field.key, *field.aliases) if source.get(k) is not None), None)
             if stored is not None:

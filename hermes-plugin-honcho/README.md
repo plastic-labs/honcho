@@ -261,6 +261,7 @@ With multiple profiles: saving a root-cascading map asks whether the edit applie
 | `recallSync` | boolean | `false` | Wait for current-query automatic recall within `timeout` / `requestTimeout` (5s when unset or invalid); omit late/busy results. Context/hybrid only |
 | `observationMode` | string | `"directional"` | Preset: `"directional"` (all on) or `"unified"` (user observes self, AI observes others). Use `observation` object for granular control |
 | `observation` | object | — | Per-peer observation config (see Observation section) |
+| `observationOptOutPhrases` | string[] | `[]` | User-message substrings that disable Honcho reasoning for the whole turn; messages remain stored and searchable |
 
 ### Write Behavior
 
@@ -407,6 +408,26 @@ Presets:
 
 - `"directional"` (default): all four `true`
 - `"unified"`: user `observeMe=true`, AI `observeOthers=true`, rest `false`
+
+### Per-turn observation opt-out
+
+Configure `observationOptOutPhrases` as a JSON array at the root or under
+`hosts.<host>`. A host value replaces the root value, including an explicit
+empty or invalid value. The default is empty (opt-out matching is off).
+
+```json
+{
+  "observationOptOutPhrases": ["off the record", "don't remember this"]
+}
+```
+
+The plugin matches case-insensitive substrings in the sanitized user message,
+not injected `<memory-context>`. A match marks every user and assistant message
+in that turn with `reasoning.enabled: false`, suppressing each message's own
+reasoning observation enqueue. Honcho still stores the messages for replay and
+search, and may use them as context when reasoning about other messages.
+An explicit `null` is treated as empty without a warning; other non-list values
+are ignored with a warning. Neither falls back from a host block to the root list.
 
 ### Hardcoded Limits
 
