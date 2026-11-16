@@ -1,7 +1,8 @@
 """The ingest fence and the ingest rows that session and workspace deletion remove."""
 
 import asyncio
-from collections.abc import AsyncIterator
+import contextlib
+from collections.abc import AsyncIterator, Callable, Coroutine
 
 import pytest
 import pytest_asyncio
@@ -297,6 +298,134 @@ async def test_rows_an_ingest_writer_commits_while_deletion_waits_are_deleted(
 
     assert await _count(db_session, models.IngestRecord, workspace_name) == 0
     assert await _count(db_session, models.IngestSessionBinding, workspace_name) == 0
+
+
+async def _backend_pid(db: AsyncSession) -> int:
+    pid = await db.scalar(text("SELECT pg_backend_pid()"))
+    assert isinstance(pid, int)
+    return pid
+
+
+async def _wait_for_the_fence(
+    observer: AsyncSession, pid: int, deletion: "asyncio.Task[object]"
+) -> None:
+    """Until backend `pid` waits on an advisory lock: deletion is at the fence."""
+    for _ in range(100):
+        if deletion.done():
+            await deletion  # raises whatever ended it early
+            raise AssertionError("deletion finished without waiting on the fence")
+        waiting = await observer.scalar(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = :pid"
+                + " AND locktype = 'advisory' AND NOT granted)"
+            ),
+            {"pid": pid},
+        )
+        if waiting:
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError("deletion never reached the fence")
+
+
+async def _writes_under_the_fence_while_deletion_waits(
+    other_db: AsyncSession,
+    deletion_db: AsyncSession,
+    delete: "Callable[[], Coroutine[object, object, object]]",
+    insert: object,
+) -> None:
+    """The writer, holding the fence, inserts a row whose foreign key locks its
+    parent row, then commits; deletion, waiting on the fence, then goes through.
+
+    Deletion must take the fence before any row lock that conflicts with that
+    foreign-key check. If it locked the parent row first, the insert would wait
+    on deletion while deletion waits on the writer's fence: a deadlock, raised
+    here.
+    """
+    pid = await _backend_pid(deletion_db)
+    deletion = asyncio.create_task(delete())
+    try:
+        await _wait_for_the_fence(other_db, pid, deletion)
+        await other_db.execute(text("SET LOCAL lock_timeout = '3s'"))
+        other_db.add(insert)
+        await other_db.flush()
+        await other_db.commit()
+        await asyncio.wait_for(deletion, timeout=10)
+    finally:
+        if not deletion.done():
+            deletion.cancel()
+        with contextlib.suppress(BaseException):
+            await deletion
+
+
+@pytest.mark.asyncio
+async def test_a_writer_holding_the_fence_can_add_a_message_while_the_session_is_deleted(
+    db_session: AsyncSession,
+    other_db: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+) -> None:
+    workspace, peer = sample_data
+    session_name = await _make_session(db_session, workspace, peer)
+    workspace_name, peer_name = workspace.name, peer.name
+
+    await take_workspace_fence(other_db, workspace_name, mode="shared")
+    await take_session_fences(other_db, workspace_name, [session_name])
+
+    # A message's foreign key locks its session row (and its peer's).
+    await _writes_under_the_fence_while_deletion_waits(
+        other_db,
+        db_session,
+        lambda: crud.delete_session(db_session, workspace_name, session_name),
+        models.Message(
+            workspace_name=workspace_name,
+            session_name=session_name,
+            peer_name=peer_name,
+            content="written under the fence",
+            seq_in_session=1,
+            token_count=4,
+        ),
+    )
+    await db_session.commit()
+
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(models.Message)
+            .where(
+                models.Message.workspace_name == workspace_name,
+                models.Message.session_name == session_name,
+            )
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_writer_holding_the_fence_can_add_a_session_while_the_workspace_is_deleted(
+    db_session: AsyncSession,
+    other_db: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+) -> None:
+    workspace_name = sample_data[0].name
+
+    await take_workspace_fence(other_db, workspace_name, mode="shared")
+
+    # A session's foreign key locks its workspace row.
+    await _writes_under_the_fence_while_deletion_waits(
+        other_db,
+        db_session,
+        lambda: crud.delete_workspace(db_session, workspace_name),
+        models.Session(name=str(generate_nanoid()), workspace_name=workspace_name),
+    )
+    await db_session.commit()
+
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(models.Session)
+            .where(models.Session.workspace_name == workspace_name)
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
