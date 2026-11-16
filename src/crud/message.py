@@ -503,7 +503,11 @@ async def create_messages(
     )
 
     message_objects = await insert_messages_locked(
-        db, messages, workspace_name, session_name
+        db,
+        messages,
+        workspace_name,
+        session_name,
+        internal_metadata=internal_metadata,
     )
 
     await db.commit()
@@ -516,6 +520,8 @@ async def insert_messages_locked(
     messages: list[schemas.MessageCreate],
     workspace_name: str,
     session_name: str,
+    *,
+    internal_metadata: Sequence[dict[str, Any]] | None = None,
 ) -> list[models.Message]:
     """Insert messages at the end of a session under its sequence lock. Does not commit.
 
@@ -529,9 +535,14 @@ async def insert_messages_locked(
         messages: Messages to insert, in order
         workspace_name: Name of the workspace
         session_name: Name of the session
+        internal_metadata: Internal metadata for each message, in the same
+            order as ``messages``, written with the insert
 
     Returns:
         The message objects, flushed or pending flush
+
+    Raises:
+        ValueError: If ``internal_metadata`` doesn't have one entry per message
     """
     await db.execute(text("SET LOCAL lock_timeout = '5s'"))
     await db.execute(*_ingest_lock(workspace_name, session_name))
