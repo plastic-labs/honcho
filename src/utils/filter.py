@@ -90,6 +90,13 @@ ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DOCUMENTS = {
     "metadata": "internal_metadata",
 }
 
+ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DREAM_RUNS = {
+    "observer_id": "observer",
+    "observed_id": "observed",
+    "started_at": "started_at",
+    "finished_at": "finished_at",
+}
+
 
 MAX_SESSION_ALLOWLIST_ENTRIES = 1000
 
@@ -699,6 +706,8 @@ def _build_field_condition(
             key,
             key,  # fallback to the key itself if not found in the mapping for internal use here
         )
+    elif model_class.__name__ == "DreamRun":
+        column_name = ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DREAM_RUNS.get(key)
     else:
         column_name = ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING.get(key)
 

@@ -829,6 +829,46 @@ Honcho v3.5.0 or later. Every derived level returns it as null, and so do older
 explicit conclusions until the deriver derives the same conclusion again and
 merges the new citations into them.
 
+### Filtering Dreams
+
+The dream list ([Representation History](/v3/documentation/features/advanced/dreaming))
+takes `filters` alongside its `observed` and `observer` peer filters, and
+combines them with AND. Its filterable fields are `started_at`, `finished_at`,
+`observer_id` and `observed_id`. `total` and `pages` count only the dreams that
+match.
+
+<CodeGroup>
+```python Python
+from datetime import datetime, timedelta, timezone
+
+# Dreams that started in the last week
+week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+dreams = honcho.dreams(filters={"started_at": {"gte": week_ago}})
+
+# One peer's dreams in a date range
+dreams = honcho.dreams(
+    observed="alice",
+    filters={"started_at": {"gte": "2026-11-01", "lt": "2026-11-08"}},
+)
+```
+
+```typescript TypeScript
+(async () => {
+    // Dreams that started in the last week
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const dreams = await honcho.dreams({
+      filters: { started_at: { gte: weekAgo } }
+    });
+
+    // One peer's dreams in a date range
+    const aliceDreams = await honcho.dreams({
+      observed: "alice",
+      filters: { started_at: { gte: "2026-11-01", lt: "2026-11-08" } }
+    });
+})();
+```
+</CodeGroup>
+
 ## Value Types
 
 A filter value has to be usable against the field it targets. Honcho validates

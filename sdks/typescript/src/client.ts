@@ -1342,6 +1342,12 @@ export class Honcho {
    * @param options.observed - Only runs about this peer (ID string or Peer object)
    * @param options.observer - Only runs from this observer's perspective. Combine
    *                           with `observed` for a single representation
+   * @param options.filters - Filter object, e.g.
+   *                          `{ started_at: { gte: '2026-01-01' } }` for the runs
+   *                          that started in a date range. Filterable fields:
+   *                          `started_at`, `finished_at`, `observer_id`,
+   *                          `observed_id`. Requires a server that accepts
+   *                          `filters` on the dream list
    * @param options.page - Page number (1-indexed)
    * @param options.size - Number of items per page
    * @returns Promise resolving to a Page of dream runs
@@ -1349,13 +1355,15 @@ export class Honcho {
   async dreams(options?: {
     observed?: string | Peer
     observer?: string | Peer
+    filters?: Filters
     page?: number
     size?: number
   }): Promise<Page<DreamRun, DreamRun>> {
     await this._ensureWorkspace()
-    const body: Record<string, string> = {}
+    const body: Record<string, unknown> = {}
     if (options?.observed) body.observed_id = resolveId(options.observed)
     if (options?.observer) body.observer_id = resolveId(options.observer)
+    if (options?.filters) body.filters = FilterSchema.parse(options.filters)
 
     const fetchPage = (
       page?: number,

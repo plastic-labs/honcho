@@ -1059,6 +1059,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         observed: str | PeerBase | None = None,
         observer: str | PeerBase | None = None,
         *,
+        filters: dict[str, object] | None = None,
         page: int = 1,
         size: int = 50,
     ) -> SyncPage[DreamRunResponse, DreamRunResponse]:
@@ -1072,6 +1073,11 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             observed: Only runs about this peer (ID string or Peer object).
             observer: Only runs from this observer's perspective. Combine with
                 ``observed`` for a single representation.
+            filters: Filter object, e.g.
+                ``{"started_at": {"gte": "2026-01-01"}}`` for the runs that
+                started in a date range. Filterable fields: ``started_at``,
+                ``finished_at``, ``observer_id``, ``observed_id``. Requires a
+                server that accepts ``filters`` on the dream list.
             page: Page number (1-indexed). Default: 1.
             size: Number of items per page. Default: 50.
 
@@ -1084,6 +1090,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             body["observed_id"] = resolve_id(observed)
         if observer is not None:
             body["observer_id"] = resolve_id(observer)
+        if filters:
+            body["filters"] = filters
 
         def fetch(next_page: int) -> dict[str, Any]:
             return self._http.post(

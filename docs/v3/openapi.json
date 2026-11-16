@@ -4272,7 +4272,7 @@
           "dreams"
         ],
         "summary": "List Dreams",
-        "description": "List dream runs, newest first. Results are paginated.\n\nEach run records what one dream changed in a representation. Filter by\n`observed_id` for a peer's history, and add `observer_id` for a single\nrepresentation. Runs are not pruned unless the server sets a retention\nwindow.",
+        "description": "List dream runs, newest first. Results are paginated.\n\nEach run records what one dream changed in a representation. Filter by\n`observed_id` for a peer's history, and add `observer_id` for a single\nrepresentation. `filters` takes the shared filter object, e.g.\n`{\"started_at\": {\"gte\": \"2026-01-01\"}}` for the runs that started in a date\nrange. Runs are not pruned unless the server sets a retention window.",
         "operationId": "list_dreams_v3_workspaces__workspace_id__dreams_list_post",
         "security": [
           {
@@ -6350,6 +6350,19 @@
             ],
             "title": "Observer Id",
             "description": "Only runs from this observer's perspective. Combine with `observed_id` for one representation."
+          },
+          "filters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filters",
+            "description": "Filter object, e.g. `{\"started_at\": {\"gte\": \"2026-01-01\"}}`. Filterable fields: `started_at`, `finished_at`, `observer_id`, `observed_id`. Combined with the top-level peer filters by AND."
           }
         },
         "type": "object",

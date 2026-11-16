@@ -1398,6 +1398,14 @@ class DreamRunList(BaseModel):
         default=None,
         description="Only runs from this observer's perspective. Combine with `observed_id` for one representation.",
     )
+    filters: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            'Filter object, e.g. `{"started_at": {"gte": "2026-01-01"}}`.'
+            " Filterable fields: `started_at`, `finished_at`, `observer_id`,"
+            " `observed_id`. Combined with the top-level peer filters by AND."
+        ),
+    )
 
 
 class DreamRun(BaseModel):
