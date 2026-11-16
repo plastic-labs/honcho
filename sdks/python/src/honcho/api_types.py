@@ -156,6 +156,8 @@ class WorkspaceResponse(BaseModel):
         default_factory=WorkspaceConfigurationResponse
     )
     created_at: datetime.datetime
+    auto: bool = False
+    """Whether this is an auto workspace, which the ingest API writes to."""
 
 
 class WorkspaceCreateParams(BaseModel):
@@ -552,6 +554,98 @@ class QueueStatusResponse(BaseModel):
     in_progress_work_units: int
     pending_work_units: int
     sessions: dict[str, SessionQueueStatus] | None = None
+
+
+# ==============================================================================
+# Ingest Types
+# ==============================================================================
+
+
+class IngestParticipant(BaseModel):
+    """A person on a source record. ``id`` is what connects them across records."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+    id: str | None = Field(None, min_length=1, max_length=512)
+    """The person's ID in the source, if it has one."""
+    name: str = Field(min_length=1, max_length=512)
+    """The person's display name."""
+    bot: bool = False
+    """The source marks this account as a bot. Its peer is created with
+    ``observe_me`` off, so nothing is derived about it."""
+
+
+class IngestContainer(BaseModel):
+    """Where a record lives in its source: a channel, a thread, a repository."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+    id: str = Field(min_length=1, max_length=512)
+    name: str | None = Field(None, min_length=1, max_length=512)
+    parent_id: str | None = Field(None, min_length=1, max_length=512)
+    """The parent container's ID, e.g. a thread's channel."""
+
+
+class IngestRecord(BaseModel):
+    """One source record to ingest: a chat message, a meeting note, an event."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+    source: str = Field(min_length=1, max_length=64)
+    """The source type, e.g. ``discord``."""
+    source_instance: str = Field(min_length=1, max_length=128)
+    """The server, team or account inside the source."""
+    created_at: datetime.datetime
+    """The source's timestamp."""
+    content: str
+    source_id: str | None = Field(None, min_length=1, max_length=512)
+    """The record's ID in that instance. Without it, the record is identified by
+    a hash of its content, so only identical content is deduplicated."""
+    revised_at: datetime.datetime | None = None
+    """When the source last changed this record."""
+    container: IngestContainer | None = None
+    """Where the record lives; omit for a standalone record."""
+    author: IngestParticipant | None = None
+    """Who wrote it; omit when there is no single author."""
+    participants: list[IngestParticipant] = Field(default_factory=list)
+    metadata: dict[str, Any] | None = None
+    configuration: MessageConfiguration | None = None
+    session_id: str | None = Field(None, min_length=1, max_length=512)
+    """An explicit session, used instead of mapping the container."""
+    peer_id: str | None = Field(None, min_length=1, max_length=512)
+    """An explicit author peer, used instead of mapping the author."""
+
+
+class IngestRecordResult(BaseModel):
+    """What happened to one ingested record."""
+
+    index: int
+    """The record's position among the records passed to ``ingest``."""
+    outcome: str
+    """``created``, ``duplicate`` or ``rejected``."""
+    reason: str | None = None
+    """Why a record was rejected, e.g. ``content_conflict``."""
+    record_id: str | None = None
+    message_id: str | None = None
+    session_id: str | None = None
+    peer_id: str | None = None
+    derivation: str | None = None
+    """``pending``, ``queued`` or ``deferred``."""
+
+
+class IngestResponse(BaseModel):
+    """One result per ingested record, in the order the records were passed."""
+
+    records: list[IngestRecordResult]
+
+
+class IngestDeriveResponse(BaseModel):
+    """How many deferred records were released for derivation."""
+
+    pending: int
+    """Records released for derivation."""
+    remaining: int
+    """Records in the workspace still deferred."""
 
 
 # ==============================================================================

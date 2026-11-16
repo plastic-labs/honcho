@@ -28,6 +28,14 @@ def workspace_queue_status(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/queue/status"
 
 
+def workspace_ingest(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/ingest"
+
+
+def workspace_ingest_derive(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/derive"
+
+
 def workspace_schedule_dream(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/schedule_dream"
 

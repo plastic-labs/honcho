@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 import weakref
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Generator, Iterable, Mapping, Sequence
 from typing import Any, Literal
 
 import httpx
@@ -16,6 +16,10 @@ from .aio import HonchoAio
 from .api_types import (
     DreamRunDetailResponse,
     DreamRunResponse,
+    IngestDeriveResponse,
+    IngestRecord,
+    IngestRecordResult,
+    IngestResponse,
     MessageResponse,
     PeerConfig,
     PeerResponse,
@@ -30,6 +34,7 @@ from .api_types import (
 from .base import PeerBase, ScopeBase, SessionBase
 from .conclusions import WorkspaceConclusions
 from .http import AsyncHonchoHTTPClient, HonchoHTTPClient, routes
+from .ingest import ingest_batches, offset_results
 from .message import Message
 from .mixins import MetadataConfigMixin
 from .pagination import SyncPage
@@ -80,6 +85,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: WorkspaceConfiguration | None = PrivateAttr(default=None)
     _uid: str | None = PrivateAttr(default=None)
+    _auto: bool = PrivateAttr(default=False)
     _http: HonchoHTTPClient = PrivateAttr()
     # An async client injected directly (the test fixtures do this); there is no
     # public parameter for it. Used as is, never replaced.
@@ -135,7 +141,18 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
 
     def _get_fetch_body(self) -> dict[str, Any]:
         """Return the request body used to fetch this workspace."""
-        return {"id": self.workspace_id}
+        return self._workspace_body()
+
+    def _workspace_body(self) -> dict[str, Any]:
+        """The get-or-create body for this client's workspace.
+
+        A client made with ``auto=True`` asks for an auto workspace, so the
+        workspace it creates is one the ingest API can write to.
+        """
+        body: dict[str, Any] = {"id": self.workspace_id}
+        if self._auto:
+            body["auto"] = True
+        return body
 
     def _parse_response(
         self, data: dict[str, Any]
@@ -262,6 +279,9 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         http_client: httpx.Client | None = Field(
             None, description="Custom HTTP client"
         ),
+        auto: bool = Field(
+            False, description="Create the workspace as an auto workspace"
+        ),
     ) -> None:
         """
         Initialize the Honcho client.
@@ -290,6 +310,12 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 Optional custom default query parameters for the HTTP client.
             http_client:
                 Optional custom httpx client.
+            auto:
+                Create the workspace as an auto workspace, which ``ingest``
+                writes to. Only a new workspace can be made auto: on an
+                existing workspace that isn't auto, the first call that
+                creates the workspace raises ``ConflictError``. An existing
+                auto workspace works with or without it.
         """
         # Resolve workspace_id before calling super().__init__
         resolved_workspace_id = workspace_id or os.getenv(
@@ -297,6 +323,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         )
 
         super().__init__(workspace_id=resolved_workspace_id)
+        self._auto = auto
 
         # Resolve API key
         resolved_api_key = api_key or os.getenv("HONCHO_API_KEY")
@@ -345,7 +372,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         """
         if self._workspace_ensured:
             return
-        data = self._http.post(routes.workspaces(), body={"id": self.workspace_id})
+        data = self._http.post(routes.workspaces(), body=self._workspace_body())
         self._uid = WorkspaceResponse.model_validate(data).uid
         self._workspace_ensured = True
 
@@ -359,7 +386,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         if self._workspace_ensured:
             return
         data = await self._async_http_client.post(
-            routes.workspaces(), body={"id": self.workspace_id}
+            routes.workspaces(), body=self._workspace_body()
         )
         self._uid = WorkspaceResponse.model_validate(data).uid
         self._workspace_ensured = True
@@ -1014,6 +1041,66 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             query=query if query else None,
         )
         return QueueStatusResponse.model_validate(data)
+
+    def ingest(
+        self,
+        records: Iterable[IngestRecord | Mapping[str, Any]],
+        *,
+        derive: Literal["now", "later"] = "now",
+    ) -> IngestResponse:
+        """
+        Ingest source records into this auto workspace.
+
+        Honcho turns each record into a message, picking its session and peers
+        from the record's source context, and deduplicates on the record's
+        source identity, so sending the same records again is safe. Records
+        are sent 100 per request; an iterator is read one batch at a time.
+
+        The workspace must be an auto workspace. A client made with
+        ``auto=True`` creates it on first use; otherwise it must already exist
+        (``NotFoundError``) and be auto (``ConflictError``).
+
+        Args:
+            records: ``IngestRecord`` objects or dicts with the same fields.
+            derive: ``"now"`` queues derivation as records arrive; ``"later"``
+                stores them without deriving until ``ingest_derive()``.
+
+        Returns:
+            One result per record, with ``index`` counted across all batches.
+            If a request fails, the batches before it are already stored;
+            sending all the records again is safe.
+        """
+        if self._auto:
+            self._ensure_workspace()
+        results: list[IngestRecordResult] = []
+        for offset, batch in ingest_batches(records):
+            data = self._http.post(
+                routes.workspace_ingest(self.workspace_id),
+                body={"derive": derive, "records": batch},
+            )
+            results.extend(offset_results(data, offset))
+        return IngestResponse(records=results)
+
+    def ingest_derive(self) -> IngestDeriveResponse:
+        """
+        Derive the records ingested with ``derive="later"``.
+
+        Releases deferred records in batches until none remain, or until a
+        call releases nothing (records still arriving with ``derive="later"``
+        are left for the next call).
+
+        Returns:
+            ``pending``: records released by this call, in total;
+            ``remaining``: records still deferred afterwards.
+        """
+        released = 0
+        while True:
+            step = IngestDeriveResponse.model_validate(
+                self._http.post(routes.workspace_ingest_derive(self.workspace_id))
+            )
+            released += step.pending
+            if step.remaining == 0 or step.pending == 0:
+                return IngestDeriveResponse(pending=released, remaining=step.remaining)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def schedule_dream(

@@ -14,6 +14,11 @@ import type {
   ChatResponse,
   DreamRun,
   DreamRunDetail,
+  IngestDeriveResponse,
+  IngestDeriveResult,
+  IngestRecordResult,
+  IngestResponse,
+  IngestResult,
   MessageResponse,
   PageResponse,
   PeerResponse,
@@ -33,6 +38,8 @@ import {
   type Filters,
   type HonchoConfig,
   HonchoConfigSchema,
+  type IngestRecord,
+  ingestRecordToApi,
   LimitSchema,
   normalizeListOptions,
   type PeerAddition,
@@ -64,6 +71,8 @@ import {
 } from './validation'
 
 const DEFAULT_BASE_URL = 'https://api.honcho.dev'
+/** Records per ingest request: the most the ingest route takes at once. */
+const INGEST_BATCH_SIZE = 100
 type ReasoningLevel = 'minimal' | 'low' | 'medium' | 'high' | 'max'
 
 /**
@@ -109,6 +118,10 @@ export class Honcho {
    * Memoized workspace get-or-create call.
    */
   private _workspaceReady?: Promise<void>
+  /**
+   * Whether this client creates its workspace as an auto workspace.
+   */
+  private readonly _auto: boolean
 
   /**
    * Cached metadata for this workspace. May be stale if the workspace
@@ -186,9 +199,15 @@ export class Honcho {
    * @param options.timeout - Optional custom timeout for the HTTP client
    * @param options.maxRetries - Optional custom maximum number of retries for the HTTP client
    * @param options.defaultHeaders - Optional custom default headers for the HTTP client
+   * @param options.auto - Create the workspace as an auto workspace, which `ingest`
+   *                       writes to. Only a new workspace can be made auto: on an
+   *                       existing workspace that isn't auto, the first call that
+   *                       creates the workspace throws `ConflictError`. An existing
+   *                       auto workspace works with or without it.
    */
   constructor(options: HonchoConfig = {}) {
     const validatedOptions = HonchoConfigSchema.parse(options)
+    this._auto = validatedOptions.auto ?? false
     this.workspaceId =
       validatedOptions.workspaceId ||
       process.env.HONCHO_WORKSPACE_ID ||
@@ -230,6 +249,7 @@ export class Honcho {
           id,
           metadata: params?.metadata,
           configuration: workspaceConfigToApi(params?.configuration),
+          ...(this._auto ? { auto: true } : {}),
         },
       }
     )
@@ -1289,6 +1309,92 @@ export class Honcho {
 
     const status = await this._getQueueStatus(this.workspaceId, queryParams)
     return transformQueueStatus(status)
+  }
+
+  /**
+   * Ingest source records into this auto workspace.
+   *
+   * Honcho turns each record into a message, picking its session and peers
+   * from the record's source context, and deduplicates on the record's source
+   * identity, so sending the same records again is safe. Records are sent 100
+   * per request; an async iterable is read one batch at a time.
+   *
+   * The workspace must be an auto workspace. A client made with `auto: true`
+   * creates it on first use; otherwise it must already exist (`NotFoundError`)
+   * and be auto (`ConflictError`).
+   *
+   * @param records - The records to ingest
+   * @param options.derive - `'now'` (default) queues derivation as records
+   *                         arrive; `'later'` stores them without deriving
+   *                         until `ingestDerive()`
+   * @returns One result per record, with `index` counted across all batches.
+   *          If a request fails, the batches before it are already stored;
+   *          sending all the records again is safe.
+   */
+  async ingest(
+    records: Iterable<IngestRecord> | AsyncIterable<IngestRecord>,
+    options?: { derive?: 'now' | 'later' }
+  ): Promise<IngestResult> {
+    if (this._auto) {
+      await this._ensureWorkspace()
+    }
+    const derive = options?.derive ?? 'now'
+    const results: IngestRecordResult[] = []
+    let batch: Record<string, unknown>[] = []
+    let offset = 0
+    const send = async () => {
+      const response = await this._http.post<IngestResponse>(
+        `/${API_VERSION}/workspaces/${this.workspaceId}/ingest`,
+        { body: { derive, records: batch } }
+      )
+      for (const r of response.records) {
+        results.push({
+          index: r.index + offset,
+          outcome: r.outcome,
+          reason: r.reason ?? undefined,
+          recordId: r.record_id ?? undefined,
+          messageId: r.message_id ?? undefined,
+          sessionId: r.session_id ?? undefined,
+          peerId: r.peer_id ?? undefined,
+          derivation: r.derivation ?? undefined,
+        })
+      }
+      offset += batch.length
+      batch = []
+    }
+    for await (const record of records) {
+      batch.push(ingestRecordToApi(record))
+      if (batch.length === INGEST_BATCH_SIZE) {
+        await send()
+      }
+    }
+    if (batch.length > 0) {
+      await send()
+    }
+    return { records: results }
+  }
+
+  /**
+   * Derive the records ingested with `derive: 'later'`.
+   *
+   * Releases deferred records in batches until none remain, or until a call
+   * releases nothing (records still arriving with `derive: 'later'` are left
+   * for the next call).
+   *
+   * @returns `pending`: records released by this call, in total;
+   *          `remaining`: records still deferred afterwards
+   */
+  async ingestDerive(): Promise<IngestDeriveResult> {
+    let released = 0
+    while (true) {
+      const step = await this._http.post<IngestDeriveResponse>(
+        `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/derive`
+      )
+      released += step.pending
+      if (step.remaining === 0 || step.pending === 0) {
+        return { pending: released, remaining: step.remaining }
+      }
+    }
   }
 
   /**

@@ -1,0 +1,106 @@
+---
+title: Ingesting Source Records
+description: Import chat history and other source records into an auto workspace
+icon: 'file-import'
+---
+
+Ingest turns records from another system (a chat message, a meeting note, an event) into Honcho messages. You send the record as the source has it: who wrote it, where it lives, and its ID in the source. Honcho picks the session and peers for you:
+
+- A record's container (a channel, a thread) becomes its session.
+- Each author and participant becomes a peer, matched across records by their ID in the source.
+- Each record is deduplicated on its source identity, so sending the same records again is always safe.
+
+Ingest writes only to an **auto workspace**. A workspace is auto only if it was created that way; an existing regular workspace can't be switched.
+
+## Create an auto workspace
+
+Pass `auto` when you create the client. The workspace is created as auto on the client's first call. On an existing workspace that isn't auto, that call fails with a conflict error.
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+honcho = Honcho(workspace_id="team-chat", auto=True)
+```
+
+```typescript TypeScript
+import { Honcho } from '@honcho-ai/sdk';
+
+const honcho = new Honcho({ workspaceId: 'team-chat', auto: true });
+```
+</CodeGroup>
+
+A client without `auto` can still ingest into a workspace that is already auto. It won't create one: ingesting into a workspace that doesn't exist is a not-found error.
+
+## Ingest records
+
+Pass any number of records. The SDK sends them 100 per request and returns one result per record, in the order you passed them.
+
+<CodeGroup>
+```python Python
+result = honcho.ingest(
+    [
+        {
+            "source": "discord",
+            "source_instance": "1016845",          # the server, team or account
+            "source_id": "1567641475",             # the record's ID in the source
+            "created_at": "2026-11-04T20:47:00Z",
+            "container": {"id": "1145750626", "name": "dev"},
+            "author": {"id": "8812", "name": "Jessica"},
+            "content": "the deploy is done",
+        }
+    ]
+)
+
+for record in result.records:
+    print(record.index, record.outcome, record.session_id, record.peer_id)
+```
+
+```typescript TypeScript
+const result = await honcho.ingest([
+  {
+    source: 'discord',
+    sourceInstance: '1016845', // the server, team or account
+    sourceId: '1567641475', // the record's ID in the source
+    createdAt: '2026-11-04T20:47:00Z',
+    container: { id: '1145750626', name: 'dev' },
+    author: { id: '8812', name: 'Jessica' },
+    content: 'the deploy is done',
+  },
+]);
+
+for (const record of result.records) {
+  console.log(record.index, record.outcome, record.sessionId, record.peerId);
+}
+```
+</CodeGroup>
+
+Each result's `outcome` is `created`, `duplicate` (already stored) or `rejected`, with a `reason`. If a request fails partway through a large import, the batches before it are already stored; send all the records again and the stored ones come back as duplicates.
+
+Mark accounts the source flags as bots or integrations with `bot: true` on the author or participant. Their messages are stored and read as context, but nothing is derived about them.
+
+## Load first, derive later
+
+With `derive="later"`, records are stored without being reasoned about. Nothing is derived until you release them, so you can check how the import was organized before paying for reasoning, and peer and session configuration changes made in between apply to what's derived.
+
+<CodeGroup>
+```python Python
+honcho.ingest(records, derive="later")
+
+# ... review peers and sessions, exclude what shouldn't be modeled ...
+
+released = honcho.ingest_derive()
+print(released.pending, released.remaining)
+```
+
+```typescript TypeScript
+await honcho.ingest(records, { derive: 'later' });
+
+// ... review peers and sessions, exclude what shouldn't be modeled ...
+
+const released = await honcho.ingestDerive();
+console.log(released.pending, released.remaining);
+```
+</CodeGroup>
+
+`ingest_derive()` releases deferred records in batches until none remain, then returns how many it released. Track reasoning progress with [queue status](/v3/documentation/features/advanced/queue-status).

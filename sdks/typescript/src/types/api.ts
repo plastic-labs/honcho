@@ -24,6 +24,8 @@ export interface WorkspaceResponse {
   metadata: Record<string, unknown>
   configuration: WorkspaceConfigApi
   created_at: string
+  /** Whether this is an auto workspace, which the ingest API writes to. */
+  auto?: boolean
 }
 
 export interface WorkspaceCreateParams {
@@ -567,6 +569,60 @@ export interface QueueStatus {
   inProgressWorkUnits: number
   pendingWorkUnits: number
   sessions?: Record<string, SessionQueueStatus>
+}
+
+// =============================================================================
+// Ingest Types
+// =============================================================================
+
+export interface IngestRecordResultResponse {
+  index: number
+  outcome: string
+  reason?: string | null
+  record_id?: string | null
+  message_id?: string | null
+  session_id?: string | null
+  peer_id?: string | null
+  derivation?: string | null
+}
+
+export interface IngestResponse {
+  records: IngestRecordResultResponse[]
+  receipt?: string | null
+}
+
+export interface IngestDeriveResponse {
+  pending: number
+  remaining: number
+}
+
+/** What happened to one ingested record. */
+export interface IngestRecordResult {
+  /** The record's position among the records passed to `ingest`. */
+  index: number
+  /** `created`, `duplicate` or `rejected`. */
+  outcome: string
+  /** Why a record was rejected, e.g. `content_conflict`. */
+  reason?: string
+  recordId?: string
+  messageId?: string
+  sessionId?: string
+  peerId?: string
+  /** `pending`, `queued` or `deferred`. */
+  derivation?: string
+}
+
+/** One result per ingested record, in the order the records were passed. */
+export interface IngestResult {
+  records: IngestRecordResult[]
+}
+
+/** How many deferred records were released for derivation. */
+export interface IngestDeriveResult {
+  /** Records released for derivation. */
+  pending: number
+  /** Records in the workspace still deferred. */
+  remaining: number
 }
 
 // =============================================================================

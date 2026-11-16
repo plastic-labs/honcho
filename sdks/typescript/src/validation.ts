@@ -42,6 +42,7 @@ export const HonchoConfigSchema = z
     defaultQuery: z
       .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
       .optional(),
+    auto: z.boolean().optional(),
   })
   .strict()
 
@@ -376,6 +377,96 @@ export const MessageInputSchema = z
     createdAt: z.string().nullable().optional(),
   })
   .strict()
+
+// Lengths are checked by the server, which counts code points; zod counts
+// UTF-16 units, so a client-side maximum would refuse valid names.
+const IngestExternalIdSchema = z.string().min(1)
+const IngestTimestampSchema = z.union([z.string().min(1), z.date()])
+
+/**
+ * Schema for a person on an ingested record. `id` is what connects them
+ * across records; `bot` marks an account the source flags as a bot, whose
+ * peer is created with `observeMe` off.
+ */
+export const IngestParticipantSchema = z
+  .object({
+    id: IngestExternalIdSchema.nullish(),
+    name: z.string().min(1),
+    bot: z.boolean().nullish(),
+  })
+  .strict()
+
+/**
+ * Schema for where an ingested record lives: a channel, a thread, a repository.
+ */
+export const IngestContainerSchema = z
+  .object({
+    id: IngestExternalIdSchema,
+    name: z.string().min(1).nullish(),
+    parentId: IngestExternalIdSchema.nullish(),
+  })
+  .strict()
+
+/**
+ * Schema for one source record to ingest.
+ */
+export const IngestRecordSchema = z
+  .object({
+    source: z.string().min(1),
+    sourceInstance: z.string().min(1),
+    sourceId: IngestExternalIdSchema.nullish(),
+    revisedAt: IngestTimestampSchema.nullish(),
+    createdAt: IngestTimestampSchema,
+    container: IngestContainerSchema.nullish(),
+    author: IngestParticipantSchema.nullish(),
+    participants: z.array(IngestParticipantSchema).nullish(),
+    content: z.string(),
+    metadata: z.record(z.string(), z.unknown()).nullish(),
+    configuration: MessageConfigurationSchema,
+    sessionId: IngestExternalIdSchema.nullish(),
+    peerId: IngestExternalIdSchema.nullish(),
+  })
+  .strict()
+
+function timestampToApi(value: string | Date): string {
+  return value instanceof Date ? value.toISOString() : value
+}
+
+/**
+ * Validate an ingest record and convert it to the API's field names.
+ * Absent and null fields are left out.
+ */
+export function ingestRecordToApi(
+  record: IngestRecord
+): Record<string, unknown> {
+  const r = IngestRecordSchema.parse(record)
+  const participant = (p: z.infer<typeof IngestParticipantSchema>) => ({
+    id: p.id ?? undefined,
+    name: p.name,
+    bot: p.bot ?? undefined,
+  })
+  return {
+    source: r.source,
+    source_instance: r.sourceInstance,
+    source_id: r.sourceId ?? undefined,
+    revised_at: r.revisedAt == null ? undefined : timestampToApi(r.revisedAt),
+    created_at: timestampToApi(r.createdAt),
+    container: r.container
+      ? {
+          id: r.container.id,
+          name: r.container.name ?? undefined,
+          parent_id: r.container.parentId ?? undefined,
+        }
+      : undefined,
+    author: r.author ? participant(r.author) : undefined,
+    participants: r.participants?.map(participant),
+    content: r.content,
+    metadata: r.metadata ?? undefined,
+    configuration: messageConfigToApi(r.configuration ?? undefined),
+    session_id: r.sessionId ?? undefined,
+    peer_id: r.peerId ?? undefined,
+  }
+}
 
 /**
  * Schema for search query validation.
@@ -1267,6 +1358,9 @@ export type SessionMetadata = z.infer<typeof SessionMetadataSchema>
 export type SessionConfig = z.infer<typeof SessionConfigSchema>
 export type SessionPeerConfig = z.infer<typeof SessionPeerConfigSchema>
 export type MessageInput = z.infer<typeof MessageInputSchema>
+export type IngestRecord = z.input<typeof IngestRecordSchema>
+export type IngestParticipant = z.input<typeof IngestParticipantSchema>
+export type IngestContainer = z.input<typeof IngestContainerSchema>
 export type Filters = z.infer<typeof FilterSchema>
 export type ChatQuery = z.infer<typeof ChatQuerySchema>
 export type ContextParams = z.infer<typeof ContextParamsSchema>

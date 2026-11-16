@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import warnings
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
 
@@ -34,6 +34,10 @@ from .api_types import (
     ConclusionResponse,
     DreamRunDetailResponse,
     DreamRunResponse,
+    IngestDeriveResponse,
+    IngestRecord,
+    IngestRecordResult,
+    IngestResponse,
     MessageCreateParams,
     MessageResponse,
     PeerCardResponse,
@@ -60,6 +64,7 @@ from .conclusions import (
     _require_view,
 )
 from .http import routes
+from .ingest import ingest_batches, offset_results
 from .message import Message
 from .mixins import AsyncMetadataConfigMixin
 from .pagination import AsyncPage
@@ -135,7 +140,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
 
     def _get_fetch_body(self) -> dict[str, Any]:
         """Return the request body used to fetch this workspace."""
-        return {"id": self._honcho.workspace_id}
+        return self._honcho._workspace_body()
 
     def _parse_response(
         self, data: dict[str, Any]
@@ -727,6 +732,43 @@ class HonchoAio(AsyncMetadataConfigMixin):
             query=query if query else None,
         )
         return QueueStatusResponse.model_validate(data)
+
+    async def ingest(
+        self,
+        records: Iterable[IngestRecord | Mapping[str, Any]],
+        *,
+        derive: Literal["now", "later"] = "now",
+    ) -> IngestResponse:
+        """Ingest source records into this auto workspace asynchronously.
+
+        See `Honcho.ingest`.
+        """
+        if self._honcho._auto:
+            await self._honcho._ensure_workspace_async()
+        results: list[IngestRecordResult] = []
+        for offset, batch in ingest_batches(records):
+            data = await self._honcho._async_http_client.post(
+                routes.workspace_ingest(self._honcho.workspace_id),
+                body={"derive": derive, "records": batch},
+            )
+            results.extend(offset_results(data, offset))
+        return IngestResponse(records=results)
+
+    async def ingest_derive(self) -> IngestDeriveResponse:
+        """Derive the records ingested with ``derive="later"`` asynchronously.
+
+        See `Honcho.ingest_derive`.
+        """
+        released = 0
+        while True:
+            step = IngestDeriveResponse.model_validate(
+                await self._honcho._async_http_client.post(
+                    routes.workspace_ingest_derive(self._honcho.workspace_id)
+                )
+            )
+            released += step.pending
+            if step.remaining == 0 or step.pending == 0:
+                return IngestDeriveResponse(pending=released, remaining=step.remaining)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def dreams(
