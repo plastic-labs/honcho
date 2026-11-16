@@ -98,6 +98,7 @@ async def test_no_create_path_caches_tenant_id(db_session: AsyncSession) -> None
         schemas.SessionCreate(name=str(generate_nanoid())),
         workspace.resource.name,
     )
+    await db_session.commit()
     await session.post_commit()
     peer_name = str(generate_nanoid())
     db_session.add(models.Peer(name=peer_name, workspace_name=workspace.resource.name))

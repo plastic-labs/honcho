@@ -244,6 +244,10 @@ async def get_or_create_session(
     session. If the session does not exist, the workspace and peers are created
     as needed before the session is created.
 
+    Changes are staged in the caller's transaction. The caller commits, then
+    calls ``post_commit()`` on the result to update caches, emit the creation
+    event and enqueue any scope backfill.
+
     Args:
         db: Database session
         session: Session creation payload, including optional metadata,
@@ -258,7 +262,8 @@ async def get_or_create_session(
         _retry: Whether to retry after a concurrent create conflict
 
     Returns:
-        GetOrCreateResult containing the session and whether it was created
+        GetOrCreateResult containing the session, whether it was created, and
+        the work to run after the caller commits
 
     Raises:
         ValueError: If session.name is empty
@@ -443,32 +448,57 @@ async def get_or_create_session(
             fetch_after_upsert=False,
         )
 
-    await db.commit()
+    session_name = session.name
+    scopes = list(session.scopes or [])
 
-    # Run deferred cache operations from workspace/peer creation
-    if ws_result is not None:
-        await ws_result.post_commit()
-    if peers_result is not None:
-        await peers_result.post_commit()
-    if scopes_result is not None:
-        await scopes_result.post_commit()
+    async def on_commit() -> None:
+        await _after_session_commit(
+            db,
+            honcho_session,
+            workspace_name=workspace_name,
+            session_name=session_name,
+            scopes=scopes,
+            created=created,
+            needs_cache_update=needs_cache_update,
+            deferred=[ws_result, peers_result, scopes_result],
+        )
+
+    return GetOrCreateResult(honcho_session, created=created, on_commit=on_commit)
+
+
+async def _after_session_commit(
+    db: AsyncSession,
+    honcho_session: models.Session,
+    *,
+    workspace_name: str,
+    session_name: str,
+    scopes: list[str],
+    created: bool,
+    needs_cache_update: bool,
+    deferred: list[GetOrCreateResult[Any] | None],
+) -> None:
+    """Run what ``get_or_create_session`` defers until its caller has committed."""
+    # Run deferred cache operations from workspace/peer/scope creation
+    for result in deferred:
+        if result is not None:
+            await result.post_commit()
     if created:
         emit(
             SessionCreatedEvent(
-                workspace_name=workspace_name, session_name=session.name
+                workspace_name=workspace_name, session_name=session_name
             )
         )
 
-    # Backfill (DEV-1999): a pre-existing session added to scopes at
+    # Backfill: a pre-existing session added to scopes at
     # create-or-get time may already have messages; those need a
     # backfill-by-copy task per scope. Fresh sessions need nothing.
-    if session.scopes:
+    if scopes:
         has_messages = await db.scalar(
             select(
                 exists(
                     select(models.Message.id)
                     .where(models.Message.workspace_name == workspace_name)
-                    .where(models.Message.session_name == session.name)
+                    .where(models.Message.session_name == session_name)
                 )
             )
         )
@@ -478,16 +508,16 @@ async def get_or_create_session(
             # Imported lazily: src.deriver.enqueue imports crud at module level.
             from src.deriver.enqueue import enqueue_scope_backfill
 
-            for scope_name in session.scopes:
+            for scope_name in scopes:
                 await enqueue_scope_backfill(
                     workspace_name,
                     scope_peer=scope_peer_name(scope_name),
-                    session_name=session.name,
+                    session_name=session_name,
                 )
 
     # Only update cache if session data changed or was newly created
     if needs_cache_update:
-        cache_key = session_cache_key(workspace_name, session.name)
+        cache_key = session_cache_key(workspace_name, session_name)
         await safe_cache_set(
             cache_key,
             {
@@ -503,10 +533,8 @@ async def get_or_create_session(
             expire=settings.CACHE.DEFAULT_TTL_SECONDS,
         )
         logger.debug(
-            "Session %s cache updated in workspace %s", session.name, workspace_name
+            "Session %s cache updated in workspace %s", session_name, workspace_name
         )
-
-    return GetOrCreateResult(honcho_session, created=created)
 
 
 async def get_session(
@@ -581,13 +609,14 @@ async def update_session(
         ConflictException: If concurrent creation prevents fetching or creating
             the session
     """
-    honcho_session: models.Session = (
-        await get_or_create_session(
-            db,
-            schema_from_path(schemas.SessionCreate, "session_id", session_name),
-            workspace_name=workspace_name,
-        )
-    ).resource
+    session_result = await get_or_create_session(
+        db,
+        schema_from_path(schemas.SessionCreate, "session_id", session_name),
+        workspace_name=workspace_name,
+    )
+    await db.commit()
+    await session_result.post_commit()
+    honcho_session: models.Session = session_result.resource
 
     # Track if anything changed
     needs_update = False

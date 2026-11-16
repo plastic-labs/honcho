@@ -75,26 +75,30 @@ class TestSessionCRUD:
             models.SessionPeer.workspace_name == test_workspace.name,
         )
 
-        await crud.get_or_create_session(
+        write_result = await crud.get_or_create_session(
             db_session,
             schemas.SessionCreate(
                 name=session_name, peers={test_peer.name: original_config}
             ),
             test_workspace.name,
         )
+        await db_session.commit()
+        await write_result.post_commit()
         first_joined_at, first_left_at, first_config = (
             await db_session.execute(session_peer_stmt)
         ).one()
         assert first_left_at is None
         assert first_config == original_config.model_dump()
 
-        await crud.get_or_create_session(
+        write_result = await crud.get_or_create_session(
             db_session,
             schemas.SessionCreate(
                 name=session_name, peers={test_peer.name: updated_config}
             ),
             test_workspace.name,
         )
+        await db_session.commit()
+        await write_result.post_commit()
         second_joined_at, second_left_at, second_config = (
             await db_session.execute(session_peer_stmt)
         ).one()
@@ -114,13 +118,15 @@ class TestSessionCRUD:
         session_peer.left_at = datetime.now(UTC)
         await db_session.commit()
 
-        await crud.get_or_create_session(
+        write_result = await crud.get_or_create_session(
             db_session,
             schemas.SessionCreate(
                 name=session_name, peers={test_peer.name: updated_config}
             ),
             test_workspace.name,
         )
+        await db_session.commit()
+        await write_result.post_commit()
         rejoined_joined_at, rejoined_left_at, rejoined_config = (
             await db_session.execute(session_peer_stmt)
         ).one()
@@ -147,10 +153,18 @@ class TestSessionCRUD:
         )
         create = schemas.SessionCreate(name=session_name, peers={peer_name: config})
 
-        await crud.get_or_create_session(db_session, create, workspace_name)
+        write_result = await crud.get_or_create_session(
+            db_session, create, workspace_name
+        )
+        await db_session.commit()
+        await write_result.post_commit()
         xmin = await db_session.scalar(xmin_stmt)
 
-        await crud.get_or_create_session(db_session, create, workspace_name)
+        write_result = await crud.get_or_create_session(
+            db_session, create, workspace_name
+        )
+        await db_session.commit()
+        await write_result.post_commit()
         assert await db_session.scalar(xmin_stmt) == xmin
 
     @pytest.mark.asyncio
@@ -271,13 +285,15 @@ class TestSessionCRUD:
         )
         existing = [str(generate_nanoid()) for _ in range(2)]
 
-        await crud.get_or_create_session(
+        write_result = await crud.get_or_create_session(
             db_session,
             schemas.SessionCreate(
                 name=session_name, peers=dict.fromkeys(existing, observer)
             ),
             workspace_name,
         )
+        await db_session.commit()
+        await write_result.post_commit()
 
         # Adding cannot demote an active member, so re-sending the two observers as
         # non-observers leaves them observing and the third peer makes three.
@@ -372,7 +388,7 @@ class TestSessionCRUD:
             observe_others=False, observe_me=True
         )
 
-        await crud.get_or_create_session(
+        write_result = await crud.get_or_create_session(
             db_session,
             schemas.SessionCreate(
                 name=session_name,
@@ -382,16 +398,20 @@ class TestSessionCRUD:
             ),
             workspace_name,
         )
+        await db_session.commit()
+        await write_result.post_commit()
 
         # Now the limit is below what the session already holds.
         monkeypatch.setattr(settings, "SESSION_OBSERVERS_LIMIT", 1)
-        await crud.get_or_create_session(
+        write_result = await crud.get_or_create_session(
             db_session,
             schemas.SessionCreate(
                 name=session_name, peers={str(generate_nanoid()): bystander}
             ),
             workspace_name,
         )
+        await db_session.commit()
+        await write_result.post_commit()
 
         active_count = await db_session.scalar(
             select(func.count()).where(

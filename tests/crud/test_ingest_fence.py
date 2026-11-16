@@ -259,12 +259,15 @@ async def test_the_fence_does_not_block_the_message_routes_session_lock(
     await take_session_fences(other_db, workspace.name, [session_name])
 
     await db_session.execute(text("SET LOCAL lock_timeout = '200ms'"))
-    created = await crud.create_messages(
+    write_result = await crud.create_messages(
         db_session,
         messages=[schemas.MessageCreate(content="hello", peer_id=peer.name)],
         workspace_name=workspace.name,
         session_name=session_name,
     )
+    await db_session.commit()
+    await write_result.post_commit()
+    created = write_result.messages
     assert len(created) == 1
     await other_db.rollback()
 

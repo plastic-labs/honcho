@@ -172,16 +172,17 @@ async def _session_with_messages(
     previous_summary: Summary | None = None,
 ) -> tuple[models.Session, list[models.Message]]:
     """Create a session holding `contents` as messages, oldest first."""
-    session = (
-        await crud.get_or_create_session(
-            db_session,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={peer.name: schemas.SessionPeerConfigInput()},
-            ),
-            workspace.name,
-        )
-    ).resource
+    write_result = await crud.get_or_create_session(
+        db_session,
+        schemas.SessionCreate(
+            name=str(generate_nanoid()),
+            peers={peer.name: schemas.SessionPeerConfigInput()},
+        ),
+        workspace.name,
+    )
+    await db_session.commit()
+    await write_result.post_commit()
+    session = write_result.resource
     messages = [
         models.Message(
             workspace_name=workspace.name,
