@@ -557,6 +557,12 @@ class IngestParticipant(BaseModel):
         default=None, description="The person's ID in the source, if it has one"
     )
     name: _DisplayName = Field(..., description="The person's display name")
+    bot: bool = Field(
+        default=False,
+        description="The source marks this account as a bot or an integration. "
+        + "Ingest creates its peer with `observe_me` off, so nothing is derived "
+        + "about it; its messages are still stored and read as context.",
+    )
 
 
 class IngestContainer(BaseModel):

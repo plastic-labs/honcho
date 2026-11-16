@@ -235,6 +235,8 @@ class _Record:
     session_key: BindingKey | str
     author_key: BindingKey | str
     participant_keys: list[BindingKey]
+    # The keys of the people the source marks as bots.
+    bot_keys: frozenset[BindingKey] = frozenset()
     session_name: str = ""
     author_name: str = ""
     record_id: str = ""
@@ -311,6 +313,18 @@ def _prepare(batch: schemas.IngestBatch) -> list[_Record]:
     prepared: list[_Record] = []
     for index, record in enumerate(batch.records):
         identity_kind, identity = record_identity(record)
+        author_key = first_seen_any(author_key_for(record))
+        participant_keys = [
+            first_seen(peer_key_for(record, p)) for p in record.participants
+        ]
+        bot_keys = {
+            key
+            for key, person in zip(participant_keys, record.participants, strict=True)
+            if person.bot
+        }
+        # An explicit peer_id replaces the author, flag and all.
+        if record.author and record.author.bot and isinstance(author_key, BindingKey):
+            bot_keys.add(author_key)
         prepared.append(
             _Record(
                 index=index,
@@ -321,10 +335,9 @@ def _prepare(batch: schemas.IngestBatch) -> list[_Record]:
                 session_key=first_seen_any(
                     session_key_for(record, (identity_kind, identity))
                 ),
-                author_key=first_seen_any(author_key_for(record)),
-                participant_keys=[
-                    first_seen(peer_key_for(record, p)) for p in record.participants
-                ],
+                author_key=author_key,
+                participant_keys=participant_keys,
+                bot_keys=frozenset(bot_keys),
             )
         )
     return prepared
@@ -474,13 +487,14 @@ async def ingest_batch(
     # can't be used rejects the records that name it.
     peer_names: dict[BindingKey | str, str | _Refused] = {}
     peer_bindings: dict[BindingKey, str] = {}
+    bots = {k for group in groups.values() for r in group for k in r.bot_keys}
     for key in sorted(
         {k for group in groups.values() for r in group for k in r.peer_keys()},
         key=_peer_sort_key,
     ):
         try:
             peer_names[key], binding_id = await _ensure_peer(
-                db, tenant_id, workspace_name, key, outcome
+                db, tenant_id, workspace_name, key, outcome, bot=key in bots
             )
         except _Refused as refused:
             peer_names[key] = refused
@@ -747,11 +761,14 @@ def _source_context(record: schemas.IngestRecordCreate) -> dict[str, Any]:
         "container": record.container.model_dump(mode="json")
         if record.container is not None
         else None,
-        "author": record.author.model_dump(mode="json")
-        if record.author is not None
-        else None,
-        "participants": [p.model_dump(mode="json") for p in record.participants],
+        "author": _person_context(record.author) if record.author is not None else None,
+        "participants": [_person_context(p) for p in record.participants],
     }
+
+
+def _person_context(person: schemas.IngestParticipant) -> dict[str, Any]:
+    """A person as received; the bot flag only when the source set it."""
+    return person.model_dump(mode="json", exclude=None if person.bot else {"bot"})
 
 
 def _first_parents(records: Sequence[_Record]) -> dict[BindingKey, str]:
@@ -1271,8 +1288,14 @@ async def _ensure_peer(
     workspace_name: str,
     key: BindingKey | str,
     outcome: IngestResult,
+    *,
+    bot: bool = False,
 ) -> tuple[str, str | None]:
-    """The peer for a key, created if needed. Returns its name and binding."""
+    """The peer for a key, created if needed. Returns its name and binding.
+
+    A peer created for a bot has `observe_me` off: nothing is derived about it.
+    A peer that already exists keeps its configuration.
+    """
     if isinstance(key, str):
         # Checked up front (_validate_explicit_peers): not a scope, and a name
         # that doesn't exist yet is a valid new one.
@@ -1345,6 +1368,7 @@ async def _ensure_peer(
                 workspace_name=workspace_name,
                 name=candidate,
                 internal_metadata=_provenance(binding_id, key),
+                configuration={"observe_me": False} if bot else {},
             )
             .on_conflict_do_nothing()
             .returning(models.Peer.id)

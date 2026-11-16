@@ -746,6 +746,8 @@ async def get_messages_by_seq_range(
     session_name: str,
     start_seq: int = 1,
     end_seq: int | None = None,
+    *,
+    limit: int | None = None,
 ) -> list[models.Message]:
     """
     Get messages from a session by seq_in_session range.
@@ -758,6 +760,7 @@ async def get_messages_by_seq_range(
         session_name: Name of the session
         start_seq: Sequence number of the first message to return (inclusive)
         end_seq: Sequence number of the last message to return (inclusive)
+        limit: At most this many messages, the first in sequence order
 
     Returns:
         List of messages ordered by seq_in_session
@@ -786,6 +789,8 @@ async def get_messages_by_seq_range(
         .where(*base_conditions)
         .order_by(models.Message.seq_in_session.asc())
     )
+    if limit is not None:
+        stmt = stmt.limit(limit)
 
     result = await db.execute(stmt)
     return list(result.scalars().all())
