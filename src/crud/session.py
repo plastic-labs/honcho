@@ -1044,10 +1044,15 @@ async def _lock_session_membership(
     row lock in their transaction, so it never waits while holding one, and no
     other path takes it.
 
+    Adding members doesn't take it. An add has no cycle with a replace when its
+    read of the current members is current; one whose read is stale (a third
+    writer rejoined a peer in between) can still cycle with a replace.
+
     A transaction-scoped advisory lock rather than a lock on the ``sessions``
     row: session and workspace deletion delete ``session_peers`` before the
     ``sessions`` row, and workspace deletion runs over active sessions, so a
-    replace that locked the session row first would invert that order.
+    replace that locked the session row first would invert that order. That
+    reason rests on deletion locking the ``sessions`` row last.
 
     Keyed on the tenant as well, since advisory locks are database-wide; the
     key is a stable hash, and a collision only serializes two unrelated
@@ -1295,23 +1300,23 @@ async def set_peers_for_session(
     # reject a request that lowers the observer count as often as one that raises
     # it. _get_or_add_peers_to_session enforces the limit on the resulting rows.
 
-    # Verify session exists
-    stmt = (
+    # Before the soft delete below: the replace's two write phases cannot be
+    # ordered against another replace or remove of this session, only serialized.
+    await _lock_session_membership(db, workspace_name, session_name)
+
+    # The session must exist and not be marked for deletion, read after the
+    # lock: a replace that waited on it sees a deletion committed meanwhile and
+    # writes nothing.
+    session = await db.scalar(
         select(models.Session)
         .where(models.Session.workspace_name == workspace_name)
         .where(models.Session.name == session_name)
+        .where(models.Session.is_active == True)  # noqa: E712
     )
-    result = await db.execute(stmt)
-    session = result.scalar_one_or_none()
-
     if session is None:
         raise ResourceNotFoundException(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
-
-    # Before the soft delete below: the replace's two write phases cannot be
-    # ordered against another replace or remove of this session, only serialized.
-    await _lock_session_membership(db, workspace_name, session_name)
 
     # Soft delete every *ordinary* active membership not in the incoming map.
     # Scope memberships are deliberately preserved: this route replaces the peers
@@ -1339,7 +1344,7 @@ async def set_peers_for_session(
         )
         .values(left_at=func.now())
     )
-    result = await db.execute(update_stmt)
+    await db.execute(update_stmt)
 
     # Get or create peers
     peers_result = await get_or_create_peers(

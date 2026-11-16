@@ -24,7 +24,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 
 import pytest
 from nanoid import generate as generate_nanoid
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src import crud, models, schemas
@@ -33,6 +33,7 @@ from src.crud.session import (
     _session_membership_lock_key,  # pyright: ignore[reportPrivateUsage]
 )
 from src.db import tenant_context
+from src.exceptions import ResourceNotFoundException
 
 _PACE_SECONDS = 0.3
 _TRIGGER = "test_pace_session_peer_write"
@@ -165,6 +166,113 @@ async def test_concurrent_membership_writes_do_not_deadlock(
         )
     # The result of running the two writes one after the other, in some order.
     assert active in outcomes
+
+
+async def _session_with_members(
+    db_engine: AsyncEngine, workspace_name: str
+) -> tuple[async_sessionmaker[AsyncSession], str]:
+    session_name = str(generate_nanoid())
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
+    async with factory() as db:
+        result = await crud.get_or_create_session(
+            db,
+            schemas.SessionCreate(
+                name=session_name,
+                peers={name: schemas.SessionPeerConfig() for name in _MEMBERS},
+            ),
+            workspace_name,
+        )
+        await db.commit()
+    await result.post_commit()
+    return factory, session_name
+
+
+async def _mark_for_deletion(
+    factory: async_sessionmaker[AsyncSession], workspace_name: str, session_name: str
+) -> None:
+    async with factory() as db:
+        session = await db.scalar(
+            select(models.Session).where(
+                models.Session.workspace_name == workspace_name,
+                models.Session.name == session_name,
+            )
+        )
+        assert session is not None
+        session.is_active = False
+        await db.commit()
+
+
+async def _members(
+    factory: async_sessionmaker[AsyncSession], workspace_name: str, session_name: str
+) -> set[str]:
+    async with factory() as db:
+        rows = await db.scalars(
+            select(models.SessionPeer.peer_name).where(
+                models.SessionPeer.workspace_name == workspace_name,
+                models.SessionPeer.session_name == session_name,
+                models.SessionPeer.left_at.is_(None),
+            )
+        )
+        return set(rows)
+
+
+async def test_a_replace_of_a_session_marked_for_deletion_writes_nothing(
+    db_engine: AsyncEngine, sample_data: tuple[models.Workspace, models.Peer]
+) -> None:
+    workspace_name = sample_data[0].name
+    factory, session_name = await _session_with_members(db_engine, workspace_name)
+    await _mark_for_deletion(factory, workspace_name, session_name)
+
+    async with factory() as db:
+        with pytest.raises(ResourceNotFoundException):
+            await _replace(["x"])(db, workspace_name, session_name)
+        await db.rollback()
+
+    assert await _members(factory, workspace_name, session_name) == set(_MEMBERS)
+
+
+async def test_a_replace_that_waited_on_the_lock_sees_a_deletion_made_meanwhile(
+    db_engine: AsyncEngine, sample_data: tuple[models.Workspace, models.Peer]
+) -> None:
+    """The session is read after the lock, so a deletion committed while the
+    replace waited is seen, and the replace writes nothing."""
+    workspace_name = sample_data[0].name
+    factory, session_name = await _session_with_members(db_engine, workspace_name)
+    key = _session_membership_lock_key(workspace_name, session_name)
+
+    async with factory() as holder:
+        await holder.execute(select(func.pg_advisory_xact_lock(key)))
+
+        pids: list[int] = []
+
+        async def replace() -> None:
+            async with factory() as db:
+                pids.append(int(await db.scalar(select(func.pg_backend_pid())) or 0))
+                try:
+                    await _replace(["x"])(db, workspace_name, session_name)
+                finally:
+                    await db.rollback()
+
+        waiting = asyncio.create_task(replace())
+        # Until the replace's backend waits on the advisory lock.
+        for _ in range(200):
+            assert not waiting.done(), "the replace didn't wait on the lock"
+            if pids and await holder.scalar(
+                select(func.count())
+                .select_from(text("pg_locks"))
+                .where(text("pid = :pid AND locktype = 'advisory' AND NOT granted")),
+                {"pid": pids[0]},
+            ):
+                break
+            await asyncio.sleep(0.05)
+        else:
+            raise AssertionError("the replace never reached the lock")
+        await _mark_for_deletion(factory, workspace_name, session_name)
+        await holder.rollback()  # releases the lock
+
+    with pytest.raises(ResourceNotFoundException):
+        await asyncio.wait_for(waiting, timeout=10)
+    assert await _members(factory, workspace_name, session_name) == set(_MEMBERS)
 
 
 def test_lock_key_is_per_session_and_per_tenant(monkeypatch: pytest.MonkeyPatch):
