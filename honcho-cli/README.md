@@ -147,6 +147,28 @@ honcho stop --wipe     # also delete volumes
 | `honcho dream list` | Dreams in the workspace, newest first (`-p` for dreams about one peer, `--observer` for one representation) |
 | `honcho dream inspect <id>` | What one dream changed: conclusions created (with what each was derived from), conclusions removed, and the peer card before and after |
 
+### Ingest (auto workspaces)
+
+Import a connector's export, review what it became, and fix it before anything is derived. Exclusions made before `ingest derive` apply to what is derived; after it, they only affect records released later.
+
+```bash
+honcho workspace create acme --auto
+honcho ingest import records.jsonl -w acme      # stored, not derived
+honcho ingest status -w acme                     # numbered people and sessions
+honcho peer exclude "Usage Stats" -w acme        # a bot the source didn't flag
+honcho session exclude 12 -w acme                # a noisy channel
+honcho ingest derive -w acme --watch
+```
+
+| Command | Description |
+|---------|-------------|
+| `honcho workspace create <id> --auto` | Create an auto workspace, which ingest writes to (only a new workspace can be made auto) |
+| `honcho ingest import <file>` | Import ingest records, one per line (`-` for stdin); not derived unless `--derive now`. Safe to run again: stored records come back as duplicates |
+| `honcho ingest status` | Records by derivation state, tokens waiting, and the people and sessions the import created, numbered, most records first |
+| `honcho ingest derive` | Release every deferred record for derivation; `--watch` follows the queue until it finishes |
+| `honcho peer exclude/include <ref>` | Stop (or resume) deriving about an imported person: `observe_me` off. `<ref>` is a number from `ingest status`, an ID, or a display name |
+| `honcho session exclude/include <ref>` | Stop (or resume) deriving from an imported session; it is still summarized |
+
 ### Config
 
 | Command | Description |

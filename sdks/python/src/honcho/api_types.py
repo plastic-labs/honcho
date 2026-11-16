@@ -639,6 +639,70 @@ class IngestResponse(BaseModel):
     records: list[IngestRecordResult]
 
 
+class IngestRecordCounts(BaseModel):
+    """The workspace's ingested records by derivation state."""
+
+    deferred: int
+    """Stored, waiting for ``ingest_derive()`` to release them."""
+    pending: int
+    """Released, about to be queued."""
+    queued: int
+    """Queued for derivation, or derived."""
+
+
+class IngestStatusResponse(BaseModel):
+    """What the workspace's imports produced, for review before deriving."""
+
+    records: IngestRecordCounts
+    deferred_tokens: int
+    """Tokens in the messages of deferred records."""
+    people: int
+    """Peers created for imported accounts."""
+    people_not_modeled: int
+    """Of those, peers with ``observe_me`` off: nothing is derived about them."""
+    sessions: int
+    """Sessions created for imported containers."""
+    sessions_not_modeled: int
+    """Of those, sessions whose reasoning is off."""
+
+
+class IngestAccount(BaseModel):
+    """One source account mapped to a peer."""
+
+    source: str
+    source_instance: str
+    id: str | None = None
+    """The account's ID in the source, when it has one."""
+    display_name: str | None = None
+
+
+class IngestPerson(BaseModel):
+    """A peer created for imported accounts."""
+
+    peer_id: str
+    display_name: str | None = None
+    """The first account's display name."""
+    accounts: list[IngestAccount]
+    messages: int
+    """Records its accounts wrote."""
+    modeled: bool
+    """False when ``observe_me`` is off: nothing is derived about it."""
+
+
+class IngestSession(BaseModel):
+    """A session created for an imported container."""
+
+    session_id: str
+    display_name: str | None = None
+    """The container's display name in the source."""
+    source: str
+    source_instance: str
+    messages: int
+    """Records in the session."""
+    modeled: bool
+    """False when reasoning is off for the session: only summaries are made."""
+
+
 class IngestDeriveResponse(BaseModel):
     """How many deferred records were released for derivation."""
 

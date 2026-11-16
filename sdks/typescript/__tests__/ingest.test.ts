@@ -137,4 +137,34 @@ describe('ingest', () => {
     const sessions = await client.sessions()
     expect(sessions.total).toBe(0)
   })
+
+  test('review an import before deriving it', async () => {
+    const client = sdk(generateWorkspaceId('ingest-review'), true)
+    await client.ingest(records(12), { derive: 'later' })
+
+    const status = await client.ingestStatus()
+    expect(status.records.deferred).toBe(12)
+    expect([status.people, status.sessions]).toEqual([4, 3])
+    expect(status.deferredTokens).toBeGreaterThan(0)
+
+    const people = await (await client.ingestPeople({ size: 2 })).toArray()
+    expect(people.map((p) => p.messages)).toEqual([3, 3, 3, 3])
+    expect(new Set(people.map((p) => p.displayName))).toEqual(
+      new Set(['Person 0', 'Person 1', 'Person 2', 'Person 3'])
+    )
+    expect(people[0].accounts[0].sourceInstance).toBe('guild1')
+
+    const sessions = await (await client.ingestSessions()).toArray()
+    expect(new Set(sessions.map((s) => s.displayName))).toEqual(
+      new Set(['channel 0', 'channel 1', 'channel 2'])
+    )
+
+    const excluded = people[0].peerId
+    await (await client.peer(excluded)).setConfiguration({ observeMe: false })
+    expect((await client.ingestStatus()).peopleNotModeled).toBe(1)
+    const after = await (await client.ingestPeople()).toArray()
+    expect(after.filter((p) => !p.modeled).map((p) => p.peerId)).toEqual([
+      excluded,
+    ])
+  })
 })

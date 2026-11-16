@@ -693,6 +693,85 @@ class IngestResponse(BaseModel):
     )
 
 
+class IngestRecordCounts(BaseModel):
+    """The workspace's ingested records by derivation state."""
+
+    deferred: int = Field(
+        ..., description="Stored, waiting for POST /ingest/derive to release them"
+    )
+    pending: int = Field(..., description="Released, about to be queued")
+    queued: int = Field(..., description="Queued for derivation, or derived")
+
+
+class IngestStatus(BaseModel):
+    """What the workspace's imports produced, for review before deriving."""
+
+    records: IngestRecordCounts
+    deferred_tokens: int = Field(
+        ..., description="Tokens in the messages of deferred records"
+    )
+    people: int = Field(..., description="Peers created for imported accounts")
+    people_not_modeled: int = Field(
+        ...,
+        description="Of those, peers with `observe_me` off: nothing is derived"
+        + " about them",
+    )
+    sessions: int = Field(..., description="Sessions created for imported containers")
+    sessions_not_modeled: int = Field(
+        ...,
+        description="Of those, sessions whose reasoning is off (their own"
+        + " setting, else the workspace's)",
+    )
+
+
+class IngestAccount(BaseModel):
+    """One source account mapped to a peer."""
+
+    source: str
+    source_instance: str
+    id: str | None = Field(
+        default=None, description="The account's ID in the source, when it has one"
+    )
+    display_name: str | None = Field(
+        default=None, description="The newest name the source gave for the account"
+    )
+
+
+class IngestPerson(BaseModel):
+    """A peer created for imported accounts."""
+
+    peer_id: str
+    display_name: str | None = Field(
+        default=None, description="The first account's display name"
+    )
+    accounts: list[IngestAccount]
+    messages: int = Field(..., description="Records its accounts wrote")
+    modeled: bool = Field(
+        ..., description="False when `observe_me` is off: nothing is derived about it"
+    )
+
+    model_config = ConfigDict(from_attributes=True)  # pyright: ignore
+
+
+class IngestSessionSummary(BaseModel):
+    """A session created for an imported container."""
+
+    session_id: str
+    display_name: str | None = Field(
+        default=None, description="The container's display name in the source"
+    )
+    source: str
+    source_instance: str
+    messages: int = Field(..., description="Records in the session")
+    modeled: bool = Field(
+        ...,
+        description="False when reasoning is off for the session (its own setting,"
+        + " else the workspace's): only summaries are made",
+    )
+
+    model_config = ConfigDict(from_attributes=True)  # pyright: ignore
+
+
 class IngestDeriveResponse(BaseModel):
     """What one derive call released. Call again until `remaining` is 0."""
 

@@ -17,9 +17,12 @@ from .api_types import (
     DreamRunDetailResponse,
     DreamRunResponse,
     IngestDeriveResponse,
+    IngestPerson,
     IngestRecord,
     IngestRecordResult,
     IngestResponse,
+    IngestSession,
+    IngestStatusResponse,
     MessageResponse,
     PeerConfig,
     PeerResponse,
@@ -1101,6 +1104,62 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             released += step.pending
             if step.remaining == 0 or step.pending == 0:
                 return IngestDeriveResponse(pending=released, remaining=step.remaining)
+
+    def ingest_status(self) -> IngestStatusResponse:
+        """
+        What this workspace's imports produced, for review before deriving.
+
+        Records by derivation state, the tokens still deferred, and how many
+        people and sessions the records map to, with how many of each are not
+        modeled.
+        """
+        return IngestStatusResponse.model_validate(
+            self._http.get(routes.workspace_ingest_status(self.workspace_id))
+        )
+
+    def ingest_people(
+        self, *, page: int = 1, size: int = 50
+    ) -> SyncPage[IngestPerson, IngestPerson]:
+        """
+        The peers created for imported accounts, most records first.
+
+        Each lists its source accounts, how many records they wrote, and
+        whether the peer is modeled. Exclude one with
+        ``peer.set_configuration(PeerConfig(observe_me=False))`` before
+        ``ingest_derive()``.
+        """
+
+        def fetch(next_page: int) -> dict[str, Any]:
+            return self._http.get(
+                routes.workspace_ingest_people(self.workspace_id),
+                query={"page": next_page, "size": size},
+            )
+
+        def fetch_next(next_page: int) -> SyncPage[IngestPerson, IngestPerson]:
+            return SyncPage(fetch(next_page), IngestPerson, None, fetch_next)
+
+        return SyncPage(fetch(page), IngestPerson, None, fetch_next)
+
+    def ingest_sessions(
+        self, *, page: int = 1, size: int = 50
+    ) -> SyncPage[IngestSession, IngestSession]:
+        """
+        The sessions created for imported containers, most records first.
+
+        Each gives its container's display name and source, how many records
+        it holds, and whether reasoning is on for it.
+        """
+
+        def fetch(next_page: int) -> dict[str, Any]:
+            return self._http.get(
+                routes.workspace_ingest_sessions(self.workspace_id),
+                query={"page": next_page, "size": size},
+            )
+
+        def fetch_next(next_page: int) -> SyncPage[IngestSession, IngestSession]:
+            return SyncPage(fetch(next_page), IngestSession, None, fetch_next)
+
+        return SyncPage(fetch(page), IngestSession, None, fetch_next)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def schedule_dream(

@@ -617,6 +617,89 @@ export interface IngestResult {
   records: IngestRecordResult[]
 }
 
+export interface IngestStatusResponse {
+  records: { deferred: number; pending: number; queued: number }
+  deferred_tokens: number
+  people: number
+  people_not_modeled: number
+  sessions: number
+  sessions_not_modeled: number
+}
+
+export interface IngestAccountResponse {
+  source: string
+  source_instance: string
+  id?: string | null
+  display_name?: string | null
+}
+
+export interface IngestPersonResponse {
+  peer_id: string
+  display_name?: string | null
+  accounts: IngestAccountResponse[]
+  messages: number
+  modeled: boolean
+}
+
+export interface IngestSessionResponse {
+  session_id: string
+  display_name?: string | null
+  source: string
+  source_instance: string
+  messages: number
+  modeled: boolean
+}
+
+/** What the workspace's imports produced, for review before deriving. */
+export interface IngestStatus {
+  /** Records by derivation state: `deferred` waits for `ingestDerive()`. */
+  records: { deferred: number; pending: number; queued: number }
+  /** Tokens in the messages of deferred records. */
+  deferredTokens: number
+  /** Peers created for imported accounts. */
+  people: number
+  /** Of those, peers with `observeMe` off: nothing is derived about them. */
+  peopleNotModeled: number
+  /** Sessions created for imported containers. */
+  sessions: number
+  /** Of those, sessions whose reasoning is off. */
+  sessionsNotModeled: number
+}
+
+/** One source account mapped to a peer. */
+export interface IngestAccount {
+  source: string
+  sourceInstance: string
+  /** The account's ID in the source, when it has one. */
+  id?: string
+  displayName?: string
+}
+
+/** A peer created for imported accounts. */
+export interface IngestPerson {
+  peerId: string
+  /** The first account's display name. */
+  displayName?: string
+  accounts: IngestAccount[]
+  /** Records its accounts wrote. */
+  messages: number
+  /** False when `observeMe` is off: nothing is derived about it. */
+  modeled: boolean
+}
+
+/** A session created for an imported container. */
+export interface IngestSession {
+  sessionId: string
+  /** The container's display name in the source. */
+  displayName?: string
+  source: string
+  sourceInstance: string
+  /** Records in the session. */
+  messages: number
+  /** False when reasoning is off for the session: only summaries are made. */
+  modeled: boolean
+}
+
 /** How many deferred records were released for derivation. */
 export interface IngestDeriveResult {
   /** Records released for derivation. */

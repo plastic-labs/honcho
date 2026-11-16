@@ -34,6 +34,7 @@ from src import crud, models, schemas
 from src.cache.client import cache
 from src.config import settings
 from src.crud import ingest as ingest_crud
+from src.crud import ingest_status
 from src.crud.message import (
     _grep_messages_internal,  # pyright: ignore[reportPrivateUsage]
 )
@@ -350,6 +351,16 @@ async def _ingest_derive(db: AsyncSession, _source_id: str) -> list[Any]:
     return [released.pending, await ingest_crud.count_deferred(db, "w")]
 
 
+async def _ingest_review(db: AsyncSession, _source_id: str) -> list[Any]:
+    # The review reads: status counts, then the people and sessions lists.
+    await ingest_crud.ingest_batch(db, "w", _ingest_batch(derive="later"))
+    workspace = await ingest_status.require_auto_workspace(db, "w")
+    status = await ingest_status.get_ingest_status(db, workspace)
+    people = (await db.execute(ingest_status.people_query("w"))).all()
+    sessions = (await db.execute(ingest_status.sessions_query("w"))).all()
+    return [status.records.deferred, status.people, len(people), len(sessions)]
+
+
 async def _conclusion_delete(db: AsyncSession, source_id: str) -> list[Any]:
     await crud.delete_document(db, "w", source_id, observer="p", observed="p")
     deleted = await db.scalars(
@@ -373,6 +384,7 @@ _CASES: dict[str, _Case] = {
     "message ingest write": _message_ingest,
     "ingest API write": _ingest_write,
     "ingest derive": _ingest_derive,
+    "ingest review": _ingest_review,
     "conclusion soft delete": _conclusion_delete,
     "session delete": _session_delete,
 }

@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 from pydantic import ValidationError
 
-from sdks.python.src.honcho.api_types import IngestRecord
+from sdks.python.src.honcho.api_types import IngestRecord, PeerConfig
 from sdks.python.src.honcho.client import Honcho
 from sdks.python.src.honcho.http import AsyncHonchoHTTPClient
 from sdks.python.src.honcho.http.exceptions import ConflictError, NotFoundError
@@ -218,3 +218,50 @@ async def test_async_ingest_and_derive(client: TestClient) -> None:
     assert [r.index for r in result.records] == list(range(150))
     assert {r.outcome for r in result.records} == {"created"}
     assert (released.pending, released.remaining) == (150, 0)
+
+
+def test_review_an_import_before_deriving_it(client: TestClient) -> None:
+    sdk = _sdk(client, _name(), auto=True)
+    sdk.ingest(_records(12), derive="later")
+
+    status = sdk.ingest_status()
+    people = list(sdk.ingest_people(size=2))
+    sessions = list(sdk.ingest_sessions())
+
+    assert (status.records.deferred, status.people, status.sessions) == (12, 4, 3)
+    assert status.deferred_tokens > 0
+    assert [p.messages for p in people] == [3, 3, 3, 3]
+    assert {p.display_name for p in people} == {f"Person {n}" for n in range(4)}
+    assert people[0].accounts[0].source == "discord"
+    assert {s.display_name for s in sessions} == {f"channel {n}" for n in range(3)}
+    assert all(p.modeled for p in people) and all(s.modeled for s in sessions)
+
+    excluded = people[0]
+    sdk.peer(excluded.peer_id).set_configuration(PeerConfig(observe_me=False))
+
+    assert sdk.ingest_status().people_not_modeled == 1
+    assert {p.peer_id for p in sdk.ingest_people() if not p.modeled} == {
+        excluded.peer_id
+    }
+
+
+@pytest.mark.asyncio
+async def test_async_review(client: TestClient) -> None:
+    sdk = _sdk(client, _name(), auto=True)
+    sdk.ingest(_records(6), derive="later")
+    async_client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=client.app),
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+    sdk._async_http = AsyncHonchoHTTPClient(  # pyright: ignore[reportPrivateUsage]
+        base_url=str(client.base_url), api_key=None, http_client=async_client
+    )
+    try:
+        status = await sdk.aio.ingest_status()
+        people = (await sdk.aio.ingest_people()).items
+        sessions = (await sdk.aio.ingest_sessions()).items
+    finally:
+        await async_client.aclose()
+
+    assert (status.records.deferred, len(people), len(sessions)) == (6, 4, 3)

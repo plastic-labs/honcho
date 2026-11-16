@@ -1,4 +1,4 @@
-"""Peer commands: list, inspect, card, chat, search, create, metadata, representation."""
+"""Peer commands: list, inspect, card, chat, search, create, metadata, representation, exclude, include."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import typer
 
 from honcho.api_types import PeerConfig
 
+from honcho_cli.commands.ingest import set_peer_modeled
 from honcho_cli.commands.workspace import _config_to_dict, _handle_chat_error, _handle_error, _raw_list
 from honcho_cli.output import print_error, print_result, use_json
 from honcho_cli.recall import parse_csv_repeatable, reject_incompatible_recall, scope_for_sdk
@@ -347,3 +348,30 @@ def representation(
         print_result({"peer_id": pid, "target": target, "representation": result})
     except Exception as e:
         _handle_error(e, "peer", pid)
+
+
+@app.command("exclude")
+def exclude_peer(
+    ref: str = typer.Argument(help="Number from `honcho ingest status`, peer ID, or display name"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Derive nothing about an imported person (`observe_me` off).
+
+    Use it between `honcho ingest import` and `honcho ingest derive`, for a bot
+    the source didn't flag or someone who shouldn't be modeled. Their messages
+    are still stored and read as others' context.
+    """
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    set_peer_modeled(ref, False)
+
+
+@app.command("include")
+def include_peer(
+    ref: str = typer.Argument(help="Number from `honcho ingest status`, peer ID, or display name"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Model an imported person again (`observe_me` on)."""
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    set_peer_modeled(ref, True)

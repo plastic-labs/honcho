@@ -16,9 +16,15 @@ import type {
   DreamRunDetail,
   IngestDeriveResponse,
   IngestDeriveResult,
+  IngestPerson,
+  IngestPersonResponse,
   IngestRecordResult,
   IngestResponse,
   IngestResult,
+  IngestSession,
+  IngestSessionResponse,
+  IngestStatus,
+  IngestStatusResponse,
   MessageResponse,
   PageResponse,
   PeerResponse,
@@ -1395,6 +1401,96 @@ export class Honcho {
         return { pending: released, remaining: step.remaining }
       }
     }
+  }
+
+  /**
+   * What this workspace's imports produced, for review before deriving.
+   *
+   * Records by derivation state, the tokens still deferred, and how many
+   * people and sessions the records map to, with how many of each are not
+   * modeled.
+   */
+  async ingestStatus(): Promise<IngestStatus> {
+    const s = await this._http.get<IngestStatusResponse>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/status`
+    )
+    return {
+      records: s.records,
+      deferredTokens: s.deferred_tokens,
+      people: s.people,
+      peopleNotModeled: s.people_not_modeled,
+      sessions: s.sessions,
+      sessionsNotModeled: s.sessions_not_modeled,
+    }
+  }
+
+  /**
+   * The peers created for imported accounts, most records first.
+   *
+   * Each lists its source accounts, how many records they wrote, and whether
+   * the peer is modeled. Exclude one with
+   * `peer.setConfiguration({ observeMe: false })` before `ingestDerive()`.
+   */
+  async ingestPeople(options?: {
+    page?: number
+    size?: number
+  }): Promise<Page<IngestPerson, IngestPersonResponse>> {
+    const fetchPage = (
+      page?: number,
+      size?: number
+    ): Promise<PageResponse<IngestPersonResponse>> =>
+      this._http.get<PageResponse<IngestPersonResponse>>(
+        `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/people`,
+        { query: { page, size } }
+      )
+    return new Page(
+      await fetchPage(options?.page, options?.size),
+      (p) => ({
+        peerId: p.peer_id,
+        displayName: p.display_name ?? undefined,
+        accounts: p.accounts.map((a) => ({
+          source: a.source,
+          sourceInstance: a.source_instance,
+          id: a.id ?? undefined,
+          displayName: a.display_name ?? undefined,
+        })),
+        messages: p.messages,
+        modeled: p.modeled,
+      }),
+      fetchPage
+    )
+  }
+
+  /**
+   * The sessions created for imported containers, most records first.
+   *
+   * Each gives its container's display name and source, how many records it
+   * holds, and whether reasoning is on for it.
+   */
+  async ingestSessions(options?: {
+    page?: number
+    size?: number
+  }): Promise<Page<IngestSession, IngestSessionResponse>> {
+    const fetchPage = (
+      page?: number,
+      size?: number
+    ): Promise<PageResponse<IngestSessionResponse>> =>
+      this._http.get<PageResponse<IngestSessionResponse>>(
+        `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/sessions`,
+        { query: { page, size } }
+      )
+    return new Page(
+      await fetchPage(options?.page, options?.size),
+      (s) => ({
+        sessionId: s.session_id,
+        displayName: s.display_name ?? undefined,
+        source: s.source,
+        sourceInstance: s.source_instance,
+        messages: s.messages,
+        modeled: s.modeled,
+      }),
+      fetchPage
+    )
   }
 
   /**

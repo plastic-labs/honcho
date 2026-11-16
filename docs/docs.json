@@ -453,7 +453,10 @@
             "group": "ingest",
             "pages": [
               "v3/api-reference/endpoint/ingest/ingest-records",
-              "v3/api-reference/endpoint/ingest/derive"
+              "v3/api-reference/endpoint/ingest/derive",
+              "v3/api-reference/endpoint/ingest/status",
+              "v3/api-reference/endpoint/ingest/people",
+              "v3/api-reference/endpoint/ingest/sessions"
             ]
           },
           {

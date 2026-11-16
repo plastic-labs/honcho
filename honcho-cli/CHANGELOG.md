@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `honcho ingest import FILE`, `honcho ingest status` and `honcho ingest derive`: import a connector's export (`records.jsonl`, one ingest record per line, or `-` for stdin) into an auto workspace, review what it became, and derive it. `import` stores records without deriving them unless `--derive now` is passed, reports created, duplicate and rejected records, and can be run again safely. `status` shows records by derivation state and the tokens waiting to be derived, and numbers the people and sessions the import created, most records first, with each person's source accounts and whether each is modeled. `derive` releases every deferred record; `--watch` follows the queue until derivation finishes. Needs a workspace or admin key and an auto workspace
+- `honcho peer exclude/include` and `honcho session exclude/include`: before `ingest derive`, stop deriving about an imported person (`observe_me` off) or from an imported session (reasoning off; it is still summarized). They take a number from the last `ingest status`, an ID, or a display name that matches one imported person or session; a name that matches none is an error, never a new peer or session
+- `honcho workspace create NAME --auto` creates an auto workspace. An existing workspace that isn't auto can't be made auto, and the command says so
+
 ### Fixed
 
 - `uvx honcho-cli <command>` runs the CLI. The package now also installs a `honcho-cli` executable alongside `honcho`; before, uvx stopped with "An executable named `honcho-cli` is not provided", so the documented `uvx honcho-cli` and a one-line `uvx honcho-cli install` both failed

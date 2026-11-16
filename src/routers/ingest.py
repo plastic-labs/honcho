@@ -13,9 +13,11 @@ the new records' derivation (src/deriver/ingest_enqueue.py).
 import logging
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable
+from functools import partial
 from typing import TypeVar
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Path
+from fastapi_pagination.bases import AbstractParams
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,13 +30,26 @@ from src.crud.ingest import (
     ingest_batch,
     release_deferred,
 )
-from src.dependencies import db
+from src.crud.ingest_status import (
+    get_ingest_status,
+    people_query,
+    require_auto_workspace,
+    session_summaries,
+    sessions_query,
+)
+from src.dependencies import db, read_db
 from src.deriver.ingest_enqueue import enqueue_session
 from src.dreamer.dream_scheduler import get_dream_scheduler
 from src.reconciler.embed_now import embed_task_gate
 from src.security import require_auth
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import MessageCreatedEvent, emit
+from src.utils.pagination import (
+    CursorPage,
+    Page,
+    paginate_offset_or_cursor,
+    pagination_params,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -241,3 +256,88 @@ async def derive(
     remaining = await count_deferred(db, workspace_id)
     await db.commit()
     return schemas.IngestDeriveResponse(pending=released.pending, remaining=remaining)
+
+
+@router.get(
+    "/status",
+    response_model=schemas.IngestStatus,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    responses={
+        404: {"model": schemas.ErrorResponse, "description": "Workspace not found"},
+        409: {"model": schemas.ErrorResponse, "description": "Not an auto workspace"},
+    },
+)
+async def status(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    db: AsyncSession = read_db,
+) -> schemas.IngestStatus:
+    """What the workspace's imports produced, for review before deriving.
+
+    Records by derivation state, the tokens still deferred, and how many people
+    and sessions the records map to, with how many of each are not modeled.
+    Only workspace and admin keys may call it.
+    """
+    workspace = await require_auto_workspace(db, workspace_id)
+    return await get_ingest_status(db, workspace)
+
+
+@router.get(
+    "/people",
+    response_model=Page[schemas.IngestPerson] | CursorPage[schemas.IngestPerson],
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    responses={
+        404: {"model": schemas.ErrorResponse, "description": "Workspace not found"},
+        409: {"model": schemas.ErrorResponse, "description": "Not an auto workspace"},
+    },
+)
+async def people(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    params: AbstractParams = Depends(pagination_params),
+    db: AsyncSession = read_db,
+):
+    """The peers created for imported accounts, most records first.
+
+    Each lists its accounts (source, ID and display name), how many records
+    they wrote, and whether the peer is modeled. Only workspace and admin keys
+    may call it.
+    """
+    await require_auto_workspace(db, workspace_id)
+    # Rows, not entities: there is nothing to deduplicate, and the accounts
+    # column holds JSON, which can't be hashed.
+    return await paginate_offset_or_cursor(
+        db, people_query(workspace_id), params, unique=False
+    )
+
+
+@router.get(
+    "/sessions",
+    response_model=Page[schemas.IngestSessionSummary]
+    | CursorPage[schemas.IngestSessionSummary],
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    responses={
+        404: {"model": schemas.ErrorResponse, "description": "Workspace not found"},
+        409: {"model": schemas.ErrorResponse, "description": "Not an auto workspace"},
+    },
+)
+async def sessions(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    params: AbstractParams = Depends(pagination_params),
+    db: AsyncSession = read_db,
+):
+    """The sessions created for imported containers, most records first.
+
+    Each gives its container's display name and source, how many records it
+    holds, and whether reasoning is on for it. Only workspace and admin keys may
+    call it.
+    """
+    workspace = await require_auto_workspace(db, workspace_id)
+    # Rows, not entities: there is nothing to deduplicate, and their JSON
+    # columns can't be hashed. `modeled` is resolved per row as the deriver
+    # resolves a session's reasoning setting.
+    return await paginate_offset_or_cursor(
+        db,
+        sessions_query(workspace_id),
+        params,
+        unique=False,
+        transformer=partial(session_summaries, workspace=workspace),
+    )

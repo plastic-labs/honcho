@@ -4067,6 +4067,324 @@
         }
       }
     },
+    "/v3/workspaces/{workspace_id}/ingest/status": {
+      "get": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Status",
+        "description": "What the workspace's imports produced, for review before deriving.\n\nRecords by derivation state, the tokens still deferred, and how many people\nand sessions the records map to, with how many of each are not modeled.\nOnly workspace and admin keys may call it.",
+        "operationId": "status_v3_workspaces__workspace_id__ingest_status_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestStatus"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not an auto workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/ingest/people": {
+      "get": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "People",
+        "description": "The peers created for imported accounts, most records first.\n\nEach lists its accounts (source, ID and display name), how many records\nthey wrote, and whether the peer is modeled. Only workspace and admin keys\nmay call it.",
+        "operationId": "people_v3_workspaces__workspace_id__ingest_people_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 2147483647,
+              "minimum": 1,
+              "description": "Page number (offset mode)",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number (offset mode)"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`.",
+              "title": "Cursor"
+            },
+            "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Page_IngestPerson_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CursorPage_IngestPerson_"
+                    }
+                  ],
+                  "title": "Response People V3 Workspaces  Workspace Id  Ingest People Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not an auto workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/ingest/sessions": {
+      "get": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Sessions",
+        "description": "The sessions created for imported containers, most records first.\n\nEach gives its container's display name and source, how many records it\nholds, and whether reasoning is on for it. Only workspace and admin keys may\ncall it.",
+        "operationId": "sessions_v3_workspaces__workspace_id__ingest_sessions_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 2147483647,
+              "minimum": 1,
+              "description": "Page number (offset mode)",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number (offset mode)"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`.",
+              "title": "Cursor"
+            },
+            "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Page_IngestSessionSummary_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CursorPage_IngestSessionSummary_"
+                    }
+                  ],
+                  "title": "Response Sessions V3 Workspaces  Workspace Id  Ingest Sessions Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not an auto workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v3/workspaces/{workspace_id}/conclusions": {
       "post": {
         "tags": [
@@ -5446,6 +5764,156 @@
         ],
         "title": "CursorPage[DreamRun]"
       },
+      "CursorPage_IngestPerson_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IngestPerson"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "current_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page",
+            "description": "Cursor to refetch the current page"
+          },
+          "current_page_backwards": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page Backwards",
+            "description": "Cursor to refetch the current page starting from the last item"
+          },
+          "previous_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Page",
+            "description": "Cursor for the previous page"
+          },
+          "next_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Page",
+            "description": "Cursor for the next page"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "CursorPage[IngestPerson]"
+      },
+      "CursorPage_IngestSessionSummary_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IngestSessionSummary"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "current_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page",
+            "description": "Cursor to refetch the current page"
+          },
+          "current_page_backwards": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page Backwards",
+            "description": "Cursor to refetch the current page starting from the last item"
+          },
+          "previous_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Page",
+            "description": "Cursor for the previous page"
+          },
+          "next_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Page",
+            "description": "Cursor for the next page"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "CursorPage[IngestSessionSummary]"
+      },
       "CursorPage_Message_": {
         "properties": {
           "items": {
@@ -6577,6 +7045,49 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "IngestAccount": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "source_instance": {
+            "type": "string",
+            "title": "Source Instance"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id",
+            "description": "The account's ID in the source, when it has one"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name",
+            "description": "The newest name the source gave for the account"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "source_instance"
+        ],
+        "title": "IngestAccount",
+        "description": "One source account mapped to a peer."
+      },
       "IngestBatch": {
         "properties": {
           "derive": {
@@ -6708,6 +7219,79 @@
         ],
         "title": "IngestParticipant",
         "description": "A person on a record. The `id` is what connects them across records."
+      },
+      "IngestPerson": {
+        "properties": {
+          "peer_id": {
+            "type": "string",
+            "title": "Peer Id"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name",
+            "description": "The first account's display name"
+          },
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/IngestAccount"
+            },
+            "type": "array",
+            "title": "Accounts"
+          },
+          "messages": {
+            "type": "integer",
+            "title": "Messages",
+            "description": "Records its accounts wrote"
+          },
+          "modeled": {
+            "type": "boolean",
+            "title": "Modeled",
+            "description": "False when `observe_me` is off: nothing is derived about it"
+          }
+        },
+        "type": "object",
+        "required": [
+          "peer_id",
+          "accounts",
+          "messages",
+          "modeled"
+        ],
+        "title": "IngestPerson",
+        "description": "A peer created for imported accounts."
+      },
+      "IngestRecordCounts": {
+        "properties": {
+          "deferred": {
+            "type": "integer",
+            "title": "Deferred",
+            "description": "Stored, waiting for POST /ingest/derive to release them"
+          },
+          "pending": {
+            "type": "integer",
+            "title": "Pending",
+            "description": "Released, about to be queued"
+          },
+          "queued": {
+            "type": "integer",
+            "title": "Queued",
+            "description": "Queued for derivation, or derived"
+          }
+        },
+        "type": "object",
+        "required": [
+          "deferred",
+          "pending",
+          "queued"
+        ],
+        "title": "IngestRecordCounts",
+        "description": "The workspace's ingested records by derivation state."
       },
       "IngestRecordCreate": {
         "properties": {
@@ -6987,6 +7571,97 @@
         ],
         "title": "IngestResponse",
         "description": "One outcome per record, in request order."
+      },
+      "IngestSessionSummary": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name",
+            "description": "The container's display name in the source"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "source_instance": {
+            "type": "string",
+            "title": "Source Instance"
+          },
+          "messages": {
+            "type": "integer",
+            "title": "Messages",
+            "description": "Records in the session"
+          },
+          "modeled": {
+            "type": "boolean",
+            "title": "Modeled",
+            "description": "False when reasoning is off for the session (its own setting, else the workspace's): only summaries are made"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "source",
+          "source_instance",
+          "messages",
+          "modeled"
+        ],
+        "title": "IngestSessionSummary",
+        "description": "A session created for an imported container."
+      },
+      "IngestStatus": {
+        "properties": {
+          "records": {
+            "$ref": "#/components/schemas/IngestRecordCounts"
+          },
+          "deferred_tokens": {
+            "type": "integer",
+            "title": "Deferred Tokens",
+            "description": "Tokens in the messages of deferred records"
+          },
+          "people": {
+            "type": "integer",
+            "title": "People",
+            "description": "Peers created for imported accounts"
+          },
+          "people_not_modeled": {
+            "type": "integer",
+            "title": "People Not Modeled",
+            "description": "Of those, peers with `observe_me` off: nothing is derived about them"
+          },
+          "sessions": {
+            "type": "integer",
+            "title": "Sessions",
+            "description": "Sessions created for imported containers"
+          },
+          "sessions_not_modeled": {
+            "type": "integer",
+            "title": "Sessions Not Modeled",
+            "description": "Of those, sessions whose reasoning is off (their own setting, else the workspace's)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "records",
+          "deferred_tokens",
+          "people",
+          "people_not_modeled",
+          "sessions",
+          "sessions_not_modeled"
+        ],
+        "title": "IngestStatus",
+        "description": "What the workspace's imports produced, for review before deriving."
       },
       "Message": {
         "properties": {
@@ -7280,6 +7955,88 @@
           "pages"
         ],
         "title": "Page[DreamRun]"
+      },
+      "Page_IngestPerson_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IngestPerson"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total",
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[IngestPerson]"
+      },
+      "Page_IngestSessionSummary_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IngestSessionSummary"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total",
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[IngestSessionSummary]"
       },
       "Page_Message_": {
         "properties": {

@@ -35,9 +35,12 @@ from .api_types import (
     DreamRunDetailResponse,
     DreamRunResponse,
     IngestDeriveResponse,
+    IngestPerson,
     IngestRecord,
     IngestRecordResult,
     IngestResponse,
+    IngestSession,
+    IngestStatusResponse,
     MessageCreateParams,
     MessageResponse,
     PeerCardResponse,
@@ -769,6 +772,57 @@ class HonchoAio(AsyncMetadataConfigMixin):
             released += step.pending
             if step.remaining == 0 or step.pending == 0:
                 return IngestDeriveResponse(pending=released, remaining=step.remaining)
+
+    async def ingest_status(self) -> IngestStatusResponse:
+        """What this workspace's imports produced, asynchronously.
+
+        See `Honcho.ingest_status`.
+        """
+        return IngestStatusResponse.model_validate(
+            await self._honcho._async_http_client.get(
+                routes.workspace_ingest_status(self._honcho.workspace_id)
+            )
+        )
+
+    async def ingest_people(
+        self, *, page: int = 1, size: int = 50
+    ) -> AsyncPage[IngestPerson, IngestPerson]:
+        """The peers created for imported accounts, asynchronously.
+
+        See `Honcho.ingest_people`.
+        """
+
+        async def fetch(next_page: int) -> dict[str, Any]:
+            return await self._honcho._async_http_client.get(
+                routes.workspace_ingest_people(self._honcho.workspace_id),
+                query={"page": next_page, "size": size},
+            )
+
+        async def fetch_next(next_page: int) -> AsyncPage[IngestPerson, IngestPerson]:
+            return AsyncPage(await fetch(next_page), IngestPerson, None, fetch_next)
+
+        return AsyncPage(await fetch(page), IngestPerson, None, fetch_next)
+
+    async def ingest_sessions(
+        self, *, page: int = 1, size: int = 50
+    ) -> AsyncPage[IngestSession, IngestSession]:
+        """The sessions created for imported containers, asynchronously.
+
+        See `Honcho.ingest_sessions`.
+        """
+
+        async def fetch(next_page: int) -> dict[str, Any]:
+            return await self._honcho._async_http_client.get(
+                routes.workspace_ingest_sessions(self._honcho.workspace_id),
+                query={"page": next_page, "size": size},
+            )
+
+        async def fetch_next(
+            next_page: int,
+        ) -> AsyncPage[IngestSession, IngestSession]:
+            return AsyncPage(await fetch(next_page), IngestSession, None, fetch_next)
+
+        return AsyncPage(await fetch(page), IngestSession, None, fetch_next)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def dreams(
