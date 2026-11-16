@@ -530,6 +530,29 @@ def test_forwarded_mentions_reach_the_account_list(tmp_path: Path) -> None:
     assert ids == {"1", "4"}
 
 
+def test_a_replied_to_webhook_is_a_bot_in_the_account_list(tmp_path: Path) -> None:
+    hook = _msg(71, "210", _user("8", "deploys"), "deployed", webhook_id="8")
+    fake = FakeDiscord()
+    fake.messages = {
+        "210": [
+            _msg(
+                72,
+                "210",
+                JESS,
+                "thanks",
+                type=19,
+                message_reference={"message_id": "71"},
+                referenced_message=hook,
+            )
+        ]
+    }
+    with _client(fake) as client:
+        export(client, GUILD, lambda: JsonlSink(tmp_path), channel_ids={"210"})
+    accounts = {a["id"]: a for a in _read(tmp_path / "accounts.jsonl")}
+    assert accounts["8"]["bot"] is True
+    assert accounts["1"]["bot"] is False
+
+
 def test_rejected_records_make_the_cli_fail(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

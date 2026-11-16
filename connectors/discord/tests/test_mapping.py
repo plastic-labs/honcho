@@ -138,10 +138,63 @@ def test_bots_and_webhooks_are_marked() -> None:
         "77",
         {},
     )
-    assert bot is not None and bot["metadata"]["bot"] is True
-    assert hook is not None and hook["metadata"]["bot"] is True
+    assert bot is not None and bot["author"]["bot"] is True
+    assert hook is not None and hook["author"]["bot"] is True
+    assert "bot" not in bot["metadata"]
     assert account(user("9", "sentry", bot=True))["bot"] is True
     assert account(user("1", "jess"))["bot"] is False
+
+
+def test_a_reply_to_a_webhook_message_marks_its_author_a_bot() -> None:
+    replied = message(
+        id="8000", author=user("8", "deploys"), webhook_id="8", mentions=[]
+    )
+    record = to_record(
+        message(
+            type=19,
+            mentions=[],
+            message_reference={"message_id": "8000"},
+            referenced_message=replied,
+        ),
+        CHANNEL,
+        "77",
+        members={},
+    )
+    assert record is not None
+    assert {"id": "8", "name": "deploys", "bot": True} in record["participants"]
+
+
+def test_a_webhook_mentioned_and_replied_to_is_still_a_bot() -> None:
+    replied = message(
+        id="8000", author=user("8", "deploys"), webhook_id="8", mentions=[]
+    )
+    record = to_record(
+        message(
+            type=19,
+            mentions=[user("8", "deploys")],
+            message_reference={"message_id": "8000"},
+            referenced_message=replied,
+        ),
+        CHANNEL,
+        "77",
+        members={},
+    )
+    assert record is not None
+    assert record["participants"] == [{"id": "8", "name": "deploys", "bot": True}]
+
+
+def test_a_bot_named_in_a_message_is_marked() -> None:
+    record = to_record(
+        message(mentions=[user("9", "sentry", bot=True), user("2", "aakash")]),
+        CHANNEL,
+        "77",
+        {},
+    )
+    assert record is not None
+    assert record["participants"] == [
+        {"id": "9", "name": "sentry", "bot": True},
+        {"id": "2", "name": "aakash"},
+    ]
 
 
 def test_participants_stay_within_ingests_limit() -> None:

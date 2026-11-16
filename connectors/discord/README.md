@@ -44,13 +44,15 @@ aren't read.
 | `source`, `source_instance` | `discord`, the server ID |
 | `source_id`, `created_at`, `revised_at` | the message ID, its timestamp, its last edit |
 | `container` | the channel or thread. `parent_id` is a thread's channel, or a channel's category |
-| `author` | the account ID and the name the server shows (nickname, global name, username) |
-| `participants` | the accounts it mentions, and the author of the message it replies to |
+| `author` | the account ID, the name the server shows (nickname, global name, username), and `bot: true` for bots and webhooks |
+| `participants` | the accounts it mentions, and the author of the message it replies to, bots marked the same way |
 | `content` | the text as written; mentions stay `<@id>`. A message without text keeps a short note of its embeds, attachments, stickers or poll |
-| `metadata` | the message type, the replied-to message ID, attachment names, and `bot` for bots and webhooks |
+| `metadata` | the message type, the replied-to message ID, attachment names |
 
 System notices (joins, pins, thread created) aren't records. Bot and webhook
-messages are, marked `bot`.
+messages are; Honcho stores them, and a bot's peer is created with nothing
+derived about it. A peer that already existed before its first flagged record
+keeps its configuration.
 
 Files written by `--out`: `records.jsonl` (ingest records, in send order),
 `accounts.jsonl` (each account's ID, username, global name, nickname and bot

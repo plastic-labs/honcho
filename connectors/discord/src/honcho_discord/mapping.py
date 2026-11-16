@@ -128,9 +128,18 @@ def account(
     }
 
 
-def _person(user: Json, members: Mapping[str, Json]) -> dict[str, Any]:
+def _person(
+    user: Json, members: Mapping[str, Json], *, bot: bool = False
+) -> dict[str, Any]:
+    """An author or participant; `bot` only when the account is one."""
     user_id = str(user["id"])
-    return {"id": user_id, "name": display_name(user, members.get(user_id))}
+    person: dict[str, Any] = {
+        "id": user_id,
+        "name": display_name(user, members.get(user_id)),
+    }
+    if bot or is_bot(user):
+        person["bot"] = True
+    return person
 
 
 def _component_text(components: list[Json]) -> list[str]:
@@ -208,20 +217,30 @@ def to_record(
         text = text[:MAX_CONTENT]
         metadata["truncated"] = True
 
-    author_person = _person(obj(message["author"]), members)
-    participants: list[dict[str, Any]] = []
-    seen = {author_person["id"]}
-    named = list(items(message.get("mentions")))
+    # A webhook's author is a bot too, though its user object doesn't say so.
+    author_person = _person(obj(message["author"]), members, bot=is_bot(message))
+    # Each named account with whether its message says it's a bot: a mention
+    # names a user, but a replied-to message may have come through a webhook.
+    named: list[tuple[Json, bool]] = [
+        (user, False) for user in items(message.get("mentions"))
+    ]
     for snapshot in snapshots:
-        named.extend(items(snapshot.get("mentions")))
-    replied_author = obj(obj(message.get("referenced_message")).get("author"))
+        named.extend((user, False) for user in items(snapshot.get("mentions")))
+    replied = obj(message.get("referenced_message"))
+    replied_author = obj(replied.get("author"))
     if replied_author:
-        named.append(replied_author)
-    for user in named:
-        person = _person(user, members)
-        if person["id"] not in seen:
-            seen.add(person["id"])
-            participants.append(person)
+        named.append((replied_author, is_bot(replied)))
+    # One entry per account, in the order first named; any mention that says
+    # it's a bot marks it.
+    by_id: dict[str, dict[str, Any]] = {}
+    for user, bot in named:
+        person = _person(user, members, bot=bot)
+        if person["id"] == author_person["id"]:
+            continue
+        kept = by_id.setdefault(person["id"], person)
+        if person.get("bot"):
+            kept["bot"] = True
+    participants = list(by_id.values())
     if len(participants) > MAX_PARTICIPANTS:
         metadata["participants_dropped"] = len(participants) - MAX_PARTICIPANTS
         participants = participants[:MAX_PARTICIPANTS]
@@ -240,8 +259,6 @@ def to_record(
     ]
     if attachments:
         metadata["attachments"] = attachments
-    if is_bot(message):
-        metadata["bot"] = True
 
     return {
         "source": SOURCE,

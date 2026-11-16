@@ -210,7 +210,9 @@ def export(
                         user = _mentioned_user(message, person["id"])
                         if user is not None:
                             accounts[person["id"]] = account(
-                                user, members.get(person["id"])
+                                user,
+                                members.get(person["id"]),
+                                bot=bool(person.get("bot")),
                             )
                 sink.record(record)
                 stats.records += 1
