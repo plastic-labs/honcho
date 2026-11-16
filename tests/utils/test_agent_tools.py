@@ -2081,13 +2081,15 @@ class TestGetPeerCard:
         workspace, peer1, peer2, _, _, _ = tool_test_data
 
         # Create peer card
-        await crud.set_peer_card(
+        write = await crud.set_peer_card(
             db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
             observed=peer2.name,
             peer_card=["Fact 1", "Fact 2"],
         )
+        await db_session.commit()
+        await write.post_commit()
 
         ctx = make_tool_context()
         result = await _handle_get_peer_card(ctx, {})

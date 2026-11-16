@@ -41,6 +41,7 @@ from src.utils.formatting import custom_instructions_section, utc_now_iso
 from src.utils.retryable_errors import is_retryable_error
 from src.utils.sanitization import strip_nul
 from src.utils.tokens import estimate_tokens, tokenizer, track_deriver_input_tokens
+from src.utils.types import PostCommit
 
 from .. import crud, models
 
@@ -712,12 +713,14 @@ async def _create_and_save_summary(
 
         # Save summary to database with new transaction
         async with tracked_db("summary.save") as db:
-            await _save_summary(
+            summary_write = await _save_summary(
                 db,
                 new_summary,
                 workspace_name,
                 session_name,
             )
+            await db.commit()
+            await summary_write.post_commit()
 
     accumulate_metric(
         f"summary_{workspace_name}_{message_id}",
@@ -911,18 +914,24 @@ async def _save_summary(
     summary: Summary,
     workspace_name: str,
     session_name: str,
-) -> None:
+) -> PostCommit:
     """
-    Save a summary as metadata on a session.
+    Save a summary as metadata on a session, in the caller's transaction.
 
     NUL is stripped from the content because jsonb rejects it. Deciding whether
     the content is worth saving (empty, fallback, degenerate) is the caller's job.
+    Does not commit: the caller commits, then runs ``post_commit()`` on the
+    result to invalidate the session cache.
 
     Args:
         db: Database session
         summary: The summary to save
         workspace_name: Workspace name
         session_name: Session name
+
+    Returns:
+        The cache work to run after the caller commits. Empty when the session
+        no longer exists and nothing was written.
     """
     from src.exceptions import ResourceNotFoundException
 
@@ -936,7 +945,7 @@ async def _save_summary(
         logger.warning(
             f"Cannot save summary: session {session_name} not found in workspace {workspace_name}"
         )
-        return
+        return PostCommit()
 
     sanitized: Summary = {**summary, "content": strip_nul(summary["content"])}
 
@@ -962,10 +971,11 @@ async def _save_summary(
     )
 
     await db.execute(stmt)
-    await db.commit()
 
-    cache_key = session_cache_key(workspace_name, session_name)
-    await cache_client.delete(cache_key)
+    async def on_commit() -> None:
+        await cache_client.delete(session_cache_key(workspace_name, session_name))
+
+    return PostCommit(on_commit)
 
 
 async def get_summarized_history(

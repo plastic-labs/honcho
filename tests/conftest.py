@@ -1283,6 +1283,7 @@ def mock_crud_collection_operations(request: pytest.FixtureRequest):
     from nanoid import generate as generate_nanoid
 
     from src import models
+    from src.utils.types import GetOrCreateResult
 
     async def mock_get_or_create_collection(
         _: AsyncSession,
@@ -1297,7 +1298,7 @@ def mock_crud_collection_operations(request: pytest.FixtureRequest):
             workspace_name=workspace_name,
         )
         mock_collection.id = generate_nanoid()
-        return mock_collection
+        return GetOrCreateResult(mock_collection, created=False)
 
     with patch(
         "src.crud.get_or_create_collection",

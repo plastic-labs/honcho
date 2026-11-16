@@ -910,12 +910,14 @@ async def create_observations(
 
     # Ensure collection exists (short DB scope)
     async with tracked_db("create_observations.collection") as db:
-        await crud.get_or_create_collection(
+        collection_result = await crud.get_or_create_collection(
             db,
             workspace_name,
             observer=observer,
             observed=observed,
         )
+        await db.commit()
+        await collection_result.post_commit()
 
     # Compute embeddings (no DB needed)
     contents = [obs.content for obs in normalized_observations]
@@ -1000,17 +1002,18 @@ async def create_observations(
     accepted: list[schemas.DocumentCreate] = []
     if documents:
         async with tracked_db("create_observations.save") as db:
-            accepted = (
-                await crud.create_documents(
-                    db,
-                    documents=documents,
-                    workspace_name=workspace_name,
-                    observer=observer,
-                    observed=observed,
-                    deduplicate=settings.DERIVER.DEDUPLICATE,
-                    history=history,
-                )
-            ).created_documents
+            create_result = await crud.create_documents(
+                db,
+                documents=documents,
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                deduplicate=settings.DERIVER.DEDUPLICATE,
+                history=history,
+            )
+            await db.commit()
+            await create_result.post_commit()
+            accepted = create_result.created_documents
         logger.info(
             "Created %d observations in %s/%s/%s",
             len(accepted),
@@ -1606,7 +1609,7 @@ async def _handle_update_peer_card(
         normalized_peer_card = normalized_peer_card[:MAX_PEER_CARD_FACTS]
 
     async with ctx.db_lock, tracked_db("tool.update_peer_card") as db:
-        await crud.set_peer_card(
+        card_write = await crud.set_peer_card(
             db,
             workspace_name=ctx.workspace_name,
             peer_card=normalized_peer_card,
@@ -1614,6 +1617,8 @@ async def _handle_update_peer_card(
             observed=ctx.observed,
             history=ctx.history,
         )
+        await db.commit()
+        await card_write.post_commit()
     logger.info(
         f"Updated peer card for {ctx.workspace_name}/{ctx.observer}/{ctx.observed}"
     )

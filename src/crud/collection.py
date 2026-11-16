@@ -22,6 +22,7 @@ from src.cache.client import (
 )
 from src.config import settings
 from src.exceptions import ConflictException, ResourceNotFoundException
+from src.utils.types import GetOrCreateResult
 
 logger = getLogger(__name__)
 
@@ -144,46 +145,57 @@ async def get_or_create_collection(
     observer: str,
     observed: str,
     _retry: bool = False,
-) -> models.Collection:
+) -> GetOrCreateResult[models.Collection]:
+    """Get a collection, or create it in the caller's transaction.
+
+    Does not commit: the caller commits, then runs ``post_commit()`` on the
+    result to cache a newly created collection. The insert runs in a savepoint,
+    so losing a create race to a concurrent writer rolls back only the insert,
+    never the caller's earlier work, and the existing row is returned instead.
+    """
     try:
-        return await get_collection(
+        collection = await get_collection(
             db, workspace_name, observer=observer, observed=observed
         )
+        return GetOrCreateResult(collection, created=False)
     except ResourceNotFoundException:
-        try:
-            honcho_collection = models.Collection(
-                workspace_name=workspace_name,
-                observer=observer,
-                observed=observed,
-            )
+        pass
+
+    honcho_collection = models.Collection(
+        workspace_name=workspace_name,
+        observer=observer,
+        observed=observed,
+    )
+    try:
+        async with db.begin_nested():
             db.add(honcho_collection)
-            await db.commit()
+    except IntegrityError:
+        if _retry:
+            raise ConflictException(
+                f"Unable to create or get collection: {observer}/{observed}"
+            ) from None
+        return await get_or_create_collection(
+            db, workspace_name, observer=observer, observed=observed, _retry=True
+        )
 
-            key = collection_cache_key(workspace_name, observer, observed)
-            await safe_cache_set(
-                key,
-                {
-                    "id": honcho_collection.id,
-                    "observer": honcho_collection.observer,
-                    "observed": honcho_collection.observed,
-                    "workspace_name": honcho_collection.workspace_name,
-                    "h_metadata": honcho_collection.h_metadata,
-                    "internal_metadata": honcho_collection.internal_metadata,
-                    "created_at": honcho_collection.created_at,
-                },
-                expire=settings.CACHE.DEFAULT_TTL_SECONDS,
-            )
+    cached = {
+        "id": honcho_collection.id,
+        "observer": honcho_collection.observer,
+        "observed": honcho_collection.observed,
+        "workspace_name": honcho_collection.workspace_name,
+        "h_metadata": honcho_collection.h_metadata,
+        "internal_metadata": honcho_collection.internal_metadata,
+        "created_at": honcho_collection.created_at,
+    }
 
-            return honcho_collection
-        except IntegrityError:
-            await db.rollback()
-            if _retry:
-                raise ConflictException(
-                    f"Unable to create or get collection: {observer}/{observed}"
-                ) from None
-            return await get_or_create_collection(
-                db, workspace_name, observer=observer, observed=observed, _retry=True
-            )
+    async def on_commit() -> None:
+        await safe_cache_set(
+            collection_cache_key(workspace_name, observer, observed),
+            cached,
+            expire=settings.CACHE.DEFAULT_TTL_SECONDS,
+        )
+
+    return GetOrCreateResult(honcho_collection, created=True, on_commit=on_commit)
 
 
 async def update_collection_internal_metadata(

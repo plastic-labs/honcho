@@ -1450,13 +1450,15 @@ class TestCreateDocumentsConcurrency:
         )
 
         # Seed the rows both writers will reinforce.
-        await crud.create_documents(
+        seeded = await crud.create_documents(
             db_session,
             self._batch(test_session.name),
             workspace_name=test_workspace.name,
             observer=test_peer.name,
             observed=test_peer2.name,
         )
+        await db_session.commit()
+        await seeded.post_commit()
 
         session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
 
@@ -1466,13 +1468,15 @@ class TestCreateDocumentsConcurrency:
 
             async def _run(batch: list[schemas.DocumentCreate]) -> None:
                 async with session_factory() as db:
-                    await crud.create_documents(
+                    reinforced = await crud.create_documents(
                         db,
                         batch,
                         workspace_name=test_workspace.name,
                         observer=test_peer.name,
                         observed=test_peer2.name,
                     )
+                    await db.commit()
+                    await reinforced.post_commit()
 
             results = await asyncio.gather(
                 _run(forward), _run(backward), return_exceptions=True
@@ -1483,23 +1487,26 @@ class TestCreateDocumentsConcurrency:
                 + "; ".join(self._chain(e) for e in errors)
             )
 
-        # Every round reinforced the same rows: 1 seed + 2 per round.
+        # Every round reinforced the same rows: 1 seed + 2 per round. The seed
+        # rows sit in this session's identity map, so read them fresh.
         docs = (
             (
                 await db_session.execute(
-                    select(models.Document).where(
+                    select(models.Document)
+                    .where(
                         models.Document.workspace_name == test_workspace.name,
                         models.Document.observer == test_peer.name,
                         models.Document.observed == test_peer2.name,
                         models.Document.deleted_at.is_(None),
                     )
+                    .execution_options(populate_existing=True)
                 )
             )
             .scalars()
             .all()
         )
         assert len(docs) == self.N_DOCS
-        assert all(d.times_derived == 1 + 2 * self.N_ROUNDS for d in docs)
+        assert [d.times_derived for d in docs] == [1 + 2 * self.N_ROUNDS] * len(docs)
 
 
 class TestCreateDocumentsErrorHandling:
@@ -1556,13 +1563,15 @@ class TestCreateDocumentsErrorHandling:
         observed = test_peer2.name
         session_name = test_session.name
 
-        await crud.create_documents(
+        seeded = await crud.create_documents(
             db_session,
             [self._doc("existing fact", session_name)],
             workspace_name=workspace_name,
             observer=observer,
             observed=observed,
         )
+        await db_session.commit()
+        await seeded.post_commit()
 
         class FakePGError(Exception):
             sqlstate: str = "40P01"

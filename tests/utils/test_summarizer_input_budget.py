@@ -201,8 +201,11 @@ async def _session_with_messages(
     if previous_summary is not None:
         # Through the summarizer's own save, which also refreshes the session
         # cache that the summary run reads from.
-        await _save_summary(db_session, previous_summary, workspace.name, session.name)
+        write = await _save_summary(
+            db_session, previous_summary, workspace.name, session.name
+        )
         await db_session.commit()
+        await write.post_commit()
     return session, messages
 
 
