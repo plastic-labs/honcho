@@ -226,12 +226,13 @@ class Tenant(Base):
     #   - vector_correlation_id: the tenant's external vector-store namespace key,
     #     preserved so the namespace stays stable if the tenant's app name changes
     #     (existing vectors resolve without a full, paid re-embed).
-    #   - tier: which backend deployment class serves this tenant.
+    # The table still has an unmapped `tier` column (NOT NULL, server default
+    # 'dedicated'). Nothing reads it; a later migration drops it once no
+    # running release maps it (DEV-3287).
     # endregion
     __tablename__: str = "tenants"
     tenant_id: Mapped[str] = mapped_column(TEXT, primary_key=True)
     vector_correlation_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
-    tier: Mapped[str] = mapped_column(TEXT, nullable=False, server_default="dedicated")
     # region ai
     # The effect, not the reason: "do not claim this tenant's work". The control
     # plane decides WHY (billing, a noisy-neighbour kill switch, a maintenance

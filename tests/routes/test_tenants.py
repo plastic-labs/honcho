@@ -142,7 +142,7 @@ def test_create_tenant(client: TestClient, enabled: str):
     assert response.status_code == 201, response.text
     data = response.json()
     assert data["tenant_id"] == tenant_id
-    assert data["tier"] == "dedicated"
+    assert "tier" not in data
     assert data["vector_correlation_id"] == "vec-1"
     assert "created_at" in data
 
@@ -161,8 +161,9 @@ def test_create_tenant_idempotent_identical(client: TestClient, enabled: str):
     assert second.json() == first.json()
 
 
-def test_create_tenant_conflict_different_tier(client: TestClient, enabled: str):
-    """Same tenant_id with a different tier is a 409 — this API never mutates."""
+def test_create_tenant_ignores_tier(client: TestClient, enabled: str):
+    """``tier`` is accepted for old control planes but not stored or compared:
+    a retry with another tier, or with none, is the same tenant (200)."""
     tenant_id = generate_nanoid()
 
     first = client.post(
@@ -172,12 +173,18 @@ def test_create_tenant_conflict_different_tier(client: TestClient, enabled: str)
     )
     assert first.status_code == 201, first.text
 
-    conflict = client.post(
+    other_tier = client.post(
         "/v3/tenants",
         json=_create_body(tenant_id, tier="dedicated"),
         headers={HEADER: enabled},
     )
-    assert conflict.status_code == 409, conflict.text
+    assert other_tier.status_code == 200, other_tier.text
+
+    body = _create_body(tenant_id)
+    del body["tier"]
+    no_tier = client.post("/v3/tenants", json=body, headers={HEADER: enabled})
+    assert no_tier.status_code == 200, no_tier.text
+    assert no_tier.json() == first.json()
 
 
 def test_create_tenant_conflict_key_held_by_another_tenant(
@@ -295,7 +302,6 @@ def test_get_tenant(client: TestClient, enabled: str):
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["tenant_id"] == tenant_id
-    assert data["tier"] == "shared"
     assert data["vector_correlation_id"] == "vec-3"
 
 
@@ -353,7 +359,7 @@ async def test_delete_non_empty_tenant_conflict(
     so Postgres refuses the delete and the CRUD layer surfaces it as a conflict.
     """
     tenant_id = generate_nanoid()
-    db_session.add(models.Tenant(tenant_id=tenant_id, tier="shared"))
+    db_session.add(models.Tenant(tenant_id=tenant_id))
     # Workspace.name is unique within a tenant; id defaults to a 21-char nanoid.
     db_session.add(models.Workspace(name=generate_nanoid(), tenant_id=tenant_id))
     await db_session.commit()
@@ -456,7 +462,7 @@ async def test_patch_vector_correlation_id_is_set_once(
     plane sent keys would have.
     """
     tenant_id = generate_nanoid()
-    db_session.add(models.Tenant(tenant_id=tenant_id, tier="dedicated"))
+    db_session.add(models.Tenant(tenant_id=tenant_id))
     await db_session.commit()
 
     def current() -> dict[str, Any]:
@@ -530,8 +536,8 @@ async def test_patch_vector_correlation_id_held_by_another_tenant_is_409(
     unset_a, unset_b = generate_nanoid(), generate_nanoid()
     db_session.add_all(
         [
-            models.Tenant(tenant_id=unset_a, tier="shared"),
-            models.Tenant(tenant_id=unset_b, tier="shared"),
+            models.Tenant(tenant_id=unset_a),
+            models.Tenant(tenant_id=unset_b),
         ]
     )
     await db_session.commit()

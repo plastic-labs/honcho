@@ -124,9 +124,6 @@ _ScopeOption = (
 # Tenant schemas (the above-tenant provisioning surface — see routers/tenants.py)
 # ---------------------------------------------------------------------------
 
-# ai: The provisioner's only two backend deployment classes (src/models.py Tenant.tier).
-TenantTier = Literal["shared", "dedicated"]
-
 
 class TenantCreate(BaseModel):
     # region ai
@@ -152,7 +149,15 @@ class TenantCreate(BaseModel):
     vector_correlation_id: Annotated[
         str, Field(min_length=1, max_length=128, pattern=RESOURCE_NAME_PATTERN)
     ]
-    tier: TenantTier
+    # region ai
+    # Accepted and ignored. Honcho no longer stores a tier, but this model
+    # forbids unknown fields and the control plane still sends one, so removing
+    # the field would 422 every registration. Delete it once no control plane
+    # sends `tier` (DEV-3287).
+    # endregion
+    tier: Literal["shared", "dedicated"] | None = Field(
+        default=None, deprecated=True, exclude=True
+    )
 
     @field_validator("tenant_id")
     @classmethod
@@ -183,8 +188,8 @@ class TenantUpdate(BaseModel):
     """The registry's mutable-field allowlist — everything else on the row is fixed.
 
     ``extra="forbid"`` IS the allowlist: a field not declared here is a 422, so
-    the identity fields (``tenant_id``, ``created_at``) and ``tier`` cannot be
-    changed through this verb without a deliberate edit here. The two fields
+    the identity fields (``tenant_id``, ``created_at``) cannot be changed
+    through this verb without a deliberate edit here. The two fields
     that ARE here have different mutation semantics — see the region-ai block
     below.
     """
@@ -220,7 +225,6 @@ class TenantIdList(BaseModel):
 class Tenant(BaseModel):
     tenant_id: str
     vector_correlation_id: str | None = None
-    tier: TenantTier
     derivation_paused: bool
     created_at: datetime.datetime
 
