@@ -36,6 +36,7 @@ from src.crud.lifecycle import (
 )
 from src.dependencies import service_db, tracked_db
 from src.exceptions import ResourceNotFoundException
+from src.utils.filter import apply_filter
 from src.utils.types import DocumentLevel
 
 logger = logging.getLogger(__name__)
@@ -227,8 +228,13 @@ def list_runs_stmt(
     *,
     observed: str | None = None,
     observer: str | None = None,
+    filters: dict[str, Any] | None = None,
 ) -> Select[tuple[models.DreamRun]]:
-    """Runs in a workspace, newest first, optionally for one observed/observer peer."""
+    """Runs in a workspace, newest first.
+
+    ``observed`` and ``observer`` narrow to one peer's runs; ``filters`` is the
+    shared filter object (see ``apply_filter``), ANDed with them.
+    """
     stmt = select(models.DreamRun).where(
         models.DreamRun.tenant_id == models.scoped_tenant_id(),
         models.DreamRun.workspace_name == workspace_name,
@@ -238,6 +244,7 @@ def list_runs_stmt(
         stmt = stmt.where(models.DreamRun.observed == observed)
     if observer is not None:
         stmt = stmt.where(models.DreamRun.observer == observer)
+    stmt = apply_filter(stmt, models.DreamRun, filters)
     return stmt.order_by(models.DreamRun.started_at.desc(), models.DreamRun.id.desc())
 
 

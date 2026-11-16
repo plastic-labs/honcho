@@ -734,6 +734,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
         observed: str | PeerBase | None = None,
         observer: str | PeerBase | None = None,
         *,
+        filters: dict[str, object] | None = None,
         page: int = 1,
         size: int = 50,
     ) -> AsyncPage[DreamRunResponse, DreamRunResponse]:
@@ -744,6 +745,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
             body["observed_id"] = resolve_id(observed)
         if observer is not None:
             body["observer_id"] = resolve_id(observer)
+        if filters:
+            body["filters"] = filters
 
         async def fetch(next_page: int) -> dict[str, Any]:
             return await self._honcho._async_http_client.post(

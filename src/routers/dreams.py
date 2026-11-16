@@ -38,13 +38,15 @@ async def list_dreams(
 
     Each run records what one dream changed in a representation. Filter by
     `observed_id` for a peer's history, and add `observer_id` for a single
-    representation. Runs are not pruned unless the server sets a retention
-    window.
+    representation. `filters` takes the shared filter object, e.g.
+    `{"started_at": {"gte": "2026-01-01"}}` for the runs that started in a date
+    range. Runs are not pruned unless the server sets a retention window.
     """
     stmt = crud.list_runs_stmt(
         workspace_id,
         observed=options.observed_id if options else None,
         observer=options.observer_id if options else None,
+        filters=options.filters if options else None,
     )
     return await paginate_offset_or_cursor(db, stmt, params)
 

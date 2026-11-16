@@ -98,6 +98,132 @@ async def test_list_filters_by_peer_newest_first(
     ]
 
 
+async def test_list_filters_by_start_window(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    workspace, peer = sample_data
+    workspace_name, maya = workspace.name, peer.name
+    day = 24 * 60
+    in_window = [
+        await _run(
+            db_session,
+            workspace_name,
+            observer=maya,
+            observed=maya,
+            started_minutes_ago=minutes,
+        )
+        for minutes in (1 * day, 2 * day, 3 * day)
+    ]
+    for minutes in (10, 9 * day):
+        await _run(
+            db_session,
+            workspace_name,
+            observer=maya,
+            observed=maya,
+            started_minutes_ago=minutes,
+        )
+    now = datetime.datetime.now(datetime.UTC)
+    window = {
+        "started_at": {
+            "gte": (now - datetime.timedelta(days=4)).isoformat(),
+            "lte": (now - datetime.timedelta(hours=12)).isoformat(),
+        }
+    }
+    root = f"/v3/workspaces/{workspace_name}/dreams"
+
+    response = client.post(f"{root}/list?size=2", json={"filters": window})
+    assert response.status_code == 200
+    page = response.json()
+    assert [run["id"] for run in page["items"]] == in_window[:2]
+    assert (page["total"], page["pages"]) == (3, 2)
+    response = client.post(f"{root}/list?size=2&page=2", json={"filters": window})
+    assert [run["id"] for run in response.json()["items"]] == in_window[2:]
+
+    response = client.post(f"{root}/list?cursor=&size=2", json={"filters": window})
+    assert response.status_code == 200
+    page = response.json()
+    assert [run["id"] for run in page["items"]] == in_window[:2]
+    response = client.post(
+        f"{root}/list?cursor={page['next_page']}&size=2", json={"filters": window}
+    )
+    assert response.status_code == 200
+    page = response.json()
+    assert [run["id"] for run in page["items"]] == in_window[2:]
+    assert page["next_page"] is None
+
+
+async def test_list_filters_combine_with_the_peer_filters(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    workspace, peer = sample_data
+    workspace_name, maya = workspace.name, peer.name
+    db_session.add(models.Peer(name="assistant", workspace_name=workspace_name))
+    await db_session.commit()
+    maya_recent = await _run(
+        db_session, workspace_name, observer=maya, observed=maya, started_minutes_ago=1
+    )
+    await _run(
+        db_session,
+        workspace_name,
+        observer=maya,
+        observed=maya,
+        started_minutes_ago=120,
+    )
+    assistant_recent = await _run(
+        db_session,
+        workspace_name,
+        observer="assistant",
+        observed="assistant",
+        started_minutes_ago=2,
+    )
+    recent = {
+        "started_at": {
+            "gt": (
+                datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=1)
+            ).isoformat()
+        }
+    }
+    root = f"/v3/workspaces/{workspace_name}/dreams"
+
+    response = client.post(
+        f"{root}/list", json={"observed_id": maya, "filters": recent}
+    )
+    assert [run["id"] for run in response.json()["items"]] == [maya_recent]
+
+    response = client.post(
+        f"{root}/list",
+        json={"filters": {"AND": [recent, {"observed_id": "assistant"}]}},
+    )
+    assert [run["id"] for run in response.json()["items"]] == [assistant_recent]
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {"status": "completed"},
+        {"workspace_id": "other"},
+        {"started_at": {"gte": "not a date"}},
+        {"started_at": {"contains": "2026"}},
+    ],
+)
+async def test_list_rejects_an_unsupported_filter(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    filters: dict[str, object],
+):
+    workspace, _peer = sample_data
+
+    response = client.post(
+        f"/v3/workspaces/{workspace.name}/dreams/list", json={"filters": filters}
+    )
+
+    assert response.status_code == 422
+
+
 async def test_get_returns_the_run_and_its_changes(
     client: TestClient,
     db_session: AsyncSession,
