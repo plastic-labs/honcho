@@ -154,7 +154,9 @@ export default {
             isError: true,
           };
         }
-        const body = JSON.stringify(truncateResult(out.result), null, 2) ?? "undefined";
+        // Compact, because truncateResult sizes the value by its compact JSON:
+        // indenting it would overrun the budget and get cut mid-value below.
+        const body = JSON.stringify(truncateResult(out.result)) ?? "undefined";
         return { content: [{ type: "text", text: truncateResponse(body + logs) }] };
       },
     );
