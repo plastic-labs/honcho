@@ -2005,7 +2005,7 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": {
-                  "$ref": "#/components/schemas/SessionPeerConfig"
+                  "$ref": "#/components/schemas/SessionPeerConfig-Input"
                 },
                 "description": "List of peer IDs (with session-level configuration) to add to the session",
                 "title": "Peers"
@@ -2075,7 +2075,7 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": {
-                  "$ref": "#/components/schemas/SessionPeerConfig"
+                  "$ref": "#/components/schemas/SessionPeerConfig-Input"
                 },
                 "description": "List of peer IDs (with session-level configuration) to set for the session",
                 "title": "Peers"
@@ -2334,7 +2334,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SessionPeerConfig"
+                  "$ref": "#/components/schemas/SessionPeerConfig-Output"
                 }
               }
             }
@@ -2397,7 +2397,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SessionPeerConfig",
+                "$ref": "#/components/schemas/SessionPeerConfig-Input",
                 "description": "New peer configuration"
               }
             }
@@ -7832,7 +7832,7 @@
             "anyOf": [
               {
                 "additionalProperties": {
-                  "$ref": "#/components/schemas/SessionPeerConfig"
+                  "$ref": "#/components/schemas/SessionPeerConfig-Input"
                 },
                 "type": "object"
               },
@@ -7893,7 +7893,50 @@
         "type": "object",
         "title": "SessionGet"
       },
-      "SessionPeerConfig": {
+      "SessionPeerConfig-Input": {
+        "properties": {
+          "observe_me": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observe Me",
+            "description": "Whether Honcho will use reasoning to form a representation of this peer"
+          },
+          "observe_others": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observe Others",
+            "description": "Whether this peer should form a session-level theory-of-mind representation of other peers in the session"
+          },
+          "joined_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Joined At",
+            "description": "When this peer joined the session; defaults to now for a new membership. Write-only. Set it when importing historical messages: peer_perspective search only returns messages created at or after the peer's join time. If the peer is already in the session, its join time is changed to this value. A timestamp without a timezone is read as UTC. A time more than five minutes in the future is rejected."
+          }
+        },
+        "type": "object",
+        "title": "SessionPeerConfig"
+      },
+      "SessionPeerConfig-Output": {
         "properties": {
           "observe_me": {
             "anyOf": [

@@ -132,6 +132,10 @@ class SessionPeerConfig(BaseModel):
         None,
         description="Whether other peers in this session should try to form a session-level theory-of-mind representation of this peer",
     )
+    joined_at: datetime.datetime | None = Field(
+        default=None,
+        description="When this peer joined the session; defaults to now for a new membership. Write-only: it is sent when adding or setting session peers and when setting a peer's configuration, and is never returned. Set it when importing historical messages, since peer-perspective search only returns messages created at or after the peer's join time. A datetime without a timezone is read as UTC. A time more than five minutes in the future is rejected. Requires a Honcho release after v3.6.1",
+    )
 
 
 # ==============================================================================

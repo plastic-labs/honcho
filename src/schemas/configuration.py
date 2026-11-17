@@ -4,10 +4,18 @@ Covers workspace, session, and message-level configuration as well as
 the fully-resolved variants used at runtime.
 """
 
+import datetime
 from enum import Enum
 from typing import Annotated, Any, Self, cast
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from src.config import settings
 from src.utils.sanitization import strip_nul
@@ -273,6 +281,9 @@ class ResolvedConfiguration(BaseModel):
         return config
 
 
+_JOINED_AT_SKEW = datetime.timedelta(minutes=5)
+
+
 class PeerConfig(BaseModel):
     # TODO: Update description - should say "Whether honcho forms a representation of the peer itself"
     observe_me: bool | None = Field(
@@ -287,3 +298,32 @@ class SessionPeerConfig(PeerConfig):
         default=None,
         description="Whether this peer should form a session-level theory-of-mind representation of other peers in the session",
     )
+    # exclude=True keeps it out of the stored configuration JSONB and out of
+    # config responses: it is a property of the membership row, not of the config.
+    joined_at: datetime.datetime | None = Field(
+        default=None,
+        exclude=True,
+        description=(
+            "When this peer joined the session; defaults to now for a new "
+            "membership. Write-only. Set it when importing "
+            "historical messages: peer_perspective search only returns messages "
+            "created at or after the peer's join time. If the peer is already in "
+            "the session, its join time is changed to this value. A timestamp "
+            "without a timezone is read as UTC. A time more than five minutes in "
+            "the future is rejected."
+        ),
+    )
+
+    @field_validator("joined_at", mode="after")
+    @classmethod
+    def _joined_at_utc(cls, v: datetime.datetime | None) -> datetime.datetime | None:
+        if v is None:
+            return v
+        # The column is timestamptz; asyncpg rejects a naive datetime.
+        if v.tzinfo is None:
+            v = v.replace(tzinfo=datetime.UTC)
+        # A future join time would hide every message until then. The leeway
+        # absorbs clock skew for a client that sends its own "now".
+        if v > datetime.datetime.now(datetime.UTC) + _JOINED_AT_SKEW:
+            raise ValueError("joined_at must not be in the future")
+        return v

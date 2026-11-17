@@ -21,6 +21,7 @@ import type {
   QueueStatusParams,
   QueueStatusResponse,
   ScopeResponse,
+  SessionPeerConfigParams,
   SessionResponse,
   WorkspaceChatParams,
   WorkspaceChatResponse,
@@ -461,10 +462,7 @@ export class Honcho {
       id: string
       metadata?: Record<string, unknown>
       configuration?: SessionConfig
-      peers?: Record<
-        string,
-        { observe_me?: boolean | null; observe_others?: boolean | null }
-      >
+      peers?: Record<string, SessionPeerConfigParams>
       scopes?: string[]
     }
   ): Promise<SessionResponse> {

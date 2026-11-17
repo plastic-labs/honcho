@@ -1597,3 +1597,37 @@ def test_get_session_context_response_structure(
     # When no peer_target, these should not be present or be None
     assert data.get("peer_representation") is None
     assert data.get("peer_card") is None
+
+
+def test_session_peer_joined_at_validation(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """A past joined_at is accepted on every route that takes a session-peer
+    config; a future one is a 422."""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+    base = f"/v3/workspaces/{test_workspace.name}/sessions"
+    past = {"joined_at": "2020-01-01T00:00:00"}
+    future = {"joined_at": "2999-01-01T00:00:00Z"}
+
+    created = client.post(
+        base, json={"id": session_id, "peers": {test_peer.name: past}}
+    )
+    assert created.status_code in [200, 201]
+    peers_url = f"{base}/{session_id}/peers"
+    config_url = f"{peers_url}/{test_peer.name}/config"
+    assert client.post(peers_url, json={test_peer.name: past}).status_code == 200
+    assert client.put(peers_url, json={test_peer.name: past}).status_code == 200
+    assert client.put(config_url, json=past).status_code == 204
+    # Write-only: never stored in, or returned with, the configuration.
+    assert "joined_at" not in client.get(config_url).json()
+
+    assert (
+        client.post(
+            base, json={"id": session_id, "peers": {test_peer.name: future}}
+        ).status_code
+        == 422
+    )
+    assert client.post(peers_url, json={test_peer.name: future}).status_code == 422
+    assert client.put(peers_url, json={test_peer.name: future}).status_code == 422
+    assert client.put(config_url, json=future).status_code == 422

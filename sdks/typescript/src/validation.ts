@@ -324,6 +324,14 @@ export const SessionPeerConfigSchema = z
   .object({
     observeMe: z.boolean().nullable().optional(),
     observeOthers: z.boolean().nullable().optional(),
+    /**
+     * When this peer joined the session (ISO 8601); defaults to now for a new
+     * membership. Write-only. Set it when importing historical messages:
+     * peer-perspective search only returns messages created at or after the
+     * peer's join time. A time more than five minutes in the future is
+     * rejected. Requires a Honcho release after v3.6.1.
+     */
+    joinedAt: z.string().nullable().optional(),
   })
   .strict()
 
@@ -747,6 +755,7 @@ export const PeerAdditionSchema = z.union([
 export type SessionPeerConfigApi = {
   observe_me?: boolean | null
   observe_others?: boolean | null
+  joined_at?: string | null
 }
 
 /**
@@ -1103,14 +1112,12 @@ export function messageConfigFromApi(
 /**
  * Check if a value is a config object (has observeMe or observeOthers).
  */
-function isSessionPeerConfig(
-  val: unknown
-): val is { observeMe?: boolean | null; observeOthers?: boolean | null } {
+function isSessionPeerConfig(val: unknown): val is SessionPeerConfig {
   return (
     typeof val === 'object' &&
     val !== null &&
     !('id' in val) &&
-    ('observeMe' in val || 'observeOthers' in val)
+    ('observeMe' in val || 'observeOthers' in val || 'joinedAt' in val)
   )
 }
 
@@ -1119,12 +1126,7 @@ function isSessionPeerConfig(
  */
 function isTuple(
   input: unknown
-): input is
-  | [string, { observeMe?: boolean | null; observeOthers?: boolean | null }]
-  | [
-      { id: string },
-      { observeMe?: boolean | null; observeOthers?: boolean | null },
-    ] {
+): input is [string, SessionPeerConfig] | [{ id: string }, SessionPeerConfig] {
   return (
     Array.isArray(input) && input.length === 2 && isSessionPeerConfig(input[1])
   )
@@ -1148,6 +1150,7 @@ export const PeerAdditionToApiSchema = PeerAdditionSchema.transform(
         result[id] = {
           observe_me: config.observeMe,
           observe_others: config.observeOthers,
+          joined_at: config.joinedAt,
         }
       } else if (typeof entry === 'object' && entry !== null && 'id' in entry) {
         result[(entry as { id: string }).id] = {}

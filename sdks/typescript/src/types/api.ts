@@ -344,6 +344,7 @@ export interface SessionCloneParams {
 export interface SessionPeerConfigParams {
   observe_me?: boolean | null
   observe_others?: boolean | null
+  joined_at?: string | null
 }
 
 export interface SessionContextParams {

@@ -16,6 +16,7 @@ from sqlalchemy import (
     exists,
     func,
     insert,
+    or_,
     select,
     tuple_,
     update,
@@ -1321,7 +1322,8 @@ async def _get_or_add_peers_to_session(
     active memberships afterward.
 
     New peers are inserted, peers that previously left the session are rejoined,
-    and already-active peers keep their existing joined_at.
+    and already-active peers keep their existing joined_at unless the incoming
+    configuration carries one, which always lands.
 
     An already-active peer also keeps its stored configuration unless
     ``replace_config`` is set: an add must not overwrite configuration it was
@@ -1358,6 +1360,13 @@ async def _get_or_add_peers_to_session(
     # removal; anything the read missed is still handled by the upsert below.
     # A replace writes every row: two replaces that each skipped the rows they
     # left unchanged could interleave into a state neither asked for.
+    # A caller-supplied joined_at always lands, even on an active membership:
+    # it is how an import backdates the peer_perspective window.
+    explicit_joined_at = {
+        peer_name: configuration.joined_at
+        for peer_name, configuration in peer_names.items()
+        if configuration.joined_at is not None
+    }
     existing = (
         {
             row.peer_name: row
@@ -1382,6 +1391,7 @@ async def _get_or_add_peers_to_session(
         peer_name: configuration
         for peer_name, configuration in sorted(peer_names.items())
         if replace_config
+        or peer_name in explicit_joined_at
         or (row := existing.get(peer_name)) is None
         or row.left_at is not None
     }
@@ -1415,7 +1425,7 @@ async def _get_or_add_peers_to_session(
                 "session_name": session_name,
                 "peer_name": peer_name,
                 "workspace_name": workspace_name,
-                "joined_at": func.now(),
+                "joined_at": explicit_joined_at.get(peer_name, func.now()),
                 "left_at": None,
                 "configuration": configuration.model_dump(),
             }
@@ -1423,9 +1433,10 @@ async def _get_or_add_peers_to_session(
         ]
     )
 
-    # On conflict, rejoin departed peers. joined_at always survives on an active
-    # membership -- advancing it would move the peer_perspective search window
-    # past messages the peer was present for (issue #940).
+    # On conflict, rejoin departed peers. Unless the caller supplied one,
+    # joined_at survives on an active membership -- advancing it would move the
+    # peer_perspective search window past messages the peer was present for
+    # (issue #940).
     #
     # Configuration depends on the caller's semantics. An add ("ensure this peer
     # is here") must not silently overwrite a config it never asked about, so an
@@ -1441,7 +1452,13 @@ async def _get_or_add_peers_to_session(
         index_elements=["tenant_id", "session_name", "peer_name", "workspace_name"],
         set_={
             "joined_at": case(
-                (models.SessionPeer.left_at.is_not(None), func.now()),
+                (
+                    or_(
+                        models.SessionPeer.left_at.is_not(None),
+                        models.SessionPeer.peer_name.in_(list(explicit_joined_at)),
+                    ),
+                    stmt.excluded.joined_at,
+                ),
                 else_=models.SessionPeer.joined_at,
             ),
             "left_at": None,
@@ -1657,5 +1674,8 @@ async def set_peer_config(
             configuration=update_data,
         )
         db.add(session_peer)
+
+    if config.joined_at is not None:
+        session_peer.joined_at = config.joined_at
 
     await db.commit()
