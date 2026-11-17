@@ -139,7 +139,7 @@ export const IntegrationsCatalog = () => {
   const ItemCard = ({ item }) => (
     <a href={item.href} className="block h-full border-none no-underline">
       <div className="h-full flex flex-col gap-1.5 rounded-xl border border-zinc-950/10 dark:border-white/10 p-4 transition-colors hover:border-primary dark:hover:border-primary-light">
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
           <Icon icon={item.icon} size={18} />
           <span className="whitespace-nowrap font-semibold text-zinc-950 dark:text-white">{item.name}</span>
           <span className="ml-auto">{pill(item.status, item.via)}</span>
