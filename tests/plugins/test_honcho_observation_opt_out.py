@@ -339,6 +339,37 @@ def test_failed_opt_out_configuration_sends_nothing_and_keeps_message_unsynced(
     assert session.messages[0].get("_synced") is False
 
 
+def test_rejected_opt_out_batch_never_retries_unflagged_and_stays_unsynced(
+    plugin: Any,
+) -> None:
+    from honcho import Peer
+
+    manager = plugin.session_api.HonchoSessionManager()
+    session = plugin.session_api.HonchoSession(
+        key="k", user_peer_id="u", assistant_peer_id="a", honcho_session_id="s"
+    )
+    session.add_message("user", "private user", no_observe=True)
+    session.add_message("assistant", "private assistant", no_observe=True)
+    session.add_message("user", "ordinary")
+    peers = {
+        peer_id: Peer(peer_id=peer_id, honcho=SimpleNamespace(workspace_id="test"))
+        for peer_id in ("u", "a")
+    }
+    remote = MagicMock()
+    remote.add_messages.side_effect = ValueError("server rejected configuration")
+    manager._get_or_create_peer = lambda peer_id: peers[peer_id]
+    manager._authed_call = lambda _label, fn: fn()
+    manager._sessions_cache["s"] = remote
+
+    assert manager._flush_session(session) is False
+    remote.add_messages.assert_called_once()
+    batch = remote.add_messages.call_args.args[0]
+    assert len(batch) == 3
+    assert all(m.configuration.reasoning.enabled is False for m in batch[:2])
+    assert batch[2].configuration is None
+    assert all(not m.get("_synced") for m in session.messages)
+
+
 def test_successful_opt_out_batch_builds_real_sdk_messages_and_syncs_cursor(
     plugin: Any,
 ) -> None:
