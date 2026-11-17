@@ -355,6 +355,9 @@ async def ingest_batch(
     """
     tenant_id = models.scoped_tenant_id()
     prepared = _prepare(batch)
+    # Checked first so a bad explicit peer is refused before anything else, and
+    # again under the fence below.
+    await _validate_explicit_peers(db, tenant_id, workspace_name, prepared)
     results: dict[int, schemas.IngestRecordResult] = {}
     outcome = IngestResult(results=[])
     # The stored row each identity was classified against, so a repeat inside the
@@ -399,8 +402,8 @@ async def ingest_batch(
             f"Workspace {workspace_name} isn't an auto workspace. Ingest writes"
             + " only to auto workspaces: create one with auto: true."
         )
-    # Explicit peers are checked against the workspace held under the fence, not
-    # one read before it that may since have been deleted and created again.
+    # Explicit peers again, against the workspace held under the fence: the one
+    # checked above may since have been deleted and created again.
     await _validate_explicit_peers(db, tenant_id, workspace_name, prepared)
 
     # Every outcome comes from rows read under the fence. A record stored before
