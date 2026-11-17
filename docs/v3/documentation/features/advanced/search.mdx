@@ -151,6 +151,26 @@ results = honcho.search("budget planning", limit=20)
 ```
 </CodeGroup>
 
+### Drop weak semantic matches
+
+By default search always returns up to `limit` messages, even when none of them are related to the query. Pass `max_distance` (cosine distance, 0–2) to drop semantic matches that are farther than that from the query. When nothing is close enough, fewer results, or none, come back.
+
+`max_distance` applies only to semantic (vector) candidates. Full-text (keyword) matches remain eligible independently of it: a message that matches the query's keywords can be returned even when its embedding is farther than `max_distance`. Leaving `max_distance` unset keeps the previous behavior.
+
+<CodeGroup>
+```python Python
+results = honcho.search("budget planning", max_distance=0.6)
+```
+
+```typescript TypeScript
+(async () => {
+    const results = await honcho.search("budget planning", { maxDistance: 0.6 });
+})();
+```
+</CodeGroup>
+
+The right value depends on your embedding model, so start loose and tighten it against queries from your own data.
+
 ### Get messages from a Peer in a specific Session
 
 Combine Peer-level search with a `session_id` filter to get messages from a Peer in a specific Session.

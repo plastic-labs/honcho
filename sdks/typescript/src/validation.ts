@@ -1234,6 +1234,14 @@ export const LimitSchema = z
   .max(100, 'Limit must be less than or equal to 100')
 
 /**
+ * Schema for the maximum cosine distance of semantic search matches.
+ */
+export const MaxDistanceSchema = z
+  .number()
+  .min(0, 'Max distance must be between 0 and 2')
+  .max(2, 'Max distance must be between 0 and 2')
+
+/**
  * Schema for conclusion query parameters.
  */
 export const ConclusionQueryParamsSchema = z
@@ -1289,4 +1297,5 @@ export type DreamConfig = z.infer<typeof DreamConfigSchema>
 export type DialecticConfig = z.infer<typeof DialecticConfigSchema>
 export type MessageConfiguration = z.infer<typeof MessageConfigurationSchema>
 export type Limit = z.infer<typeof LimitSchema>
+export type MaxDistance = z.infer<typeof MaxDistanceSchema>
 export type ConclusionQueryParams = z.infer<typeof ConclusionQueryParamsSchema>

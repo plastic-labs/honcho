@@ -684,6 +684,13 @@ class Peer(PeerBase, MetadataConfigMixin):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
+        *,
+        max_distance: float | None = Field(
+            None,
+            ge=0.0,
+            le=2.0,
+            description="Maximum cosine distance for semantic matches",
+        ),
     ) -> list[Message]:
         """
         Search across all messages in the workspace with this peer as author.
@@ -694,15 +701,21 @@ class Peer(PeerBase, MetadataConfigMixin):
             query: The search query to use
             filters: Filters to scope the search. See [search filters documentation](https://honcho.dev/docs/v3/documentation/core-concepts/features/using-filters).
             limit: Number of results to return (1-100, default: 10)
+            max_distance: Optional maximum cosine distance (0-2) for semantic
+                matches. Farther semantic hits are dropped, so fewer than ``limit``
+                results (or none) may be returned. Full-text matches are unaffected.
 
         Returns:
             A list of Message objects representing the search results.
             Returns an empty list if no messages are found.
         """
         self._honcho._ensure_workspace()
+        body: dict[str, Any] = {"query": query, "filters": filters, "limit": limit}
+        if max_distance is not None:
+            body["max_distance"] = max_distance
         data = self._honcho._http.post(
             routes.peer_search(self.workspace_id, self.id),
-            body={"query": query, "filters": filters, "limit": limit},
+            body=body,
         )
         return [
             Message.from_api_response(MessageResponse.model_validate(item))

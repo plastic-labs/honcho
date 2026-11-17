@@ -188,6 +188,55 @@ async def test_workspace_search(client_fixture: tuple[Honcho, str]):
 
 
 @pytest.mark.asyncio
+async def test_search_sends_max_distance_from_every_surface(
+    client_fixture: tuple[Honcho, str],
+):
+    """`max_distance` reaches the server from workspace, session and peer search (#1177)."""
+    from unittest.mock import AsyncMock, patch
+
+    honcho_client, client_type = client_fixture
+    targets = (
+        "src.routers.workspaces.search",
+        "src.routers.sessions.search",
+        "src.routers.peers.search",
+    )
+    with (
+        patch(targets[0], new=AsyncMock(return_value=[])) as workspace_search,
+        patch(targets[1], new=AsyncMock(return_value=[])) as session_search,
+        patch(targets[2], new=AsyncMock(return_value=[])) as peer_search,
+    ):
+        if client_type == "async":
+            session = await honcho_client.aio.session(id="max-distance-session")
+            peer = await honcho_client.aio.peer(id="max-distance-peer")
+            assert isinstance(session, Session)
+            assert isinstance(peer, Peer)
+            await honcho_client.aio.search("q", max_distance=0.25)
+            await session.aio.search("q", max_distance=0.5)
+            await peer.aio.search("q", max_distance=0.75)
+        else:
+            session = honcho_client.session(id="max-distance-session")
+            peer = honcho_client.peer(id="max-distance-peer")
+            honcho_client.search("q", max_distance=0.25)
+            session.search("q", max_distance=0.5)
+            peer.search("q", max_distance=0.75)
+
+    sent = [
+        mock.await_args.kwargs["max_distance"] if mock.await_args else None
+        for mock in (workspace_search, session_search, peer_search)
+    ]
+    assert sent == [0.25, 0.5, 0.75]
+
+
+def test_search_rejects_max_distance_outside_cosine_range(
+    honcho_sync_test_client: Honcho,
+):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        honcho_sync_test_client.search("q", max_distance=2.5)
+
+
+@pytest.mark.asyncio
 async def test_get_queue_status(client_fixture: tuple[Honcho, str]):
     """
     Tests getting queue status with various parameter combinations.
