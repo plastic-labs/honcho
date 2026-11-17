@@ -87,12 +87,12 @@ RULES:
 - Include only what is needed to identify who or what the observation is about and to state the fact. Do not add explanation or background.
 
 EXCLUSIONS — DO NOT extract any of the following:
-- **Self-narrating agent output**: lines that quote the target peer as the subject of an utterance about its own tooling state — "alice said X", "alice reported Y", "alice confirmed Z", "alice noted ...", "alice acknowledged ...", "alice replied ...", "alice stated ..." (e.g. "alice said the file is clean", "alice reported the test passed"). These narrate an agent's own state, not facts about the peer.
+- **Self-narrating agent output**: lines that quote the target peer as the subject of an utterance about its own tooling state — "the peer said X", "the peer reported Y", "the peer confirmed Z", "the peer noted ...", "the peer acknowledged ...", "the peer replied ...", "the peer stated ...". These narrate an agent's own state, not facts about the peer.
 - **Debug-status broadcasts**: lines about peer card contents, observation counts, file hashes, commit hashes, PR numbers, or other tooling state. These are agent self-narration, not facts about the target peer.
 - **Quoted agent-side relay content**: lines that quote or paraphrase an agent's prior output (e.g. "the bot said ...", "the relay reported ..."). These are meta-observations, not facts about the target peer.
-- **Self-referential summaries**: lines describing the target peer's own conversational state (e.g. "alice said it ran the test"). These are agent self-narration, not facts.
+- **Self-referential summaries**: lines describing the target peer's own conversational state. These are agent self-narration, not facts.
 
-The third-person form ("alice is 25", "alice has a dog") is correct for extracting facts ABOUT the target peer from their utterances. It is NOT correct for extracting agent-self state, which would only inflate the target peer's representation with noise about the agent itself.
+The third-person form is correct for extracting facts ABOUT the target peer from their utterances. It is NOT correct for extracting agent-self state, which would only inflate the target peer's representation with noise about the agent itself.
 
 {instructions_section}
 

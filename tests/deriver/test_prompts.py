@@ -147,3 +147,18 @@ def test_minimal_deriver_prompt_excludes_agent_self_narration() -> None:
     assert "Debug-status broadcasts" in prompt
     assert "Quoted agent-side relay content" in prompt
     assert "Self-referential summaries" in prompt
+
+
+def test_minimal_deriver_prompt_exclusions_carry_no_example_facts() -> None:
+    """The exclusion block must not reintroduce worked-example facts.
+
+    `test_model_visible_scaffold_carries_no_example_facts` forbids any example
+    content in the model-visible scaffold. The exclusions describe the excluded
+    shapes, so they must describe them generically — a concrete "the peer has a
+    dog" would put an example fact back into the prompt.
+    """
+    prompt = minimal_deriver_prompt(peer_id="", messages="", custom_instructions=None)
+
+    for legacy in ("dog", "NYC", "25 years", "six years", "alice", "Rover", "Ann "):
+        assert legacy not in prompt
+    assert "EXAMPLE" not in prompt.upper()
