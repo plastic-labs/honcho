@@ -153,6 +153,18 @@ async def _insert_queue_records(
     await db_session.execute(insert(QueueItem).returning(QueueItem), records)
 
 
+async def insert_queue_records_in_transaction(
+    db_session: AsyncSession, queue_records: list[dict[str, Any]]
+) -> None:
+    """Insert a batch of queue records in the caller's transaction.
+
+    For a caller outside this module that commits the queue work together with
+    other writes and retries the whole transaction itself (the ingest enqueuer).
+    """
+    if queue_records:
+        await _insert_queue_records(db_session, queue_records)
+
+
 def _stamp_tenant_id(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Set each queue record's tenant_id from its work_unit_key's tenant prefix."""
     # region ai
