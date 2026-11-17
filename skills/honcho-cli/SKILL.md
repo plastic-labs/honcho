@@ -18,6 +18,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 ## Command groups
 
 - `honcho config` — CLI configuration
+- `honcho install` — find the AI agents on this machine and add Honcho to them; `honcho install --list` only reports which agents have Honcho
 - `honcho start` / `stop` / `status` — local Docker stack (does not change `environmentUrl`). First start pins the Honcho image digest and writes `config.toml` into the profile. Pass `--setup basic` or `--setup advanced` for an interactive config wizard (TTY only; writes `.env` overrides). `honcho status` lists every profile; pass `--profile` for one.
 - `honcho workspace` — inspect, delete, search, chat, replay (copy to another workspace or instance)
 - `honcho peer` — inspect, card, chat, search
