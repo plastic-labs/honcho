@@ -136,3 +136,14 @@ def test_minimal_deriver_prompt_names_the_peer_id_as_subject() -> None:
     prompt = minimal_deriver_prompt(peer_id="x7", messages="", custom_instructions=None)
 
     assert "Write `x7` as the subject of every observation" in prompt
+
+
+def test_minimal_deriver_prompt_excludes_agent_self_narration() -> None:
+    """Agent self-narration must not become a fact about the target peer."""
+    prompt = minimal_deriver_prompt(peer_id="alice", messages="<messages></messages>")
+
+    assert "EXCLUSIONS" in prompt
+    assert "Self-narrating agent output" in prompt
+    assert "Debug-status broadcasts" in prompt
+    assert "Quoted agent-side relay content" in prompt
+    assert "Self-referential summaries" in prompt
