@@ -27,6 +27,7 @@ from src.crud.deriver import (
     delete_queue_items_and_claims,
 )
 from src.crud.dream_history import delete_workspace_history
+from src.crud.ingest_fence import take_workspace_fence
 from src.crud.lifecycle import (
     live_message_row,
     live_peer_row,
@@ -441,6 +442,11 @@ async def delete_workspace(
     # then workspace
 
     try:
+        # The ingest fence first, exclusive, before any row lock: every ingest
+        # transaction in this workspace finishes first, and none starts until this
+        # deletion commits, so the ingest rows deleted below are all of them.
+        await take_workspace_fence(db, workspace_name, mode="exclusive")
+
         # Queue items, then the claim rows on their work units (the helper
         # carries the lock order). workspace_name is only unique per tenant
         # (every tenant has a "default" workspace) and queue is deliberately
@@ -464,6 +470,23 @@ async def delete_workspace(
             ],
             active_queue_session_match(workspace_name),
         )
+
+        # The workspace's ingest records and bindings. These tables have no
+        # foreign keys (src/models.py), so nothing else removes them; they go
+        # after the queue sweep, matching the ingest enqueuer's
+        # queue-then-ingest-rows order.
+        tenant_id = models.scoped_tenant_id()
+        for ingest_model in (
+            models.IngestRecord,
+            models.IngestSessionBinding,
+            models.IngestPeerBinding,
+        ):
+            await db.execute(
+                delete(ingest_model).where(
+                    ingest_model.tenant_id == tenant_id,
+                    ingest_model.workspace_name == workspace_name,
+                )
+            )
 
         # Get all collections for this workspace to delete their vector namespaces
         collections_result = await db.execute(
