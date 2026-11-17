@@ -260,7 +260,12 @@ class IngestResult:
 
 
 class IngestRaced(Exception):
-    """A concurrent batch bound one of this batch's sources first; retry it whole."""
+    """A concurrent change won a race this batch can't finish under; retry it whole.
+
+    Either a concurrent batch bound one of this batch's sources first, or a record
+    stored before the fence was deleted before the batch held it (a reset, or the
+    workspace deleted and created again), so its session isn't fenced.
+    """
 
 
 class _Refused(Exception):
@@ -343,13 +348,13 @@ async def ingest_batch(
         ResourceNotFoundException: The workspace doesn't exist.
         ConflictException: The workspace isn't an auto workspace.
         DBAPIError: A deadlock, serialization failure or lock timeout.
-        IngestRaced: A concurrent batch bound one of this batch's sources first.
+        IngestRaced: A concurrent batch bound one of this batch's sources first,
+            or a record stored before the fence was deleted before it was held.
             For these two, nothing was committed and the caller retries the whole
             batch, which is safe because records dedup on their identity.
     """
     tenant_id = models.scoped_tenant_id()
     prepared = _prepare(batch)
-    await _validate_explicit_peers(db, tenant_id, workspace_name, prepared)
     results: dict[int, schemas.IngestRecordResult] = {}
     outcome = IngestResult(results=[])
     # The stored row each identity was classified against, so a repeat inside the
@@ -368,16 +373,15 @@ async def ingest_batch(
         else:
             repeats.append((r, first))
 
-    # Records already stored are classified and take no further part. Read before
-    # the fence only to narrow it, and again under it.
-    remaining = await _classify_stored(
-        db, tenant_id, workspace_name, unique, results, basis
-    )
+    # Records already stored are classified and take no further part. This read,
+    # before the fence and without locks, only narrows which sessions to fence;
+    # its outcomes are discarded.
+    narrowed = await _classify_stored(db, tenant_id, workspace_name, unique, {}, {})
 
     # The fence, before any row lock: shared on the workspace, then every session
     # this batch writes.
     await take_workspace_fence(db, workspace_name, mode="shared")
-    session_names = await _fence_sessions(db, tenant_id, workspace_name, remaining)
+    session_names = await _fence_sessions(db, tenant_id, workspace_name, narrowed)
 
     # Re-read under the fence: a workspace deleted while we waited is gone now.
     workspace = (
@@ -395,9 +399,19 @@ async def ingest_batch(
             f"Workspace {workspace_name} isn't an auto workspace. Ingest writes"
             + " only to auto workspaces: create one with auto: true."
         )
+    # Explicit peers are checked against the workspace held under the fence, not
+    # one read before it that may since have been deleted and created again.
+    await _validate_explicit_peers(db, tenant_id, workspace_name, prepared)
+
+    # Every outcome comes from rows read under the fence. A record stored before
+    # it may be gone now: a reset, or the workspace deleted and created again,
+    # took the exclusive fence first and deleted it. Its session isn't fenced, so
+    # the batch starts over, and the next attempt fences it.
     remaining = await _classify_stored(
-        db, tenant_id, workspace_name, remaining, results, basis
+        db, tenant_id, workspace_name, unique, results, basis
     )
+    if any(r.session_key not in session_names for r in remaining):
+        raise IngestRaced
 
     groups: dict[str, list[_Record]] = {}
     for r in remaining:

@@ -95,7 +95,7 @@ async def ingest(
             reason = _sqlstate(error)
         except IngestRaced:
             await db.rollback()
-            reason = "a concurrent batch bound the same source"
+            reason = "a concurrent batch or reset changed what it read"
         logger.info(
             "Ingest attempt %d/%d in workspace %s hit contention (%s)",
             attempt,

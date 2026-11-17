@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
-from sqlalchemy import func, select, text, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -340,6 +340,69 @@ async def test_concurrent_overlapping_batches_create_each_record_once(
     async with factory() as db:
         assert await _count(db, models.Message, workspace) == len(shared)
         assert await _count(db, models.IngestRecord, workspace) == len(shared)
+
+
+@pytest.mark.asyncio
+async def test_a_record_deleted_before_the_fence_is_not_reported_as_stored(
+    db_engine: AsyncEngine, auto_data: tuple[models.Workspace, models.Peer]
+) -> None:
+    """Outcomes come from rows read under the fence, not from the read before it.
+
+    An exclusive fence holder (workspace deletion, or deleting and creating the
+    workspace again) deletes a stored record while a batch that already read it
+    waits for the fence. The batch must not answer `duplicate` for a record that
+    is gone: it starts over, and the next attempt stores it.
+    """
+    workspace = auto_data[0].name
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
+    record = _record()
+    batch = schemas.IngestBatch.model_validate({"records": [record]})
+    async with factory() as db:
+        [stored] = (await ingest_crud.ingest_batch(db, workspace, batch)).results
+    assert stored.outcome == "created"
+
+    async with factory() as holder:
+        await take_workspace_fence(holder, workspace, mode="exclusive")
+        await holder.execute(
+            delete(models.IngestRecord).where(
+                models.IngestRecord.workspace_name == workspace
+            )
+        )
+
+        pid: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+
+        async def ingest_again() -> list[schemas.IngestRecordResult]:
+            async with factory() as db:
+                pid.set_result(int(await db.scalar(text("SELECT pg_backend_pid()"))))
+                return (await ingest_crud.ingest_batch(db, workspace, batch)).results
+
+        task = asyncio.create_task(ingest_again())
+        backend = await pid
+        # Wait until the batch has read the stored row and waits on the fence.
+        async with factory() as probe:
+            for _ in range(100):
+                waiting = await probe.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'"
+                        + " AND NOT granted AND pid = :pid"
+                    ),
+                    {"pid": backend},
+                )
+                await probe.rollback()
+                if waiting:
+                    break
+                await asyncio.sleep(0.05)
+            else:
+                pytest.fail("the batch never waited on the fence")
+        await holder.commit()
+
+    with pytest.raises(ingest_crud.IngestRaced):
+        await task
+
+    async with factory() as db:
+        [again] = (await ingest_crud.ingest_batch(db, workspace, batch)).results
+        assert again.outcome == "created"
+        assert await _count(db, models.IngestRecord, workspace) == 1
 
 
 def test_a_rename_inside_one_batch_keeps_one_session(client: TestClient) -> None:
