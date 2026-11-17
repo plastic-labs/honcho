@@ -943,3 +943,35 @@ class TestWorkspaceCreateRace:
 
         assert result.created is False
         assert result.resource.name == name
+
+    @pytest.mark.asyncio
+    async def test_a_lost_race_still_refuses_auto_on_a_workspace_that_isnt(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ):
+        from src.crud import workspace as workspace_crud
+        from src.exceptions import ConflictException
+
+        plain, auto = str(generate_nanoid()), str(generate_nanoid())
+        await crud.get_or_create_workspace(
+            db_session, schemas.WorkspaceCreate(name=plain)
+        )
+        await crud.get_or_create_workspace(
+            db_session, schemas.WorkspaceCreate(name=auto, auto=True)
+        )
+        await db_session.commit()
+
+        async def always_miss(_db: AsyncSession, _workspace_name: str):
+            return None
+
+        monkeypatch.setattr(workspace_crud, "_fetch_workspace", always_miss)
+
+        with pytest.raises(ConflictException):
+            await crud.get_or_create_workspace(
+                db_session, schemas.WorkspaceCreate(name=plain, auto=True)
+            )
+        await db_session.rollback()
+        result = await crud.get_or_create_workspace(
+            db_session, schemas.WorkspaceCreate(name=auto, auto=True)
+        )
+        assert result.created is False
+        assert result.resource.auto_enabled_at is not None

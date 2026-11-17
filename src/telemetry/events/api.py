@@ -28,7 +28,7 @@ class MessageCreatedEvent(BaseEvent):
     session_name: str = Field(..., description="Session name")
     message_count: int = Field(..., description="Number of messages created")
     total_tokens: int = Field(..., description="Total tokens across created messages")
-    source: Literal["api", "file_upload"] = Field(
+    source: Literal["api", "file_upload", "ingest"] = Field(
         default="api", description="Source of the created messages"
     )
     last_message_id: str = Field(
