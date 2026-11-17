@@ -87,6 +87,7 @@ members = [
     "sdks/python",
     "honcho-cli",
     "connectors/discord",
+    "connectors/github",
 ]
 
 [tool.uv.sources]
