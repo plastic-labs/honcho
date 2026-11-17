@@ -4385,6 +4385,266 @@
         }
       }
     },
+    "/v3/workspaces/{workspace_id}/ingest/link": {
+      "post": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Link",
+        "description": "Link imported people into one, from the next import on.\n\nEvery account of the other people maps to the first from now on, so the\nnext import puts their records on one person. Nothing already imported\nmoves: the people being merged must have no imported messages yet, so\nreset the import (`POST /ingest/reset`), link, then import again. Only\nworkspace and admin keys may call it.",
+        "operationId": "link_v3_workspaces__workspace_id__ingest_link_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestLink"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestLinkResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace or peer not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not an auto workspace, or the people involved already have imported messages: reset the import first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Contention outlasted the retries; nothing changed. Calling again is safe.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/ingest/unlink": {
+      "post": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Unlink",
+        "description": "Take a linked account back out, from the next import on.\n\nThe account maps to the person it was linked from again. Its records must\nnot be imported yet: reset the import first. Only workspace and admin keys\nmay call it.",
+        "operationId": "unlink_v3_workspaces__workspace_id__ingest_unlink_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestUnlink"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestUnlinkResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace or peer not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not an auto workspace, or the people involved already have imported messages: reset the import first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Contention outlasted the retries; nothing changed. Calling again is safe.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/ingest/reset": {
+      "post": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Reset",
+        "description": "Delete every session holding imported records, to import again.\n\nEach session is marked inactive at once and deleted in the background, as\n`DELETE /sessions/{id}` does, with its messages, memberships and ingest\nrecords. People, their configuration and links stay; a session's own\nconfiguration goes with it. `GET /ingest/status` counts only active\nsessions, so it shows the reset straight away. Only workspace and admin\nkeys may call it.",
+        "operationId": "reset_v3_workspaces__workspace_id__ingest_reset_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestResetResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace or peer not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not an auto workspace, or the people involved already have imported messages: reset the import first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Contention outlasted the retries; nothing changed. Calling again is safe.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v3/workspaces/{workspace_id}/conclusions": {
       "post": {
         "tags": [
@@ -7088,6 +7348,36 @@
         "title": "IngestAccount",
         "description": "One source account mapped to a peer."
       },
+      "IngestAccountRef": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Source"
+          },
+          "source_instance": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Source Instance"
+          },
+          "id": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "source_instance",
+          "id"
+        ],
+        "title": "IngestAccountRef",
+        "description": "One source account, by its ID in the source."
+      },
       "IngestBatch": {
         "properties": {
           "derive": {
@@ -7182,6 +7472,60 @@
         ],
         "title": "IngestDeriveResponse",
         "description": "What one derive call released. Call again until `remaining` is 0."
+      },
+      "IngestLink": {
+        "properties": {
+          "peers": {
+            "items": {
+              "type": "string",
+              "maxLength": 512,
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_-]+$"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 2,
+            "title": "Peers",
+            "description": "Peer IDs. Every account of the others maps to the first from the next import on"
+          }
+        },
+        "type": "object",
+        "required": [
+          "peers"
+        ],
+        "title": "IngestLink",
+        "description": "People to link into one: the first is kept."
+      },
+      "IngestLinkResult": {
+        "properties": {
+          "peer_id": {
+            "type": "string",
+            "title": "Peer Id"
+          },
+          "merged": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Merged",
+            "description": "The people linked into it"
+          },
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/IngestAccount"
+            },
+            "type": "array",
+            "title": "Accounts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "peer_id",
+          "merged",
+          "accounts"
+        ],
+        "title": "IngestLinkResult",
+        "description": "The kept person and every account that now maps to it."
       },
       "IngestParticipant": {
         "properties": {
@@ -7543,6 +7887,23 @@
         "title": "IngestRecordResult",
         "description": "What happened to one record of the batch."
       },
+      "IngestResetResponse": {
+        "properties": {
+          "sessions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sessions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sessions"
+        ],
+        "title": "IngestResetResponse",
+        "description": "The imported sessions whose deletion was started."
+      },
       "IngestResponse": {
         "properties": {
           "records": {
@@ -7649,6 +8010,12 @@
             "type": "integer",
             "title": "Sessions Not Modeled",
             "description": "Of those, sessions whose reasoning is off (their own setting, else the workspace's)"
+          },
+          "sessions_being_deleted": {
+            "type": "integer",
+            "title": "Sessions Being Deleted",
+            "description": "Sessions a reset marked for deletion that still hold imported records; 0 once the deletion has finished",
+            "default": 0
           }
         },
         "type": "object",
@@ -7662,6 +8029,45 @@
         ],
         "title": "IngestStatus",
         "description": "What the workspace's imports produced, for review before deriving."
+      },
+      "IngestUnlink": {
+        "properties": {
+          "peer": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Peer",
+            "description": "The person it was linked into"
+          },
+          "account": {
+            "$ref": "#/components/schemas/IngestAccountRef"
+          }
+        },
+        "type": "object",
+        "required": [
+          "peer",
+          "account"
+        ],
+        "title": "IngestUnlink",
+        "description": "An account to take back out of the person it was linked into."
+      },
+      "IngestUnlinkResult": {
+        "properties": {
+          "peer_id": {
+            "type": "string",
+            "title": "Peer Id"
+          },
+          "account": {
+            "$ref": "#/components/schemas/IngestAccount"
+          }
+        },
+        "type": "object",
+        "required": [
+          "peer_id",
+          "account"
+        ],
+        "title": "IngestUnlinkResult",
+        "description": "The person the account maps to again, from the next import on."
       },
       "Message": {
         "properties": {

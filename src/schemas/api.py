@@ -722,6 +722,11 @@ class IngestStatus(BaseModel):
         description="Of those, sessions whose reasoning is off (their own"
         + " setting, else the workspace's)",
     )
+    sessions_being_deleted: int = Field(
+        default=0,
+        description="Sessions a reset marked for deletion that still hold imported"
+        + " records; 0 once the deletion has finished",
+    )
 
 
 class IngestAccount(BaseModel):
@@ -770,6 +775,60 @@ class IngestSessionSummary(BaseModel):
     )
 
     model_config = ConfigDict(from_attributes=True)  # pyright: ignore
+
+
+class IngestLink(BaseModel):
+    """People to link into one: the first is kept."""
+
+    peers: list[
+        Annotated[
+            str, Field(min_length=1, max_length=512, pattern=RESOURCE_NAME_PATTERN)
+        ]
+    ] = Field(
+        ...,
+        min_length=2,
+        max_length=20,
+        description="Peer IDs. Every account of the others maps to the first from the"
+        + " next import on",
+    )
+
+
+class IngestLinkResult(BaseModel):
+    """The kept person and every account that now maps to it."""
+
+    peer_id: str
+    merged: list[str] = Field(..., description="The people linked into it")
+    accounts: list[IngestAccount]
+
+
+class IngestAccountRef(BaseModel):
+    """One source account, by its ID in the source."""
+
+    source: str = Field(..., min_length=1, max_length=64)
+    source_instance: str = Field(..., min_length=1, max_length=128)
+    id: _ExternalId
+
+
+class IngestUnlink(BaseModel):
+    """An account to take back out of the person it was linked into."""
+
+    peer: str = Field(
+        ..., min_length=1, max_length=512, description="The person it was linked into"
+    )
+    account: IngestAccountRef
+
+
+class IngestUnlinkResult(BaseModel):
+    """The person the account maps to again, from the next import on."""
+
+    peer_id: str
+    account: IngestAccount
+
+
+class IngestResetResponse(BaseModel):
+    """The imported sessions whose deletion was started."""
+
+    sessions: list[str]
 
 
 class IngestDeriveResponse(BaseModel):

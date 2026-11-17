@@ -9,11 +9,13 @@ import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdks.python.src.honcho.api_types import IngestRecord, PeerConfig
 from sdks.python.src.honcho.client import Honcho
 from sdks.python.src.honcho.http import AsyncHonchoHTTPClient
 from sdks.python.src.honcho.http.exceptions import ConflictError, NotFoundError
+from src import crud
 
 
 def _name() -> str:
@@ -265,3 +267,55 @@ async def test_async_review(client: TestClient) -> None:
         await async_client.aclose()
 
     assert (status.records.deferred, len(people), len(sessions)) == (6, 4, 3)
+
+
+def _two_accounts() -> list[dict[str, Any]]:
+    """Alex on Discord, and the same Alex as alexdev on GitHub."""
+    return [
+        {
+            "source": source,
+            "source_instance": "acme",
+            "source_id": f"{source}-{n}",
+            "created_at": f"2026-11-04T10:{n:02d}:00Z",
+            "container": {"id": f"{source}-chan", "name": f"{source} channel"},
+            "author": author,
+            "content": f"message {n}",
+        }
+        for n, (source, author) in enumerate(
+            [
+                ("discord", {"id": "u1", "name": "Alex"}),
+                ("github", {"id": "g1", "name": "alexdev"}),
+            ]
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_link_after_a_reset_puts_both_accounts_on_one_person(
+    client: TestClient, db_session: AsyncSession
+) -> None:
+    sdk = _sdk(client, _name(), auto=True)
+    sdk.ingest(_two_accounts(), derive="later")
+    people = {p.display_name: p.peer_id for p in sdk.ingest_people()}
+
+    with pytest.raises(ConflictError):
+        sdk.ingest_link([people["Alex"], people["alexdev"]])
+
+    reset = sdk.ingest_reset()
+    for name in reset.sessions:
+        await crud.delete_session(db_session, sdk.workspace_id, name)
+    await db_session.commit()
+    linked = sdk.ingest_link([people["Alex"], people["alexdev"]])
+    again = sdk.ingest(_two_accounts(), derive="later")
+
+    assert linked.merged == [people["alexdev"]]
+    assert {r.peer_id for r in again.records} == {people["Alex"]}
+
+    reset = sdk.ingest_reset()
+    for name in reset.sessions:
+        await crud.delete_session(db_session, sdk.workspace_id, name)
+    await db_session.commit()
+    unlinked = sdk.ingest_unlink(
+        people["Alex"], source="github", source_instance="acme", account_id="g1"
+    )
+    assert unlinked.peer_id == people["alexdev"]

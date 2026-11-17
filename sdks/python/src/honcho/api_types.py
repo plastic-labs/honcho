@@ -664,6 +664,8 @@ class IngestStatusResponse(BaseModel):
     """Sessions created for imported containers."""
     sessions_not_modeled: int
     """Of those, sessions whose reasoning is off."""
+    sessions_being_deleted: int = 0
+    """Sessions a reset is still deleting; 0 once it has finished."""
 
 
 class IngestAccount(BaseModel):
@@ -701,6 +703,28 @@ class IngestSession(BaseModel):
     """Records in the session."""
     modeled: bool
     """False when reasoning is off for the session: only summaries are made."""
+
+
+class IngestLinkResponse(BaseModel):
+    """The kept person and every account that now maps to it."""
+
+    peer_id: str
+    merged: list[str]
+    """The people linked into it."""
+    accounts: list[IngestAccount]
+
+
+class IngestUnlinkResponse(BaseModel):
+    """The person a linked account maps to again, from the next import on."""
+
+    peer_id: str
+    account: IngestAccount
+
+
+class IngestResetResponse(BaseModel):
+    """The imported sessions whose deletion was started."""
+
+    sessions: list[str]
 
 
 class IngestDeriveResponse(BaseModel):

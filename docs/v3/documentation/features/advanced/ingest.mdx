@@ -138,6 +138,28 @@ await (await honcho.peer('usage-stats-9a1b2c3d4e')).setConfiguration({ observeMe
 
 Excluding a person (`observe_me` off) or a session (reasoning off) before `ingest_derive()` keeps it out of what is derived: configuration is read when records are released. After release, an exclusion only affects records released later; conclusions already derived stay.
 
+## One person, several accounts
+
+The same person can show up as two accounts: Alex on Discord and alexdev on GitHub. Linking them makes every account of the other people map to the first, so the next import puts their records on one person. A link never moves what was already imported, so during a dry run you reset, link, and import again; before anything is derived that costs nothing.
+
+<CodeGroup>
+```python Python
+honcho.ingest_reset()  # deletes the imported sessions; people, their exclusions and links stay
+# ... wait until ingest_status().sessions_being_deleted is 0 ...
+honcho.ingest_link(["alex-018a0fc9e0", "alexdev-41c0b2d7e1"])
+honcho.ingest(records, derive="later")  # Alex now has both accounts
+```
+
+```typescript TypeScript
+await honcho.ingestReset();
+// ... wait until (await honcho.ingestStatus()).sessionsBeingDeleted is 0 ...
+await honcho.ingestLink(['alex-018a0fc9e0', 'alexdev-41c0b2d7e1']);
+await honcho.ingest(records, { derive: 'later' });
+```
+</CodeGroup>
+
+`ingest_unlink()` takes one account back out the same way. A link is refused while the people being merged have imported messages (reset first), or once anything has been derived about them. A reset deletes the imported sessions in the background, with their messages; people, their exclusions and links stay, and a session's own settings go with it.
+
 ## From the CLI
 
 The [Honcho CLI](/v3/documentation/reference/cli) runs the same flow on a connector's `records.jsonl`:
@@ -146,7 +168,10 @@ The [Honcho CLI](/v3/documentation/reference/cli) runs the same flow on a connec
 honcho workspace create acme --auto
 honcho ingest import records.jsonl -w acme
 honcho ingest status -w acme
+honcho ingest link 1 2 --reset -w acme          # one person, two accounts: resets the import
+honcho ingest import records.jsonl -w acme       # their records now go to one person
+honcho ingest status -w acme                     # numbers change after a reset
 honcho peer exclude "Usage Stats" -w acme
-honcho session exclude 12 -w acme
+honcho session exclude 12 -w acme                # after the last reset: a reset deletes sessions
 honcho ingest derive -w acme --watch
 ```

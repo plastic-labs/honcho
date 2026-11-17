@@ -456,7 +456,10 @@
               "v3/api-reference/endpoint/ingest/derive",
               "v3/api-reference/endpoint/ingest/status",
               "v3/api-reference/endpoint/ingest/people",
-              "v3/api-reference/endpoint/ingest/sessions"
+              "v3/api-reference/endpoint/ingest/sessions",
+              "v3/api-reference/endpoint/ingest/link",
+              "v3/api-reference/endpoint/ingest/unlink",
+              "v3/api-reference/endpoint/ingest/reset"
             ]
           },
           {

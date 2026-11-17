@@ -478,3 +478,211 @@ def test_workspace_create_auto_on_a_regular_workspace_explains(cfg, runner):
 
     assert result.exit_code == 1
     assert json.loads(result.stderr)["error"]["code"] == "NOT_AUTO_WORKSPACE"
+
+
+# --- reset, link, unlink ----------------------------------------------------------
+
+
+def test_reset_asks_first_and_waits_for_the_deletion(cfg, runner):
+    from honcho.api_types import IngestResetResponse
+
+    deleting = STATUS.model_copy(update={"sessions_being_deleted": 2})
+    done = STATUS.model_copy(update={"sessions_being_deleted": 0})
+    client = _client(
+        ingest_reset=MagicMock(return_value=IngestResetResponse(sessions=["a", "b"])),
+        ingest_status=MagicMock(side_effect=[deleting, done]),
+    )
+    with (
+        patch("honcho_cli.commands.ingest.get_client", return_value=(client, _config())),
+        patch("honcho_cli.commands.ingest.time.sleep"),
+    ):
+        refused = runner.invoke(app, ["ingest", "reset", "-w", "ws1"])
+        result = runner.invoke(app, ["ingest", "reset", "-w", "ws1", "--yes"])
+
+    assert refused.exit_code == 1
+    assert json.loads(refused.stderr)["error"]["code"] == "CONFIRMATION_REQUIRED"
+    assert result.exit_code == 0, result.stderr
+    assert json.loads(result.stdout) == {"sessions": 2, "waited": True}
+    assert client.ingest_reset.call_count == 1
+    assert client.ingest_status.call_count == 2
+
+
+def test_link_resolves_people_and_keeps_the_first(cfg, runner):
+    from honcho.api_types import IngestLinkResponse
+
+    assert _status(runner, _review_client()).exit_code == 0
+    link = MagicMock(
+        return_value=IngestLinkResponse(
+            peer_id="jess-1", merged=["stats-1"], accounts=PEOPLE[0].accounts
+        )
+    )
+    with patch(
+        "honcho_cli.commands.ingest.get_client",
+        return_value=(_review_client(ingest_link=link), _config()),
+    ):
+        result = runner.invoke(app, ["ingest", "link", "1", "Usage Stats", "-w", "ws1"])
+
+    assert result.exit_code == 0, result.stderr
+    link.assert_called_once_with(["jess-1", "stats-1"])
+
+
+def test_a_refused_link_says_why(cfg, runner):
+    link = MagicMock(side_effect=ConflictError("Peer stats-1 already has messages. Reset the import"))
+    with patch(
+        "honcho_cli.commands.ingest.get_client",
+        return_value=(_review_client(ingest_link=link), _config()),
+    ):
+        result = runner.invoke(app, ["ingest", "link", "jess-1", "stats-1", "-w", "ws1"])
+
+    assert result.exit_code == 1
+    error = json.loads(result.stderr)["error"]
+    assert error["code"] == "LINK_REFUSED"
+    assert "Reset the import" in error["message"]
+
+
+def test_link_needs_two_people(cfg, runner):
+    result = runner.invoke(app, ["ingest", "link", "jess-1", "-w", "ws1"])
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def test_unlink_finds_the_account_by_name_or_source_and_id(cfg, runner):
+    from honcho.api_types import IngestUnlinkResponse
+
+    linked = _person("jess-1", "Jessica", 30).model_copy(
+        update={
+            "accounts": [
+                IngestAccount(source="discord", source_instance="g1", id="u1", display_name="Jessica"),
+                IngestAccount(source="github", source_instance="acme", id="g9", display_name="jessd"),
+            ]
+        }
+    )
+    for ref in ("jessd", "github:g9", "g9"):
+        unlink = MagicMock(
+            return_value=IngestUnlinkResponse(peer_id="jessd-1", account=linked.accounts[1])
+        )
+        client = _client(
+            ingest_people=MagicMock(return_value=iter([linked])), ingest_unlink=unlink
+        )
+        with patch("honcho_cli.commands.ingest.get_client", return_value=(client, _config())):
+            result = runner.invoke(app, ["ingest", "unlink", "Jessica", ref, "-w", "ws1"])
+
+        assert result.exit_code == 0, result.stderr
+        unlink.assert_called_once_with(
+            "jess-1", source="github", source_instance="acme", account_id="g9"
+        )
+
+
+def test_unlink_of_an_unknown_account_lists_the_persons_accounts(cfg, runner):
+    client = _client(ingest_people=MagicMock(return_value=iter(PEOPLE)))
+    with patch("honcho_cli.commands.ingest.get_client", return_value=(client, _config())):
+        result = runner.invoke(app, ["ingest", "unlink", "Jessica", "nope", "-w", "ws1"])
+
+    assert result.exit_code == 1
+    error = json.loads(result.stderr)["error"]
+    assert error["code"] == "ACCOUNT_NOT_FOUND"
+    assert error["details"]["accounts"] == ["discord:jess-1 (Jessica)"]
+
+
+def test_link_can_keep_a_peer_no_import_created(cfg, runner):
+    from honcho.api_types import IngestLinkResponse
+
+    link = MagicMock(
+        return_value=IngestLinkResponse(peer_id="alice", merged=["stats-1"], accounts=[])
+    )
+    with patch(
+        "honcho_cli.commands.ingest.get_client",
+        return_value=(_review_client(ingest_link=link), _config()),
+    ):
+        result = runner.invoke(app, ["ingest", "link", "alice", "stats-1", "-w", "ws1"])
+
+    assert result.exit_code == 0, result.stderr
+    link.assert_called_once_with(["alice", "stats-1"])
+
+
+def test_unlink_reads_an_account_id_that_contains_a_colon(cfg, runner):
+    from honcho.api_types import IngestUnlinkResponse
+
+    account = IngestAccount(source="github", source_instance="acme", id="org:user", display_name="org-user")
+    person = _person("jess-1", "Jessica", 30).model_copy(update={"accounts": [account]})
+    for ref in ("org:user", "github:org:user"):
+        unlink = MagicMock(return_value=IngestUnlinkResponse(peer_id="x-1", account=account))
+        client = _client(ingest_people=MagicMock(return_value=iter([person])), ingest_unlink=unlink)
+        with patch("honcho_cli.commands.ingest.get_client", return_value=(client, _config())):
+            result = runner.invoke(app, ["ingest", "unlink", "Jessica", ref, "-w", "ws1"])
+
+        assert result.exit_code == 0, (ref, result.stderr)
+        unlink.assert_called_once_with(
+            "jess-1", source="github", source_instance="acme", account_id="org:user"
+        )
+
+
+def test_keep_takes_a_peer_id_literally(cfg, runner):
+    """An ID that reads like a list number or an imported person's name."""
+    from honcho.api_types import IngestLinkResponse
+
+    for kept in ("123", "jessica"):
+        link = MagicMock(
+            return_value=IngestLinkResponse(peer_id=kept, merged=["stats-1"], accounts=[])
+        )
+        with patch(
+            "honcho_cli.commands.ingest.get_client",
+            return_value=(_review_client(ingest_link=link), _config()),
+        ):
+            result = runner.invoke(
+                app, ["ingest", "link", "--keep", kept, "stats-1", "-w", "ws1"]
+            )
+
+        assert result.exit_code == 0, result.stderr
+        link.assert_called_once_with([kept, "stats-1"])
+
+
+def test_link_with_reset_finds_people_before_resetting(cfg, runner):
+    """After a reset everyone has 0 messages and the list re-sorts."""
+    from honcho.api_types import IngestLinkResponse, IngestResetResponse
+
+    assert _status(runner, _review_client()).exit_code == 0
+    calls: list[str] = []
+    done = STATUS.model_copy(update={"sessions_being_deleted": 0})
+    client = _review_client(
+        ingest_reset=MagicMock(
+            side_effect=lambda: calls.append("reset") or IngestResetResponse(sessions=["s"])
+        ),
+        ingest_link=MagicMock(
+            side_effect=lambda ids: calls.append(f"link {ids}")
+            or IngestLinkResponse(peer_id=ids[0], merged=ids[1:], accounts=[])
+        ),
+    )
+    client.ingest_status = MagicMock(return_value=done)
+    with patch("honcho_cli.commands.ingest.get_client", return_value=(client, _config())):
+        result = runner.invoke(
+            app, ["ingest", "link", "1", "4", "--reset", "--yes", "-w", "ws1"]
+        )
+
+    assert result.exit_code == 0, result.stderr
+    assert calls == ["reset", "link ['jess-1', 'stats-1']"]
+
+
+def test_a_refused_link_suggests_reset(cfg, runner):
+    link = MagicMock(side_effect=ConflictError("Peer stats-1 already has messages. Reset the import first."))
+    with patch(
+        "honcho_cli.commands.ingest.get_client",
+        return_value=(_review_client(ingest_link=link), _config()),
+    ):
+        result = runner.invoke(app, ["ingest", "link", "jess-1", "stats-1", "-w", "ws1"])
+
+    assert result.exit_code == 1
+    assert "--reset" in json.loads(result.stderr)["error"]["message"]
+
+
+def test_reset_before_link_needs_confirmation(cfg, runner):
+    link = MagicMock()
+    with patch(
+        "honcho_cli.commands.ingest.get_client",
+        return_value=(_review_client(ingest_link=link), _config()),
+    ):
+        result = runner.invoke(app, ["ingest", "link", "jess-1", "stats-1", "--reset", "-w", "ws1"])
+
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["error"]["code"] == "CONFIRMATION_REQUIRED"
+    link.assert_not_called()

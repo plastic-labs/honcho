@@ -167,4 +167,28 @@ describe('ingest', () => {
       excluded,
     ])
   })
+
+  test('link and unlink wait for a reset; reset shows in status at once', async () => {
+    const client = sdk(generateWorkspaceId('ingest-link'), true)
+    await client.ingest(records(8), { derive: 'later' })
+    const people = await (await client.ingestPeople()).toArray()
+    const [keep, merge] = people.map((p) => p.peerId)
+
+    // Already imported: refused until a reset (the deriver runs the deletion).
+    await expect(client.ingestLink([keep, merge])).rejects.toBeInstanceOf(
+      ConflictError
+    )
+    await expect(
+      client.ingestUnlink({
+        peer: keep,
+        account: { source: 'discord', sourceInstance: 'guild1', id: 'user-0' },
+      })
+    ).rejects.toBeInstanceOf(ConflictError)
+
+    const reset = await client.ingestReset()
+    expect(reset.sessions.length).toBe(3)
+    const status = await client.ingestStatus()
+    expect(status.records).toEqual({ deferred: 0, pending: 0, queued: 0 })
+    expect(status.sessions).toBe(0)
+  })
 })

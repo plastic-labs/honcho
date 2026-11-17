@@ -14,7 +14,7 @@ import logging
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable
 from functools import partial
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Path
 from fastapi_pagination.bases import AbstractParams
@@ -22,6 +22,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import schemas
+from src.cache.client import safe_cache_delete
 from src.config import settings
 from src.crud.ingest import (
     IngestRaced,
@@ -30,6 +31,7 @@ from src.crud.ingest import (
     ingest_batch,
     release_deferred,
 )
+from src.crud.ingest_link import link_peers, reset_import, unlink_account
 from src.crud.ingest_status import (
     get_ingest_status,
     people_query,
@@ -37,6 +39,8 @@ from src.crud.ingest_status import (
     session_summaries,
     sessions_query,
 )
+from src.crud.peer import peer_cache_key
+from src.crud.session import session_cache_key
 from src.dependencies import db, read_db
 from src.deriver.ingest_enqueue import enqueue_session
 from src.dreamer.dream_scheduler import get_dream_scheduler
@@ -341,3 +345,106 @@ async def sessions(
         unique=False,
         transformer=partial(session_summaries, workspace=workspace),
     )
+
+
+_LINK_RESPONSES: dict[int | str, dict[str, Any]] = {
+    404: {"model": schemas.ErrorResponse, "description": "Workspace or peer not found"},
+    409: {
+        "model": schemas.ErrorResponse,
+        "description": "Not an auto workspace, or the people involved already have"
+        + " imported messages: reset the import first",
+    },
+    503: {
+        "model": schemas.ErrorResponse,
+        "description": "Contention outlasted the retries; nothing changed. Calling"
+        + " again is safe.",
+    },
+}
+
+
+@router.post(
+    "/link",
+    response_model=schemas.IngestLinkResult,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    responses=_LINK_RESPONSES,
+)
+async def link(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    body: schemas.IngestLink = Body(...),
+    db: AsyncSession = db,
+) -> schemas.IngestLinkResult:
+    """Link imported people into one, from the next import on.
+
+    Every account of the other people maps to the first from now on, so the
+    next import puts their records on one person. Nothing already imported
+    moves: the people being merged must have no imported messages yet, so
+    reset the import (`POST /ingest/reset`), link, then import again. Only
+    workspace and admin keys may call it.
+    """
+    await require_auto_workspace(db, workspace_id)
+    result = await _with_retries(
+        db, workspace_id, lambda: link_peers(db, workspace_id, body.peers)
+    )
+    await db.commit()
+    for name in body.peers:
+        await safe_cache_delete(peer_cache_key(workspace_id, name))
+    return result
+
+
+@router.post(
+    "/unlink",
+    response_model=schemas.IngestUnlinkResult,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    responses=_LINK_RESPONSES,
+)
+async def unlink(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    body: schemas.IngestUnlink = Body(...),
+    db: AsyncSession = db,
+) -> schemas.IngestUnlinkResult:
+    """Take a linked account back out, from the next import on.
+
+    The account maps to the person it was linked from again. Its records must
+    not be imported yet: reset the import first. Only workspace and admin keys
+    may call it.
+    """
+    await require_auto_workspace(db, workspace_id)
+    result = await _with_retries(
+        db,
+        workspace_id,
+        lambda: unlink_account(db, workspace_id, body.peer, body.account),
+    )
+    await db.commit()
+    for name in (body.peer, result.peer_id):
+        await safe_cache_delete(peer_cache_key(workspace_id, name))
+    return result
+
+
+@router.post(
+    "/reset",
+    response_model=schemas.IngestResetResponse,
+    status_code=202,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    responses=_LINK_RESPONSES,
+)
+async def reset(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    db: AsyncSession = db,
+) -> schemas.IngestResetResponse:
+    """Delete every session holding imported records, to import again.
+
+    Each session is marked inactive at once and deleted in the background, as
+    `DELETE /sessions/{id}` does, with its messages, memberships and ingest
+    records. People, their configuration and links stay; a session's own
+    configuration goes with it. `GET /ingest/status` counts only active
+    sessions, so it shows the reset straight away. Only workspace and admin
+    keys may call it.
+    """
+    await require_auto_workspace(db, workspace_id)
+    sessions = await _with_retries(
+        db, workspace_id, lambda: reset_import(db, workspace_id)
+    )
+    await db.commit()
+    for name in sessions:
+        await safe_cache_delete(session_cache_key(workspace_id, name))
+    return schemas.IngestResetResponse(sessions=sessions)

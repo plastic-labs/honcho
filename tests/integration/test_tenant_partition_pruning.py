@@ -34,7 +34,7 @@ from src import crud, models, schemas
 from src.cache.client import cache
 from src.config import settings
 from src.crud import ingest as ingest_crud
-from src.crud import ingest_status
+from src.crud import ingest_link, ingest_status
 from src.crud.message import (
     _grep_messages_internal,  # pyright: ignore[reportPrivateUsage]
 )
@@ -46,6 +46,7 @@ from src.db import (
     tenant_context,
 )
 from src.db import connect_args as app_connect_args
+from src.exceptions import ConflictException
 from src.utils.search import (
     _fulltext_search,  # pyright: ignore[reportPrivateUsage]
     _semantic_search_pgvector,  # pyright: ignore[reportPrivateUsage]
@@ -361,6 +362,19 @@ async def _ingest_review(db: AsyncSession, _source_id: str) -> list[Any]:
     return [status.records.deferred, status.people, len(people), len(sessions)]
 
 
+async def _ingest_link_and_reset(db: AsyncSession, _source_id: str) -> list[Any]:
+    # A link refused because the person has messages (its eligibility reads),
+    # then a reset (its session sweep).
+    result = await ingest_crud.ingest_batch(db, "w", _ingest_batch(derive="later"))
+    peers = sorted({r.peer_id for r in result.results if r.peer_id})
+    refused = ""
+    try:
+        await ingest_link.link_peers(db, "w", [*peers, "p"][:2])
+    except ConflictException as error:
+        refused = type(error).__name__
+    return [refused, len(await ingest_link.reset_import(db, "w"))]
+
+
 async def _conclusion_delete(db: AsyncSession, source_id: str) -> list[Any]:
     await crud.delete_document(db, "w", source_id, observer="p", observed="p")
     deleted = await db.scalars(
@@ -385,6 +399,7 @@ _CASES: dict[str, _Case] = {
     "ingest API write": _ingest_write,
     "ingest derive": _ingest_derive,
     "ingest review": _ingest_review,
+    "ingest link and reset": _ingest_link_and_reset,
     "conclusion soft delete": _conclusion_delete,
     "session delete": _session_delete,
 }

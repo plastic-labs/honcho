@@ -231,6 +231,46 @@ honcho ingest import <file>
   later (default): store without deriving until `honcho ingest derive`; now: derive as records arrive.
 </ParamField>
 </Accordion>
+<Accordion title="link">
+Treat several imported accounts as one person, from the next import on.
+
+Every account of the other people maps to the first. Nothing already
+imported moves, so an import that already holds their records is reset
+first: `honcho ingest link 1 24 --reset`, then `honcho ingest import` again.
+
+```bash
+honcho ingest link <refs>
+```
+
+<ParamField path="refs" type="string" required />
+<ParamField path="--keep" type="string">
+  Keep this peer ID, taken literally (any peer, including one no import created); every person in REFS is linked into it.
+</ParamField>
+<ParamField path="--reset" type="boolean">
+  Reset the import first (deletes the imported sessions and waits); the people are found before the reset, so their numbers stay right.
+</ParamField>
+<ParamField path="--yes" type="boolean">
+  Don't ask before --reset. Short alias: `-y`.
+</ParamField>
+</Accordion>
+<Accordion title="reset">
+Delete the imported sessions, to import again after a link or a fix.
+
+Deletes every session holding imported records, with their messages.
+People, their exclusions and links stay; session exclusions go with the
+sessions. Use it before anything is derived: the import runs again for free.
+
+```bash
+honcho ingest reset
+```
+
+<ParamField path="--yes" type="boolean">
+  Don't ask for confirmation. Short alias: `-y`.
+</ParamField>
+<ParamField path="--wait" type="boolean" default="true">
+  Wait until the deletion has finished. Negate with `--no-wait`.
+</ParamField>
+</Accordion>
 <Accordion title="status">
 What the workspace's imports became: records, people and sessions.
 
@@ -243,6 +283,25 @@ honcho ingest status
 
 <ParamField path="--limit" type="number" default="50">
   People and sessions to list, most records first.
+</ParamField>
+</Accordion>
+<Accordion title="unlink">
+Take a linked account back out of a person, from the next import on.
+
+As for a link, an import that already holds its records is reset first:
+`honcho ingest unlink 1 alexdev --reset`, then import again.
+
+```bash
+honcho ingest unlink <person> <account>
+```
+
+<ParamField path="person" type="string" required />
+<ParamField path="account" type="string" required />
+<ParamField path="--reset" type="boolean">
+  Reset the import first (deletes the imported sessions and waits).
+</ParamField>
+<ParamField path="--yes" type="boolean">
+  Don't ask before --reset. Short alias: `-y`.
 </ParamField>
 </Accordion>
 </AccordionGroup>

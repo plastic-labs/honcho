@@ -14,8 +14,12 @@ import type {
   ChatResponse,
   DreamRun,
   DreamRunDetail,
+  IngestAccount,
+  IngestAccountResponse,
   IngestDeriveResponse,
   IngestDeriveResult,
+  IngestLinkResponse,
+  IngestLinkResult,
   IngestPerson,
   IngestPersonResponse,
   IngestRecordResult,
@@ -25,6 +29,8 @@ import type {
   IngestSessionResponse,
   IngestStatus,
   IngestStatusResponse,
+  IngestUnlinkResponse,
+  IngestUnlinkResult,
   MessageResponse,
   PageResponse,
   PeerResponse,
@@ -79,6 +85,15 @@ import {
 const DEFAULT_BASE_URL = 'https://api.honcho.dev'
 /** Records per ingest request: the most the ingest route takes at once. */
 const INGEST_BATCH_SIZE = 100
+
+function ingestAccountFromApi(a: IngestAccountResponse): IngestAccount {
+  return {
+    source: a.source,
+    sourceInstance: a.source_instance,
+    id: a.id ?? undefined,
+    displayName: a.display_name ?? undefined,
+  }
+}
 type ReasoningLevel = 'minimal' | 'low' | 'medium' | 'high' | 'max'
 
 /**
@@ -1404,6 +1419,66 @@ export class Honcho {
   }
 
   /**
+   * Link imported people into one, from the next import on.
+   *
+   * Every account of `peers.slice(1)` maps to `peers[0]` from now on, so the
+   * next import puts their records on one person. Nothing already imported
+   * moves: the people being merged must have no imported messages yet, so
+   * call `ingestReset()`, link, then import again (`ConflictError` otherwise).
+   */
+  async ingestLink(peers: Array<string | Peer>): Promise<IngestLinkResult> {
+    const r = await this._http.post<IngestLinkResponse>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/link`,
+      { body: { peers: peers.map((p) => resolveId(p)) } }
+    )
+    return {
+      peerId: r.peer_id,
+      merged: r.merged,
+      accounts: r.accounts.map(ingestAccountFromApi),
+    }
+  }
+
+  /**
+   * Take a linked account back out of `peer`, from the next import on.
+   *
+   * The account maps to the person it was linked from again. Its records must
+   * not be imported yet: call `ingestReset()` first.
+   */
+  async ingestUnlink(options: {
+    peer: string | Peer
+    account: { source: string; sourceInstance: string; id: string }
+  }): Promise<IngestUnlinkResult> {
+    const r = await this._http.post<IngestUnlinkResponse>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/unlink`,
+      {
+        body: {
+          peer: resolveId(options.peer),
+          account: {
+            source: options.account.source,
+            source_instance: options.account.sourceInstance,
+            id: options.account.id,
+          },
+        },
+      }
+    )
+    return { peerId: r.peer_id, account: ingestAccountFromApi(r.account) }
+  }
+
+  /**
+   * Delete every session holding imported records, to import again.
+   *
+   * The sessions are deleted in the background; `ingestStatus()` shows them
+   * gone at once. People, their configuration and links stay.
+   *
+   * @returns The sessions whose deletion was started
+   */
+  async ingestReset(): Promise<{ sessions: string[] }> {
+    return this._http.post<{ sessions: string[] }>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/reset`
+    )
+  }
+
+  /**
    * What this workspace's imports produced, for review before deriving.
    *
    * Records by derivation state, the tokens still deferred, and how many
@@ -1421,6 +1496,7 @@ export class Honcho {
       peopleNotModeled: s.people_not_modeled,
       sessions: s.sessions,
       sessionsNotModeled: s.sessions_not_modeled,
+      sessionsBeingDeleted: s.sessions_being_deleted ?? 0,
     }
   }
 
@@ -1448,12 +1524,7 @@ export class Honcho {
       (p) => ({
         peerId: p.peer_id,
         displayName: p.display_name ?? undefined,
-        accounts: p.accounts.map((a) => ({
-          source: a.source,
-          sourceInstance: a.source_instance,
-          id: a.id ?? undefined,
-          displayName: a.display_name ?? undefined,
-        })),
+        accounts: p.accounts.map(ingestAccountFromApi),
         messages: p.messages,
         modeled: p.modeled,
       }),

@@ -35,12 +35,15 @@ from .api_types import (
     DreamRunDetailResponse,
     DreamRunResponse,
     IngestDeriveResponse,
+    IngestLinkResponse,
     IngestPerson,
     IngestRecord,
     IngestRecordResult,
+    IngestResetResponse,
     IngestResponse,
     IngestSession,
     IngestStatusResponse,
+    IngestUnlinkResponse,
     MessageCreateParams,
     MessageResponse,
     PeerCardResponse,
@@ -772,6 +775,46 @@ class HonchoAio(AsyncMetadataConfigMixin):
             released += step.pending
             if step.remaining == 0 or step.pending == 0:
                 return IngestDeriveResponse(pending=released, remaining=step.remaining)
+
+    async def ingest_link(self, peers: Sequence[str | PeerBase]) -> IngestLinkResponse:
+        """Link imported people into one, asynchronously. See `Honcho.ingest_link`."""
+        return IngestLinkResponse.model_validate(
+            await self._honcho._async_http_client.post(
+                routes.workspace_ingest_link(self._honcho.workspace_id),
+                body={"peers": [resolve_id(p) for p in peers]},
+            )
+        )
+
+    async def ingest_unlink(
+        self,
+        peer: str | PeerBase,
+        *,
+        source: str,
+        source_instance: str,
+        account_id: str,
+    ) -> IngestUnlinkResponse:
+        """Take a linked account back out, asynchronously. See `Honcho.ingest_unlink`."""
+        return IngestUnlinkResponse.model_validate(
+            await self._honcho._async_http_client.post(
+                routes.workspace_ingest_unlink(self._honcho.workspace_id),
+                body={
+                    "peer": resolve_id(peer),
+                    "account": {
+                        "source": source,
+                        "source_instance": source_instance,
+                        "id": account_id,
+                    },
+                },
+            )
+        )
+
+    async def ingest_reset(self) -> IngestResetResponse:
+        """Delete the imported sessions, asynchronously. See `Honcho.ingest_reset`."""
+        return IngestResetResponse.model_validate(
+            await self._honcho._async_http_client.post(
+                routes.workspace_ingest_reset(self._honcho.workspace_id)
+            )
+        )
 
     async def ingest_status(self) -> IngestStatusResponse:
         """What this workspace's imports produced, asynchronously.

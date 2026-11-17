@@ -1,4 +1,4 @@
-"""Ingest commands: import, status, derive.
+"""Ingest commands: import, status, derive, reset, link, unlink.
 
 Load a connector's export into an auto workspace without deriving it, review
 what it became, exclude what shouldn't be modeled, then derive:
@@ -8,6 +8,11 @@ what it became, exclude what shouldn't be modeled, then derive:
     honcho ingest status -w acme
     honcho peer exclude 3 -w acme
     honcho ingest derive -w acme --watch
+
+Two accounts of one person (a dry run shows them apart) are linked, then the
+import runs again: `honcho ingest reset`, `honcho ingest link 1 2`,
+`honcho ingest import`. A link changes who an account maps to; it never moves
+what was already imported.
 
 Changes made before `ingest derive` apply to what is derived: configuration is
 read when records are released. Needs a workspace or admin key.
@@ -39,8 +44,8 @@ from honcho_cli._help import HonchoTyperGroup
 from honcho_cli.commands.workspace import _handle_error
 from honcho_cli.common import add_common_options, get_client, handle_cmd_flags
 from honcho_cli.ingest_refs import resolve, save_listing
-from honcho_cli.replay import read_only
 from honcho_cli.output import print_error, print_json, status, stdout_console, use_json
+from honcho_cli.replay import read_only
 
 app = typer.Typer(
     cls=HonchoTyperGroup,
@@ -229,6 +234,10 @@ def _print_status(
     )
     if r.deferred:
         stdout_console.print(f"{st.deferred_tokens:,} tokens waiting to be derived")
+    if st.sessions_being_deleted:
+        stdout_console.print(
+            f"{st.sessions_being_deleted:,} sessions still being deleted by a reset"
+        )
 
     people_table = Table(
         title=f"People ({st.people:,}, {st.people_not_modeled:,} not modeled)",
@@ -243,7 +252,7 @@ def _print_status(
     people_table.add_column("modeled")
     for number, p in enumerate(people, start=1):
         accounts = ", ".join(
-            sorted({f"{a.source}" for a in p.accounts})
+            dict.fromkeys(a.source for a in p.accounts)
         ) + (f" ({len(p.accounts)})" if len(p.accounts) > 1 else "")
         people_table.add_row(
             str(number), p.display_name or "", p.peer_id, accounts,
@@ -487,3 +496,244 @@ def set_session_modeled(ref: str, modeled: bool) -> None:
     label = f"{name} ({session_id})" if name else session_id
     stdout_console.print(f"{label}: {'modeled' if modeled else 'not modeled'}")
     _note_derived(client)
+
+
+# ---------------------------------------------------------------------------
+# Reset, link, unlink: fixing who is who, applied on the next import.
+# ---------------------------------------------------------------------------
+
+RESET_POLL_SECONDS = 2
+RESET_WAIT_SECONDS = 600
+"""How long `ingest reset` waits for the background deletion before giving up."""
+
+
+def _refused(e: Exception, code: str, *, hint: str | None) -> NoReturn:
+    """A 409 from link or unlink: say the server's reason, and how to proceed."""
+    message = str(e)
+    if hint and "reset" in message.lower():
+        message += f" Run the same command with {hint} to reset the import first."
+    print_error(code, message)
+    raise typer.Exit(1)
+
+
+def _reset(client: Honcho, wid: str, *, yes: bool, wait: bool = True) -> Any:
+    """Reset the import, after a confirmation, and wait for the deletion.
+
+    Returns the server's reset response. Raises ``typer.Exit`` when the
+    confirmation is missing, the reset fails, or the wait times out.
+    """
+    if not yes:
+        if use_json():
+            print_error("CONFIRMATION_REQUIRED", "Pass --yes to reset without a prompt.")
+            raise typer.Exit(1)
+        typer.confirm(
+            f"Delete every imported session in '{wid}', with its messages?", abort=True
+        )
+    try:
+        reset = client.ingest_reset()
+    except Exception as e:
+        _ingest_error(e, wid)
+    if not wait:
+        return reset
+    deadline = time.monotonic() + RESET_WAIT_SECONDS
+    try:
+        while client.ingest_status().sessions_being_deleted:
+            if time.monotonic() > deadline:
+                print_error(
+                    "RESET_STILL_RUNNING",
+                    "Still deleting in the background; check `honcho ingest status`.",
+                )
+                raise typer.Exit(1)
+            time.sleep(RESET_POLL_SECONDS)
+    except KeyboardInterrupt:
+        status("Stopped waiting; the deletion continues on the server.")
+        raise typer.Exit(130) from None
+    return reset
+
+
+def _people(client: Honcho) -> list[Any]:
+    return list(client.ingest_people(size=100))
+
+
+@app.command("reset")
+def reset_import(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Don't ask for confirmation"),
+    wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait until the deletion has finished"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Delete the imported sessions, to import again after a link or a fix.
+
+    Deletes every session holding imported records, with their messages.
+    People, their exclusions and links stay; session exclusions go with the
+    sessions. Use it before anything is derived: the import runs again for free.
+    """
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    client, config = get_client()
+    wid = config.workspace_id
+    reset = _reset(client, wid, yes=yes, wait=wait)
+    if use_json():
+        print_json({"sessions": len(reset.sessions), "waited": wait})
+        return
+    stdout_console.print(f"Reset {len(reset.sessions):,} imported sessions.")
+    status("Link or fix what you need, then run `honcho ingest import` again.")
+
+
+@app.command("link")
+def link_people(
+    refs: list[str] = typer.Argument(
+        help="People: number from `ingest status`, peer ID, or display name. Without"
+        + " --keep, the first is kept"
+    ),
+    keep: Optional[str] = typer.Option(
+        None,
+        "--keep",
+        help="Keep this peer ID, taken literally (any peer, including one no import"
+        + " created); every person in REFS is linked into it",
+    ),
+    reset: bool = typer.Option(
+        False,
+        "--reset",
+        help="Reset the import first (deletes the imported sessions and waits); the"
+        + " people are found before the reset, so their numbers stay right",
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Don't ask before --reset"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Treat several imported accounts as one person, from the next import on.
+
+    Every account of the other people maps to the first. Nothing already
+    imported moves, so an import that already holds their records is reset
+    first: `honcho ingest link 1 24 --reset`, then `honcho ingest import` again.
+    """
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    if len(refs) + (1 if keep else 0) < 2:
+        print_error(
+            "INVALID_ARGUMENT",
+            "Name at least two people (the first is kept), or --keep and one more.",
+        )
+        raise typer.Exit(1)
+    client, config = get_client()
+    wid = config.workspace_id
+    try:
+        people = _people(client)
+    except Exception as e:
+        _ingest_error(e, wid)
+    candidates = [(p.peer_id, p.display_name) for p in people]
+
+    def person(ref: str) -> str:
+        return resolve(
+            ref, kind="people", base_url=str(client.base_url),
+            credential=_credential(client), workspace_id=wid, candidates=candidates,
+        )
+
+    # The kept person can be any peer, including one made by hand that no
+    # import created; the server checks that it exists. --keep takes the ID
+    # literally, for an ID that reads like a list number or a display name.
+    if keep:
+        peer_ids = [keep, *(person(ref) for ref in refs)]
+    else:
+        first = refs[0]
+        listed = {i for i, _ in candidates} | {
+            n.casefold() for _, n in candidates if n
+        }
+        kept = (
+            person(first)
+            if first.isdigit() or first in listed or first.casefold() in listed
+            else first
+        )
+        peer_ids = [kept, *(person(ref) for ref in refs[1:])]
+    if reset:
+        _reset(client, wid, yes=yes)
+    try:
+        linked = client.ingest_link(peer_ids)
+    except ConflictError as e:
+        _refused(e, "LINK_REFUSED", hint=None if reset else "--reset")
+    except Exception as e:
+        _ingest_error(e, wid)
+    if use_json():
+        print_json(linked.model_dump(mode="json"))
+        return
+    name = dict(candidates).get(linked.peer_id) or linked.peer_id
+    accounts = ", ".join(
+        f"{a.source} {a.display_name or a.id}" for a in linked.accounts
+    )
+    stdout_console.print(f"{name} ({linked.peer_id}) now has: {accounts}")
+    status("Run `honcho ingest import` again: their records go to one person.")
+
+
+@app.command("unlink")
+def unlink_account(
+    person: str = typer.Argument(help="The person the account was linked into"),
+    account: str = typer.Argument(
+        help="The account: its ID or display name in the source, or SOURCE:ID"
+    ),
+    reset: bool = typer.Option(
+        False, "--reset", help="Reset the import first (deletes the imported sessions and waits)"
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Don't ask before --reset"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Take a linked account back out of a person, from the next import on.
+
+    As for a link, an import that already holds its records is reset first:
+    `honcho ingest unlink 1 alexdev --reset`, then import again.
+    """
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    client, config = get_client()
+    wid = config.workspace_id
+    try:
+        people = _people(client)
+    except Exception as e:
+        _ingest_error(e, wid)
+    peer_id = resolve(
+        person, kind="people", base_url=str(client.base_url),
+        credential=_credential(client), workspace_id=wid,
+        candidates=[(p.peer_id, p.display_name) for p in people],
+    )
+    accounts = next(p.accounts for p in people if p.peer_id == peer_id)
+
+    def named(a: Any, text: str) -> bool:
+        return a.id == text or (a.display_name or "").casefold() == text.casefold()
+
+    # The ID or name as given first (an ID can contain ":"), then SOURCE:ID.
+    matches = [a for a in accounts if a.id is not None and named(a, account)]
+    if not matches and ":" in account:
+        source, _, rest = account.partition(":")
+        matches = [
+            a
+            for a in accounts
+            if a.id is not None and a.source == source and named(a, rest)
+        ]
+    if len(matches) != 1:
+        print_error(
+            "ACCOUNT_NOT_FOUND" if not matches else "AMBIGUOUS",
+            f"{'No' if not matches else 'More than one'} account of this person"
+            + f" matches '{account}'.",
+            {"accounts": [f"{a.source}:{a.id} ({a.display_name})" for a in accounts]},
+        )
+        raise typer.Exit(1)
+    chosen = matches[0]
+    assert chosen.id is not None
+    if reset:
+        _reset(client, wid, yes=yes)
+    try:
+        unlinked = client.ingest_unlink(
+            peer_id,
+            source=chosen.source,
+            source_instance=chosen.source_instance,
+            account_id=chosen.id,
+        )
+    except ConflictError as e:
+        _refused(e, "UNLINK_REFUSED", hint=None if reset else "--reset")
+    except Exception as e:
+        _ingest_error(e, wid)
+    if use_json():
+        print_json(unlinked.model_dump(mode="json"))
+        return
+    stdout_console.print(
+        f"{chosen.source} {chosen.display_name or chosen.id} goes back to"
+        + f" {unlinked.peer_id} from the next import on."
+    )

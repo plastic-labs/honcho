@@ -52,6 +52,21 @@ async def require_auto_workspace(
     return workspace
 
 
+def _in_active_session(record: Any) -> Any:
+    """A record whose session is active: a reset marks its sessions inactive at once."""
+    session = models.Session
+    return (
+        select(session.name)
+        .where(
+            session.tenant_id == record.tenant_id,
+            session.workspace_name == record.workspace_name,
+            session.name == record.session_name,
+            session.is_active.is_(True),
+        )
+        .exists()
+    )
+
+
 def _owned(target: Any, binding: Any) -> Any:
     """A binding ingest trusts: it created the target, or a person confirmed it."""
     return (
@@ -95,6 +110,16 @@ def _people(workspace_name: str) -> Any:
                         "display_name",
                         binding.display_name,
                     ),
+                    # The account the import created the person for first: it
+                    # names the person, and linked accounts follow.
+                    case(
+                        (
+                            peer.internal_metadata["ingest"]["binding_id"].astext
+                            == binding.id,
+                            0,
+                        ),
+                        else_=1,
+                    ),
                     binding.created_at,
                     binding.id,
                 )
@@ -124,7 +149,11 @@ def _people(workspace_name: str) -> Any:
             & (message.workspace_name == record.workspace_name)
             & (message.public_id == record.message_public_id),
         )
-        .where(record.tenant_id == tenant_id, record.workspace_name == workspace_name)
+        .where(
+            record.tenant_id == tenant_id,
+            record.workspace_name == workspace_name,
+            _in_active_session(record),
+        )
         .group_by(message.peer_name)
         .subquery("written")
     )
@@ -272,7 +301,11 @@ async def get_ingest_status(
     record = models.IngestRecord
     counted = await db.execute(
         select(record.derivation, func.count())
-        .where(record.tenant_id == tenant_id, record.workspace_name == workspace_name)
+        .where(
+            record.tenant_id == tenant_id,
+            record.workspace_name == workspace_name,
+            _in_active_session(record),
+        )
         .group_by(record.derivation)
     )
     by_state: dict[str, int] = {state: count for state, count in counted.tuples()}
@@ -290,6 +323,7 @@ async def get_ingest_status(
             record.tenant_id == tenant_id,
             record.workspace_name == workspace_name,
             record.derivation == "deferred",
+            _in_active_session(record),
         )
     )
     people = _people(workspace_name)
@@ -304,6 +338,13 @@ async def get_ingest_status(
     sessions = session_summaries(
         (await db.execute(sessions_query(workspace_name))).all(), workspace
     )
+    being_deleted = await db.scalar(
+        select(func.count(func.distinct(record.session_name))).where(
+            record.tenant_id == tenant_id,
+            record.workspace_name == workspace_name,
+            ~_in_active_session(record),
+        )
+    )
     return schemas.IngestStatus(
         records=schemas.IngestRecordCounts(
             deferred=by_state.get("deferred", 0),
@@ -315,6 +356,7 @@ async def get_ingest_status(
         people_not_modeled=people_off,
         sessions=len(sessions),
         sessions_not_modeled=sum(1 for s in sessions if not s.modeled),
+        sessions_being_deleted=int(being_deleted or 0),
     )
 
 

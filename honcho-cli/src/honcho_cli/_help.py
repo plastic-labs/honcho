@@ -95,7 +95,7 @@ def print_welcome(console: Console) -> None:
         ("message",    "list · create · get"),
         ("conclusion", "list · create · search · delete"),
         ("dream",      "list · inspect"),
-        ("ingest",     "import · status · derive"),
+        ("ingest",     "import · status · derive · reset · link · unlink"),
         ("config",     "inspect current configuration"),
     ]
     memory_rows = [

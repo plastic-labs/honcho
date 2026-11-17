@@ -27,7 +27,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 - `honcho message` — list and get
 - `honcho conclusion` — list, search, create, delete
 - `honcho dream` — list, inspect (what each dream changed; workspace or admin key)
-- `honcho ingest` — import, status, derive: load source records into an auto workspace, review them, derive (workspace or admin key). `honcho peer exclude` / `honcho session exclude` stop derivation about an imported person or session before `ingest derive`
+- `honcho ingest` — import, status, derive, reset, link, unlink: load source records into an auto workspace, review them, derive (workspace or admin key). `honcho peer exclude` / `honcho session exclude` stop derivation about an imported person or session before `ingest derive`
 
 ## Rules
 
@@ -36,6 +36,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 - Use `honcho session context` to see exactly what an agent receives.
 - Never run `honcho workspace delete` without `honcho workspace inspect` first.
 - After `honcho ingest import`, run `honcho ingest status` and exclude what shouldn't be modeled before `honcho ingest derive`: exclusions apply only to records not yet released.
+- To make two imported accounts one person: `honcho ingest link <kept> <other> --reset --yes`, then `honcho ingest import` again. A link never moves imported messages, so it's refused without the reset. Resolve the people before any separate `ingest reset`: a reset re-sorts the numbered list.
 - Compare peer card with conclusions to understand memory state.
 - After `honcho scope add-sessions`, check `honcho scope status <name>` before a scoped `chat`: a `pending` backfill means the scope has not caught up yet, not that there is nothing to recall.
 - `honcho start` does not rewrite `environmentUrl`. Use `HONCHO_BASE_URL=http://127.0.0.1:8000` to talk to local stack.

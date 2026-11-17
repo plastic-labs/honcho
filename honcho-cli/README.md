@@ -155,8 +155,11 @@ Import a connector's export, review what it became, and fix it before anything i
 honcho workspace create acme --auto
 honcho ingest import records.jsonl -w acme      # stored, not derived
 honcho ingest status -w acme                     # numbered people and sessions
+honcho ingest link 1 2 --reset -w acme          # two accounts are one person: reset and link,
+honcho ingest import records.jsonl -w acme       #   then import again
+honcho ingest status -w acme                     # numbers change after a reset
 honcho peer exclude "Usage Stats" -w acme        # a bot the source didn't flag
-honcho session exclude 12 -w acme                # a noisy channel
+honcho session exclude 12 -w acme                # a noisy channel (a reset deletes sessions, so exclude after it)
 honcho ingest derive -w acme --watch
 ```
 
@@ -168,6 +171,9 @@ honcho ingest derive -w acme --watch
 | `honcho ingest derive` | Release every deferred record for derivation; `--watch` follows the queue until it finishes |
 | `honcho peer exclude/include <ref>` | Stop (or resume) deriving about an imported person: `observe_me` off. `<ref>` is a number from `ingest status`, an ID, or a display name |
 | `honcho session exclude/include <ref>` | Stop (or resume) deriving from an imported session; it is still summarized |
+| `honcho ingest reset` | Delete the imported sessions and their messages, to import again; people, exclusions and links stay. Asks first (`--yes` to skip) and waits for the deletion |
+| `honcho ingest link <ref> <ref>...` | Treat several imported people as one, from the next import on: every account of the others maps to the first (`--keep <peer-id>` keeps any peer). Nothing imported moves, so `--reset` resets the import first, finding the people before the reset so their numbers stay right |
+| `honcho ingest unlink <person> <account>` | Take a linked account back out (`<account>` = its ID, display name, or `SOURCE:ID`); `--reset` as for link |
 
 ### Config
 

@@ -17,12 +17,15 @@ from .api_types import (
     DreamRunDetailResponse,
     DreamRunResponse,
     IngestDeriveResponse,
+    IngestLinkResponse,
     IngestPerson,
     IngestRecord,
     IngestRecordResult,
+    IngestResetResponse,
     IngestResponse,
     IngestSession,
     IngestStatusResponse,
+    IngestUnlinkResponse,
     MessageResponse,
     PeerConfig,
     PeerResponse,
@@ -1104,6 +1107,62 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             released += step.pending
             if step.remaining == 0 or step.pending == 0:
                 return IngestDeriveResponse(pending=released, remaining=step.remaining)
+
+    def ingest_link(self, peers: Sequence[str | PeerBase]) -> IngestLinkResponse:
+        """
+        Link imported people into one, from the next import on.
+
+        Every account of ``peers[1:]`` maps to ``peers[0]`` from now on, so the
+        next import puts their records on one person. Nothing already imported
+        moves: the people being merged must have no imported messages yet, so
+        call ``ingest_reset()``, link, then import again (``ConflictError``
+        otherwise).
+        """
+        return IngestLinkResponse.model_validate(
+            self._http.post(
+                routes.workspace_ingest_link(self.workspace_id),
+                body={"peers": [resolve_id(p) for p in peers]},
+            )
+        )
+
+    def ingest_unlink(
+        self,
+        peer: str | PeerBase,
+        *,
+        source: str,
+        source_instance: str,
+        account_id: str,
+    ) -> IngestUnlinkResponse:
+        """
+        Take a linked account back out of ``peer``, from the next import on.
+
+        The account maps to the person it was linked from again. Its records
+        must not be imported yet: call ``ingest_reset()`` first.
+        """
+        return IngestUnlinkResponse.model_validate(
+            self._http.post(
+                routes.workspace_ingest_unlink(self.workspace_id),
+                body={
+                    "peer": resolve_id(peer),
+                    "account": {
+                        "source": source,
+                        "source_instance": source_instance,
+                        "id": account_id,
+                    },
+                },
+            )
+        )
+
+    def ingest_reset(self) -> IngestResetResponse:
+        """
+        Delete every session holding imported records, to import again.
+
+        The sessions are deleted in the background; ``ingest_status()`` shows
+        them gone at once. People, their configuration and links stay.
+        """
+        return IngestResetResponse.model_validate(
+            self._http.post(routes.workspace_ingest_reset(self.workspace_id))
+        )
 
     def ingest_status(self) -> IngestStatusResponse:
         """

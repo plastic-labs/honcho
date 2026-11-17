@@ -36,6 +36,18 @@ def workspace_ingest_derive(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/derive"
 
 
+def workspace_ingest_link(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/link"
+
+
+def workspace_ingest_unlink(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/unlink"
+
+
+def workspace_ingest_reset(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/reset"
+
+
 def workspace_ingest_status(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/status"
 

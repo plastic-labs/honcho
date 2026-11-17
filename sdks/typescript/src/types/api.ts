@@ -624,6 +624,7 @@ export interface IngestStatusResponse {
   people_not_modeled: number
   sessions: number
   sessions_not_modeled: number
+  sessions_being_deleted?: number
 }
 
 export interface IngestAccountResponse {
@@ -664,6 +665,8 @@ export interface IngestStatus {
   sessions: number
   /** Of those, sessions whose reasoning is off. */
   sessionsNotModeled: number
+  /** Sessions a reset is still deleting; 0 once it has finished. */
+  sessionsBeingDeleted: number
 }
 
 /** One source account mapped to a peer. */
@@ -698,6 +701,31 @@ export interface IngestSession {
   messages: number
   /** False when reasoning is off for the session: only summaries are made. */
   modeled: boolean
+}
+
+export interface IngestLinkResponse {
+  peer_id: string
+  merged: string[]
+  accounts: IngestAccountResponse[]
+}
+
+export interface IngestUnlinkResponse {
+  peer_id: string
+  account: IngestAccountResponse
+}
+
+/** The kept person and every account that now maps to it. */
+export interface IngestLinkResult {
+  peerId: string
+  /** The people linked into it. */
+  merged: string[]
+  accounts: IngestAccount[]
+}
+
+/** The person a linked account maps to again, from the next import on. */
+export interface IngestUnlinkResult {
+  peerId: string
+  account: IngestAccount
 }
 
 /** How many deferred records were released for derivation. */
