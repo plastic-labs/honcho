@@ -59,10 +59,10 @@ class TestSessionCRUD:
         new window."""
         test_workspace, test_peer = sample_data
         session_name = str(generate_nanoid())
-        original_config = schemas.SessionPeerConfig(
+        original_config = schemas.SessionPeerConfigInput(
             observe_others=True, observe_me=False
         )
-        updated_config = schemas.SessionPeerConfig(
+        updated_config = schemas.SessionPeerConfigInput(
             observe_others=False, observe_me=True
         )
         session_peer_stmt = select(
@@ -139,7 +139,7 @@ class TestSessionCRUD:
         test_workspace, test_peer = sample_data
         workspace_name, peer_name = test_workspace.name, test_peer.name
         session_name = str(generate_nanoid())
-        config = schemas.SessionPeerConfig(observe_others=True, observe_me=False)
+        config = schemas.SessionPeerConfigInput(observe_others=True, observe_me=False)
         xmin_stmt = select(literal_column("xmin::text", String)).where(
             models.SessionPeer.session_name == session_name,
             models.SessionPeer.peer_name == peer_name,
@@ -162,10 +162,10 @@ class TestSessionCRUD:
         """PUT-peers keeps active membership windows and refreshes real rejoins."""
         test_workspace, test_peer = sample_data
         session_name = str(generate_nanoid())
-        original_config = schemas.SessionPeerConfig(
+        original_config = schemas.SessionPeerConfigInput(
             observe_others=True, observe_me=False
         )
-        updated_config = schemas.SessionPeerConfig(
+        updated_config = schemas.SessionPeerConfigInput(
             observe_others=False, observe_me=True
         )
         db_session.add(
@@ -265,8 +265,10 @@ class TestSessionCRUD:
         # it would lazy-load outside the greenlet context.
         workspace_name = test_workspace.name
         session_name = str(generate_nanoid())
-        observer = schemas.SessionPeerConfig(observe_others=True, observe_me=False)
-        bystander = schemas.SessionPeerConfig(observe_others=False, observe_me=True)
+        observer = schemas.SessionPeerConfigInput(observe_others=True, observe_me=False)
+        bystander = schemas.SessionPeerConfigInput(
+            observe_others=False, observe_me=True
+        )
         existing = [str(generate_nanoid()) for _ in range(2)]
 
         await crud.get_or_create_session(
@@ -319,8 +321,10 @@ class TestSessionCRUD:
         session_name = str(generate_nanoid())
         db_session.add(models.Session(name=session_name, workspace_name=workspace_name))
         await db_session.flush()
-        observer = schemas.SessionPeerConfig(observe_others=True, observe_me=False)
-        bystander = schemas.SessionPeerConfig(observe_others=False, observe_me=True)
+        observer = schemas.SessionPeerConfigInput(observe_others=True, observe_me=False)
+        bystander = schemas.SessionPeerConfigInput(
+            observe_others=False, observe_me=True
+        )
         existing = [str(generate_nanoid()) for _ in range(2)]
 
         await crud.set_peers_for_session(
@@ -363,8 +367,10 @@ class TestSessionCRUD:
         test_workspace, _ = sample_data
         workspace_name = test_workspace.name
         session_name = str(generate_nanoid())
-        observer = schemas.SessionPeerConfig(observe_others=True, observe_me=False)
-        bystander = schemas.SessionPeerConfig(observe_others=False, observe_me=True)
+        observer = schemas.SessionPeerConfigInput(observe_others=True, observe_me=False)
+        bystander = schemas.SessionPeerConfigInput(
+            observe_others=False, observe_me=True
+        )
 
         await crud.get_or_create_session(
             db_session,
@@ -421,10 +427,10 @@ class TestSessionCRUD:
 
         # Add peers to session with different configurations
         peer_configs = {
-            test_peer.name: schemas.SessionPeerConfig(
+            test_peer.name: schemas.SessionPeerConfigInput(
                 observe_others=True, observe_me=False
             ),
-            peer2.name: schemas.SessionPeerConfig(
+            peer2.name: schemas.SessionPeerConfigInput(
                 observe_others=False, observe_me=True
             ),
         }

@@ -136,7 +136,7 @@ async def create_test_session_with_peer(
             db_session,
             schemas.SessionCreate(
                 name=str(generate_nanoid()),
-                peers={peer.name: schemas.SessionPeerConfig(observe_me=True)},
+                peers={peer.name: schemas.SessionPeerConfigInput(observe_me=True)},
             ),
             workspace.name,
         )

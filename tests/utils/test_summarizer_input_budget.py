@@ -177,7 +177,7 @@ async def _session_with_messages(
             db_session,
             schemas.SessionCreate(
                 name=str(generate_nanoid()),
-                peers={peer.name: schemas.SessionPeerConfig()},
+                peers={peer.name: schemas.SessionPeerConfigInput()},
             ),
             workspace.name,
         )

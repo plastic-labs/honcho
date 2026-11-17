@@ -735,3 +735,67 @@ async def test_session_clone_with_cutoff(
         original_messages_page = session.messages()
         original_messages = list(original_messages_page)
         assert len(original_messages) == 3
+
+
+@pytest.mark.asyncio
+async def test_session_peer_joined_at(client_fixture: tuple[Honcho, str]):
+    """joined_at is sent by every call that takes a SessionPeerConfig, and the
+    server accepts it."""
+    import datetime
+
+    from sdks.python.src.honcho.utils.peers import normalize_peers_to_dict
+
+    old = datetime.datetime(2020, 1, 1, tzinfo=datetime.UTC)
+    config = SessionPeerConfig(observe_others=None, observe_me=False, joined_at=old)
+    assert normalize_peers_to_dict([("p", config)]) == {
+        "p": {"observe_me": False, "joined_at": "2020-01-01T00:00:00Z"}
+    }
+
+    honcho_client, client_type = client_fixture
+    if client_type == "async":
+        session = await honcho_client.aio.session(
+            id="test-session-joined-at", peers=[("p-joined-a", config)]
+        )
+        await session.aio.add_peers([("p-joined-b", config)])
+        await session.aio.set_peers([("p-joined-a", config), ("p-joined-b", config)])
+        await session.aio.set_peer_configuration("p-joined-a", config)
+        retrieved = await session.aio.get_peer_configuration("p-joined-a")
+    else:
+        session = honcho_client.session(
+            id="test-session-joined-at", peers=[("p-joined-a", config)]
+        )
+        session.add_peers([("p-joined-b", config)])
+        session.set_peers([("p-joined-a", config), ("p-joined-b", config)])
+        session.set_peer_configuration("p-joined-a", config)
+        retrieved = session.get_peer_configuration("p-joined-a")
+    # Write-only: the configuration read does not carry it.
+    assert retrieved.observe_me is False
+    assert retrieved.joined_at is None
+
+    # The server rejects a future join time, so a call that raises here is a
+    # call that really sent the field.
+    future = SessionPeerConfig(
+        observe_others=None, observe_me=None, joined_at=old.replace(year=2999)
+    )
+    if client_type == "async":
+        with pytest.raises(Exception, match="future"):
+            await session.aio.add_peers([("p-joined-a", future)])
+        with pytest.raises(Exception, match="future"):
+            await session.aio.set_peers([("p-joined-a", future)])
+        with pytest.raises(Exception, match="future"):
+            await session.aio.set_peer_configuration("p-joined-a", future)
+        with pytest.raises(Exception, match="future"):
+            await honcho_client.aio.session(
+                id="test-session-joined-at", peers=[("p-joined-a", future)]
+            )
+    else:
+        with pytest.raises(Exception, match="future"):
+            session.add_peers([("p-joined-a", future)])
+        with pytest.raises(Exception, match="future"):
+            session.set_peers([("p-joined-a", future)])
+        with pytest.raises(Exception, match="future"):
+            session.set_peer_configuration("p-joined-a", future)
+        with pytest.raises(Exception, match="future"):
+            honcho_client.session(
+                id="test-session-joined-at", peers=[("p-joined-a", future)]
+            )

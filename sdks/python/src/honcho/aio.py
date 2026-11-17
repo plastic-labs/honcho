@@ -1484,6 +1484,8 @@ class SessionAio(AsyncMetadataConfigMixin):
             body["observe_others"] = configuration.observe_others
         if configuration.observe_me is not None:
             body["observe_me"] = configuration.observe_me
+        if configuration.joined_at is not None:
+            body["joined_at"] = configuration.joined_at.isoformat()
 
         await self._session._honcho._async_http_client.put(
             routes.session_peer_config(

@@ -4,7 +4,7 @@ import datetime
 
 import pytest
 from nanoid import generate as generate_nanoid
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -739,7 +739,7 @@ async def test_peer_perspective_search_after_active_readd(
 
     session_create = schemas.SessionCreate(
         name=session.name,
-        peers={peer1.name: schemas.SessionPeerConfig()},
+        peers={peer1.name: schemas.SessionPeerConfigInput()},
     )
     await crud.get_or_create_session(db_session, session_create, workspace.name)
     results = await search(
@@ -767,3 +767,120 @@ async def test_peer_perspective_search_after_active_readd(
         limit=10,
     )
     assert msg_old.public_id not in [m.public_id for m in results]
+
+
+@pytest.mark.asyncio
+async def test_peer_perspective_search_sees_imported_messages_with_joined_at(
+    db_session: AsyncSession,
+):
+    """A caller-supplied joined_at backdates the window so imported (old-dated)
+    messages are visible to peer_perspective search."""
+    workspace = models.Workspace(name=generate_nanoid())
+    db_session.add(workspace)
+    await db_session.flush()
+
+    old = datetime.datetime(2020, 1, 1, tzinfo=datetime.UTC)
+    session_name = "imported"
+
+    async def add_peers(peers: dict[str, schemas.SessionPeerConfigInput]) -> None:
+        await crud.get_or_create_session(
+            db_session,
+            schemas.SessionCreate(name=session_name, peers=peers),
+            workspace.name,
+        )
+
+    async def membership(peer_name: str) -> models.SessionPeer:
+        return (
+            await db_session.execute(
+                select(models.SessionPeer)
+                .where(
+                    models.SessionPeer.workspace_name == workspace.name,
+                    models.SessionPeer.session_name == session_name,
+                    models.SessionPeer.peer_name == peer_name,
+                )
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one()
+
+    async def visible_to(peer_name: str) -> int:
+        return len(
+            await search(
+                "Imported",
+                filters={"peer_perspective": peer_name, "workspace_id": workspace.name},
+                limit=10,
+            )
+        )
+
+    # "backdated" joins with an explicit time (naive is read as UTC); "late"
+    # joins now, the pre-fix behaviour for every membership.
+    await add_peers(
+        {
+            "backdated": schemas.SessionPeerConfigInput(
+                observe_me=False, joined_at=old.replace(tzinfo=None)
+            ),
+            "late": schemas.SessionPeerConfigInput(
+                observe_others=True, observe_me=False
+            ),
+        }
+    )
+    db_session.add(
+        models.Message(
+            content="Imported message",
+            session_name=session_name,
+            peer_name="backdated",
+            workspace_name=workspace.name,
+            seq_in_session=1,
+            created_at=old + datetime.timedelta(days=1),
+        )
+    )
+    await db_session.commit()
+
+    row = await membership("backdated")
+    assert row.joined_at == old
+    # joined_at is a membership column, never part of the stored configuration.
+    assert "joined_at" not in row.configuration
+    assert await visible_to("backdated") == 1
+    assert await visible_to("late") == 0
+
+    # An explicit joined_at repairs an already-active membership, and leaves
+    # its stored configuration alone.
+    late_config = (await membership("late")).configuration
+    await add_peers(
+        {
+            "late": schemas.SessionPeerConfigInput(
+                observe_others=False, observe_me=True, joined_at=old
+            )
+        }
+    )
+    row = await membership("late")
+    assert row.joined_at == old
+    assert row.configuration == late_config
+    assert await visible_to("late") == 1
+
+    # Re-adding without one still preserves the window (issue #940).
+    await add_peers({"late": schemas.SessionPeerConfigInput()})
+    assert (await membership("late")).joined_at == old
+
+    # The replace path and the per-peer config route honour it too.
+    newer = old + datetime.timedelta(hours=1)
+    await crud.set_peers_for_session(
+        db_session,
+        workspace.name,
+        session_name,
+        {
+            "backdated": schemas.SessionPeerConfigInput(),
+            "late": schemas.SessionPeerConfigInput(joined_at=newer),
+        },
+    )
+    assert (await membership("backdated")).joined_at == old
+    assert (await membership("late")).joined_at == newer
+    await crud.set_peer_config(
+        db_session,
+        workspace.name,
+        session_name,
+        "late",
+        schemas.SessionPeerConfigInput(joined_at=old),
+    )
+    row = await membership("late")
+    assert row.joined_at == old
+    assert "joined_at" not in row.configuration

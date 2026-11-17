@@ -2005,7 +2005,7 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": {
-                  "$ref": "#/components/schemas/SessionPeerConfig"
+                  "$ref": "#/components/schemas/SessionPeerConfigInput"
                 },
                 "description": "List of peer IDs (with session-level configuration) to add to the session",
                 "title": "Peers"
@@ -2075,7 +2075,7 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": {
-                  "$ref": "#/components/schemas/SessionPeerConfig"
+                  "$ref": "#/components/schemas/SessionPeerConfigInput"
                 },
                 "description": "List of peer IDs (with session-level configuration) to set for the session",
                 "title": "Peers"
@@ -2397,7 +2397,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SessionPeerConfig",
+                "$ref": "#/components/schemas/SessionPeerConfigInput",
                 "description": "New peer configuration"
               }
             }
@@ -7845,7 +7845,7 @@
             "anyOf": [
               {
                 "additionalProperties": {
-                  "$ref": "#/components/schemas/SessionPeerConfig"
+                  "$ref": "#/components/schemas/SessionPeerConfigInput"
                 },
                 "type": "object"
               },
@@ -7935,6 +7935,50 @@
         },
         "type": "object",
         "title": "SessionPeerConfig"
+      },
+      "SessionPeerConfigInput": {
+        "properties": {
+          "observe_me": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observe Me",
+            "description": "Whether Honcho will use reasoning to form a representation of this peer"
+          },
+          "observe_others": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observe Others",
+            "description": "Whether this peer should form a session-level theory-of-mind representation of other peers in the session"
+          },
+          "joined_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Joined At",
+            "description": "When this peer joined the session; defaults to now for a new membership. Write-only. Set it when importing historical messages: peer_perspective search only returns messages created at or after the peer's join time. If the peer is already in the session, its join time is changed to this value. A timestamp without a timezone is read as UTC. A time more than five minutes in the future is rejected."
+          }
+        },
+        "type": "object",
+        "title": "SessionPeerConfigInput",
+        "description": "A session-peer configuration as a request sends it.\n\nAdds ``joined_at``, which is write-only: it is a property of the membership\nrow, not of the configuration, so ``SessionPeerConfig`` (what is stored and\nreturned) does not have it."
       },
       "SessionQueueStatus": {
         "properties": {

@@ -431,6 +431,8 @@ class Session(SessionBase, MetadataConfigMixin):
             body["observe_others"] = configuration.observe_others
         if configuration.observe_me is not None:
             body["observe_me"] = configuration.observe_me
+        if configuration.joined_at is not None:
+            body["joined_at"] = configuration.joined_at.isoformat()
 
         self._honcho._http.put(
             routes.session_peer_config(self.workspace_id, self.id, peer_id),

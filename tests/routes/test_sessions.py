@@ -1597,3 +1597,88 @@ def test_get_session_context_response_structure(
     # When no peer_target, these should not be present or be None
     assert data.get("peer_representation") is None
     assert data.get("peer_card") is None
+
+
+def test_session_peer_joined_at_validation(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """A past joined_at is accepted on every route that takes a session-peer
+    config; a future one is a 422."""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+    base = f"/v3/workspaces/{test_workspace.name}/sessions"
+    past = {"joined_at": "2020-01-01T00:00:00"}
+    future = {"joined_at": "2999-01-01T00:00:00Z"}
+
+    created = client.post(
+        base, json={"id": session_id, "peers": {test_peer.name: past}}
+    )
+    assert created.status_code in [200, 201]
+    peers_url = f"{base}/{session_id}/peers"
+    config_url = f"{peers_url}/{test_peer.name}/config"
+    assert client.post(peers_url, json={test_peer.name: past}).status_code == 200
+    assert client.put(peers_url, json={test_peer.name: past}).status_code == 200
+    assert client.put(config_url, json=past).status_code == 204
+    # Write-only: never stored in, or returned with, the configuration.
+    assert "joined_at" not in client.get(config_url).json()
+
+    assert (
+        client.post(
+            base, json={"id": session_id, "peers": {test_peer.name: future}}
+        ).status_code
+        == 422
+    )
+    assert client.post(peers_url, json={test_peer.name: future}).status_code == 422
+    assert client.put(peers_url, json={test_peer.name: future}).status_code == 422
+    assert client.put(config_url, json=future).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_peer_key_cannot_set_joined_at_on_existing_session(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """For a peer-scoped key, create-or-get on an existing session skips the
+    membership upsert, so a join time sent there is refused instead of being
+    dropped behind a 200."""
+    test_workspace, alice = sample_data
+    session_id = str(generate_nanoid())
+    base = f"/v3/workspaces/{test_workspace.name}/sessions"
+    client.post(base, json={"id": session_id, "peers": {alice.name: {}}})
+    # Membership is read on a separate committed-only connection by the auth
+    # dependency, so it must be committed before a member-scoped call.
+    await db_session.commit()
+
+    monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
+    monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
+    client.headers["Authorization"] = (
+        f"Bearer {create_jwt(JWTParams(w=test_workspace.name, p=alice.name))}"
+    )
+
+    refused = client.post(
+        base,
+        json={
+            "id": session_id,
+            "peers": {alice.name: {"joined_at": "2020-01-01T00:00:00Z"}},
+        },
+    )
+    assert refused.status_code == 401
+    assert "join time" in refused.json()["detail"]
+    # Naming itself without one is still a plain get.
+    assert (
+        client.post(
+            base, json={"id": session_id, "peers": {alice.name: {}}}
+        ).status_code
+        == 200
+    )
+    # A new session is the caller's to create, join time included.
+    created = client.post(
+        base,
+        json={
+            "id": str(generate_nanoid()),
+            "peers": {alice.name: {"joined_at": "2020-01-01T00:00:00Z"}},
+        },
+    )
+    assert created.status_code == 201
