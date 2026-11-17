@@ -298,8 +298,18 @@ class SessionPeerConfig(PeerConfig):
         default=None,
         description="Whether this peer should form a session-level theory-of-mind representation of other peers in the session",
     )
-    # exclude=True keeps it out of the stored configuration JSONB and out of
-    # config responses: it is a property of the membership row, not of the config.
+
+
+class SessionPeerConfigInput(SessionPeerConfig):
+    """A session-peer configuration as a request sends it.
+
+    Adds ``joined_at``, which is write-only: it is a property of the membership
+    row, not of the configuration, so ``SessionPeerConfig`` (what is stored and
+    returned) does not have it.
+    """
+
+    # exclude=True keeps it out of the model_dump() that writes the stored
+    # configuration JSONB.
     joined_at: datetime.datetime | None = Field(
         default=None,
         exclude=True,

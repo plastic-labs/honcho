@@ -28,7 +28,7 @@ from src.schemas.configuration import (
     DreamType,
     MessageConfiguration,
     SessionConfiguration,
-    SessionPeerConfig,
+    SessionPeerConfigInput,
     WorkspaceConfiguration,
 )
 from src.utils.sanitization import NulStripped, StorableOnly, strip_nul
@@ -537,7 +537,9 @@ class SessionCreate(SessionBase):
         Field(alias="id", min_length=1, max_length=512, pattern=RESOURCE_NAME_PATTERN),
     ]
     metadata: _SanitizedMetadata | None = None
-    peer_names: dict[str, SessionPeerConfig] | None = Field(default=None, alias="peers")
+    peer_names: dict[str, SessionPeerConfigInput] | None = Field(
+        default=None, alias="peers"
+    )
     configuration: SessionConfiguration | None = None
     scopes: list[str] | None = Field(
         default=None,

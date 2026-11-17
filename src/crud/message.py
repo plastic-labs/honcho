@@ -489,7 +489,9 @@ async def create_messages(
     )
 
     # Get or create session with peers in messages list
-    peers = {message.peer_name: schemas.SessionPeerConfig() for message in messages}
+    peers = {
+        message.peer_name: schemas.SessionPeerConfigInput() for message in messages
+    }
     await get_or_create_session(
         db,
         session=schema_from_path(

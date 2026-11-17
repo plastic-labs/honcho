@@ -169,7 +169,7 @@ async def _write_and_enqueue_first_message(
             db,
             schemas.SessionCreate(
                 name=session_name,
-                peers={peer_name: schemas.SessionPeerConfig(observe_me=True)},
+                peers={peer_name: schemas.SessionPeerConfigInput(observe_me=True)},
             ),
             workspace_name,
         )

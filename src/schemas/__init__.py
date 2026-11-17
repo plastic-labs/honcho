@@ -95,6 +95,7 @@ from src.schemas.configuration import (
     ResolvedSummaryConfiguration,
     SessionConfiguration,
     SessionPeerConfig,
+    SessionPeerConfigInput,
     SummaryConfiguration,
     WorkspaceConfiguration,
 )
@@ -129,6 +130,7 @@ __all__ = [
     "ResolvedSummaryConfiguration",
     "SessionConfiguration",
     "SessionPeerConfig",
+    "SessionPeerConfigInput",
     "SummaryConfiguration",
     "WorkspaceConfiguration",
     # api

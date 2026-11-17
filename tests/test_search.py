@@ -739,7 +739,7 @@ async def test_peer_perspective_search_after_active_readd(
 
     session_create = schemas.SessionCreate(
         name=session.name,
-        peers={peer1.name: schemas.SessionPeerConfig()},
+        peers={peer1.name: schemas.SessionPeerConfigInput()},
     )
     await crud.get_or_create_session(db_session, session_create, workspace.name)
     results = await search(
@@ -782,7 +782,7 @@ async def test_peer_perspective_search_sees_imported_messages_with_joined_at(
     old = datetime.datetime(2020, 1, 1, tzinfo=datetime.UTC)
     session_name = "imported"
 
-    async def add_peers(peers: dict[str, schemas.SessionPeerConfig]) -> None:
+    async def add_peers(peers: dict[str, schemas.SessionPeerConfigInput]) -> None:
         await crud.get_or_create_session(
             db_session,
             schemas.SessionCreate(name=session_name, peers=peers),
@@ -815,10 +815,12 @@ async def test_peer_perspective_search_sees_imported_messages_with_joined_at(
     # joins now, the pre-fix behaviour for every membership.
     await add_peers(
         {
-            "backdated": schemas.SessionPeerConfig(
+            "backdated": schemas.SessionPeerConfigInput(
                 observe_me=False, joined_at=old.replace(tzinfo=None)
             ),
-            "late": schemas.SessionPeerConfig(observe_others=True, observe_me=False),
+            "late": schemas.SessionPeerConfigInput(
+                observe_others=True, observe_me=False
+            ),
         }
     )
     db_session.add(
@@ -845,7 +847,7 @@ async def test_peer_perspective_search_sees_imported_messages_with_joined_at(
     late_config = (await membership("late")).configuration
     await add_peers(
         {
-            "late": schemas.SessionPeerConfig(
+            "late": schemas.SessionPeerConfigInput(
                 observe_others=False, observe_me=True, joined_at=old
             )
         }
@@ -856,7 +858,7 @@ async def test_peer_perspective_search_sees_imported_messages_with_joined_at(
     assert await visible_to("late") == 1
 
     # Re-adding without one still preserves the window (issue #940).
-    await add_peers({"late": schemas.SessionPeerConfig()})
+    await add_peers({"late": schemas.SessionPeerConfigInput()})
     assert (await membership("late")).joined_at == old
 
     # The replace path and the per-peer config route honour it too.
@@ -866,8 +868,8 @@ async def test_peer_perspective_search_sees_imported_messages_with_joined_at(
         workspace.name,
         session_name,
         {
-            "backdated": schemas.SessionPeerConfig(),
-            "late": schemas.SessionPeerConfig(joined_at=newer),
+            "backdated": schemas.SessionPeerConfigInput(),
+            "late": schemas.SessionPeerConfigInput(joined_at=newer),
         },
     )
     assert (await membership("backdated")).joined_at == old
@@ -877,7 +879,7 @@ async def test_peer_perspective_search_sees_imported_messages_with_joined_at(
         workspace.name,
         session_name,
         "late",
-        schemas.SessionPeerConfig(joined_at=old),
+        schemas.SessionPeerConfigInput(joined_at=old),
     )
     row = await membership("late")
     assert row.joined_at == old

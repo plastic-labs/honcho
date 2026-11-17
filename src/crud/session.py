@@ -1,5 +1,6 @@
 """CRUD helpers for sessions and session-related relationship data."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
@@ -167,7 +168,7 @@ def _reject_resolved_scope_peers(peers: list[models.Peer]) -> None:
 
 
 def count_observers_in_config(
-    peer_configs: dict[str, schemas.SessionPeerConfig],
+    peer_configs: Mapping[str, schemas.SessionPeerConfig],
 ) -> int:
     """
     Count the number of peers that will be observing others based on their configurations.
@@ -365,6 +366,16 @@ async def get_or_create_session(
             if session.metadata is not None or session.configuration is not None:
                 raise AuthenticationException(
                     "Peer-scoped keys cannot modify an existing session"
+                )
+            # The membership upsert is skipped below, so a join time sent here
+            # would be dropped while the request still succeeded. Refuse it:
+            # changing a join time goes through the session peers routes.
+            if any(
+                config.joined_at is not None
+                for config in (session.peer_names or {}).values()
+            ):
+                raise AuthenticationException(
+                    "Peer-scoped keys cannot change join time on an existing session"
                 )
             # The caller is already a member, so the only effect of naming
             # itself would be the upsert's rejoin (it clears ``left_at``), which
@@ -1190,7 +1201,7 @@ async def set_peers_for_session(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
-    peer_names: dict[str, schemas.SessionPeerConfig],
+    peer_names: Mapping[str, schemas.SessionPeerConfig],
 ) -> list[models.SessionPeer]:
     """
     Replace a session's ordinary peer set with ``peer_names``.
@@ -1288,7 +1299,7 @@ async def upsert_session_peers(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
-    peer_names: dict[str, schemas.SessionPeerConfig],
+    peer_names: Mapping[str, schemas.SessionPeerConfig],
     *,
     fetch_after_upsert: bool = True,
 ) -> list[models.SessionPeer]:
@@ -1312,7 +1323,7 @@ async def _get_or_add_peers_to_session(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
-    peer_names: dict[str, schemas.SessionPeerConfig],
+    peer_names: Mapping[str, schemas.SessionPeerConfig],
     *,
     fetch_after_upsert: bool = True,
     replace_config: bool = False,
@@ -1365,7 +1376,8 @@ async def _get_or_add_peers_to_session(
     explicit_joined_at = {
         peer_name: configuration.joined_at
         for peer_name, configuration in peer_names.items()
-        if configuration.joined_at is not None
+        if isinstance(configuration, schemas.SessionPeerConfigInput)
+        and configuration.joined_at is not None
     }
     existing = (
         {
@@ -1675,7 +1687,10 @@ async def set_peer_config(
         )
         db.add(session_peer)
 
-    if config.joined_at is not None:
+    if (
+        isinstance(config, schemas.SessionPeerConfigInput)
+        and config.joined_at is not None
+    ):
         session_peer.joined_at = config.joined_at
 
     await db.commit()
