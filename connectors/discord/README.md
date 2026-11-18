@@ -5,6 +5,11 @@ JSONL files or sends them to the ingest API. This is the backfill half of a
 Discord connector: it reads history once, oldest first. It has no live events,
 install flow or stored read position yet.
 
+> **Experimental.** Ingest into auto workspaces is experimental, and so is
+> this connector: its records, its options and the ingest API it sends to may
+> change or stop working without notice. The CLI commands that import and review
+> its output run only with `HONCHO_EXPERIMENTAL=1` set.
+
 ## What it needs
 
 A bot token, in a file, for a bot that has been added to the server with:

@@ -1,5 +1,8 @@
 """Command line: list a server's channels, or export its history.
 
+Experimental: ingest, and this connector, may change or stop working without
+notice.
+
     honcho-discord channels --token-file F --guild ID
     honcho-discord export --token-file F --guild ID [--channel ID ...] --out DIR
     honcho-discord export --token-file F --guild ID [--channel ID ...] \\
