@@ -243,6 +243,37 @@ class TestCloneHonchoForProfile:
         monkeypatch.setattr(honcho_cli, "_write_config", _write)
         return honcho_cli, written
 
+    @pytest.mark.parametrize("action,default,profile,root,expected", [
+        ("clone", {"observationOptOutPhrases": [" host phrase ", "", 7]}, {}, ["root"], ["host phrase"]),
+        ("clone", {"observationOptOutPhrases": []}, {}, ["root"], []),
+        ("clone", {}, {}, ["root"], ["root"]),
+        ("enable", {"observationOptOutPhrases": [" host phrase "]}, {}, ["root"], ["host phrase"]),
+        ("enable", {"observationOptOutPhrases": ["host"]}, {"observationOptOutPhrases": []}, ["root"], []),
+        ("enable", {"observationOptOutPhrases": ["host"]}, {"observationOptOutPhrases": "invalid"}, ["root"], []),
+        ("enable", {}, {}, ["root"], ["root"]),
+        ("enable", {}, {}, None, []),
+    ])
+    def test_observation_opt_out_inheritance(self, monkeypatch, tmp_path, action, default, profile, root, expected):
+        from hermes_plugin_honcho.client import _parse_string_list
+
+        cfg = {"apiKey": "test-key", "hosts": {"hermes": {"peerName": "eri", **default}}}
+        if root is not None:
+            cfg["observationOptOutPhrases"] = root
+        if action == "enable":
+            cfg["hosts"]["hermes_coder"] = dict(profile)
+        cli, written = self._setup_clone_env(monkeypatch, tmp_path, cfg)
+        if action == "clone":
+            assert cli.clone_honcho_for_profile("coder") is True
+        else:
+            monkeypatch.setattr(cli, "_host_key", lambda: "hermes_coder")
+            cli.cmd_enable(SimpleNamespace())
+        block = written["cfg"]["hosts"]["hermes_coder"]
+        if "observationOptOutPhrases" in profile or "observationOptOutPhrases" in default:
+            assert block["observationOptOutPhrases"] == (profile if profile else default)["observationOptOutPhrases"]
+        else:
+            assert "observationOptOutPhrases" not in block
+        assert _parse_string_list(block, cfg, "observationOptOutPhrases") == expected
+
     def test_user_peer_aliases_carry_into_cloned_profile(self, monkeypatch, tmp_path):
         cfg = {
             "apiKey": "***",

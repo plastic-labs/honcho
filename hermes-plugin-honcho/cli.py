@@ -26,7 +26,7 @@ _INHERITED_KEYS = (
     "recallMode", "writeFrequency", "sessionStrategy", "contextTokens",
     "dialecticReasoningLevel", "dialecticDynamic", "dialecticMaxChars",
     "messageMaxChars", "dialecticMaxInputChars", "saveMessages", "observation",
-    "recallSync",
+    "recallSync", "observationOptOutPhrases",
 )
 # clone_honcho_for_profile also carries the operator's runtime-to-peer routing intent.
 _CLONE_KEYS = _INHERITED_KEYS[:3] + ("sessionPeerPrefix", "sessionAiPeerPrefix") + _INHERITED_KEYS[3:] + (
