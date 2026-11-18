@@ -264,7 +264,31 @@ async def _queue_records(
                 get_configuration(configuration, session, workspace),
             )
         )
-    return queue_records
+    return _last_summaries(queue_records)
+
+
+def _last_summaries(queue_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop every summary task but the batch's last long and last short one.
+
+    A session keeps only its latest summary of each kind, so the summaries a
+    batch of history would make at every interval are overwritten before
+    anyone reads them. The summarizer catches the kept ones up over the whole
+    batch (auto workspaces only; ingest writes only to those).
+    """
+    summaries = [r for r in queue_records if r["task_type"] == "summary"]
+    if len(summaries) <= 1:
+        return queue_records
+
+    def crosses(r: dict[str, Any], interval_key: str) -> bool:
+        payload = r["payload"]
+        interval: int = payload["configuration"]["summary"][interval_key]
+        return payload["message_seq_in_session"] % interval == 0
+
+    keep: set[int] = set()
+    for interval_key in ("messages_per_short_summary", "messages_per_long_summary"):
+        if crossing := [r for r in summaries if crosses(r, interval_key)]:
+            keep.add(id(crossing[-1]))
+    return [r for r in queue_records if r["task_type"] != "summary" or id(r) in keep]
 
 
 # ---------------------------------------------------------------------------

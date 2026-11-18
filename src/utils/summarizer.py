@@ -1,15 +1,15 @@
 import asyncio
 import logging
 import time
-from collections.abc import Callable
-from dataclasses import replace
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass, replace
 from enum import Enum
 from functools import cache
 from inspect import cleandoc as c
 from typing import Any, TypedDict
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import case, func, literal, update
+from sqlalchemy import case, func, literal, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -394,7 +394,12 @@ async def summarize_if_needed(
     if should_create_long is False and should_create_short is False:
         return
 
-    # If both summaries need to be created, run them in parallel
+    # Auto workspaces queue history with only the last summaries of each batch,
+    # so a summary there may have to catch up (see _create_and_save_summary).
+    catch_up = await _in_auto_workspace(workspace_name)
+
+    # If both summaries need to be created, run them in parallel (one after the
+    # other when catching up, so the short summary can start from the long one)
     if should_create_long and should_create_short:
 
         async def create_long_summary_task():
@@ -407,6 +412,7 @@ async def summarize_if_needed(
                 summary_type=SummaryType.LONG,
                 configuration=configuration,
                 queue_item_id=queue_item_id,
+                catch_up=catch_up,
             )
             accumulate_metric(
                 f"summary_{workspace_name}_{message_id}",
@@ -425,6 +431,7 @@ async def summarize_if_needed(
                 summary_type=SummaryType.SHORT,
                 configuration=configuration,
                 queue_item_id=queue_item_id,
+                catch_up=catch_up,
             )
             accumulate_metric(
                 f"summary_{workspace_name}_{message_id}",
@@ -436,11 +443,15 @@ async def summarize_if_needed(
         # Every long boundary is also a short one under the default cadence, so
         # this is how every long summary runs. Both finish before any failure is
         # raised, so one failing never cancels the other.
-        long_result, short_result = await asyncio.gather(
-            create_long_summary_task(),
-            create_short_summary_task(),
-            return_exceptions=True,
-        )
+        if catch_up:
+            long_result = await _outcome(create_long_summary_task())
+            short_result = await _outcome(create_short_summary_task())
+        else:
+            long_result, short_result = await asyncio.gather(
+                create_long_summary_task(),
+                create_short_summary_task(),
+                return_exceptions=True,
+            )
         _raise_summary_failures(
             {SummaryType.LONG: long_result, SummaryType.SHORT: short_result},
             workspace_name=workspace_name,
@@ -459,6 +470,7 @@ async def summarize_if_needed(
                 summary_type=SummaryType.LONG,
                 configuration=configuration,
                 queue_item_id=queue_item_id,
+                catch_up=catch_up,
             )
             accumulate_metric(
                 f"summary_{workspace_name}_{message_id}",
@@ -476,6 +488,7 @@ async def summarize_if_needed(
                 summary_type=SummaryType.SHORT,
                 configuration=configuration,
                 queue_item_id=queue_item_id,
+                catch_up=catch_up,
             )
             accumulate_metric(
                 f"summary_{workspace_name}_{message_id}",
@@ -483,6 +496,27 @@ async def summarize_if_needed(
                 message_seq_in_session,
                 "count",
             )
+
+
+async def _outcome(task: Coroutine[Any, Any, None]) -> BaseException | None:
+    """Await a summary task, returning its exception instead of raising it."""
+    try:
+        await task
+    except Exception as error:
+        return error
+    return None
+
+
+async def _in_auto_workspace(workspace_name: str) -> bool:
+    """Whether the workspace was created as an auto workspace."""
+    async with tracked_db("summary.workspace_auto", read_only=True) as db:
+        enabled_at = await db.scalar(
+            select(models.Workspace.auto_enabled_at).where(
+                models.Workspace.tenant_id == models.scoped_tenant_id(),
+                models.Workspace.name == workspace_name,
+            )
+        )
+    return enabled_at is not None
 
 
 def _raise_summary_failures(
@@ -545,6 +579,49 @@ def _raise_summary_failures(
     raise raised
 
 
+class SummaryCatchUpIncomplete(Exception):
+    """A catch-up summary stopped partway: a chunk's summary was a fallback."""
+
+
+@dataclass(frozen=True)
+class _Window:
+    """The messages one summary call reads, taken while their session is open."""
+
+    formatted: str
+    first_seq: int
+    last_id: int
+    last_seq: int
+    last_public_id: str
+    last_preview: str
+    count: int
+    source_ids: list[str]
+    # Message tokens as sent: a clipped message is shorter than its stored count.
+    tokens: int
+
+
+def _window(messages: list[Message], formatted: str, clipped: bool) -> _Window:
+    return _Window(
+        formatted=formatted,
+        first_seq=messages[0].seq_in_session,
+        last_id=messages[-1].id,
+        last_seq=messages[-1].seq_in_session,
+        last_public_id=messages[-1].public_id,
+        last_preview=messages[-1].content[:30],
+        count=len(messages),
+        source_ids=[message.public_id for message in messages],
+        tokens=_count_prompt_tokens(formatted)
+        if clipped
+        else sum(message.token_count for message in messages),
+    )
+
+
+# A catch-up summary reads the history it missed in chunks of at most this many
+# message tokens, oldest first: one call per chunk instead of one per interval.
+_CATCH_UP_CHUNK_TOKENS = 20_000
+# Messages read per catch-up chunk: more than a chunk of tokens ever holds.
+_CATCH_UP_FETCH = 2_000
+
+
 async def _create_and_save_summary(
     workspace_name: str,
     session_name: str,
@@ -555,6 +632,7 @@ async def _create_and_save_summary(
     summary_type: SummaryType,
     configuration: schemas.ResolvedConfiguration,
     queue_item_id: int | None = None,
+    catch_up: bool = False,
 ) -> None:
     """
     Create a new summary and save it to the database.
@@ -562,6 +640,13 @@ async def _create_and_save_summary(
     2. Get the messages since the latest summary
     3. Generate a new summary using the messages and the previous summary
     4. Save the new summary to the database
+
+    The summary reads the interval's messages ending at this one. With
+    `catch_up` (auto workspaces, whose history is queued with only the last
+    summaries of each batch), it reads every message after the latest summary
+    instead, however many, in chunks, oldest first, folding each into the
+    summary and saving it before the next, so a retry resumes where a failure
+    stopped. A short summary behind the long one starts from the long one.
     """
 
     logger.debug("Creating new %s summary", summary_type.name)
@@ -578,7 +663,14 @@ async def _create_and_save_summary(
         prompt_tokens += _count_prompt_tokens(
             custom_instructions_section(configuration.summary.custom_instructions)
         )
+    messages_per_summary = (
+        configuration.summary.messages_per_long_summary
+        if summary_type == SummaryType.LONG
+        else configuration.summary.messages_per_short_summary
+    )
 
+    # The single window, when not catching up.
+    window: _Window | None = None
     async with tracked_db("summary.fetch_data") as db:
         try:
             session = await crud.get_session(db, session_name, workspace_name)
@@ -594,75 +686,235 @@ async def _create_and_save_summary(
                 return
 
         previous_summary_text = latest_summary["content"] if latest_summary else None
+        previous_summary_tokens = latest_summary["token_count"] if latest_summary else 0
 
-        # Calculate the sequence range for messages to summarize
-        # We want to get the last N messages where N is the configured summary interval
-        messages_per_summary = (
-            configuration.summary.messages_per_long_summary
-            if summary_type == SummaryType.LONG
-            else configuration.summary.messages_per_short_summary
-        )
-        start_seq = max(message_seq_in_session - messages_per_summary + 1, 1)
+        catch_up_from: int | None = None
+        if catch_up:
+            covered = await _covered_seq(
+                db, workspace_name, session_name, latest_summary
+            )
+            # Everything after the latest summary, however far behind it is,
+            # so a retry after a crash mid-catch-up resumes where it stopped.
+            catch_up_from = covered + 1
+            long_summary = summaries.get(SummaryType.LONG.value)
+            if summary_type == SummaryType.SHORT and long_summary is not None:
+                long_covered = await _covered_seq(
+                    db, workspace_name, session_name, long_summary
+                )
+                if long_covered > covered:
+                    # The long summary already holds the history up to its
+                    # message: start from it, after it.
+                    previous_summary_text = long_summary["content"]
+                    previous_summary_tokens = long_summary["token_count"]
+                    catch_up_from = long_covered + 1
+                    if long_covered >= message_seq_in_session:
+                        # Nothing after it: condense it with the interval's
+                        # messages, as an ordinary short summary would.
+                        catch_up_from = None
 
-        messages: list[Message] = await crud.get_messages_by_seq_range(
-            db,
+        if catch_up_from is None:
+            # Calculate the sequence range for messages to summarize
+            # We want to get the last N messages where N is the configured summary interval
+            start_seq = max(message_seq_in_session - messages_per_summary + 1, 1)
+
+            messages = await crud.get_messages_by_seq_range(
+                db,
+                workspace_name,
+                session_name,
+                start_seq=start_seq,
+                end_seq=message_seq_in_session,
+            )
+            if not messages:
+                logger.warning("No messages to summarize for message %s", message_id)
+                return
+
+            # The window is chosen by message count, so it can outgrow the model's
+            # context window. Fit it to the input budget, dropping the oldest
+            # messages first.
+            window_size = len(messages)
+            message_budget = (
+                settings.SUMMARY.MAX_INPUT_TOKENS
+                - prompt_tokens
+                - _count_prompt_tokens(previous_summary_text or "")
+                - _PROMPT_SLACK_TOKENS
+            )
+            messages, formatted_messages, clipped = _fit_messages_to_budget(
+                messages, message_budget
+            )
+            if not messages:
+                logger.warning(
+                    "No room for messages in the %s summary for message %s: the "
+                    + "prompt and previous summary use the whole input budget of %s "
+                    + "tokens",
+                    summary_type.name,
+                    message_id,
+                    settings.SUMMARY.MAX_INPUT_TOKENS,
+                )
+                return
+            if len(messages) < window_size:
+                logger.warning(
+                    "Dropped the oldest %s of %s messages from the %s summary for "
+                    + "message %s to stay under the input budget of %s tokens",
+                    window_size - len(messages),
+                    window_size,
+                    summary_type.name,
+                    message_id,
+                    settings.SUMMARY.MAX_INPUT_TOKENS,
+                )
+            window = _window(messages, formatted_messages, clipped)
+
+    if window is not None:
+        saved = await _summarize_window(
             workspace_name,
             session_name,
-            start_seq=start_seq,
-            end_seq=message_seq_in_session,
+            session_id=session_id,
+            summary_type=summary_type,
+            configuration=configuration,
+            prompt_tokens=prompt_tokens,
+            window=window,
+            previous_summary_text=previous_summary_text,
+            previous_summary_tokens=previous_summary_tokens,
+            message_public_id=message_public_id,
+            message_seq_in_session=message_seq_in_session,
+            metric_key=f"summary_{workspace_name}_{message_id}",
+            summary_start=summary_start,
+            queue_item_id=queue_item_id,
+            raise_errors=catch_up,
         )
-        if not messages:
-            logger.warning("No messages to summarize for message %s", message_id)
-            return
+        if catch_up and saved is None:
+            raise SummaryCatchUpIncomplete(
+                f"{summary_type.name} summary of session {session_name} wasn't "
+                + f"saved at message {message_seq_in_session}"
+            )
+        return
+    if catch_up_from is None:
+        return
 
-        # The window is chosen by message count, so it can outgrow the model's
-        # context window. Fit it to the input budget, dropping the oldest
-        # messages first (DEV-3043).
-        window_size = len(messages)
-        message_budget = (
+    # Chunks whose summary came back bad (a refusal, an empty answer). They
+    # are skipped, as a regular summary's failed window is lost, so one bad
+    # chunk can't hold back the rest of the session; the task then reports them.
+    skipped: list[tuple[int, int]] = []
+
+    start = catch_up_from
+    while start <= message_seq_in_session:
+        budget = (
             settings.SUMMARY.MAX_INPUT_TOKENS
             - prompt_tokens
             - _count_prompt_tokens(previous_summary_text or "")
             - _PROMPT_SLACK_TOKENS
         )
-        messages, formatted_messages, clipped = _fit_messages_to_budget(
-            messages, message_budget
-        )
-        if not messages:
-            logger.warning(
-                "No room for messages in the %s summary for message %s: the "
-                + "prompt and previous summary use the whole input budget of %s "
-                + "tokens",
-                summary_type.name,
-                message_id,
-                settings.SUMMARY.MAX_INPUT_TOKENS,
+        async with tracked_db("summary.catch_up") as db:
+            # The next live messages, however many sequence numbers deleted
+            # messages left empty.
+            fetched = await crud.get_messages_by_seq_range(
+                db,
+                workspace_name,
+                session_name,
+                start_seq=start,
+                end_seq=message_seq_in_session,
+                limit=_CATCH_UP_FETCH,
             )
-            return
-        if len(messages) < window_size:
-            logger.warning(
-                "Dropped the oldest %s of %s messages from the %s summary for "
-                + "message %s to stay under the input budget of %s tokens",
-                window_size - len(messages),
-                window_size,
-                summary_type.name,
-                message_id,
-                settings.SUMMARY.MAX_INPUT_TOKENS,
+            chunk, formatted_chunk, chunk_clipped = _fit_oldest_messages_to_budget(
+                fetched, min(_CATCH_UP_CHUNK_TOKENS, budget), budget
             )
-
-        # Extract values before closing session
-        last_message_id = messages[-1].id
-        last_message_content_preview = messages[-1].content[:30]
-        message_count = len(messages)
-        source_message_ids = [message.public_id for message in messages]
-
-        # A clipped message is sent shorter than its stored count says.
-        messages_tokens = (
-            _count_prompt_tokens(formatted_messages)
-            if clipped
-            else sum([message.token_count for message in messages])
+            chunk_window = (
+                _window(chunk, formatted_chunk, chunk_clipped) if chunk else None
+            )
+        if chunk_window is None:
+            if not fetched:
+                break
+            raise SummaryCatchUpIncomplete(
+                f"No room for messages in the {summary_type.name} summary of "
+                + f"session {session_name}: the prompt and previous summary use "
+                + "the whole input budget"
+            )
+        try:
+            saved = await _summarize_window(
+                workspace_name,
+                session_name,
+                session_id=session_id,
+                summary_type=summary_type,
+                configuration=configuration,
+                prompt_tokens=prompt_tokens,
+                window=chunk_window,
+                previous_summary_text=previous_summary_text,
+                previous_summary_tokens=previous_summary_tokens,
+                message_public_id=chunk_window.last_public_id,
+                message_seq_in_session=chunk_window.last_seq,
+                metric_key=f"summary_{workspace_name}_{message_id}",
+                # Each chunk is timed on its own.
+                summary_start=time.perf_counter(),
+                queue_item_id=queue_item_id,
+                # A failed call reaches the queue and leaves the checkpoint at
+                # the last saved chunk, where a retry or the next summary
+                # resumes; only a bad answer (a refusal, an empty one) skips.
+                raise_errors=True,
+            )
+        except EmptySummaryError:
+            saved = None
+        if saved is None:
+            skipped.append((chunk_window.first_seq, chunk_window.last_seq))
+        else:
+            previous_summary_text = saved["content"]
+            previous_summary_tokens = saved["token_count"]
+        start = chunk_window.last_seq + 1
+    if skipped:
+        raise SummaryCatchUpIncomplete(
+            f"{summary_type.name} summary of session {session_name} skipped "
+            + ", ".join(f"messages {a}-{b}" for a, b in skipped)
         )
-        previous_summary_tokens = latest_summary["token_count"] if latest_summary else 0
-        input_tokens = messages_tokens + previous_summary_tokens
+
+
+async def _covered_seq(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    summary: "Summary | None",
+) -> int:
+    """The sequence number of the last message a summary covers; 0 for none.
+
+    Read as the newest message at or before the summary's message id, so a
+    deleted message still places the summary.
+    """
+    if summary is None:
+        return 0
+    seq = await db.scalar(
+        select(func.max(models.Message.seq_in_session)).where(
+            models.Message.tenant_id == models.scoped_tenant_id(),
+            models.Message.workspace_name == workspace_name,
+            models.Message.session_name == session_name,
+            models.Message.id <= summary["message_id"],
+        )
+    )
+    return int(seq or 0)
+
+
+async def _summarize_window(
+    workspace_name: str,
+    session_name: str,
+    *,
+    session_id: str,
+    summary_type: SummaryType,
+    configuration: schemas.ResolvedConfiguration,
+    prompt_tokens: int,
+    window: _Window,
+    previous_summary_text: str | None,
+    previous_summary_tokens: int,
+    message_public_id: str,
+    message_seq_in_session: int,
+    metric_key: str,
+    summary_start: float,
+    queue_item_id: int | None,
+    raise_errors: bool = False,
+) -> "Summary | None":
+    """Summarize one window of messages onto the previous summary, and save it.
+
+    Returns the saved summary, or None when the result was a fallback, which
+    is never saved. With `raise_errors`, a failed call is raised instead of
+    becoming a fallback.
+    """
+    messages_tokens = window.tokens
+    input_tokens = messages_tokens + previous_summary_tokens
 
     # One run id per summary: its LLM calls and its summary-created event share it.
     run_id = generate_nanoid()
@@ -672,20 +924,21 @@ async def _create_and_save_summary(
         llm_input_tokens,
         llm_output_tokens,
     ) = await _create_summary(
-        formatted_messages=formatted_messages,
+        formatted_messages=window.formatted,
         previous_summary_text=previous_summary_text,
         summary_type=summary_type,
         input_tokens=input_tokens,
         message_public_id=message_public_id,
-        last_message_id=last_message_id,
-        last_message_content_preview=last_message_content_preview,
-        message_count=message_count,
+        last_message_id=window.last_id,
+        last_message_content_preview=window.last_preview,
+        message_count=window.count,
         custom_instructions=configuration.summary.custom_instructions,
+        raise_errors=raise_errors,
         telemetry=LLMTelemetryContext(
             workspace_name=workspace_name,
             session_id=session_id,
             trace_id=run_id,
-            source_message_ids=source_message_ids,
+            source_message_ids=window.source_ids,
             queue_item_ids=[queue_item_id] if queue_item_id is not None else [],
             custom_instructions=configuration.summary.custom_instructions,
         ),
@@ -723,13 +976,13 @@ async def _create_and_save_summary(
             await summary_write.post_commit()
 
     accumulate_metric(
-        f"summary_{workspace_name}_{message_id}",
+        metric_key,
         f"{summary_type.name}_summary_text",
         new_summary["content"],
         "blob",
     )
     accumulate_metric(
-        f"summary_{workspace_name}_{message_id}",
+        metric_key,
         f"{summary_type.name}_summary_size",
         new_summary["token_count"],
         "tokens",
@@ -737,7 +990,7 @@ async def _create_and_save_summary(
 
     summary_duration = (time.perf_counter() - summary_start) * 1000
     accumulate_metric(
-        f"summary_{workspace_name}_{message_id}",
+        metric_key,
         f"{summary_type.name}_summary_creation",
         summary_duration,
         "ms",
@@ -745,9 +998,6 @@ async def _create_and_save_summary(
 
     # Emit telemetry event (only for non-fallback summaries).
     if not is_fallback:
-        # `prompt_tokens` is set in the `if not is_fallback` block above for
-        # both SHORT and LONG summary types — we're inside the same branch, so
-        # it's guaranteed bound here.
         emit(
             AgentToolSummaryCreatedEvent(
                 run_id=run_id,
@@ -756,7 +1006,7 @@ async def _create_and_save_summary(
                 workspace_name=workspace_name,
                 session_name=session_name,
                 message_id=message_public_id,
-                message_count=len(messages),
+                message_count=window.count,
                 message_seq_in_session=message_seq_in_session,
                 summary_type="short" if summary_type == SummaryType.SHORT else "long",
                 input_tokens=llm_input_tokens,
@@ -771,6 +1021,7 @@ async def _create_and_save_summary(
                 custom_instructions_source=configuration.summary.custom_instructions_source,
             )
         )
+    return None if is_fallback else new_summary
 
 
 async def _create_summary(
@@ -784,6 +1035,7 @@ async def _create_summary(
     message_count: int,
     custom_instructions: str | None = None,
     *,
+    raise_errors: bool = False,
     telemetry: LLMTelemetryContext | None = None,
 ) -> tuple[Summary, bool, int, int]:
     """
@@ -799,6 +1051,8 @@ async def _create_summary(
         last_message_content_preview: Preview of last message content for fallback
         message_count: Number of messages for fallback
         custom_instructions: Resolved summary custom instructions, if any
+        raise_errors: Raise a failed call (a timeout, a provider error)
+            instead of falling back; a bad answer still falls back.
         telemetry: Source identity carried through summary generation.
 
     Returns:
@@ -886,6 +1140,8 @@ async def _create_summary(
             )
         raise
     except Exception:
+        if raise_errors:
+            raise
         logger.exception("Error generating summary!")
         # Fallback to a basic summary in case of error
         summary_text = _basic_fallback_summary(
@@ -1308,6 +1564,39 @@ def _fit_messages_to_budget(
 
     kept = messages[len(messages) - len(lines) :] if lines else []
     return kept, "\n".join(reversed(lines)), clipped
+
+
+def _fit_oldest_messages_to_budget(
+    messages: list[models.Message], target_tokens: int, budget_tokens: int
+) -> tuple[list[models.Message], str, bool]:
+    """Keep the oldest messages whose formatted lines fit in `target_tokens`.
+
+    The catch-up counterpart of `_fit_messages_to_budget`: messages are taken
+    oldest first and the newer ones left for the next chunk. The oldest message
+    is always taken, even past the target, while it fits in `budget_tokens`;
+    past that, its content is clipped to the budget and marked as truncated.
+
+    Returns:
+        The kept messages, oldest first; their text formatted as by
+        `_format_messages`; and whether the one kept message was clipped.
+    """
+    lines: list[str] = []
+    used_tokens = 0
+    for message in messages:
+        line = f"{message.peer_name}: {message.content}"
+        cost = _count_prompt_tokens(line) + 1
+        limit = budget_tokens if not lines else target_tokens
+        if used_tokens + cost > limit:
+            break
+        lines.append(line)
+        used_tokens += cost
+
+    if not lines and messages:
+        clipped_line = _clip_message_line(messages[0], budget_tokens - 1)
+        if clipped_line is None:
+            return [], "", False
+        return messages[:1], clipped_line, True
+    return messages[: len(lines)], "\n".join(lines), False
 
 
 def _clip_message_line(message: models.Message, budget_tokens: int) -> str | None:
