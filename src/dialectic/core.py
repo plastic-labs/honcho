@@ -504,7 +504,9 @@ class DialecticAgent:
         """Sentence introducing the prefetched block in the user message."""
         return (
             "The following observations were found to be semantically relevant to your query. "
-            "Use these as primary context. You may still use tools to find additional information if needed."
+            "Use these as primary context. They are conclusions drawn from the messages, not "
+            "the messages themselves: if they don't hold the specific answer, search the "
+            "messages before answering."
         )
 
     def _telemetry_context(self, track_name: str | None = None) -> LLMTelemetryContext:

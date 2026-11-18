@@ -226,6 +226,7 @@ Each entry must start with one of these four prefixes (exact case, followed by a
 4. **Type-agnostic.** The target observee may not be human. Do not require name/age/location/family/occupation fields.
 5. **No behavioral content.** TRAITs, behavioral tendencies, patterns, and inferred preferences belong in observations, not on the peer card. Do not write `TRAIT:` entries or behavioral `PREFERENCE:` entries — they will be rejected.
 6. **No evidence bundles.** Each entry is one concise fact. No `e.g.` clauses, no parenthetical example lists, no semicolon-separated value dumps.
+7. **Current.** Each entry holds the latest value. When observations give a marker different values over time (a move, a new job, a breakup), write the newest one, and leave out a link that has ended rather than keeping the old partner, employer or city.
 
 ### Migrating an existing peer card
 
@@ -359,9 +360,21 @@ The target observee is the peer identified above. When created observations need
 """
 
     def _build_peer_card_context(self, peer_card: list[str] | None) -> str:
-        """Build the peer card context section for user prompts."""
-        if not peer_card:
+        """Build the peer card context section for user prompts.
+
+        `None` means the card isn't shown to this specialist; an empty list
+        means it was fetched and the peer has none yet, which the prompt says,
+        so a specialist that can write the card knows to create it.
+        """
+        if peer_card is None:
             return ""
+        if not peer_card:
+            return """
+## CURRENT PEER CARD
+
+This peer has no peer card yet. If what you find includes stable identity markers (see the PEER CARD section), create the card with `update_peer_card`.
+
+"""
         facts = "\n".join(f"- {fact}" for fact in peer_card)
         return f"""
 ## CURRENT PEER CARD
@@ -483,13 +496,18 @@ If you update it, send the full deduplicated list and remove stale entries.
                 # Fetch current peer card to inject into prompt (saves a tool call).
                 # Skipped when inject_peer_card is False (card-refresh rebuild
                 # mode): the card must be reconstructed from observations only.
+                # A peer with no card yet gets an empty list, so the prompt says
+                # there is none to create rather than leaving the card out.
                 current_peer_card: list[str] | None = None
                 if peer_card_enabled and self.inject_peer_card:
-                    current_peer_card = await crud.get_peer_card(
-                        db,
-                        workspace_name=workspace_name,
-                        observer=observer,
-                        observed=observed,
+                    current_peer_card = (
+                        await crud.get_peer_card(
+                            db,
+                            workspace_name=workspace_name,
+                            observer=observer,
+                            observed=observed,
+                        )
+                        or []
                     )
 
                 memory_counts: str | None = None
@@ -876,8 +894,13 @@ class DeductionSpecialist(BaseSpecialist):
     ) -> str:
         _ = observed
         peer_card_section = ""
+        card_update = ""
         if peer_card_enabled:
             peer_card_section = PEER_CARD_SYSTEM_SECTION
+            card_update = (
+                "\n- If the old value is on the peer card (a job, a city, a "
+                + "relationship), update the card with the new one in this pass"
+            )
 
         return f"""You are a deductive reasoning agent analyzing observations about the target observee.
 
@@ -902,7 +925,7 @@ Once you understand what's there, create observations and clean up:
 When the same fact has different values at different times:
 - "meeting Tuesday" [old] → "meeting moved to Thursday" [new]
 - Create a deductive update observation
-- DELETE the outdated observation immediately
+- DELETE the outdated observation immediately{card_update}
 
 ### Logical Implications
 Extract implicit information:
