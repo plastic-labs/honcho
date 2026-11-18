@@ -752,7 +752,9 @@ async def remove_sessions_from_scope(
             .where(models.SessionPeer.peer_name == scope_peer)
             .where(models.SessionPeer.session_name.in_(removed))
             .where(models.SessionPeer.left_at.is_(None))
-            .values(left_at=func.now())
+            # The statement's time, not the transaction's: this may have waited
+            # on a rejoin of these rows that began after this transaction did.
+            .values(left_at=func.statement_timestamp())
         )
     for session_name in removed:
         await insert_scope_task(

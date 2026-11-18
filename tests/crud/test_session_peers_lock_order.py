@@ -19,6 +19,7 @@ that lock.
 """
 
 import asyncio
+import contextlib
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 
@@ -34,6 +35,7 @@ from src.crud.session import (
 )
 from src.db import tenant_context
 from src.exceptions import ResourceNotFoundException
+from src.utils.scopes import scope_peer_name
 
 _PACE_SECONDS = 0.3
 _TRIGGER = "test_pace_session_peer_write"
@@ -188,7 +190,11 @@ async def _session_with_members(
 
 
 async def _mark_for_deletion(
-    factory: async_sessionmaker[AsyncSession], workspace_name: str, session_name: str
+    factory: async_sessionmaker[AsyncSession],
+    workspace_name: str,
+    session_name: str,
+    *,
+    tombstone: bool = False,
 ) -> None:
     async with factory() as db:
         session = await db.scalar(
@@ -198,44 +204,68 @@ async def _mark_for_deletion(
             )
         )
         assert session is not None
-        session.is_active = False
+        if tombstone:
+            session.deleted_at = func.now()
+        else:
+            session.is_active = False
         await db.commit()
+
+
+async def _active(db: AsyncSession, workspace_name: str, session_name: str) -> set[str]:
+    rows = await db.scalars(
+        select(models.SessionPeer.peer_name).where(
+            models.SessionPeer.workspace_name == workspace_name,
+            models.SessionPeer.session_name == session_name,
+            models.SessionPeer.left_at.is_(None),
+        )
+    )
+    return set(rows)
 
 
 async def _members(
     factory: async_sessionmaker[AsyncSession], workspace_name: str, session_name: str
 ) -> set[str]:
     async with factory() as db:
-        rows = await db.scalars(
-            select(models.SessionPeer.peer_name).where(
-                models.SessionPeer.workspace_name == workspace_name,
-                models.SessionPeer.session_name == session_name,
-                models.SessionPeer.left_at.is_(None),
-            )
-        )
-        return set(rows)
+        return await _active(db, workspace_name, session_name)
 
 
-async def test_a_replace_of_a_session_marked_for_deletion_writes_nothing(
-    db_engine: AsyncEngine, sample_data: tuple[models.Workspace, models.Peer]
+_ENDING_WRITES = [
+    pytest.param(_replace(["x"]), id="replace"),
+    pytest.param(_remove(["a"]), id="remove"),
+]
+
+
+@pytest.mark.parametrize("tombstone", [False, True], ids=["marked", "tombstoned"])
+@pytest.mark.parametrize("write", _ENDING_WRITES)
+async def test_a_write_to_a_session_marked_for_deletion_writes_nothing(
+    db_engine: AsyncEngine,
+    sample_data: tuple[models.Workspace, models.Peer],
+    write: Write,
+    tombstone: bool,
 ) -> None:
     workspace_name = sample_data[0].name
     factory, session_name = await _session_with_members(db_engine, workspace_name)
-    await _mark_for_deletion(factory, workspace_name, session_name)
+    await _mark_for_deletion(factory, workspace_name, session_name, tombstone=tombstone)
 
     async with factory() as db:
         with pytest.raises(ResourceNotFoundException):
-            await _replace(["x"])(db, workspace_name, session_name)
+            await write(db, workspace_name, session_name)
+        # Read in the writer's own transaction, before its rollback could hide
+        # a change it made before raising.
+        assert await _active(db, workspace_name, session_name) == set(_MEMBERS)
         await db.rollback()
 
     assert await _members(factory, workspace_name, session_name) == set(_MEMBERS)
 
 
-async def test_a_replace_that_waited_on_the_lock_sees_a_deletion_made_meanwhile(
-    db_engine: AsyncEngine, sample_data: tuple[models.Workspace, models.Peer]
+@pytest.mark.parametrize("write", _ENDING_WRITES)
+async def test_a_write_that_waited_on_the_lock_sees_a_deletion_made_meanwhile(
+    db_engine: AsyncEngine,
+    sample_data: tuple[models.Workspace, models.Peer],
+    write: Write,
 ) -> None:
     """The session is read after the lock, so a deletion committed while the
-    replace waited is seen, and the replace writes nothing."""
+    write waited is seen, and the write changes nothing."""
     workspace_name = sample_data[0].name
     factory, session_name = await _session_with_members(db_engine, workspace_name)
     key = _session_membership_lock_key(workspace_name, session_name)
@@ -245,34 +275,145 @@ async def test_a_replace_that_waited_on_the_lock_sees_a_deletion_made_meanwhile(
 
         pids: list[int] = []
 
-        async def replace() -> None:
+        async def blocked_write() -> set[str]:
             async with factory() as db:
                 pids.append(int(await db.scalar(select(func.pg_backend_pid())) or 0))
                 try:
-                    await _replace(["x"])(db, workspace_name, session_name)
+                    with pytest.raises(ResourceNotFoundException):
+                        await write(db, workspace_name, session_name)
+                    # In the writer's own transaction, before the rollback.
+                    return await _active(db, workspace_name, session_name)
                 finally:
                     await db.rollback()
 
-        waiting = asyncio.create_task(replace())
-        # Until the replace's backend waits on the advisory lock.
-        for _ in range(200):
-            assert not waiting.done(), "the replace didn't wait on the lock"
-            if pids and await holder.scalar(
-                select(func.count())
-                .select_from(text("pg_locks"))
-                .where(text("pid = :pid AND locktype = 'advisory' AND NOT granted")),
-                {"pid": pids[0]},
-            ):
-                break
-            await asyncio.sleep(0.05)
-        else:
-            raise AssertionError("the replace never reached the lock")
-        await _mark_for_deletion(factory, workspace_name, session_name)
+        waiting = asyncio.create_task(blocked_write())
+        try:
+            # Until the write's backend waits on the advisory lock.
+            for _ in range(200):
+                assert not waiting.done(), "the write didn't wait on the lock"
+                if pids and await holder.scalar(
+                    select(func.count())
+                    .select_from(text("pg_locks"))
+                    .where(
+                        text("pid = :pid AND locktype = 'advisory' AND NOT granted")
+                    ),
+                    {"pid": pids[0]},
+                ):
+                    break
+                await asyncio.sleep(0.05)
+            else:
+                raise AssertionError("the write never reached the lock")
+            await _mark_for_deletion(factory, workspace_name, session_name)
+        except BaseException:
+            # Stop the write while the lock still holds it, so it can't go on
+            # to change the session, which is still active.
+            waiting.cancel()
+            with contextlib.suppress(BaseException):
+                await waiting
+            raise
         await holder.rollback()  # releases the lock
 
-    with pytest.raises(ResourceNotFoundException):
-        await asyncio.wait_for(waiting, timeout=10)
+    seen_by_writer = await asyncio.wait_for(waiting, timeout=10)
+    assert seen_by_writer == set(_MEMBERS)
     assert await _members(factory, workspace_name, session_name) == set(_MEMBERS)
+
+
+async def _membership_times(
+    factory: async_sessionmaker[AsyncSession],
+    workspace_name: str,
+    session_name: str,
+    peer_name: str,
+) -> tuple[object, object]:
+    async with factory() as db:
+        row = (
+            await db.execute(
+                select(models.SessionPeer.joined_at, models.SessionPeer.left_at).where(
+                    models.SessionPeer.workspace_name == workspace_name,
+                    models.SessionPeer.session_name == session_name,
+                    models.SessionPeer.peer_name == peer_name,
+                )
+            )
+        ).one()
+        return row.joined_at, row.left_at
+
+
+@pytest.mark.parametrize(
+    "end_a",
+    [
+        pytest.param(_remove(["a"]), id="remove"),
+        pytest.param(_replace(["b", "c", "d"]), id="replace"),
+    ],
+)
+async def test_a_membership_never_ends_before_it_starts(
+    db_engine: AsyncEngine,
+    sample_data: tuple[models.Workspace, models.Peer],
+    end_a: Write,
+) -> None:
+    """A write that ends a membership can begin its transaction before a rejoin
+    of that member commits; the end is the time of the write, not of the
+    transaction's start, so it's never before the rejoin."""
+    workspace_name = sample_data[0].name
+    factory, session_name = await _session_with_members(db_engine, workspace_name)
+    async with factory() as db:
+        await _remove(["a"])(db, workspace_name, session_name)
+
+    async with factory() as ender:
+        began = await ender.scalar(select(func.now()))  # begins its transaction
+        async with factory() as db:
+            await _replace(_MEMBERS)(db, workspace_name, session_name)  # rejoins a
+        joined_at, left_at = await _membership_times(
+            factory, workspace_name, session_name, "a"
+        )
+        assert left_at is None, "a wasn't rejoined"
+        assert joined_at > began  # pyright: ignore[reportOperatorIssue]
+        await end_a(ender, workspace_name, session_name)
+
+    joined_at, left_at = await _membership_times(
+        factory, workspace_name, session_name, "a"
+    )
+    assert left_at is not None
+    assert left_at >= joined_at  # pyright: ignore[reportOperatorIssue]
+
+
+async def test_a_scope_membership_never_ends_before_it_starts(
+    db_engine: AsyncEngine, sample_data: tuple[models.Workspace, models.Peer]
+) -> None:
+    workspace_name = sample_data[0].name
+    factory, session_name = await _session_with_members(db_engine, workspace_name)
+    scope_name = f"s{generate_nanoid(alphabet='0123456789abcdef', size=12)}"
+    async with factory() as db:
+        result = await crud.get_or_create_scopes(
+            db, workspace_name, [schemas.ScopeCreate(name=scope_name)]
+        )
+        await db.commit()
+    await result.post_commit()
+    async with factory() as db:
+        await crud.add_sessions_to_scope(db, workspace_name, scope_name, [session_name])
+    async with factory() as db:
+        await crud.remove_sessions_from_scope(
+            db, workspace_name, scope_name, [session_name]
+        )
+
+    async with factory() as ender:
+        began = await ender.scalar(select(func.now()))  # begins its transaction
+        async with factory() as db:
+            await crud.add_sessions_to_scope(
+                db, workspace_name, scope_name, [session_name]
+            )
+        joined_at, left_at = await _membership_times(
+            factory, workspace_name, session_name, scope_peer_name(scope_name)
+        )
+        assert left_at is None, "the session wasn't added back"
+        assert joined_at > began  # pyright: ignore[reportOperatorIssue]
+        await crud.remove_sessions_from_scope(
+            ender, workspace_name, scope_name, [session_name]
+        )
+
+    joined_at, left_at = await _membership_times(
+        factory, workspace_name, session_name, scope_peer_name(scope_name)
+    )
+    assert left_at is not None
+    assert left_at >= joined_at  # pyright: ignore[reportOperatorIssue]
 
 
 def test_lock_key_is_per_session_and_per_tenant(monkeypatch: pytest.MonkeyPatch):

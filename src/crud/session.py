@@ -1044,9 +1044,11 @@ async def _lock_session_membership(
     row lock in their transaction, so it never waits while holding one, and no
     other path takes it.
 
-    Adding members doesn't take it. An add has no cycle with a replace when its
-    read of the current members is current; one whose read is stale (a third
-    writer rejoined a peer in between) can still cycle with a replace.
+    Adding members doesn't take it. An add that writes only members who aren't
+    active has no cycle with a replace. An add that rewrites an active member
+    can cycle with one: an explicit ``joined_at`` for a member who is already
+    active rewrites that row, and so does an add whose read of the current
+    members is stale (a third writer rejoined one of them in between).
 
     A transaction-scoped advisory lock rather than a lock on the ``sessions``
     row: session and workspace deletion delete ``session_peers`` before the
@@ -1069,6 +1071,32 @@ def _session_membership_lock_key(workspace_name: str, session_name: str) -> int:
         ["session-membership", models.scoped_tenant_id(), workspace_name, session_name]
     )
     return int.from_bytes(hashlib.sha256(name.encode()).digest()[:8], signed=True)
+
+
+async def _require_active_session(
+    db: AsyncSession, workspace_name: str, session_name: str
+) -> None:
+    """Raise unless the session exists, isn't marked for deletion, and neither it
+    nor its workspace is tombstoned (what ``get_session`` checks, uncached).
+
+    Called by a replace or remove right after it takes the membership lock. It
+    reads the database rather than the cache, so a write that waited on the lock
+    sees a deletion committed meanwhile and writes nothing. Waiting is also why
+    these writes end memberships at ``statement_timestamp()`` rather than
+    ``now()``: ``now()`` is when the transaction began, which can be before a
+    rejoin it waited on, so the membership would end before it started.
+    """
+    session = await db.scalar(
+        select(models.Session)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.name == session_name)
+        .where(models.Session.is_active == True)  # noqa: E712
+        .where(live_session_row())
+    )
+    if session is None:
+        raise ResourceNotFoundException(
+            f"Session {session_name} not found in workspace {workspace_name}"
+        )
 
 
 async def remove_peers_from_session(
@@ -1098,9 +1126,8 @@ async def remove_peers_from_session(
         ResourceNotFoundException: If the session does not exist
         ValidationException: If any named peer is a scope
     """
-    # Verify session exists
-    await get_session(db, session_name, workspace_name)
     await _lock_session_membership(db, workspace_name, session_name)
+    await _require_active_session(db, workspace_name, session_name)
 
     # Scope membership is ended through the scopes routes, which also reconcile
     # the scope's copies. Rejected up front for a clear 422 rather than a silent
@@ -1124,7 +1151,8 @@ async def remove_peers_from_session(
             models.SessionPeer.peer_name.in_(peer_names),
             models.SessionPeer.left_at.is_(None),  # Only update active peers
         )
-        .values(left_at=func.now())
+        # The statement's time, not the transaction's: see _require_active_session.
+        .values(left_at=func.statement_timestamp())
     )
     if not _allow_scope_peers:
         # Closes the window the advisory check above cannot: the exclusion is
@@ -1304,19 +1332,7 @@ async def set_peers_for_session(
     # ordered against another replace or remove of this session, only serialized.
     await _lock_session_membership(db, workspace_name, session_name)
 
-    # The session must exist and not be marked for deletion, read after the
-    # lock: a replace that waited on it sees a deletion committed meanwhile and
-    # writes nothing.
-    session = await db.scalar(
-        select(models.Session)
-        .where(models.Session.workspace_name == workspace_name)
-        .where(models.Session.name == session_name)
-        .where(models.Session.is_active == True)  # noqa: E712
-    )
-    if session is None:
-        raise ResourceNotFoundException(
-            f"Session {session_name} not found in workspace {workspace_name}"
-        )
+    await _require_active_session(db, workspace_name, session_name)
 
     # Soft delete every *ordinary* active membership not in the incoming map.
     # Scope memberships are deliberately preserved: this route replaces the peers
@@ -1342,7 +1358,8 @@ async def set_peers_for_session(
                 .correlate(models.SessionPeer)
             ),
         )
-        .values(left_at=func.now())
+        # The statement's time, not the transaction's: see _require_active_session.
+        .values(left_at=func.statement_timestamp())
     )
     await db.execute(update_stmt)
 
