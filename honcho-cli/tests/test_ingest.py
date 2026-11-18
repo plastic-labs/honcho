@@ -36,6 +36,8 @@ def cfg(tmp_path, monkeypatch):
     monkeypatch.setattr("honcho_cli.config.CONFIG_FILE", f)
     for k in [k for k in os.environ if k.startswith("HONCHO_")]:
         monkeypatch.delenv(k)
+    # These commands are experimental: on here, off in the tests that check that.
+    monkeypatch.setenv("HONCHO_EXPERIMENTAL", "1")
     f.write_text(json.dumps({"apiKey": "k", "environmentUrl": BASE_URL}))
     return f
 
@@ -686,3 +688,76 @@ def test_reset_before_link_needs_confirmation(cfg, runner):
     assert result.exit_code == 1
     assert json.loads(result.stderr)["error"]["code"] == "CONFIRMATION_REQUIRED"
     link.assert_not_called()
+
+
+_EXPERIMENTAL = [
+    ["ingest", "import", "records.jsonl", "-w", "ws1"],
+    ["ingest", "status", "-w", "ws1"],
+    ["ingest", "derive", "-w", "ws1"],
+    ["ingest", "reset", "-w", "ws1", "--yes"],
+    ["ingest", "link", "1", "2", "-w", "ws1"],
+    ["ingest", "unlink", "1", "alex", "-w", "ws1"],
+    ["peer", "exclude", "1", "-w", "ws1"],
+    ["peer", "include", "1", "-w", "ws1"],
+    ["session", "exclude", "1", "-w", "ws1"],
+    ["session", "include", "1", "-w", "ws1"],
+    ["workspace", "create", "ws1", "--auto"],
+]
+
+
+@pytest.mark.parametrize("args", _EXPERIMENTAL, ids=lambda a: " ".join(a[:2]))
+def test_experimental_commands_are_off_unless_opted_in(cfg, runner, monkeypatch, args):
+    monkeypatch.delenv("HONCHO_EXPERIMENTAL")
+    reached = MagicMock(side_effect=AssertionError("ran without opting in"))
+    with (
+        patch("honcho_cli.commands.ingest.get_client", reached),
+        patch("honcho_cli.commands.workspace.get_client", reached),
+    ):
+        result = runner.invoke(app, ["--json", *args])
+
+    assert result.exit_code == 1, result.output
+    error = json.loads(result.stderr)["error"]
+    assert error["code"] == "EXPERIMENTAL"
+    assert "HONCHO_EXPERIMENTAL=1" in error["message"]
+    reached.assert_not_called()
+
+
+def test_a_plain_workspace_create_needs_no_opt_in(cfg, runner, monkeypatch):
+    monkeypatch.delenv("HONCHO_EXPERIMENTAL")
+    client = MagicMock()
+    with (
+        patch(
+            "honcho_cli.commands.workspace.get_client", return_value=(client, _config())
+        ),
+        patch("honcho_cli.commands.workspace._with_workspace", return_value=MagicMock()),
+    ):
+        result = runner.invoke(app, ["workspace", "create", "ws1"])
+
+    assert result.exit_code == 0, result.output
+
+
+def test_experimental_commands_say_so_in_help(cfg, runner, monkeypatch):
+    monkeypatch.delenv("HONCHO_EXPERIMENTAL")
+
+    ingest_help = runner.invoke(app, ["ingest", "--help"])
+    peer_help = runner.invoke(app, ["peer", "--help"])
+
+    assert ingest_help.exit_code == 0
+    assert "HONCHO_EXPERIMENTAL=1" in ingest_help.output
+    for name in ("import", "status", "derive", "reset", "link", "unlink"):
+        command_help = runner.invoke(app, ["ingest", name, "--help"])
+        assert command_help.exit_code == 0, name
+        assert "Experimental:" in command_help.output, name
+    assert "Experimental:" in peer_help.output
+
+
+def test_the_refusal_honors_a_commands_own_json_flag(cfg, runner, monkeypatch):
+    # In a terminal, only `--json` makes the error JSON; here it comes after
+    # the command, where the command itself parses it.
+    monkeypatch.delenv("HONCHO_EXPERIMENTAL")
+    monkeypatch.setattr("honcho_cli.output.is_tty", lambda: True)
+
+    result = runner.invoke(app, ["ingest", "derive", "-w", "ws1", "--json"])
+
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["error"]["code"] == "EXPERIMENTAL"

@@ -11,6 +11,7 @@ from honcho.api_types import PeerConfig
 
 from honcho_cli.commands.ingest import set_peer_modeled
 from honcho_cli.commands.workspace import _config_to_dict, _handle_chat_error, _handle_error, _raw_list
+from honcho_cli.experimental import experimental
 from honcho_cli.output import print_error, print_result, use_json
 from honcho_cli.recall import parse_csv_repeatable, reject_incompatible_recall, scope_for_sdk
 from honcho_cli.validation import validate_resource_id
@@ -351,6 +352,7 @@ def representation(
 
 
 @app.command("exclude")
+@experimental
 def exclude_peer(
     ref: str = typer.Argument(help="Number from `honcho ingest status`, peer ID, or display name"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
@@ -367,6 +369,7 @@ def exclude_peer(
 
 
 @app.command("include")
+@experimental
 def include_peer(
     ref: str = typer.Argument(help="Number from `honcho ingest status`, peer ID, or display name"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),

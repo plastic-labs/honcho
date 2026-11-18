@@ -587,7 +587,10 @@ class IngestContainer(BaseModel):
 
 
 class IngestRecord(BaseModel):
-    """One source record to ingest: a chat message, a meeting note, an event."""
+    """One source record to ingest: a chat message, a meeting note, an event.
+
+    Experimental: ingest may change or stop working without notice.
+    """
 
     model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 

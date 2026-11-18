@@ -221,10 +221,12 @@ export class Honcho {
    * @param options.maxRetries - Optional custom maximum number of retries for the HTTP client
    * @param options.defaultHeaders - Optional custom default headers for the HTTP client
    * @param options.auto - Create the workspace as an auto workspace, which `ingest`
-   *                       writes to. Only a new workspace can be made auto: on an
-   *                       existing workspace that isn't auto, the first call that
-   *                       creates the workspace throws `ConflictError`. An existing
-   *                       auto workspace works with or without it.
+   *                       writes to. Experimental, like ingest: it may change or
+   *                       stop working without notice. Only a new workspace can be
+   *                       made auto: on an existing workspace that isn't auto, the
+   *                       first call that creates the workspace throws
+   *                       `ConflictError`. An existing auto workspace works with or
+   *                       without it.
    */
   constructor(options: HonchoConfig = {}) {
     const validatedOptions = HonchoConfigSchema.parse(options)
@@ -1351,6 +1353,8 @@ export class Honcho {
    * @returns One result per record, with `index` counted across all batches.
    *          If a request fails, the batches before it are already stored;
    *          sending all the records again is safe.
+   *
+   * @experimental Ingest may change or stop working without notice.
    */
   async ingest(
     records: Iterable<IngestRecord> | AsyncIterable<IngestRecord>,
@@ -1404,6 +1408,8 @@ export class Honcho {
    *
    * @returns `pending`: records released by this call, in total;
    *          `remaining`: records still deferred afterwards
+   *
+   * @experimental Ingest may change or stop working without notice.
    */
   async ingestDerive(): Promise<IngestDeriveResult> {
     let released = 0
@@ -1425,6 +1431,8 @@ export class Honcho {
    * next import puts their records on one person. Nothing already imported
    * moves: the people being merged must have no imported messages yet, so
    * call `ingestReset()`, link, then import again (`ConflictError` otherwise).
+   *
+   * @experimental Ingest may change or stop working without notice.
    */
   async ingestLink(peers: Array<string | Peer>): Promise<IngestLinkResult> {
     const r = await this._http.post<IngestLinkResponse>(
@@ -1443,6 +1451,8 @@ export class Honcho {
    *
    * The account maps to the person it was linked from again. Its records must
    * not be imported yet: call `ingestReset()` first.
+   *
+   * @experimental Ingest may change or stop working without notice.
    */
   async ingestUnlink(options: {
     peer: string | Peer
@@ -1471,6 +1481,8 @@ export class Honcho {
    * gone at once. People, their configuration and links stay.
    *
    * @returns The sessions whose deletion was started
+   *
+   * @experimental Ingest may change or stop working without notice.
    */
   async ingestReset(): Promise<{ sessions: string[] }> {
     return this._http.post<{ sessions: string[] }>(
@@ -1484,6 +1496,8 @@ export class Honcho {
    * Records by derivation state, the tokens still deferred, and how many
    * people and sessions the records map to, with how many of each are not
    * modeled.
+   *
+   * @experimental Ingest may change or stop working without notice.
    */
   async ingestStatus(): Promise<IngestStatus> {
     const s = await this._http.get<IngestStatusResponse>(
@@ -1506,6 +1520,8 @@ export class Honcho {
    * Each lists its source accounts, how many records they wrote, and whether
    * the peer is modeled. Exclude one with
    * `peer.setConfiguration({ observeMe: false })` before `ingestDerive()`.
+   *
+   * @experimental Ingest may change or stop working without notice.
    */
   async ingestPeople(options?: {
     page?: number
@@ -1537,6 +1553,8 @@ export class Honcho {
    *
    * Each gives its container's display name and source, how many records it
    * holds, and whether reasoning is on for it.
+   *
+   * @experimental Ingest may change or stop working without notice.
    */
   async ingestSessions(options?: {
     page?: number

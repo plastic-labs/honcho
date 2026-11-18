@@ -147,11 +147,14 @@ honcho stop --wipe     # also delete volumes
 | `honcho dream list` | Dreams in the workspace, newest first (`-p` for dreams about one peer, `--observer` for one representation) |
 | `honcho dream inspect <id>` | What one dream changed: conclusions created (with what each was derived from), conclusions removed, and the peer card before and after |
 
-### Ingest (auto workspaces)
+### Ingest (auto workspaces, experimental)
 
 Import a connector's export, review what it became, and fix it before anything is derived. Exclusions made before `ingest derive` apply to what is derived; after it, they only affect records released later.
 
+These commands are experimental: they may change or stop working without notice, and aren't ready for production use. They're off by default and run only with `HONCHO_EXPERIMENTAL=1` set; without it they exit 1 and say how to turn them on.
+
 ```bash
+export HONCHO_EXPERIMENTAL=1
 honcho workspace create acme --auto
 honcho ingest import records.jsonl -w acme      # stored, not derived
 honcho ingest status -w acme                     # numbered people and sessions

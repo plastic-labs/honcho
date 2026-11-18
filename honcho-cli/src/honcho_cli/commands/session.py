@@ -12,6 +12,7 @@ from honcho import HonchoError, Session
 
 from honcho_cli.commands.ingest import set_session_modeled
 from honcho_cli.commands.workspace import _config_to_dict, _handle_error, _raw_list
+from honcho_cli.experimental import experimental
 from honcho_cli.output import print_error, print_result, print_transcript, status, use_json
 from honcho_cli.validation import validate_resource_id
 
@@ -659,6 +660,7 @@ def set_metadata(
 
 
 @app.command("exclude")
+@experimental
 def exclude_session(
     ref: str = typer.Argument(help="Number from `honcho ingest status`, session ID, or display name"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
@@ -674,6 +676,7 @@ def exclude_session(
 
 
 @app.command("include")
+@experimental
 def include_session(
     ref: str = typer.Argument(help="Number from `honcho ingest status`, session ID, or display name"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),

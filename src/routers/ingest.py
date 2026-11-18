@@ -185,6 +185,8 @@ async def ingest(
     reason. The workspace must be an auto workspace (created with `auto: true`).
     Only workspace and admin keys may ingest: one batch can create sessions and
     peers anywhere in the workspace.
+
+    Experimental: ingest may change or stop working without notice.
     """
     outcome = await _with_retries(
         db, workspace_id, lambda: ingest_batch(db, workspace_id, batch)
@@ -252,6 +254,8 @@ async def derive(
     queues their derivation. Call again until `remaining` is 0. Configuration
     and observers are resolved when a record is queued, not when it was
     ingested. Only workspace and admin keys may call it.
+
+    Experimental: ingest may change or stop working without notice.
     """
     released = await _with_retries(
         db, workspace_id, lambda: release_deferred(db, workspace_id)
@@ -280,6 +284,8 @@ async def status(
     Records by derivation state, the tokens still deferred, and how many people
     and sessions the records map to, with how many of each are not modeled.
     Only workspace and admin keys may call it.
+
+    Experimental: ingest may change or stop working without notice.
     """
     workspace = await require_auto_workspace(db, workspace_id)
     return await get_ingest_status(db, workspace)
@@ -304,6 +310,8 @@ async def people(
     Each lists its accounts (source, ID and display name), how many records
     they wrote, and whether the peer is modeled. Only workspace and admin keys
     may call it.
+    Experimental: ingest may change or stop working without notice.
+
     """
     await require_auto_workspace(db, workspace_id)
     # Rows, not entities: there is nothing to deduplicate, and the accounts
@@ -333,6 +341,8 @@ async def sessions(
     Each gives its container's display name and source, how many records it
     holds, and whether reasoning is on for it. Only workspace and admin keys may
     call it.
+    Experimental: ingest may change or stop working without notice.
+
     """
     workspace = await require_auto_workspace(db, workspace_id)
     # Rows, not entities: there is nothing to deduplicate, and their JSON
@@ -380,6 +390,8 @@ async def link(
     moves: the people being merged must have no imported messages yet, so
     reset the import (`POST /ingest/reset`), link, then import again. Only
     workspace and admin keys may call it.
+
+    Experimental: ingest may change or stop working without notice.
     """
     await require_auto_workspace(db, workspace_id)
     result = await _with_retries(
@@ -407,6 +419,8 @@ async def unlink(
     The account maps to the person it was linked from again. Its records must
     not be imported yet: reset the import first. Only workspace and admin keys
     may call it.
+
+    Experimental: ingest may change or stop working without notice.
     """
     await require_auto_workspace(db, workspace_id)
     result = await _with_retries(
@@ -439,6 +453,8 @@ async def reset(
     configuration goes with it. `GET /ingest/status` counts only active
     sessions, so it shows the reset straight away. Only workspace and admin
     keys may call it.
+
+    Experimental: ingest may change or stop working without notice.
     """
     await require_auto_workspace(db, workspace_id)
     sessions = await _with_retries(

@@ -1,5 +1,8 @@
 """Ingest commands: import, status, derive, reset, link, unlink.
 
+Experimental, and off unless `HONCHO_EXPERIMENTAL=1` is set (see
+`honcho_cli.experimental`).
+
 Load a connector's export into an auto workspace without deriving it, review
 what it became, exclude what shouldn't be modeled, then derive:
 
@@ -43,13 +46,15 @@ from rich.text import Text
 from honcho_cli._help import HonchoTyperGroup
 from honcho_cli.commands.workspace import _handle_error
 from honcho_cli.common import add_common_options, get_client, handle_cmd_flags
+from honcho_cli.experimental import experimental
 from honcho_cli.ingest_refs import resolve, save_listing
 from honcho_cli.output import print_error, print_json, status, stdout_console, use_json
 from honcho_cli.replay import read_only
 
 app = typer.Typer(
     cls=HonchoTyperGroup,
-    help="Import source records into an auto workspace, review them, and derive.",
+    help="Experimental: import source records into an auto workspace, review them,"
+    + " and derive. Off by default: set HONCHO_EXPERIMENTAL=1.",
 )
 add_common_options(app)
 
@@ -130,6 +135,7 @@ def _chunks(items: Iterable[T], size: int) -> Iterator[list[T]]:
 
 
 @app.command("import")
+@experimental
 def import_records(
     file: str = typer.Argument(
         help="JSONL file of ingest records, one per line (`-` reads stdin)"
@@ -289,6 +295,7 @@ def _print_status(
 
 
 @app.command("status")
+@experimental
 def ingest_status(
     limit: int = typer.Option(50, "--limit", help="People and sessions to list, most records first"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
@@ -336,6 +343,7 @@ STALL_SECONDS = 90
 
 
 @app.command("derive")
+@experimental
 def derive_records(
     watch: bool = typer.Option(False, "--watch", help="Follow the queue until derivation finishes"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
@@ -556,6 +564,7 @@ def _people(client: Honcho) -> list[Any]:
 
 
 @app.command("reset")
+@experimental
 def reset_import(
     yes: bool = typer.Option(False, "--yes", "-y", help="Don't ask for confirmation"),
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait until the deletion has finished"),
@@ -580,6 +589,7 @@ def reset_import(
 
 
 @app.command("link")
+@experimental
 def link_people(
     refs: list[str] = typer.Argument(
         help="People: number from `ingest status`, peer ID, or display name. Without"
@@ -664,6 +674,7 @@ def link_people(
 
 
 @app.command("unlink")
+@experimental
 def unlink_account(
     person: str = typer.Argument(help="The person the account was linked into"),
     account: str = typer.Argument(

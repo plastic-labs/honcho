@@ -286,7 +286,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             None, description="Custom HTTP client"
         ),
         auto: bool = Field(
-            False, description="Create the workspace as an auto workspace"
+            False,
+            description="Create the workspace as an auto workspace (experimental)",
         ),
     ) -> None:
         """
@@ -318,10 +319,11 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 Optional custom httpx client.
             auto:
                 Create the workspace as an auto workspace, which ``ingest``
-                writes to. Only a new workspace can be made auto: on an
-                existing workspace that isn't auto, the first call that
-                creates the workspace raises ``ConflictError``. An existing
-                auto workspace works with or without it.
+                writes to. Experimental, like ingest: it may change or stop
+                working without notice. Only a new workspace can be made
+                auto: on an existing workspace that isn't auto, the first call
+                that creates the workspace raises ``ConflictError``. An
+                existing auto workspace works with or without it.
         """
         # Resolve workspace_id before calling super().__init__
         resolved_workspace_id = workspace_id or os.getenv(
@@ -1057,6 +1059,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         """
         Ingest source records into this auto workspace.
 
+        Experimental: ingest may change or stop working without notice.
+
         Honcho turns each record into a message, picking its session and peers
         from the record's source context, and deduplicates on the record's
         source identity, so sending the same records again is safe. Records
@@ -1091,6 +1095,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         """
         Derive the records ingested with ``derive="later"``.
 
+        Experimental: ingest may change or stop working without notice.
+
         Releases deferred records in batches until none remain, or until a
         call releases nothing (records still arriving with ``derive="later"``
         are left for the next call).
@@ -1111,6 +1117,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
     def ingest_link(self, peers: Sequence[str | PeerBase]) -> IngestLinkResponse:
         """
         Link imported people into one, from the next import on.
+
+        Experimental: ingest may change or stop working without notice.
 
         Every account of ``peers[1:]`` maps to ``peers[0]`` from now on, so the
         next import puts their records on one person. Nothing already imported
@@ -1136,6 +1144,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         """
         Take a linked account back out of ``peer``, from the next import on.
 
+        Experimental: ingest may change or stop working without notice.
+
         The account maps to the person it was linked from again. Its records
         must not be imported yet: call ``ingest_reset()`` first.
         """
@@ -1157,6 +1167,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         """
         Delete every session holding imported records, to import again.
 
+        Experimental: ingest may change or stop working without notice.
+
         The sessions are deleted in the background; ``ingest_status()`` shows
         them gone at once. People, their configuration and links stay.
         """
@@ -1167,6 +1179,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
     def ingest_status(self) -> IngestStatusResponse:
         """
         What this workspace's imports produced, for review before deriving.
+
+        Experimental: ingest may change or stop working without notice.
 
         Records by derivation state, the tokens still deferred, and how many
         people and sessions the records map to, with how many of each are not
@@ -1181,6 +1195,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
     ) -> SyncPage[IngestPerson, IngestPerson]:
         """
         The peers created for imported accounts, most records first.
+
+        Experimental: ingest may change or stop working without notice.
 
         Each lists its source accounts, how many records they wrote, and
         whether the peer is modeled. Exclude one with
@@ -1204,6 +1220,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
     ) -> SyncPage[IngestSession, IngestSession]:
         """
         The sessions created for imported containers, most records first.
+
+        Experimental: ingest may change or stop working without notice.
 
         Each gives its container's display name and source, how many records
         it holds, and whether reasoning is on for it.

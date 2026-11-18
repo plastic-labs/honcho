@@ -198,11 +198,11 @@ honcho help
 
 ## honcho ingest
 
-Import source records into an auto workspace, review them, and derive.
+Experimental: import source records into an auto workspace, review them, and derive. Off by default: set HONCHO_EXPERIMENTAL=1.
 
 <AccordionGroup>
 <Accordion title="derive">
-Derive the records imported with `--derive later`.
+Experimental: Derive the records imported with `--derive later`.
 
 Releases every deferred record for derivation. Exclusions made before this
 apply; changes made after it only affect records released later.
@@ -216,7 +216,7 @@ honcho ingest derive
 </ParamField>
 </Accordion>
 <Accordion title="import">
-Import source records, such as a connector's `records.jsonl`.
+Experimental: Import source records, such as a connector's `records.jsonl`.
 
 Each record becomes a message; its container picks the session and its
 author and participants the peers. Records already imported come back as
@@ -232,7 +232,7 @@ honcho ingest import <file>
 </ParamField>
 </Accordion>
 <Accordion title="link">
-Treat several imported accounts as one person, from the next import on.
+Experimental: Treat several imported accounts as one person, from the next import on.
 
 Every account of the other people maps to the first. Nothing already
 imported moves, so an import that already holds their records is reset
@@ -254,7 +254,7 @@ honcho ingest link <refs>
 </ParamField>
 </Accordion>
 <Accordion title="reset">
-Delete the imported sessions, to import again after a link or a fix.
+Experimental: Delete the imported sessions, to import again after a link or a fix.
 
 Deletes every session holding imported records, with their messages.
 People, their exclusions and links stay; session exclusions go with the
@@ -272,7 +272,7 @@ honcho ingest reset
 </ParamField>
 </Accordion>
 <Accordion title="status">
-What the workspace's imports became: records, people and sessions.
+Experimental: What the workspace's imports became: records, people and sessions.
 
 People and sessions are numbered, most records first; `honcho peer exclude
 N` and `honcho session exclude N` take those numbers.
@@ -286,7 +286,7 @@ honcho ingest status
 </ParamField>
 </Accordion>
 <Accordion title="unlink">
-Take a linked account back out of a person, from the next import on.
+Experimental: Take a linked account back out of a person, from the next import on.
 
 As for a link, an import that already holds its records is reset first:
 `honcho ingest unlink 1 alexdev --reset`, then import again.
@@ -457,7 +457,7 @@ honcho peer create <peer_id>
 </ParamField>
 </Accordion>
 <Accordion title="exclude">
-Derive nothing about an imported person (`observe_me` off).
+Experimental: Derive nothing about an imported person (`observe_me` off).
 
 Use it between `honcho ingest import` and `honcho ingest derive`, for a bot
 the source didn't flag or someone who shouldn't be modeled. Their messages
@@ -479,7 +479,7 @@ honcho peer get-metadata [<peer_id>]
 <ParamField path="peer_id" type="string" />
 </Accordion>
 <Accordion title="include">
-Model an imported person again (`observe_me` on).
+Experimental: Model an imported person again (`observe_me` on).
 
 ```bash
 honcho peer include <ref>
@@ -683,7 +683,7 @@ honcho session delete [<session_id>]
 </ParamField>
 </Accordion>
 <Accordion title="exclude">
-Turn reasoning off for an imported session, such as a noisy channel.
+Experimental: Turn reasoning off for an imported session, such as a noisy channel.
 
 Use it between `honcho ingest import` and `honcho ingest derive`. Its
 messages are still stored and summarized; nothing is derived from them.
@@ -704,7 +704,7 @@ honcho session get-metadata [<session_id>]
 <ParamField path="session_id" type="string" />
 </Accordion>
 <Accordion title="include">
-Turn reasoning back on for an imported session.
+Experimental: Turn reasoning back on for an imported session.
 
 ```bash
 honcho session include <ref>
@@ -946,7 +946,7 @@ honcho workspace create <workspace_id>
   JSON metadata to associate with the workspace.
 </ParamField>
 <ParamField path="--auto" type="boolean">
-  Create it as an auto workspace, which `honcho ingest import` writes to. Only a new workspace can be made auto.
+  Experimental (needs HONCHO_EXPERIMENTAL=1): create it as an auto workspace, which `honcho ingest import` writes to. Only a new workspace can be made auto.
 </ParamField>
 </Accordion>
 <Accordion title="delete">

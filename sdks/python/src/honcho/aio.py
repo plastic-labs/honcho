@@ -747,6 +747,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
     ) -> IngestResponse:
         """Ingest source records into this auto workspace asynchronously.
 
+        Experimental: ingest may change or stop working without notice.
+
         See `Honcho.ingest`.
         """
         if self._honcho._auto:
@@ -763,6 +765,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
     async def ingest_derive(self) -> IngestDeriveResponse:
         """Derive the records ingested with ``derive="later"`` asynchronously.
 
+        Experimental: ingest may change or stop working without notice.
+
         See `Honcho.ingest_derive`.
         """
         released = 0
@@ -777,7 +781,10 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 return IngestDeriveResponse(pending=released, remaining=step.remaining)
 
     async def ingest_link(self, peers: Sequence[str | PeerBase]) -> IngestLinkResponse:
-        """Link imported people into one, asynchronously. See `Honcho.ingest_link`."""
+        """Link imported people into one, asynchronously. See `Honcho.ingest_link`.
+
+        Experimental: ingest may change or stop working without notice.
+        """
         return IngestLinkResponse.model_validate(
             await self._honcho._async_http_client.post(
                 routes.workspace_ingest_link(self._honcho.workspace_id),
@@ -793,7 +800,10 @@ class HonchoAio(AsyncMetadataConfigMixin):
         source_instance: str,
         account_id: str,
     ) -> IngestUnlinkResponse:
-        """Take a linked account back out, asynchronously. See `Honcho.ingest_unlink`."""
+        """Take a linked account back out, asynchronously. See `Honcho.ingest_unlink`.
+
+        Experimental: ingest may change or stop working without notice.
+        """
         return IngestUnlinkResponse.model_validate(
             await self._honcho._async_http_client.post(
                 routes.workspace_ingest_unlink(self._honcho.workspace_id),
@@ -809,7 +819,10 @@ class HonchoAio(AsyncMetadataConfigMixin):
         )
 
     async def ingest_reset(self) -> IngestResetResponse:
-        """Delete the imported sessions, asynchronously. See `Honcho.ingest_reset`."""
+        """Delete the imported sessions, asynchronously. See `Honcho.ingest_reset`.
+
+        Experimental: ingest may change or stop working without notice.
+        """
         return IngestResetResponse.model_validate(
             await self._honcho._async_http_client.post(
                 routes.workspace_ingest_reset(self._honcho.workspace_id)
@@ -818,6 +831,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
 
     async def ingest_status(self) -> IngestStatusResponse:
         """What this workspace's imports produced, asynchronously.
+
+        Experimental: ingest may change or stop working without notice.
 
         See `Honcho.ingest_status`.
         """
@@ -831,6 +846,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
         self, *, page: int = 1, size: int = 50
     ) -> AsyncPage[IngestPerson, IngestPerson]:
         """The peers created for imported accounts, asynchronously.
+
+        Experimental: ingest may change or stop working without notice.
 
         See `Honcho.ingest_people`.
         """
@@ -850,6 +867,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
         self, *, page: int = 1, size: int = 50
     ) -> AsyncPage[IngestSession, IngestSession]:
         """The sessions created for imported containers, asynchronously.
+
+        Experimental: ingest may change or stop working without notice.
 
         See `Honcho.ingest_sessions`.
         """

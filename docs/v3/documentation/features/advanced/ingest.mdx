@@ -4,6 +4,10 @@ description: Import chat history and other source records into an auto workspace
 icon: 'file-import'
 ---
 
+<Warning>
+Ingest and auto workspaces are experimental and under active development. The API, SDK methods and CLI commands described here may change or stop working without notice, and aren't ready for production use. The CLI's ingest commands are off by default: set `HONCHO_EXPERIMENTAL=1` to run them.
+</Warning>
+
 Ingest turns records from another system (a chat message, a meeting note, an event) into Honcho messages. You send the record as the source has it: who wrote it, where it lives, and its ID in the source. Honcho picks the session and peers for you:
 
 - A record's container (a channel, a thread) becomes its session.
@@ -162,9 +166,10 @@ await honcho.ingest(records, { derive: 'later' });
 
 ## From the CLI
 
-The [Honcho CLI](/v3/documentation/reference/cli) runs the same flow on a connector's `records.jsonl`:
+The [Honcho CLI](/v3/documentation/reference/cli) runs the same flow on a connector's `records.jsonl`. These commands are experimental, so they run only with `HONCHO_EXPERIMENTAL=1` set:
 
 ```bash
+export HONCHO_EXPERIMENTAL=1
 honcho workspace create acme --auto
 honcho ingest import records.jsonl -w acme
 honcho ingest status -w acme

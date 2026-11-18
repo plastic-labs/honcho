@@ -11,6 +11,7 @@ never a get-or-create of a new peer or session.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 from collections.abc import Iterable
@@ -23,12 +24,24 @@ from honcho_cli import config
 from honcho_cli.output import print_error
 
 
-def _listing_path(base_url: str, credential: str, workspace_id: str) -> Path:
+_KEY_ITERATIONS = 600_000
+"""PBKDF2 rounds for the credential's part of the path (about 35 ms)."""
+
+
+@functools.cache
+def _instance_dir(base_url: str, credential: str) -> str:
     # The credential picks the tenant: two tenants can share an instance and a
-    # workspace name, and generated peer names, so it is part of the key.
-    instance = hashlib.sha256(
-        f"{base_url.rstrip('/')}\n{credential}".encode()
-    ).hexdigest()[:16]
+    # workspace name, and generated peer names, so it is part of the key. It's a
+    # secret, so it goes through a slow key-derivation function, salted with the
+    # instance: the directory name doesn't make the key any cheaper to guess.
+    # Cached, so a command that resolves several references derives it once.
+    return hashlib.pbkdf2_hmac(
+        "sha256", credential.encode(), base_url.rstrip("/").encode(), _KEY_ITERATIONS
+    ).hex()[:16]
+
+
+def _listing_path(base_url: str, credential: str, workspace_id: str) -> Path:
+    instance = _instance_dir(base_url, credential)
     workspace = hashlib.sha256(workspace_id.encode()).hexdigest()[:16]
     return config.CONFIG_DIR / "ingest" / instance / f"{workspace}.json"
 

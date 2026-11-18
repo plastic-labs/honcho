@@ -409,6 +409,8 @@ export const IngestContainerSchema = z
 
 /**
  * Schema for one source record to ingest.
+ *
+ * @experimental Ingest may change or stop working without notice.
  */
 export const IngestRecordSchema = z
   .object({

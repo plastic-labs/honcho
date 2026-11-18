@@ -27,7 +27,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 - `honcho message` — list and get
 - `honcho conclusion` — list, search, create, delete
 - `honcho dream` — list, inspect (what each dream changed; workspace or admin key)
-- `honcho ingest` — import, status, derive, reset, link, unlink: load source records into an auto workspace, review them, derive (workspace or admin key). `honcho peer exclude` / `honcho session exclude` stop derivation about an imported person or session before `ingest derive`
+- `honcho ingest` (experimental: needs `HONCHO_EXPERIMENTAL=1`) — import, status, derive, reset, link, unlink: load source records into an auto workspace, review them, derive (workspace or admin key). `honcho peer exclude` / `honcho session exclude` stop derivation about an imported person or session before `ingest derive`
 
 ## Rules
 

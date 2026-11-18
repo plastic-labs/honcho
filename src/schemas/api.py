@@ -247,8 +247,8 @@ class WorkspaceCreate(WorkspaceBase):
     )
     auto: bool = Field(
         default=False,
-        description="Create the workspace as an auto workspace, which the ingest"
-        + " API writes to. Only a new workspace can be made auto: asking for it on"
+        description="Experimental. Create the workspace as an auto workspace, which"
+        + " the ingest API writes to. Only a new workspace can be made auto: asking for it on"
         + " an existing workspace that isn't auto is a 409. It can't be turned"
         + " off.",
     )

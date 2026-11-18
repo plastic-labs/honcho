@@ -22,6 +22,7 @@ from honcho import (
 from honcho_cli import replay as replay_lib
 from honcho_cli import replay_view
 from honcho_cli.config import identity_headers
+from honcho_cli.experimental import require as require_experimental
 from honcho_cli.output import print_error, print_json, print_result, status, use_json
 from honcho_cli.recall import parse_csv_repeatable, reject_incompatible_recall, scope_for_sdk
 from honcho_cli.validation import validate_resource_id
@@ -78,13 +79,15 @@ def create_workspace(
     auto: bool = typer.Option(
         False,
         "--auto",
-        help="Create it as an auto workspace, which `honcho ingest import` writes to."
-        + " Only a new workspace can be made auto.",
+        help="Experimental (needs HONCHO_EXPERIMENTAL=1): create it as an auto workspace,"
+        + " which `honcho ingest import` writes to. Only a new workspace can be made auto.",
     ),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Create or get a workspace."""
     handle_cmd_flags(json_output=json_output)
+    if auto:
+        require_experimental("`--auto`")
     wid = validate_resource_id(workspace_id, "workspace")
     client, config = get_client(require_workspace=False)
     ws_client = _with_workspace(client, wid, auto=auto)
