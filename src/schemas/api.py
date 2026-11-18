@@ -687,6 +687,20 @@ class IngestResponse(BaseModel):
     )
 
 
+class IngestDeriveResponse(BaseModel):
+    """What one derive call released. Call again until `remaining` is 0."""
+
+    pending: int = Field(
+        ...,
+        description="Deferred records this call released for derivation. They are"
+        + " queued before the response, or shortly after by a background sweep"
+        + " when their session was busy.",
+    )
+    remaining: int = Field(
+        ..., description="Records in the workspace still deferred after this call"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Session schemas
 # ---------------------------------------------------------------------------
