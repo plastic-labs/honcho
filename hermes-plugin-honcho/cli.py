@@ -275,8 +275,10 @@ def _ensure_peer_exists(host_key: str | None = None) -> bool:
 def _inherit_defaults(block: dict, default_block: dict, cfg: dict, keys: tuple[str, ...]) -> None:
     """Copy ``keys`` (and peerName) from the default host block into ``block`` where unset."""
     for key in keys:
-        if (val := default_block.get(key)) is not None and key not in block:
-            block[key] = val
+        if key not in block and key in default_block and (
+            default_block[key] is not None or key == "observationOptOutPhrases"
+        ):
+            block[key] = default_block[key]
     if (peer_name := _pref(default_block, cfg, "peerName")) and "peerName" not in block:
         block["peerName"] = peer_name
 

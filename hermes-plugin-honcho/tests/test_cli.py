@@ -246,6 +246,9 @@ class TestCloneHonchoForProfile:
     @pytest.mark.parametrize("action,default,profile,root,expected", [
         ("clone", {"observationOptOutPhrases": [" host phrase ", "", 7]}, {}, ["root"], ["host phrase"]),
         ("clone", {"observationOptOutPhrases": []}, {}, ["root"], []),
+        ("clone", {"observationOptOutPhrases": None}, {}, ["root"], []),
+        ("enable", {"observationOptOutPhrases": None}, {}, ["root"], []),
+        ("enable", {"observationOptOutPhrases": ["host"]}, {"observationOptOutPhrases": None}, ["root"], []),
         ("clone", {}, {}, ["root"], ["root"]),
         ("enable", {"observationOptOutPhrases": [" host phrase "]}, {}, ["root"], ["host phrase"]),
         ("enable", {"observationOptOutPhrases": ["host"]}, {"observationOptOutPhrases": []}, ["root"], []),
