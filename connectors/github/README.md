@@ -6,6 +6,11 @@ backfill half of a GitHub connector: it reads history on demand. It has no
 webhooks or stored read position yet; running it again is safe (see
 [Running again](#running-again)).
 
+> **Experimental.** Ingest into auto workspaces is experimental, and so is
+> this connector: its records, its options and the ingest API it sends to may
+> change or stop working without notice. The CLI commands that import and review
+> its output run only with `HONCHO_EXPERIMENTAL=1` set.
+
 ## What it needs
 
 A token, in a file, that can read the repositories. A fine-grained token with

@@ -1,5 +1,8 @@
 """Command line: list the repositories an export would read, or export them.
 
+Experimental: ingest, and this connector, may change or stop working without
+notice.
+
     honcho-github repos --token-file F (--repo OWNER/NAME ... | --org LOGIN ...)
     honcho-github export --token-file F (--repo ... | --org ...) [--since DATE] --out DIR
     honcho-github export --token-file F (--repo ... | --org ...) [--since DATE] \\
