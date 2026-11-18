@@ -56,7 +56,7 @@ async def paced_session(
             db,
             schemas.SessionCreate(
                 name=session_name,
-                peers={name: schemas.SessionPeerConfig() for name in _MEMBERS},
+                peers={name: schemas.SessionPeerConfigInput() for name in _MEMBERS},
             ),
             workspace.name,
         )
@@ -178,7 +178,7 @@ async def _session_with_members(
             db,
             schemas.SessionCreate(
                 name=session_name,
-                peers={name: schemas.SessionPeerConfig() for name in _MEMBERS},
+                peers={name: schemas.SessionPeerConfigInput() for name in _MEMBERS},
             ),
             workspace_name,
         )
