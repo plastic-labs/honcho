@@ -129,6 +129,27 @@ jobs:
           done < <(env -0)
           echo "Applied ${applied} override(s)"
 
+      # A model base URL from the staging secret points at staging's provider
+      # endpoint, which the runner may not reach: calls through it fail, retry
+      # and fall back to the backup model, so the tests run slower and judge a
+      # different model's answers. Warn, by name only, about any base URL the
+      # testing secret doesn't override.
+      - name: Check model base URLs have testing overrides
+        run: |
+          set -euo pipefail
+          missing=()
+          while IFS= read -r name; do
+            override="HONCHO_TEST_OVERRIDE_${name}"
+            if [ -z "${!override:-}" ]; then
+              missing+=("$name")
+            fi
+          done < <(compgen -e | grep -E '__BASE_URL$' | grep -v '^HONCHO_TEST_OVERRIDE_' || true)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::warning title=Model base URLs without a testing override::${missing[*]}"
+          else
+            echo "Every model base URL has a testing override"
+          fi
+
       # Configure the test environment. Disables auth/Sentry/CloudEvents telemetry
       # (their endpoints aren't reachable from CI), and points REASONING_TRACES_FILE
       # at a shared path so the API + deriver record full LLM I/O for auditing — the

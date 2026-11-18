@@ -526,6 +526,14 @@ class HonchoHarness:
         env.update(self.get_database_env_vars())
         # Enable flush mode for tests - process messages immediately without waiting for batch threshold
         env["DERIVER_FLUSH_ENABLED"] = "true"
+        # Poll every second, from the start, however long the queue has been
+        # idle. Tests wait on the queue with fixed timeouts, and run one after
+        # another, so a deriver that backed off while idle (by default up to
+        # 30 s, jittered to 45 s; more under a deployment's settings, which CI
+        # loads) can sleep through a test's whole wait.
+        env["DERIVER_POLLING_STARTUP_JITTER_SECONDS"] = "0"
+        env["DERIVER_POLLING_SLEEP_INTERVAL_SECONDS"] = "1"
+        env["DERIVER_POLLING_BACKOFF_ENABLED"] = "false"
 
         process = subprocess.Popen(
             [sys.executable, "-m", "src.deriver"],
