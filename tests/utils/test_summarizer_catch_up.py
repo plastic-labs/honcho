@@ -57,7 +57,7 @@ async def _session(
             db,
             schemas.SessionCreate(
                 name=str(generate_nanoid()),
-                peers={peer.name: schemas.SessionPeerConfig()},
+                peers={peer.name: schemas.SessionPeerConfigInput()},
             ),
             workspace.name,
         )
