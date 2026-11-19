@@ -18,6 +18,7 @@ from src.utils.config_helpers import get_configuration
 from src.utils.queue_payload import (
     create_deletion_payload,
     create_dream_payload,
+    create_organize_payload,
     create_payload,
     create_scope_task_payload,
 )
@@ -975,3 +976,42 @@ async def enqueue_deletion(
 
             sentry_sdk.capture_exception(e)
         raise
+
+
+async def insert_organize_task(db_session: AsyncSession, workspace_name: str) -> bool:
+    """Queue a refresh of the workspace's suggestions, in the caller's transaction.
+
+    One refresh waiting is enough: the organizer reads the workspace as it is
+    when it runs, so a second request while one is pending adds nothing. A
+    refresh already running doesn't count: it may have read the workspace
+    before the change this request is about, so one more is queued behind it.
+
+    Does not commit.
+
+    Returns:
+        Whether a task was inserted
+    """
+    payload = create_organize_payload()
+    work_unit_key = construct_work_unit_key(workspace_name, payload)
+    is_pending = await db_session.scalar(
+        select(
+            exists(
+                select(QueueItem.id).where(
+                    QueueItem.work_unit_key == work_unit_key,
+                    QueueItem.processed == False,  # noqa: E712
+                )
+            )
+        )
+    )
+    if is_pending:
+        return False
+    record = {
+        "work_unit_key": work_unit_key,
+        "payload": payload,
+        "session_id": None,
+        "task_type": "organize",
+        "workspace_name": workspace_name,
+        "message_id": None,
+    }
+    await db_session.execute(insert(QueueItem), _stamp_tenant_id([record]))
+    return True

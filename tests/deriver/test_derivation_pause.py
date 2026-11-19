@@ -56,10 +56,12 @@ def test_every_task_type_is_classified() -> None:
     for billing. This pins the current split so the default is never silent.
     """
     assert PAUSE_EXEMPT_TASK_TYPES <= TASK_TYPES
+    # `organize` pauses too: its judge stage calls a model on our account.
     assert {
         "representation",
         "summary",
         "dream",
+        "organize",
     } == TASK_TYPES - PAUSE_EXEMPT_TASK_TYPES
 
 

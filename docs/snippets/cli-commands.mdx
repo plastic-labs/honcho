@@ -320,6 +320,26 @@ honcho ingest status
   People and sessions to list, most records first.
 </ParamField>
 </Accordion>
+<Accordion title="suggestions">
+Experimental: accounts that look like one person, to accept or dismiss.
+
+```bash
+honcho ingest suggestions
+```
+
+<ParamField path="--refresh" type="boolean" default="true">
+  Refresh the suggestions first and wait for it (on by default). Negate with `--no-refresh`.
+</ParamField>
+<ParamField path="--confidence" type="string">
+  Only `high` or only `low`.
+</ParamField>
+<ParamField path="--status" type="string" default="open">
+  open (default), accepted, dismissed or all.
+</ParamField>
+<ParamField path="--limit" type="number" default="50">
+  Suggestions to list, strongest first.
+</ParamField>
+</Accordion>
 <Accordion title="unlink">
 Experimental: Take a linked account back out of a person, from the next import on.
 

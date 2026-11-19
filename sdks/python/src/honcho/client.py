@@ -18,6 +18,8 @@ from .api_types import (
     DreamRunResponse,
     IngestDeriveResponse,
     IngestLinkResponse,
+    IngestSuggestion,
+    IngestSuggestionAccepted,
     IngestPerson,
     IngestRecord,
     IngestRecordResult,
@@ -1214,6 +1216,95 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             return SyncPage(fetch(next_page), IngestPerson, None, fetch_next)
 
         return SyncPage(fetch(page), IngestPerson, None, fetch_next)
+
+    def ingest_refresh_suggestions(self) -> bool:
+        """
+        Queue a refresh of the suggested links between imported accounts.
+
+        Experimental: ingest may change or stop working without notice.
+
+        The refresh runs in the background, reading the imports as they are
+        when it runs; ``ingest_status().suggestions.refreshing`` is True until
+        it's done. Refresh after importing and before ``ingest_reset()``: the
+        evidence comes from the imported records. Returns whether a refresh
+        was queued (one already waiting covers this call).
+        """
+        response = self._http.post(
+            routes.workspace_ingest_suggestions_refresh(self.workspace_id)
+        )
+        return bool(response.get("queued"))
+
+    def ingest_suggestions(
+        self,
+        *,
+        status: Literal["open", "accepted", "dismissed"] | None = "open",
+        confidence: Literal["high", "low"] | None = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> SyncPage[IngestSuggestion, IngestSuggestion]:
+        """
+        Accounts that look like one person, strongest first, with the evidence.
+
+        Experimental: ingest may change or stop working without notice.
+
+        Nothing is linked until a suggestion is accepted with
+        ``ingest_accept_suggestion``. ``status=None`` lists every state.
+        """
+        query: dict[str, Any] = {"page": page, "size": size}
+        if status is not None:
+            query["status"] = status
+        if confidence is not None:
+            query["confidence"] = confidence
+
+        def fetch(next_page: int) -> dict[str, Any]:
+            return self._http.get(
+                routes.workspace_ingest_suggestions(self.workspace_id),
+                query={**query, "page": next_page},
+            )
+
+        def fetch_next(next_page: int) -> SyncPage[IngestSuggestion, IngestSuggestion]:
+            return SyncPage(fetch(next_page), IngestSuggestion, None, fetch_next)
+
+        return SyncPage(fetch(page), IngestSuggestion, None, fetch_next)
+
+    def ingest_accept_suggestion(
+        self, suggestion_id: str, *, keep: str | PeerBase | None = None
+    ) -> IngestSuggestionAccepted:
+        """
+        Accept a suggestion: link its two accounts into one person.
+
+        Experimental: ingest may change or stop working without notice.
+
+        It is ``ingest_link`` for the suggestion's two people, keeping an
+        explicit peer, else the one with more records (or ``keep``), and it is
+        refused the same way: call ``ingest_reset()`` first, accept, then
+        import again (``ConflictError`` otherwise).
+        """
+        body: dict[str, Any] = {}
+        if keep is not None:
+            body["keep"] = resolve_id(keep)
+        return IngestSuggestionAccepted.model_validate(
+            self._http.post(
+                routes.workspace_ingest_suggestion(
+                    self.workspace_id, suggestion_id, "accept"
+                ),
+                body=body,
+            )
+        )
+
+    def ingest_dismiss_suggestion(self, suggestion_id: str) -> IngestSuggestion:
+        """
+        Dismiss a suggestion: the accounts stay apart, and a refresh won't bring it back.
+
+        Experimental: ingest may change or stop working without notice.
+        """
+        return IngestSuggestion.model_validate(
+            self._http.post(
+                routes.workspace_ingest_suggestion(
+                    self.workspace_id, suggestion_id, "dismiss"
+                )
+            )
+        )
 
     def ingest_sessions(
         self, *, page: int = 1, size: int = 50

@@ -12,6 +12,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     ForeignKeyConstraint,
     Identity,
@@ -1828,6 +1829,71 @@ class IngestPeerBinding(Base, TenantPartitioned):
         CheckConstraint(
             "key_kind IN ('external_id', 'provisional_name', 'source_peer')",
             name="key_kind_valid",
+        ),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
+    )
+
+
+@final
+class IngestSuggestion(Base, TenantPartitioned):
+    """A suggestion about an import for a person to confirm: two accounts look like one person.
+
+    `subject_key` names the two accounts (peer-binding IDs, or `peer:<name>` for
+    an explicit peer) in sorted order, so a refresh updates a suggestion rather
+    than adding it twice. `accounts` keeps how each account looked when the
+    suggestion was last made, including how many records it had: a reset
+    deletes the records, not the suggestion. A refresh changes only `open`
+    suggestions and never deletes one; `accepted` and `dismissed` stay as the
+    person left them.
+    """
+
+    __tablename__: str = "ingest_suggestions"
+
+    tenant_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
+    )
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    kind: Mapped[str] = mapped_column(TEXT, nullable=False)
+    subject_key: Mapped[str] = mapped_column(TEXT, nullable=False)
+    accounts: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    confidence: Mapped[str] = mapped_column(TEXT, nullable=False)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    evidence: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    # Which stage made it (`rules`, later a judge), with its rules version and
+    # the model tokens it cost (0 for rules).
+    stage: Mapped[str] = mapped_column(TEXT, nullable=False)
+    rules_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    organizer_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    status: Mapped[str] = mapped_column(TEXT, nullable=False)
+    refreshed_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    decided_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        PrimaryKeyConstraint("tenant_id", "id"),
+        UniqueConstraint(
+            "tenant_id",
+            "workspace_name",
+            "kind",
+            "subject_key",
+            name="uq_ingest_suggestions_subject",
+        ),
+        CheckConstraint("kind IN ('same_person')", name="kind_valid"),
+        CheckConstraint("confidence IN ('high', 'low')", name="confidence_valid"),
+        CheckConstraint(
+            "status IN ('open', 'accepted', 'dismissed')", name="status_valid"
         ),
         {"postgresql_partition_by": "HASH (tenant_id)"},
     )

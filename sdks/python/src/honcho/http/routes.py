@@ -60,6 +60,23 @@ def workspace_ingest_sessions(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/sessions"
 
 
+def workspace_ingest_suggestions(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/suggestions"
+
+
+def workspace_ingest_suggestions_refresh(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/suggestions/refresh"
+
+
+def workspace_ingest_suggestion(
+    workspace_id: str, suggestion_id: str, action: str
+) -> str:
+    return (
+        f"/{API_VERSION}/workspaces/{workspace_id}/ingest/suggestions/"
+        + f"{suggestion_id}/{action}"
+    )
+
+
 def workspace_schedule_dream(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/schedule_dream"
 
