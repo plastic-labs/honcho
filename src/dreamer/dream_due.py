@@ -8,8 +8,10 @@ from typing import Any, NamedTuple, cast
 from sqlalchemy import (
     Text,
     and_,
+    any_,
     column,
     func,
+    literal,
     literal_column,
     or_,
     select,
@@ -17,6 +19,7 @@ from sqlalchemy import (
     tuple_,
     values,
 )
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -28,7 +31,7 @@ from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
 logger = getLogger(__name__)
 
-# Keys per row-value IN lookup.
+# Keys per lookup that binds one parameter per key column.
 _LOOKUP_BATCH_SIZE = 500
 
 
@@ -180,7 +183,8 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
             )
             .where(
                 models.QueueItem.task_type == "dream",
-                models.QueueItem.work_unit_key.in_(candidates.keys()),
+                models.QueueItem.work_unit_key
+                == any_(literal(list(candidates), ARRAY(Text))),
             )
             .group_by(models.QueueItem.work_unit_key)
         )
@@ -195,7 +199,7 @@ async def list_due_dreams(db: AsyncSession) -> list[DueDream]:
     if settings.MULTI_TENANT:
         tenants = sorted({due_dream.tenant_id for due_dream, _ in candidates.values()})
         pending_representation = pending_representation.where(
-            models.QueueItemBatch.tenant_id.in_(tenants)
+            (models.QueueItemBatch.tenant_id == any_(literal(tenants, ARRAY(Text))))
             | models.QueueItemBatch.tenant_id.is_(None)
         )
     pending_representation_keys = (
@@ -247,58 +251,62 @@ async def _newest_session_names(
     db: AsyncSession, candidates: list[DueDream]
 ) -> dict[tuple[str, str, str, str], str | None]:
     """The session of each candidate collection's newest explicit document."""
-    keys = values(
-        column("tenant_id", Text),
-        column("workspace_name", Text),
-        column("observer", Text),
-        column("observed", Text),
-        name="keys",
-    ).data(
-        list(
-            {
+    collection_keys = sorted(
+        {
+            (
+                due_dream.tenant_id,
+                due_dream.workspace_name,
+                due_dream.observer,
+                due_dream.observed,
+            )
+            for due_dream in candidates
+        }
+    )
+    newest_sessions: dict[tuple[str, str, str, str], str | None] = {}
+    # Batched: the VALUES list binds four parameters per key, and one statement
+    # takes at most 65,535.
+    for key_batch in batched(collection_keys, _LOOKUP_BATCH_SIZE, strict=False):
+        keys = values(
+            column("tenant_id", Text),
+            column("workspace_name", Text),
+            column("observer", Text),
+            column("observed", Text),
+            name="keys",
+        ).data(list(key_batch))
+        newest = (
+            select(models.Document.session_name)
+            .where(
+                models.Document.tenant_id == keys.c.tenant_id,
+                models.Document.observer == keys.c.observer,
+                models.Document.observed == keys.c.observed,
+                models.Document.workspace_name == keys.c.workspace_name,
+                models.Document.level == "explicit",
+            )
+            .order_by(models.Document.created_at.desc())
+            .limit(1)
+            .lateral("newest")
+        )
+        rows = (
+            await db.execute(
+                select(
+                    keys.c.tenant_id,
+                    keys.c.workspace_name,
+                    keys.c.observer,
+                    keys.c.observed,
+                    newest.c.session_name,
+                ).select_from(keys.join(newest, true()))
+            )
+        ).all()
+        for row in rows:
+            newest_sessions[
                 (
-                    due_dream.tenant_id,
-                    due_dream.workspace_name,
-                    due_dream.observer,
-                    due_dream.observed,
+                    cast(str, row[0]),
+                    cast(str, row[1]),
+                    cast(str, row[2]),
+                    cast(str, row[3]),
                 )
-                for due_dream in candidates
-            }
-        )
-    )
-    newest = (
-        select(models.Document.session_name)
-        .where(
-            models.Document.tenant_id == keys.c.tenant_id,
-            models.Document.observer == keys.c.observer,
-            models.Document.observed == keys.c.observed,
-            models.Document.workspace_name == keys.c.workspace_name,
-            models.Document.level == "explicit",
-        )
-        .order_by(models.Document.created_at.desc())
-        .limit(1)
-        .lateral("newest")
-    )
-    rows = (
-        await db.execute(
-            select(
-                keys.c.tenant_id,
-                keys.c.workspace_name,
-                keys.c.observer,
-                keys.c.observed,
-                newest.c.session_name,
-            ).select_from(keys.join(newest, true()))
-        )
-    ).all()
-    return {
-        (
-            cast(str, row[0]),
-            cast(str, row[1]),
-            cast(str, row[2]),
-            cast(str, row[3]),
-        ): cast("str | None", row[4])
-        for row in rows
-    }
+            ] = cast("str | None", row[4])
+    return newest_sessions
 
 
 async def _filter_dreams_enabled(
