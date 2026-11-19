@@ -28,8 +28,11 @@ from sqlalchemy.dialects.postgresql import JSONB, aggregate_order_by
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
+from src.crud.ingest_suggestions import refreshing_clause, suggestion_counts
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.config_helpers import get_configuration
+from src.utils.queue_payload import create_organize_payload
+from src.utils.work_unit import construct_work_unit_key
 
 
 async def require_auto_workspace(
@@ -357,6 +360,19 @@ async def get_ingest_status(
         sessions=len(sessions),
         sessions_not_modeled=sum(1 for s in sessions if not s.modeled),
         sessions_being_deleted=int(being_deleted or 0),
+        suggestions=await _suggestions(db, workspace_name),
+    )
+
+
+async def _suggestions(
+    db: AsyncSession, workspace_name: str
+) -> schemas.IngestSuggestionCounts:
+    """Open suggestions by confidence, and whether a refresh is waiting or running."""
+    counts = await suggestion_counts(db, workspace_name)
+    key = construct_work_unit_key(workspace_name, create_organize_payload())
+    refreshing = bool(await db.scalar(select(refreshing_clause(key))))
+    return schemas.IngestSuggestionCounts(
+        high=counts.get("high", 0), low=counts.get("low", 0), refreshing=refreshing
     )
 
 

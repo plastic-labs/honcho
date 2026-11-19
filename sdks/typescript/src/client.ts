@@ -29,6 +29,9 @@ import type {
   IngestSessionResponse,
   IngestStatus,
   IngestStatusResponse,
+  IngestSuggestion,
+  IngestSuggestionAccepted,
+  IngestSuggestionResponse,
   IngestUnlinkResponse,
   IngestUnlinkResult,
   MessageResponse,
@@ -92,6 +95,30 @@ function ingestAccountFromApi(a: IngestAccountResponse): IngestAccount {
     sourceInstance: a.source_instance,
     id: a.id ?? undefined,
     displayName: a.display_name ?? undefined,
+  }
+}
+function ingestSuggestionFromApi(
+  s: IngestSuggestionResponse
+): IngestSuggestion {
+  return {
+    id: s.id,
+    kind: s.kind,
+    confidence: s.confidence,
+    score: s.score,
+    status: s.status,
+    linked: s.linked,
+    accounts: s.accounts.map((a) => ({
+      source: a.source,
+      sourceInstance: a.source_instance,
+      id: a.id ?? undefined,
+      displayName: a.display_name ?? undefined,
+      handle: a.handle ?? undefined,
+      peerId: a.peer_id ?? undefined,
+      records: a.records,
+    })),
+    evidence: s.evidence,
+    stage: s.stage,
+    refreshedAt: s.refreshed_at,
   }
 }
 type ReasoningLevel = 'minimal' | 'low' | 'medium' | 'high' | 'max'
@@ -1511,7 +1538,111 @@ export class Honcho {
       sessions: s.sessions,
       sessionsNotModeled: s.sessions_not_modeled,
       sessionsBeingDeleted: s.sessions_being_deleted ?? 0,
+      suggestions: s.suggestions ?? { high: 0, low: 0, refreshing: false },
     }
+  }
+
+  /**
+   * Queue a refresh of the suggested links between imported accounts.
+   *
+   * The refresh runs in the background, reading the imports as they are when
+   * it runs; `ingestStatus().suggestions.refreshing` is true until it's done.
+   * Refresh after importing and before `ingestReset()`: the evidence comes from
+   * the imported records. Resolves to whether a refresh was queued (one
+   * already waiting covers this call).
+   *
+   * @experimental Ingest may change or stop working without notice.
+   */
+  async ingestRefreshSuggestions(): Promise<boolean> {
+    const r = await this._http.post<{ queued: boolean }>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/suggestions/refresh`
+    )
+    return r.queued
+  }
+
+  /**
+   * Accounts that look like one person, strongest first, with the evidence.
+   *
+   * Nothing is linked until a suggestion is accepted with
+   * `ingestAcceptSuggestion`. `status: null` lists every state.
+   *
+   * @experimental Ingest may change or stop working without notice.
+   */
+  async ingestSuggestions(options?: {
+    status?: 'open' | 'accepted' | 'dismissed' | null
+    confidence?: 'high' | 'low'
+    page?: number
+    size?: number
+  }): Promise<Page<IngestSuggestion, IngestSuggestionResponse>> {
+    const status = options?.status === undefined ? 'open' : options.status
+    const fetchPage = (
+      page?: number,
+      size?: number
+    ): Promise<PageResponse<IngestSuggestionResponse>> =>
+      this._http.get<PageResponse<IngestSuggestionResponse>>(
+        `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/suggestions`,
+        {
+          query: {
+            page,
+            size,
+            ...(status === null ? {} : { status }),
+            ...(options?.confidence ? { confidence: options.confidence } : {}),
+          },
+        }
+      )
+    return new Page(
+      await fetchPage(options?.page, options?.size),
+      ingestSuggestionFromApi,
+      fetchPage
+    )
+  }
+
+  /**
+   * Accept a suggestion: link its two accounts into one person.
+   *
+   * It is `ingestLink` for the suggestion's two people, keeping an explicit
+   * peer, else the one with more records (or `keep`), and it is refused the
+   * same way: call `ingestReset()` first, accept, then import again.
+   *
+   * @experimental Ingest may change or stop working without notice.
+   */
+  async ingestAcceptSuggestion(
+    suggestionId: string,
+    options?: { keep?: string | Peer }
+  ): Promise<IngestSuggestionAccepted> {
+    const r = await this._http.post<{
+      suggestion: IngestSuggestionResponse
+      link: IngestLinkResponse | null
+    }>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/suggestions/${suggestionId}/accept`,
+      { body: options?.keep ? { keep: resolveId(options.keep) } : {} }
+    )
+    return {
+      suggestion: ingestSuggestionFromApi(r.suggestion),
+      link: r.link
+        ? {
+            peerId: r.link.peer_id,
+            merged: r.link.merged,
+            accounts: r.link.accounts.map(ingestAccountFromApi),
+          }
+        : undefined,
+    }
+  }
+
+  /**
+   * Dismiss a suggestion: the accounts stay apart, and a refresh won't bring
+   * it back.
+   *
+   * @experimental Ingest may change or stop working without notice.
+   */
+  async ingestDismissSuggestion(
+    suggestionId: string
+  ): Promise<IngestSuggestion> {
+    return ingestSuggestionFromApi(
+      await this._http.post<IngestSuggestionResponse>(
+        `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/suggestions/${suggestionId}/dismiss`
+      )
+    )
   }
 
   /**

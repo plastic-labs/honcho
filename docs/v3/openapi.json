@@ -4645,6 +4645,430 @@
         }
       }
     },
+    "/v3/workspaces/{workspace_id}/ingest/suggestions/refresh": {
+      "post": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Refresh Suggestions",
+        "description": "Queue a refresh of the suggested links between the workspace's accounts.\n\nThe refresh runs in the background and reads the imports as they are when\nit runs: `GET /ingest/status` says `refreshing` until it's done. It adds new\nsuggestions and updates open ones; it never reopens one a person accepted or\ndismissed. Run it after importing and before a reset: the evidence comes\nfrom the imported records. Only workspace and admin keys may call it.\n\nExperimental: ingest may change or stop working without notice.",
+        "operationId": "refresh_suggestions_v3_workspaces__workspace_id__ingest_suggestions_refresh_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestSuggestionsRefresh"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not an auto workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/ingest/suggestions": {
+      "get": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "List Suggestions",
+        "description": "Accounts that look like one person, strongest first, with the evidence.\n\nEach suggestion names its two accounts as they were when it was made and\nthe person each maps to now (`linked` once they're one). Nothing is linked\nuntil a suggestion is accepted. The evidence can reveal that two accounts\nare one person, so only workspace and admin keys may call it.\n\nExperimental: ingest may change or stop working without notice.",
+        "operationId": "list_suggestions_v3_workspaces__workspace_id__ingest_suggestions_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(open|accepted|dismissed)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only suggestions in this state; omit the value for every state",
+              "default": "open",
+              "title": "Status"
+            },
+            "description": "Only suggestions in this state; omit the value for every state"
+          },
+          {
+            "name": "confidence",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(high|low)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only `high` or only `low`",
+              "title": "Confidence"
+            },
+            "description": "Only `high` or only `low`"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 2147483647,
+              "minimum": 1,
+              "description": "Page number (offset mode)",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number (offset mode)"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`.",
+              "title": "Cursor"
+            },
+            "description": "Opt in to cursor pagination. Send an empty value for the first page, then the `next_page` value from each response. When set, `page` is ignored and the response is a cursor page with no `total`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Page_IngestSuggestion_"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CursorPage_IngestSuggestion_"
+                    }
+                  ],
+                  "title": "Response List Suggestions V3 Workspaces  Workspace Id  Ingest Suggestions Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not an auto workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/ingest/suggestions/{suggestion_id}/accept": {
+      "post": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Accept",
+        "description": "Accept a suggestion: link its two accounts into one person.\n\nThis is `POST /ingest/link` for the suggestion's two people, keeping an\nexplicit peer, else the one with more records (or `keep`), and it is\nrefused the same way: the people must have no imported messages yet, so\nreset the import first, accept, then import again. Accepting a pair that\nis already one person just marks it accepted. Only workspace and admin keys\nmay call it.\n\nExperimental: ingest may change or stop working without notice.",
+        "operationId": "accept_v3_workspaces__workspace_id__ingest_suggestions__suggestion_id__accept_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "suggestion_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the suggestion",
+              "title": "Suggestion Id"
+            },
+            "description": "ID of the suggestion"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestSuggestionAccept"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestSuggestionAccepted"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace, suggestion or one of its accounts not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not an auto workspace; the suggestion was already decided the other way; or the people have imported messages: reset the import first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Contention outlasted the retries; nothing changed. Calling again is safe.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/ingest/suggestions/{suggestion_id}/dismiss": {
+      "post": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Dismiss",
+        "description": "Dismiss a suggestion: the accounts stay apart, and a refresh won't bring it back.\n\nOnly workspace and admin keys may call it.\n\nExperimental: ingest may change or stop working without notice.",
+        "operationId": "dismiss_v3_workspaces__workspace_id__ingest_suggestions__suggestion_id__dismiss_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "suggestion_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the suggestion",
+              "title": "Suggestion Id"
+            },
+            "description": "ID of the suggestion"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestSuggestion"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace, suggestion or one of its accounts not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not an auto workspace; the suggestion was already decided the other way; or the people have imported messages: reset the import first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Contention outlasted the retries; nothing changed. Calling again is safe.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v3/workspaces/{workspace_id}/conclusions": {
       "post": {
         "tags": [
@@ -6174,6 +6598,81 @@
         ],
         "title": "CursorPage[IngestSessionSummary]"
       },
+      "CursorPage_IngestSuggestion_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IngestSuggestion"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "current_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page",
+            "description": "Cursor to refetch the current page"
+          },
+          "current_page_backwards": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Page Backwards",
+            "description": "Cursor to refetch the current page starting from the last item"
+          },
+          "previous_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Page",
+            "description": "Cursor for the previous page"
+          },
+          "next_page": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Page",
+            "description": "Cursor for the next page"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "CursorPage[IngestSuggestion]"
+      },
       "CursorPage_Message_": {
         "properties": {
           "items": {
@@ -7550,6 +8049,45 @@
             "title": "Name",
             "description": "The person's display name"
           },
+          "handle": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handle",
+            "description": "The account's username in the source, unique there: a GitHub login, a Discord username. Used only to suggest which accounts are one person."
+          },
+          "aliases": {
+            "items": {
+              "type": "string",
+              "maxLength": 512,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Aliases",
+            "description": "Other names the account goes by, such as a profile name or a server nickname. Used only to suggest which accounts are one person."
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 320,
+                "minLength": 3
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email",
+            "description": "The account's email address. Ingest keeps only a digest of it, scoped to the workspace, to suggest which accounts are one person; the address itself is not stored."
+          },
           "bot": {
             "type": "boolean",
             "title": "Bot",
@@ -8017,6 +8555,10 @@
             "title": "Sessions Being Deleted",
             "description": "Sessions a reset marked for deletion that still hold imported records; 0 once the deletion has finished",
             "default": 0
+          },
+          "suggestions": {
+            "$ref": "#/components/schemas/IngestSuggestionCounts",
+            "description": "Open suggested links between accounts, by confidence"
           }
         },
         "type": "object",
@@ -8030,6 +8572,275 @@
         ],
         "title": "IngestStatus",
         "description": "What the workspace's imports produced, for review before deriving."
+      },
+      "IngestSuggestion": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "const": "same_person",
+            "title": "Kind"
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "high",
+              "low"
+            ],
+            "title": "Confidence",
+            "description": "`high`: evidence to accept at a glance. `low`: needs a closer look"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score",
+            "description": "Orders suggestions; higher is stronger"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "accepted",
+              "dismissed"
+            ],
+            "title": "Status"
+          },
+          "linked": {
+            "type": "boolean",
+            "title": "Linked",
+            "description": "The two accounts map to one person now, however it happened"
+          },
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/IngestSuggestionAccount"
+            },
+            "type": "array",
+            "title": "Accounts"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/IngestSuggestionEvidence"
+            },
+            "type": "array",
+            "title": "Evidence"
+          },
+          "stage": {
+            "type": "string",
+            "title": "Stage",
+            "description": "What made it: `rules`"
+          },
+          "refreshed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Refreshed At",
+            "description": "When a refresh last made it"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "confidence",
+          "score",
+          "status",
+          "linked",
+          "accounts",
+          "evidence",
+          "stage",
+          "refreshed_at"
+        ],
+        "title": "IngestSuggestion",
+        "description": "Two accounts that look like one person, and why. Nothing is linked until accepted."
+      },
+      "IngestSuggestionAccept": {
+        "properties": {
+          "keep": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keep",
+            "description": "The peer to keep. By default an explicit peer, else the account with more records when the suggestion was made"
+          }
+        },
+        "type": "object",
+        "title": "IngestSuggestionAccept",
+        "description": "Which person to keep when accepting a suggestion."
+      },
+      "IngestSuggestionAccepted": {
+        "properties": {
+          "suggestion": {
+            "$ref": "#/components/schemas/IngestSuggestion"
+          },
+          "link": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IngestLinkResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "suggestion",
+          "link"
+        ],
+        "title": "IngestSuggestionAccepted",
+        "description": "The accepted suggestion and the link it made (null when already one person)."
+      },
+      "IngestSuggestionAccount": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "source_instance": {
+            "type": "string",
+            "title": "Source Instance"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id",
+            "description": "The account's ID in the source, when it has one"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handle",
+            "description": "Its username in the source, when the source sent one"
+          },
+          "peer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peer Id",
+            "description": "The person it maps to now; null if it's gone"
+          },
+          "records": {
+            "type": "integer",
+            "title": "Records",
+            "description": "Records it had written when the suggestion was made"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "source_instance",
+          "records"
+        ],
+        "title": "IngestSuggestionAccount",
+        "description": "One account of a suggestion, as it was when the suggestion was made."
+      },
+      "IngestSuggestionCounts": {
+        "properties": {
+          "high": {
+            "type": "integer",
+            "title": "High",
+            "default": 0
+          },
+          "low": {
+            "type": "integer",
+            "title": "Low",
+            "default": 0
+          },
+          "refreshing": {
+            "type": "boolean",
+            "title": "Refreshing",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "IngestSuggestionCounts",
+        "description": "The workspace's open suggestions, and whether a refresh is under way."
+      },
+      "IngestSuggestionEvidence": {
+        "properties": {
+          "signal": {
+            "type": "string",
+            "enum": [
+              "email",
+              "names",
+              "shared_work",
+              "self_reference",
+              "conflict"
+            ],
+            "title": "Signal"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "strong",
+              "medium",
+              "weak"
+            ],
+            "title": "Level"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "signal",
+          "level",
+          "detail"
+        ],
+        "title": "IngestSuggestionEvidence",
+        "description": "One reason for a suggestion."
+      },
+      "IngestSuggestionsRefresh": {
+        "properties": {
+          "queued": {
+            "type": "boolean",
+            "title": "Queued"
+          }
+        },
+        "type": "object",
+        "required": [
+          "queued"
+        ],
+        "title": "IngestSuggestionsRefresh",
+        "description": "Whether a refresh was queued; one already waiting covers this request."
       },
       "IngestUnlink": {
         "properties": {
@@ -8444,6 +9255,47 @@
           "pages"
         ],
         "title": "Page[IngestSessionSummary]"
+      },
+      "Page_IngestSuggestion_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IngestSuggestion"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total",
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[IngestSuggestion]"
       },
       "Page_Message_": {
         "properties": {

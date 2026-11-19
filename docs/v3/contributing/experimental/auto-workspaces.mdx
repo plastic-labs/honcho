@@ -17,7 +17,7 @@ A workspace is auto only if it was created that way. Regular workspaces work as 
 - **Create** an auto workspace with the SDKs (`auto=True`) or the API.
 - **Import** records through the ingest API, the SDKs or `honcho ingest import`. `honcho ingest import FILE --check` validates a file without sending it.
 - **Run a connector** from the CLI: `honcho ingest from discord` reads a Discord server, and `honcho ingest from github` reads GitHub repositories.
-- **Review before memory is built.** Records imported with `derive="later"` wait until you derive them. The CLI imports this way by default; the API and SDKs derive right away unless you ask for `later`. In the meantime, list the people and sessions an import created, exclude bots and noise, and link accounts that belong to one person.
+- **Review before memory is built.** Records imported with `derive="later"` wait until you derive them. The CLI imports this way by default; the API and SDKs derive right away unless you ask for `later`. In the meantime, list the people and sessions an import created, exclude bots and noise, and link accounts that belong to one person. Honcho suggests which accounts are one person, with the evidence, and you accept or dismiss each suggestion.
 - **Derive** when the workspace looks right.
 
 ## Guides
@@ -25,6 +25,9 @@ A workspace is auto only if it was created that way. Regular workspaces work as 
 <CardGroup cols={2}>
   <Card title="Ingesting Source Records" icon="file-import" href="/v3/contributing/experimental/ingest">
     Create an auto workspace, send records, review them and derive.
+  </Card>
+  <Card title="One Workspace from Several Sources" icon="users" href="/v3/contributing/experimental/ingest-sources">
+    Import a team's Discord and GitHub into one workspace, with one person per teammate.
   </Card>
   <Card title="Writing an Exporter" icon="file-export" href="/v3/contributing/experimental/ingest-exporters">
     Turn another system's history into ingest records, and run it from the CLI.

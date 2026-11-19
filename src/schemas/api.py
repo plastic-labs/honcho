@@ -724,6 +724,14 @@ class IngestRecordCounts(BaseModel):
     queued: int = Field(..., description="Queued for derivation, or derived")
 
 
+class IngestSuggestionCounts(BaseModel):
+    """The workspace's open suggestions, and whether a refresh is under way."""
+
+    high: int = 0
+    low: int = 0
+    refreshing: bool = False
+
+
 class IngestStatus(BaseModel):
     """What the workspace's imports produced, for review before deriving."""
 
@@ -747,6 +755,10 @@ class IngestStatus(BaseModel):
         default=0,
         description="Sessions a reset marked for deletion that still hold imported"
         + " records; 0 once the deletion has finished",
+    )
+    suggestions: IngestSuggestionCounts = Field(
+        default_factory=IngestSuggestionCounts,
+        description="Open suggested links between accounts, by confidence",
     )
 
 
@@ -844,6 +856,81 @@ class IngestUnlinkResult(BaseModel):
 
     peer_id: str
     account: IngestAccount
+
+
+class IngestSuggestionAccount(BaseModel):
+    """One account of a suggestion, as it was when the suggestion was made."""
+
+    source: str
+    source_instance: str
+    id: str | None = Field(
+        default=None, description="The account's ID in the source, when it has one"
+    )
+    display_name: str | None = None
+    handle: str | None = Field(
+        default=None, description="Its username in the source, when the source sent one"
+    )
+    peer_id: str | None = Field(
+        default=None, description="The person it maps to now; null if it's gone"
+    )
+    records: int = Field(
+        ..., description="Records it had written when the suggestion was made"
+    )
+
+
+class IngestSuggestionEvidence(BaseModel):
+    """One reason for a suggestion."""
+
+    signal: Literal["email", "names", "shared_work", "self_reference", "conflict"]
+    level: Literal["strong", "medium", "weak"]
+    detail: str
+
+
+class IngestSuggestion(BaseModel):
+    """Two accounts that look like one person, and why. Nothing is linked until accepted."""
+
+    id: str
+    kind: Literal["same_person"]
+    confidence: Literal["high", "low"] = Field(
+        ...,
+        description="`high`: evidence to accept at a glance. `low`: needs a closer"
+        + " look",
+    )
+    score: float = Field(..., description="Orders suggestions; higher is stronger")
+    status: Literal["open", "accepted", "dismissed"]
+    linked: bool = Field(
+        ..., description="The two accounts map to one person now, however it happened"
+    )
+    accounts: list[IngestSuggestionAccount]
+    evidence: list[IngestSuggestionEvidence]
+    stage: str = Field(..., description="What made it: `rules`")
+    refreshed_at: datetime.datetime = Field(
+        ..., description="When a refresh last made it"
+    )
+
+
+class IngestSuggestionAccept(BaseModel):
+    """Which person to keep when accepting a suggestion."""
+
+    keep: str | None = Field(
+        default=None,
+        max_length=512,
+        description="The peer to keep. By default an explicit peer, else the account"
+        + " with more records when the suggestion was made",
+    )
+
+
+class IngestSuggestionAccepted(BaseModel):
+    """The accepted suggestion and the link it made (null when already one person)."""
+
+    suggestion: IngestSuggestion
+    link: IngestLinkResult | None
+
+
+class IngestSuggestionsRefresh(BaseModel):
+    """Whether a refresh was queued; one already waiting covers this request."""
+
+    queued: bool
 
 
 class IngestResetResponse(BaseModel):
