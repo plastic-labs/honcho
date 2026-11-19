@@ -57,9 +57,57 @@ def save_listing(
     path = _listing_path(base_url, credential, workspace_id)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"people": people, "sessions": sessions}))
+        data: dict[str, Any] = {"people": people, "sessions": sessions}
+        # Keep the last `ingest suggestions` numbering: it is listed separately.
+        data["suggestions"] = _saved(base_url, credential, workspace_id, "suggestions")
+        path.write_text(json.dumps(data))
     except OSError:
         pass
+
+
+def save_suggestions(
+    base_url: str, credential: str, workspace_id: str, suggestions: list[str]
+) -> None:
+    """Remember the numbering of the last `ingest suggestions`. Best effort.
+
+    Kept beside the people and sessions of the last `ingest status`, which it
+    leaves as they are.
+    """
+    path = _listing_path(base_url, credential, workspace_id)
+    try:
+        data: dict[str, Any] = json.loads(path.read_text()) if path.exists() else {}
+    except (OSError, ValueError):
+        data = {}
+    data["suggestions"] = suggestions
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data))
+    except OSError:
+        pass
+
+
+def saved_suggestion(
+    base_url: str, credential: str, workspace_id: str, ref: str
+) -> str:
+    """The suggestion ID `ref` names: a number from the last listing, or an ID."""
+    if not ref.isdigit():
+        return ref
+    numbered = _saved(base_url, credential, workspace_id, "suggestions")
+    index = int(ref) - 1
+    if not numbered:
+        print_error(
+            "NO_LISTING",
+            "No numbered suggestions for this workspace yet. Run"
+            + " `honcho ingest suggestions`, or name the suggestion by ID.",
+        )
+        raise typer.Exit(1)
+    if not 0 <= index < len(numbered):
+        print_error(
+            "NOT_LISTED",
+            f"There is no suggestion {ref} in the last `honcho ingest suggestions`.",
+        )
+        raise typer.Exit(1)
+    return numbered[index]
 
 
 def _saved(base_url: str, credential: str, workspace_id: str, kind: str) -> list[str]:

@@ -27,7 +27,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 - `honcho message` — list and get
 - `honcho conclusion` — list, search, create, delete
 - `honcho dream` — list, inspect (what each dream changed; workspace or admin key)
-- `honcho ingest` (experimental: needs `HONCHO_EXPERIMENTAL=1`) — import, from, status, derive, reset, link, unlink: load source records into an auto workspace (a JSONL file, or an installed connector with `ingest from <source>`), review them, derive (workspace or admin key). `honcho ingest import FILE --check` validates a file without sending it. `honcho peer exclude` / `honcho session exclude` stop derivation about an imported person or session before `ingest derive`
+- `honcho ingest` (experimental: needs `HONCHO_EXPERIMENTAL=1`) — import, from, status, suggestions, derive, reset, link, unlink: load source records into an auto workspace (a JSONL file, or an installed connector with `ingest from <source>`), review them, derive (workspace or admin key). `honcho ingest import FILE --check` validates a file without sending it. `honcho peer exclude` / `honcho session exclude` stop derivation about an imported person or session before `ingest derive`
 
 ## Rules
 
@@ -37,6 +37,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 - Never run `honcho workspace delete` without `honcho workspace inspect` first.
 - `honcho ingest import` holds back bot records no person interacted with (`--bots interacted`, the default); `--bots all` imports every record.
 - After `honcho ingest import`, run `honcho ingest status` and exclude what shouldn't be modeled before `honcho ingest derive`: exclusions apply only to records not yet released.
+- To find accounts across sources that are one person: `honcho ingest suggestions` (after importing, before any reset), then `honcho ingest suggestions accept N --reset --yes` (or `--all-high`) and `honcho ingest import` again. Read the evidence of `low` ones before accepting.
 - To make two imported accounts one person: `honcho ingest link <kept> <other> --reset --yes`, then `honcho ingest import` again. A link never moves imported messages, so it's refused without the reset. Resolve the people before any separate `ingest reset`: a reset re-sorts the numbered list.
 - Compare peer card with conclusions to understand memory state.
 - After `honcho scope add-sessions`, check `honcho scope status <name>` before a scoped `chat`: a `pending` backfill means the scope has not caught up yet, not that there is nothing to recall.

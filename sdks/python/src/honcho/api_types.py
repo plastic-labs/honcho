@@ -736,6 +736,14 @@ class IngestRecordCounts(BaseModel):
     """Queued for derivation, or derived."""
 
 
+class IngestSuggestionCounts(BaseModel):
+    """Open suggested links by confidence, and whether a refresh is under way."""
+
+    high: int = 0
+    low: int = 0
+    refreshing: bool = False
+
+
 class IngestStatusResponse(BaseModel):
     """What the workspace's imports produced, for review before deriving."""
 
@@ -752,6 +760,8 @@ class IngestStatusResponse(BaseModel):
     """Of those, sessions whose reasoning is off."""
     sessions_being_deleted: int = 0
     """Sessions a reset is still deleting; 0 once it has finished."""
+    suggestions: IngestSuggestionCounts = Field(default_factory=IngestSuggestionCounts)
+    """Open suggested links between accounts."""
 
 
 class IngestAccount(BaseModel):
@@ -798,6 +808,55 @@ class IngestLinkResponse(BaseModel):
     merged: list[str]
     """The people linked into it."""
     accounts: list[IngestAccount]
+
+
+class IngestSuggestionAccount(BaseModel):
+    """One account of a suggestion, as it was when the suggestion was made."""
+
+    source: str
+    source_instance: str
+    id: str | None = None
+    display_name: str | None = None
+    handle: str | None = None
+    peer_id: str | None = None
+    """The person it maps to now; None if it's gone."""
+    records: int
+    """Records it had written when the suggestion was made."""
+
+
+class IngestSuggestionEvidence(BaseModel):
+    """One reason for a suggestion."""
+
+    signal: str
+    level: str
+    detail: str
+
+
+class IngestSuggestion(BaseModel):
+    """Two accounts that look like one person, and why. Nothing is linked until accepted.
+
+    Experimental: ingest may change or stop working without notice.
+    """
+
+    id: str
+    kind: str
+    confidence: Literal["high", "low"]
+    """``high``: evidence to accept at a glance. ``low``: needs a closer look."""
+    score: float
+    status: Literal["open", "accepted", "dismissed"]
+    linked: bool
+    """The two accounts map to one person now, however it happened."""
+    accounts: list[IngestSuggestionAccount]
+    evidence: list[IngestSuggestionEvidence]
+    stage: str
+    refreshed_at: datetime.datetime
+
+
+class IngestSuggestionAccepted(BaseModel):
+    """The accepted suggestion, and the link it made (None when already one person)."""
+
+    suggestion: IngestSuggestion
+    link: IngestLinkResponse | None = None
 
 
 class IngestUnlinkResponse(BaseModel):

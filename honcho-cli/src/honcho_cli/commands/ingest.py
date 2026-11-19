@@ -1,4 +1,4 @@
-"""Ingest commands: import, from, status, derive, reset, link, unlink.
+"""Ingest commands: import, from, status, suggestions, derive, reset, link, unlink.
 
 Experimental, and off unless `HONCHO_EXPERIMENTAL=1` is set (see
 `honcho_cli.experimental`).
@@ -49,7 +49,12 @@ from honcho_cli.common import add_common_options, get_client, handle_cmd_flags
 from honcho_cli import ingest_sources
 from honcho_cli.experimental import experimental
 from honcho_cli.experimental import require as require_experimental
-from honcho_cli.ingest_refs import resolve, save_listing
+from honcho_cli.ingest_refs import (
+    resolve,
+    save_listing,
+    save_suggestions,
+    saved_suggestion,
+)
 from honcho_cli.output import print_error, print_json, status, stdout_console, use_json
 from honcho_cli.replay import read_only
 
@@ -1104,3 +1109,254 @@ def unlink_account(
         f"{chosen.source} {chosen.display_name or chosen.id} goes back to"
         + f" {unlinked.peer_id} from the next import on."
     )
+
+
+# ---------------------------------------------------------------------------
+# Suggested links
+# ---------------------------------------------------------------------------
+
+suggestions_app = typer.Typer(
+    cls=HonchoTyperGroup,
+    help="Experimental: accounts that look like one person, to accept or dismiss.",
+)
+app.add_typer(suggestions_app, name="suggestions")
+
+REFRESH_POLL_SECONDS = 1
+REFRESH_WAIT_SECONDS = 300
+
+
+def _wait_for_refresh(client: Honcho) -> bool:
+    """Wait until no refresh is waiting or running; False if it outlasted the wait."""
+    deadline = time.monotonic() + REFRESH_WAIT_SECONDS
+    try:
+        while client.ingest_status().suggestions.refreshing:
+            if time.monotonic() > deadline:
+                return False
+            time.sleep(REFRESH_POLL_SECONDS)
+    except KeyboardInterrupt:
+        status("Stopped waiting; the refresh continues on the server.")
+        raise typer.Exit(130) from None
+    return True
+
+
+def _account_label(account: Any) -> str:
+    name = account.display_name or account.id or "?"
+    handle = f" ({account.handle})" if account.handle and account.handle != name else ""
+    return f"{account.source} {name}{handle}"
+
+
+def _print_suggestions(found: list[Any], total: int) -> None:
+    table = Table(
+        title=f"Suggested links ({total})", show_header=True, header_style="bold"
+    )
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("confidence")
+    table.add_column("accounts", overflow="fold")
+    table.add_column("why", overflow="fold")
+    for number, s in enumerate(found, start=1):
+        confidence = Text(
+            s.confidence, style="green" if s.confidence == "high" else "yellow"
+        )
+        accounts = " + ".join(_account_label(a) for a in s.accounts)
+        if s.linked:
+            accounts += " (already one person)"
+        why = "; ".join(e.detail for e in s.evidence)
+        table.add_row(str(number), confidence, accounts, why)
+    stdout_console.print(table)
+    if found:
+        status(
+            "Accept with `honcho ingest suggestions accept N --reset` (or"
+            + " --all-high), dismiss with `honcho ingest suggestions dismiss N`,"
+            + " then run `honcho ingest import` again."
+        )
+
+
+@suggestions_app.callback(invoke_without_command=True)
+@experimental
+def list_suggestions(
+    ctx: typer.Context,
+    refresh: bool = typer.Option(
+        True,
+        "--refresh/--no-refresh",
+        help="Refresh the suggestions first and wait for it (on by default)",
+    ),
+    confidence: str | None = typer.Option(
+        None, "--confidence", help="Only `high` or only `low`"
+    ),
+    state: str = typer.Option(
+        "open", "--status", help="open (default), accepted, dismissed or all"
+    ),
+    limit: int = typer.Option(50, "--limit", help="Suggestions to list, strongest first"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Accounts from different sources that look like one person, with the evidence.
+
+    Refreshes the suggestions from the imported records first (run it after
+    importing, before a reset), then lists them numbered, strongest first.
+    `high` ones have evidence to accept at a glance; `low` ones need a closer
+    look. Nothing is linked until you accept one.
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    if confidence not in (None, "high", "low"):
+        print_error("INVALID_ARGUMENT", "--confidence must be 'high' or 'low'")
+        raise typer.Exit(1)
+    if state not in ("open", "accepted", "dismissed", "all"):
+        print_error(
+            "INVALID_ARGUMENT", "--status must be open, accepted, dismissed or all"
+        )
+        raise typer.Exit(1)
+    client, config = get_client()
+    wid = config.workspace_id
+    try:
+        if refresh:
+            client.ingest_refresh_suggestions()
+            if not _wait_for_refresh(client):
+                status(
+                    "Still refreshing (is the deriver running?); showing the"
+                    + " suggestions as they are now."
+                )
+        page = client.ingest_suggestions(
+            status=None if state == "all" else state,  # pyright: ignore[reportArgumentType]
+            confidence=confidence,  # pyright: ignore[reportArgumentType]
+            size=min(limit, 100),
+        )
+        found = _first(page, limit)
+        total = page.total or len(found)
+    except Exception as e:
+        _ingest_error(e, wid)
+    save_suggestions(str(client.base_url), _credential(client), wid, [s.id for s in found])
+    if use_json():
+        print_json([s.model_dump(mode="json") for s in found])
+        return
+    _print_suggestions(found, total)
+
+
+def _suggestion_ids(client: Honcho, wid: str, refs: list[str]) -> list[str]:
+    return [
+        saved_suggestion(str(client.base_url), _credential(client), wid, ref)
+        for ref in refs
+    ]
+
+
+@suggestions_app.command("accept")
+@experimental
+def accept_suggestions(
+    refs: list[str] | None = typer.Argument(
+        None, help="Suggestions: numbers from `ingest suggestions`, or IDs"
+    ),
+    all_high: bool = typer.Option(
+        False, "--all-high", help="Accept every open high-confidence suggestion"
+    ),
+    keep: str | None = typer.Option(
+        None,
+        "--keep",
+        help="The peer to keep (one suggestion only). By default an explicit peer,"
+        + " else the account with more records",
+    ),
+    reset: bool = typer.Option(
+        False,
+        "--reset",
+        help="Reset the import first (deletes the imported sessions and waits):"
+        + " accepting links the people, which needs them without imported records",
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Don't ask before --reset"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Accept suggestions: link each one's two accounts into one person.
+
+    Accepting is `honcho ingest link` for the suggestion's two people, so it
+    applies from the next import on: reset first (`--reset`), accept, then run
+    `honcho ingest import` again. The suggestions are found before the reset,
+    so their numbers stay right.
+    """
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    if not refs and not all_high:
+        print_error("INVALID_ARGUMENT", "Name suggestions to accept, or pass --all-high.")
+        raise typer.Exit(1)
+    if keep and (all_high or len(refs or []) != 1):
+        print_error("INVALID_ARGUMENT", "--keep goes with exactly one suggestion.")
+        raise typer.Exit(1)
+    client, config = get_client()
+    wid = config.workspace_id
+    ids = _suggestion_ids(client, wid, refs or [])
+    if all_high:
+        try:
+            ids += [
+                s.id
+                for s in client.ingest_suggestions(status="open", confidence="high", size=100)
+                if not s.linked
+            ]
+        except Exception as e:
+            _ingest_error(e, wid)
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        print_error("NOTHING_TO_ACCEPT", "No open high-confidence suggestions.")
+        raise typer.Exit(1)
+    if reset:
+        _reset(client, wid, yes=yes)
+    accepted: list[dict[str, Any]] = []
+    failed: list[dict[str, str]] = []
+    for suggestion_id in ids:
+        try:
+            result = client.ingest_accept_suggestion(suggestion_id, keep=keep)
+        except (ConflictError, NotFoundError) as e:
+            failed.append({"suggestion": suggestion_id, "reason": str(e)})
+            continue
+        except Exception as e:
+            _ingest_error(e, wid)
+        accepted.append(result.model_dump(mode="json"))
+        if not use_json():
+            if result.link is None:
+                stdout_console.print(
+                    "Already one person: "
+                    + " + ".join(_account_label(a) for a in result.suggestion.accounts)
+                )
+            else:
+                accounts = ", ".join(
+                    f"{a.source} {a.display_name or a.id}" for a in result.link.accounts
+                )
+                stdout_console.print(f"{result.link.peer_id} now has: {accounts}")
+    if use_json():
+        print_json({"accepted": accepted, "failed": failed})
+    else:
+        for failure in failed:
+            print_error("ACCEPT_REFUSED", f"{failure['suggestion']}: {failure['reason']}")
+        if accepted:
+            status("Run `honcho ingest import` again: linked records go to one person.")
+    if failed:
+        raise typer.Exit(1)
+
+
+@suggestions_app.command("dismiss")
+@experimental
+def dismiss_suggestions(
+    refs: list[str] = typer.Argument(
+        help="Suggestions: numbers from `ingest suggestions`, or IDs"
+    ),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Dismiss suggestions: the accounts stay apart, and a refresh won't bring them back."""
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    client, config = get_client()
+    wid = config.workspace_id
+    dismissed: list[dict[str, Any]] = []
+    for suggestion_id in _suggestion_ids(client, wid, refs):
+        try:
+            result = client.ingest_dismiss_suggestion(suggestion_id)
+        except (ConflictError, NotFoundError) as e:
+            print_error("DISMISS_REFUSED", f"{suggestion_id}: {e}")
+            raise typer.Exit(1) from None
+        except Exception as e:
+            _ingest_error(e, wid)
+        dismissed.append(result.model_dump(mode="json"))
+        if not use_json():
+            stdout_console.print(
+                "Dismissed: " + " + ".join(_account_label(a) for a in result.accounts)
+            )
+    if use_json():
+        print_json(dismissed)

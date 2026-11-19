@@ -625,6 +625,7 @@ export interface IngestStatusResponse {
   sessions: number
   sessions_not_modeled: number
   sessions_being_deleted?: number
+  suggestions?: { high: number; low: number; refreshing: boolean }
 }
 
 export interface IngestAccountResponse {
@@ -667,6 +668,8 @@ export interface IngestStatus {
   sessionsNotModeled: number
   /** Sessions a reset is still deleting; 0 once it has finished. */
   sessionsBeingDeleted: number
+  /** Open suggested links by confidence, and whether a refresh is under way. */
+  suggestions: { high: number; low: number; refreshing: boolean }
 }
 
 /** One source account mapped to a peer. */
@@ -726,6 +729,69 @@ export interface IngestLinkResult {
 export interface IngestUnlinkResult {
   peerId: string
   account: IngestAccount
+}
+
+export interface IngestSuggestionAccountResponse {
+  source: string
+  source_instance: string
+  id?: string | null
+  display_name?: string | null
+  handle?: string | null
+  peer_id?: string | null
+  records: number
+}
+
+export interface IngestSuggestionResponse {
+  id: string
+  kind: string
+  confidence: 'high' | 'low'
+  score: number
+  status: 'open' | 'accepted' | 'dismissed'
+  linked: boolean
+  accounts: IngestSuggestionAccountResponse[]
+  evidence: { signal: string; level: string; detail: string }[]
+  stage: string
+  refreshed_at: string
+}
+
+/** One account of a suggestion, as it was when the suggestion was made. */
+export interface IngestSuggestionAccount {
+  source: string
+  sourceInstance: string
+  id?: string
+  displayName?: string
+  handle?: string
+  /** The person it maps to now; undefined if it's gone. */
+  peerId?: string
+  /** Records it had written when the suggestion was made. */
+  records: number
+}
+
+/**
+ * Two accounts that look like one person, and why. Nothing is linked until
+ * the suggestion is accepted.
+ *
+ * @experimental Ingest may change or stop working without notice.
+ */
+export interface IngestSuggestion {
+  id: string
+  kind: string
+  /** `high`: evidence to accept at a glance. `low`: needs a closer look. */
+  confidence: 'high' | 'low'
+  score: number
+  status: 'open' | 'accepted' | 'dismissed'
+  /** The two accounts map to one person now, however it happened. */
+  linked: boolean
+  accounts: IngestSuggestionAccount[]
+  evidence: { signal: string; level: string; detail: string }[]
+  stage: string
+  refreshedAt: string
+}
+
+/** The accepted suggestion, and the link it made (undefined when already one person). */
+export interface IngestSuggestionAccepted {
+  suggestion: IngestSuggestion
+  link?: IngestLinkResult
 }
 
 /** How many deferred records were released for derivation. */
