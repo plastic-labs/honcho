@@ -5,20 +5,27 @@
     python -m tests.bench.auto_workspaces.run --data DIR         # a dataset on disk
     python -m tests.bench.auto_workspaces.run --write DIR        # save the fixtures
 
-Only the rules-only baseline exists so far; an organizer plugs in as another
-`organize(dataset) -> Prediction`.
+`--organizer baseline` (the default) is the exact-rules baseline;
+`--organizer rules` is the identity rules (`rules_identity.py`). Another
+organizer plugs in as an `organize(dataset) -> Prediction`.
 """
 
 import argparse
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import get_args
 
-from tests.bench.auto_workspaces import baseline, fixtures
-from tests.bench.auto_workspaces.model import Dataset
+from tests.bench.auto_workspaces import baseline, fixtures, rules_identity
+from tests.bench.auto_workspaces.model import Dataset, Prediction
 from tests.bench.auto_workspaces.scoring import Report, score
 from tests.bench.auto_workspaces.split import Split, missing_cases, select
+
+_ORGANIZERS: dict[str, Callable[[Dataset], Prediction]] = {
+    "baseline": baseline.organize,
+    "rules": rules_identity.organize,
+}
 
 
 def _table(report: Report) -> str:
@@ -61,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--instances", type=int, default=30)
     parser.add_argument("--write", type=Path, help="write the dataset to DIR and exit")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
+    parser.add_argument("--organizer", choices=sorted(_ORGANIZERS), default="baseline")
     args = parser.parse_args(argv)
 
     dataset = (
@@ -80,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
             + "generate more --instances"
         )
     # The organizer sees records and profiles, never labels or truth.
-    report = score(part, baseline.organize(part.blind()))
+    report = score(part, _ORGANIZERS[args.organizer](part.blind()))
     print(json.dumps(report.as_dict(), indent=1) if args.json else _table(report))
     return 0
 
