@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from src import crud, models, schemas
 from src.crud import collection as collection_crud
 from src.crud.document import create_documents
-from src.crud.message import create_messages
+from src.crud.message import CreateMessagesResult, create_messages
 from src.crud.peer_card import construct_peer_card_label, set_peer_card
 from src.crud.session import get_or_create_session
 from src.deriver.enqueue import (
@@ -459,6 +459,39 @@ async def test_a_rolled_back_message_write_leaves_no_session(
     await db_session.rollback()
 
     assert session_name not in await _committed_session_names(db_engine, workspace_name)
+
+
+@pytest.mark.asyncio
+async def test_a_rolled_back_write_into_a_new_workspace_leaves_nothing_cached(
+    db_session: AsyncSession,
+) -> None:
+    """The first write creates the workspace, session and peer, then rolls back.
+    Nothing it read may stay cached: the next write creates them again."""
+    workspace_name, session_name = str(generate_nanoid()), str(generate_nanoid())
+
+    async def write() -> CreateMessagesResult:
+        return await create_messages(
+            db_session,
+            messages=[schemas.MessageCreate(content="hello", peer_id="alice")],
+            workspace_name=workspace_name,
+            session_name=session_name,
+        )
+
+    await write()
+    await db_session.rollback()
+
+    result = await write()
+    await db_session.commit()
+    await result.post_commit()
+    stored = await db_session.scalar(
+        select(func.count())
+        .select_from(models.Message)
+        .where(
+            models.Message.workspace_name == workspace_name,
+            models.Message.session_name == session_name,
+        )
+    )
+    assert stored == 1
 
 
 @pytest.mark.asyncio

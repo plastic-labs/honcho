@@ -411,6 +411,7 @@ async def get_or_create_session(
         peers_result = await get_or_create_peers(
             db,
             workspace_name=workspace_name,
+            workspace_ensured=True,
             peers=[
                 schemas.PeerSpec(name=peer_name) for peer_name in session.peer_names
             ],
@@ -433,6 +434,7 @@ async def get_or_create_session(
         scopes_result = await get_or_create_scopes(
             db,
             workspace_name=workspace_name,
+            workspace_ensured=True,
             scopes=[
                 schemas.ScopeCreate(name=scope_name) for scope_name in session.scopes
             ],
