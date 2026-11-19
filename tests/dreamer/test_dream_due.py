@@ -363,6 +363,75 @@ class TestCountDueDreams:
 
         assert await count_due_dreams(db_session) == 0
 
+    async def test_dream_setting_lookup_spans_batches(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Every lookup still sees all its keys when it takes several queries.
+
+        One collection is due. Each of the others is off through a different
+        workspace or session, so a lost batch would count it as due.
+        """
+        workspace, _ = sample_data
+
+        async def make_collection(workspace_name: str) -> models.Collection:
+            peer = models.Peer(
+                name=f"p-{generate_nanoid()}", workspace_name=workspace_name
+            )
+            db_session.add(peer)
+            await db_session.flush()
+            collection = models.Collection(
+                observer=peer.name,
+                observed=peer.name,
+                workspace_name=workspace_name,
+                internal_metadata={},
+            )
+            db_session.add(collection)
+            await db_session.commit()
+            return collection
+
+        # Two workspaces with dreams off: two workspace batches.
+        for _ in range(2):
+            off_workspace = models.Workspace(
+                name=f"w-{generate_nanoid()}",
+                configuration={"dream": {"enabled": False}},
+            )
+            db_session.add(off_workspace)
+            await db_session.commit()
+            await _insert_docs(
+                db_session,
+                await make_collection(off_workspace.name),
+                "explicit",
+                60,
+                age_minutes=90,
+            )
+
+        # Two sessions with dreams off: two session batches.
+        for _ in range(2):
+            off_session = await _make_session(
+                db_session, workspace.name, {"dream": {"enabled": False}}
+            )
+            await _insert_docs(
+                db_session,
+                await make_collection(workspace.name),
+                "explicit",
+                60,
+                age_minutes=90,
+                session_name=off_session,
+            )
+
+        await _insert_docs(
+            db_session,
+            await make_collection(workspace.name),
+            "explicit",
+            60,
+            age_minutes=90,
+        )
+
+        with patch("src.dreamer.dream_due._LOOKUP_BATCH_SIZE", 1):
+            assert await count_due_dreams(db_session) == 1
+
     async def test_dreams_disabled_globally_returns_zero(
         self,
         db_session: AsyncSession,
