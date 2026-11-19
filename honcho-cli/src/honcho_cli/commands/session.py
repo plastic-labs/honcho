@@ -1,4 +1,4 @@
-"""Session commands: list, inspect, view, context, summaries, peers, search, representation, metadata."""
+"""Session commands: list, inspect, view, context, summaries, peers, search, representation, metadata, exclude, include."""
 
 from __future__ import annotations
 
@@ -10,7 +10,9 @@ import typer
 
 from honcho import HonchoError, Session
 
+from honcho_cli.commands.ingest import set_session_modeled
 from honcho_cli.commands.workspace import _config_to_dict, _handle_error, _raw_list
+from honcho_cli.experimental import experimental
 from honcho_cli.output import print_error, print_result, print_transcript, status, use_json
 from honcho_cli.validation import validate_resource_id
 
@@ -655,3 +657,31 @@ def set_metadata(
         print_result({"session_id": sid, "metadata": parsed})
     except Exception as e:
         _handle_error(e, "session", sid)
+
+
+@app.command("exclude")
+@experimental
+def exclude_session(
+    ref: str = typer.Argument(help="Number from `honcho ingest status`, session ID, or display name"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Turn reasoning off for an imported session, such as a noisy channel.
+
+    Use it between `honcho ingest import` and `honcho ingest derive`. Its
+    messages are still stored and summarized; nothing is derived from them.
+    """
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    set_session_modeled(ref, False)
+
+
+@app.command("include")
+@experimental
+def include_session(
+    ref: str = typer.Argument(help="Number from `honcho ingest status`, session ID, or display name"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Turn reasoning back on for an imported session."""
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    set_session_modeled(ref, True)

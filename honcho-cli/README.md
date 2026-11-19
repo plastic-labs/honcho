@@ -147,6 +147,37 @@ honcho stop --wipe     # also delete volumes
 | `honcho dream list` | Dreams in the workspace, newest first (`-p` for dreams about one peer, `--observer` for one representation) |
 | `honcho dream inspect <id>` | What one dream changed: conclusions created (with what each was derived from), conclusions removed, and the peer card before and after |
 
+### Ingest (auto workspaces, experimental)
+
+Import a connector's export, review what it became, and fix it before anything is derived. Exclusions made before `ingest derive` apply to what is derived; after it, they only affect records released later.
+
+These commands are experimental: they may change or stop working without notice, and aren't ready for production use. They're off by default and run only with `HONCHO_EXPERIMENTAL=1` set; without it they exit 1 and say how to turn them on.
+
+```bash
+export HONCHO_EXPERIMENTAL=1
+honcho workspace create acme --auto
+honcho ingest import records.jsonl -w acme      # stored, not derived
+honcho ingest status -w acme                     # numbered people and sessions
+honcho ingest link 1 2 --reset -w acme          # two accounts are one person: reset and link,
+honcho ingest import records.jsonl -w acme       #   then import again
+honcho ingest status -w acme                     # numbers change after a reset
+honcho peer exclude "Usage Stats" -w acme        # a bot the source didn't flag
+honcho session exclude 12 -w acme                # a noisy channel (a reset deletes sessions, so exclude after it)
+honcho ingest derive -w acme --watch
+```
+
+| Command | Description |
+|---------|-------------|
+| `honcho workspace create <id> --auto` | Create an auto workspace, which ingest writes to (only a new workspace can be made auto) |
+| `honcho ingest import <file>` | Import ingest records, one per line (`-` for stdin); not derived unless `--derive now`. Safe to run again: stored records come back as duplicates |
+| `honcho ingest status` | Records by derivation state, tokens waiting, and the people and sessions the import created, numbered, most records first |
+| `honcho ingest derive` | Release every deferred record for derivation; `--watch` follows the queue until it finishes |
+| `honcho peer exclude/include <ref>` | Stop (or resume) deriving about an imported person: `observe_me` off. `<ref>` is a number from `ingest status`, an ID, or a display name |
+| `honcho session exclude/include <ref>` | Stop (or resume) deriving from an imported session; it is still summarized |
+| `honcho ingest reset` | Delete the imported sessions and their messages, to import again; people, exclusions and links stay. Asks first (`--yes` to skip) and waits for the deletion |
+| `honcho ingest link <ref> <ref>...` | Treat several imported people as one, from the next import on: every account of the others maps to the first (`--keep <peer-id>` keeps any peer). Nothing imported moves, so `--reset` resets the import first, finding the people before the reset so their numbers stay right |
+| `honcho ingest unlink <person> <account>` | Take a linked account back out (`<account>` = its ID, display name, or `SOURCE:ID`); `--reset` as for link |
+
 ### Config
 
 | Command | Description |

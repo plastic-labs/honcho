@@ -631,17 +631,22 @@ async def _validate_explicit_peers(
     await reject_scope_observed(
         db, workspace_name, names, action="Scope peers can't author ingested records."
     )
-    existing = set(
-        (
-            await db.execute(
-                select(models.Peer.name).where(
-                    models.Peer.tenant_id == tenant_id,
-                    models.Peer.workspace_name == workspace_name,
-                    models.Peer.name.in_(names),
-                )
+    rows = (
+        await db.execute(
+            select(models.Peer.name, models.Peer.internal_metadata).where(
+                models.Peer.tenant_id == tenant_id,
+                models.Peer.workspace_name == workspace_name,
+                models.Peer.name.in_(names),
             )
-        ).scalars()
-    )
+        )
+    ).all()
+    existing = {name for name, _ in rows}
+    merged = sorted(name for name, metadata in rows if merged_into(metadata))
+    if merged:
+        raise ConflictException(
+            f"Peer(s) {merged} were linked into another person; send their records"
+            + " to that person's peer_id instead."
+        )
     invalid = [n for n in names if n not in existing and not _NAME_PATTERN.fullmatch(n)]
     if invalid:
         raise ValidationException(
@@ -941,6 +946,15 @@ def _provenance(binding_id: str, key: BindingKey) -> dict[str, Any]:
             "provisional": key.kind == "provisional_name",
         }
     }
+
+
+def merged_into(internal_metadata: dict[str, Any] | None) -> str | None:
+    """The person a peer was linked into (`crud.ingest_link`), if any."""
+    ingest: Any = (internal_metadata or {}).get("ingest")
+    if not isinstance(ingest, dict):
+        return None
+    value = cast(dict[str, Any], ingest).get("merged_into")
+    return value if isinstance(value, str) else None
 
 
 def _owned_by(internal_metadata: dict[str, Any] | None, binding_id: str) -> bool:
@@ -1307,6 +1321,15 @@ async def _ensure_peer(
         )
         if created is not None:
             outcome.created_peers.append(key)
+        else:
+            # Again under the fence: a link that committed while this batch
+            # waited for it may have merged the peer since the check up front.
+            _, metadata = await _peer_metadata(db, tenant_id, workspace_name, key)
+            if merged_into(metadata):
+                raise ConflictException(
+                    f"Peer {key} was linked into another person; send its records"
+                    + " to that person's peer_id instead."
+                )
         return key, None
 
     short, long = key.candidates()
