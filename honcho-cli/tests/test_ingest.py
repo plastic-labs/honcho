@@ -1224,3 +1224,29 @@ def test_dismiss_by_id(cfg, runner):
 
     assert result.exit_code == 0, result.stderr
     dismiss.assert_called_once_with("sg1")
+
+
+def test_a_batch_reports_what_was_done_before_a_failure(cfg, runner):
+    def accept(suggestion_id: str, keep=None):
+        if suggestion_id == "sg2":
+            raise RuntimeError("server error")
+        return IngestSuggestionAccepted(suggestion=SUGGESTIONS[0], link=None)
+
+    client = _suggestions_client(ingest_accept_suggestion=MagicMock(side_effect=accept))
+    result = _invoke(runner, client, "accept", "sg1", "sg2", "--json")
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)
+    assert [a["suggestion"]["id"] for a in body["accepted"]] == ["sg1"]
+    assert body["failed"][0]["suggestion"] == "sg2"
+
+    def dismiss(suggestion_id: str):
+        if suggestion_id == "sg2":
+            raise ConflictError("was accepted")
+        return SUGGESTIONS[0].model_copy(update={"status": "dismissed"})
+
+    client = _suggestions_client(ingest_dismiss_suggestion=MagicMock(side_effect=dismiss))
+    result = _invoke(runner, client, "dismiss", "sg1", "sg2", "--json")
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)
+    assert [d["id"] for d in body["dismissed"]] == ["sg1"]
+    assert body["failed"][0]["suggestion"] == "sg2"

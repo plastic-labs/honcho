@@ -106,8 +106,6 @@
         "email": {
           "anyOf": [
             {
-              "maxLength": 320,
-              "minLength": 3,
               "type": "string"
             },
             {
@@ -115,7 +113,7 @@
             }
           ],
           "default": null,
-          "description": "The account's email address. Ingest keeps only a digest of it, scoped to the workspace, to suggest which accounts are one person; the address itself is not stored.",
+          "description": "The account's email address. Ingest keeps only a digest of it, scoped to the workspace, to suggest which accounts are one person; the address itself is not stored. A value that isn't an address is ignored.",
           "title": "Email"
         },
         "bot": {

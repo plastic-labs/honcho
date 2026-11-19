@@ -542,10 +542,10 @@ async def refresh_suggestions(
 )
 async def list_suggestions(
     workspace_id: str = Path(..., description="ID of the workspace"),
-    status: str | None = Query(
+    status: str = Query(
         "open",
-        pattern="^(open|accepted|dismissed)$",
-        description="Only suggestions in this state; omit the value for every state",
+        pattern="^(open|accepted|dismissed|all)$",
+        description="Only suggestions in this state, or `all`",
     ),
     confidence: str | None = Query(
         None, pattern="^(high|low)$", description="Only `high` or only `low`"
@@ -573,7 +573,11 @@ async def list_suggestions(
 
     return await paginate_offset_or_cursor(
         db,
-        suggestions_query(workspace_id, status=status, confidence=confidence),
+        suggestions_query(
+            workspace_id,
+            status=None if status == "all" else status,
+            confidence=confidence,
+        ),
         params,
         transformer=resolve,
     )

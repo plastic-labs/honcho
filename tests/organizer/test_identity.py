@@ -9,6 +9,7 @@ from src.organizer.identity import (
     normalize_url,
     own_words,
     suggest,
+    suggest_with,
 )
 
 T0 = datetime.datetime(2026, 11, 3, 9, 0, tzinfo=datetime.UTC)
@@ -137,7 +138,7 @@ def test_a_self_reference_naming_the_source_is_high() -> None:
         github("1", handle="anguyen4821"),
     ]
     for text in (
-        "Opened the northstar PR on GitHub as anguyen4821.",
+        "I opened the northstar PR on GitHub as anguyen4821.",
         "my github username is @anguyen4821",
         "I'm anguyen4821 on GitHub, ping me there",
     ):
@@ -152,6 +153,9 @@ def test_mentions_quotes_and_code_are_not_self_references() -> None:
     ]
     for text in (
         "I reviewed anguyen4821's PR on GitHub",
+        "Alex is on GitHub as anguyen4821",
+        "I'm not on GitHub as anguyen4821",
+        "I never used anguyen4821 on GitHub, my GitHub is something else",
         "same as @anguyen4821 said",
         "> Opened the PR on GitHub as anguyen4821.",
         "run `git push  # on GitHub as anguyen4821`",
@@ -301,3 +305,34 @@ def test_helpers() -> None:
     )
     assert normalize_url("ftp://example.com/x") is None
     assert own_words("> quoted\nmine\n```\ncode\n```") == "mine\n "
+
+
+def test_a_link_to_a_comment_that_was_not_imported_is_no_ones() -> None:
+    # The comment isn't in the import: its link must not count for the PR author.
+    accounts = [
+        discord("1", "Dani", handle="danibalcells"),
+        github("1", handle="danibalcells"),
+    ]
+    posts = [
+        _pr("g:1", 1, 0),
+        _share("d:1", 1, 10, "#issuecomment-9"),
+        _share("d:1", 1, 20, "#issuecomment-10"),
+    ]
+    found = {s.accounts: s for s in suggest(accounts, posts)}
+    assert all(e.signal != "shared_work" for e in found[("d:1", "g:1")].evidence)
+
+
+def test_a_retained_high_pair_joins_the_conflict_check() -> None:
+    # An earlier refresh left d:1 + g:1 open and high; now d:2 claims g:1 too.
+    accounts = [
+        discord("1", "Alex", handle="alex1"),
+        discord("2", "Sam", handle="sam2"),
+        github("1", handle="anguyen4821"),
+    ]
+    posts = [Post("d:2", T0, "I'm anguyen4821 on GitHub")]
+    found, demoted = suggest_with(accounts, posts, retained=[("d:1", "g:1")])
+    assert _pairs(found, "high") == set()
+    assert set(demoted) == {("d:1", "g:1")}
+    # Without the retained pair, the new one alone is fine.
+    found, demoted = suggest_with(accounts, posts, retained=[])
+    assert _pairs(found, "high") == {("d:2", "g:1")} and demoted == {}
