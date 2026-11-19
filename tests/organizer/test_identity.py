@@ -138,7 +138,8 @@ def test_a_self_reference_naming_the_source_is_high() -> None:
         github("1", handle="anguyen4821"),
     ]
     for text in (
-        "I opened the northstar PR on GitHub as anguyen4821.",
+        "I'm on GitHub as anguyen4821.",
+        "anguyen4821 on GitHub is me",
         "my github username is @anguyen4821",
         "I'm anguyen4821 on GitHub, ping me there",
     ):
@@ -154,6 +155,8 @@ def test_mentions_quotes_and_code_are_not_self_references() -> None:
     for text in (
         "I reviewed anguyen4821's PR on GitHub",
         "Alex is on GitHub as anguyen4821",
+        "My friend Bob is on GitHub as anguyen4821",
+        "I think Bob is on GitHub as anguyen4821",
         "I'm not on GitHub as anguyen4821",
         "I never used anguyen4821 on GitHub, my GitHub is something else",
         "same as @anguyen4821 said",

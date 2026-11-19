@@ -559,13 +559,26 @@ async def _kept(
             )
         )
     )
+    # A peer holding an account without a source ID (a provisional or source
+    # account) can't be merged away, whichever account the suggestion names.
+    binding = models.IngestPeerBinding
+    holds_unmergeable = set(
+        await db.scalars(
+            select(binding.peer_name).where(
+                binding.tenant_id == models.scoped_tenant_id(),
+                binding.workspace_name == workspace_name,
+                binding.peer_name.in_(names),
+                binding.key_kind != "external_id",
+            )
+        )
+    )
 
     def rank(account: Mapping[str, Any]) -> tuple[bool, int]:
         peer = peers[account["subject"]]
-        must_keep = peer not in created_by_import or account["kind"] in (
-            "explicit",
-            "provisional",
-            "source",
+        must_keep = (
+            peer not in created_by_import
+            or peer in holds_unmergeable
+            or account["kind"] in ("explicit", "provisional", "source")
         )
         return (must_keep, int(account.get("records", 0)))
 

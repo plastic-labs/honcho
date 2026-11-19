@@ -391,3 +391,54 @@ async def test_accept_keeps_a_peer_link_cant_merge_away(
     )
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["link"]["peer_id"] == "alex-nguyen"
+
+
+@pytest.mark.asyncio
+async def test_accept_keeps_a_peer_holding_an_account_without_an_id(
+    client: TestClient, db_session: AsyncSession
+) -> None:
+    """Linked into a person known only by name, an account keeps that person."""
+    workspace = _workspace(client)
+    notes = {
+        **_record(1, {"id": "notes", "name": "Notes"}, "Sync notes", "granola"),
+        "participants": [{"name": "Riley O"}],
+    }
+    discord_riley = {"id": "u5", "name": "Riley", "email": "riley@team.example"}
+    github_riley = {"id": "g5", "name": "rileyo", "email": "riley@team.example"}
+    records = [
+        notes,
+        _record(2, discord_riley, "Shipping today"),
+        *(_record(10 + n, github_riley, f"PR {n}", "github") for n in range(3)),
+    ]
+
+    def send() -> None:
+        response = client.post(
+            f"/v3/workspaces/{workspace}/ingest",
+            json={"derive": "later", "records": records},
+        )
+        assert response.status_code == 200, response.text
+
+    send()
+    people = client.get(f"/v3/workspaces/{workspace}/ingest/people").json()["items"]
+    by_name = {p["display_name"]: p["peer_id"] for p in people}
+    await _reset(client, db_session, workspace)
+    linked = client.post(
+        f"/v3/workspaces/{workspace}/ingest/link",
+        json={"peers": [by_name["Riley O"], by_name["Riley"]]},
+    )
+    assert linked.status_code == 200, linked.text
+    send()
+    await _refresh(client, workspace)
+    [high] = [
+        s
+        for s in _suggestions(client, workspace, confidence="high")
+        if {a["id"] for a in s["accounts"]} == {"u5", "g5"}
+    ]
+    await _reset(client, db_session, workspace)
+
+    # GitHub has more records, but the person known by name can't be merged away.
+    accepted = client.post(
+        f"/v3/workspaces/{workspace}/ingest/suggestions/{high['id']}/accept"
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["link"]["peer_id"] == by_name["Riley O"]

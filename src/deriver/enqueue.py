@@ -1055,12 +1055,8 @@ async def insert_organize_task(db_session: AsyncSession, workspace_name: str) ->
     """
     payload = create_organize_payload()
     work_unit_key = construct_work_unit_key(workspace_name, payload)
-    unprocessed = await db_session.scalar(
-        select(func.count(QueueItem.id)).where(
-            QueueItem.work_unit_key == work_unit_key,
-            QueueItem.processed == False,  # noqa: E712
-        )
-    )
+    # Running first, then the count: a refresh that finishes in between leaves
+    # a lower count, so this errs toward queueing one more, never toward none.
     running = await db_session.scalar(
         select(
             exists(
@@ -1068,6 +1064,12 @@ async def insert_organize_task(db_session: AsyncSession, workspace_name: str) ->
                     models.ActiveQueueSession.work_unit_key == work_unit_key
                 )
             )
+        )
+    )
+    unprocessed = await db_session.scalar(
+        select(func.count(QueueItem.id)).where(
+            QueueItem.work_unit_key == work_unit_key,
+            QueueItem.processed == False,  # noqa: E712
         )
     )
     if (unprocessed or 0) >= (2 if running else 1):

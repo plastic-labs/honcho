@@ -17,11 +17,11 @@ A pair of accounts gets at most one level of evidence from each family:
 - **shared work:** one account links, in another source, to records the other
   created there, within 6 hours of their creation: two or more distinct
   records (strong), or one, or links later on (weak).
-- **self-reference:** one account gives the other's handle as its own, in the
-  first person and naming the other's source in the same sentence: "I'm on
-  GitHub as alexdev", "my GitHub username is alexdev", "I'm alexdev on GitHub"
-  (strong). Negated sentences, quoted lines, code and injected system
-  reminders don't count.
+- **self-reference:** one account gives the other's handle as its own, in a
+  form that names the writer, the other's source and the handle together:
+  "I'm on GitHub as alexdev", "my GitHub username is alexdev", "I'm alexdev
+  on GitHub", "alexdev on GitHub is me" (strong). Negated sentences, quoted
+  lines, code and injected system reminders don't count.
 
 A `high` suggestion has evidence a person can accept at a glance: an email, a
 self-reference, two agreeing names, a specific name plus shared work, or a
@@ -391,23 +391,23 @@ def _shared_work(
 
 _SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
 _ACCOUNT_WORDS = r"(?:account|handle|username|user\s*name|login|name|id)"
-_FIRST_PERSON = re.compile(r"\b(?:i|i'm|im|me|my|mine)\b", re.IGNORECASE)
 _NEGATION = re.compile(r"\b(?:not|never|no\s+longer)\b|n't\b", re.IGNORECASE)
 
 
 def _claims_handle(sentence: str, handle: str, source: str) -> bool:
     """Does the sentence give `handle` on `source` as the writer's own?
 
-    Only in the first person and not negated: "Bob is on GitHub as bobdev" and
-    "I'm not on GitHub as bobdev" say nothing about the writer.
+    Only in a form that names the writer and the account together, and not
+    negated: "My friend Bob is on GitHub as bobdev" and "I'm not on GitHub as
+    bobdev" say nothing about the writer.
     """
-    if not _FIRST_PERSON.search(sentence) or _NEGATION.search(sentence):
+    if _NEGATION.search(sentence):
         return False
     h = r"@?" + re.escape(handle) + r"(?![\w-])"
     s = re.escape(source)
     patterns = (
-        # "I'm on GitHub as alexdev", "I opened it on GitHub as alexdev"
-        rf"\b{s}\b.*\bas\s+{h}",
+        # "I'm on GitHub as alexdev", "I am on GitHub as alexdev"
+        rf"\bi(?:'m|\s+am)\s+(?:on|at|in)\s+{s}\s+as\s+{h}",
         # "my GitHub (username) is alexdev", "my GitHub: alexdev"
         rf"\bmy\s+{s}(?:\s+{_ACCOUNT_WORDS})?\s*(?:is|:|=)\s*{h}",
         # "I'm alexdev on GitHub", "I am alexdev on GitHub"
