@@ -25,15 +25,6 @@ LEVELS: tuple[str, ...] = ("explicit", "deductive", "inductive", "contradiction"
 _LEVEL_INDEX = {name: i for i, name in enumerate(LEVELS)}
 
 
-class GraphTooLargeError(Exception):
-    """count is a lower bound: the check stops counting one past the limit."""
-
-    def __init__(self, count: int, limit: int):
-        super().__init__(f"graph has at least {count} conclusions; limit is {limit}")
-        self.count = count
-        self.limit = limit
-
-
 @dataclass
 class PerspectiveSummary:
     observer: str
@@ -140,18 +131,9 @@ async def get_graph_columns(
     workspace_name: str,
     observer: str | None,
     observed: str | None,
-    max_nodes: int,
 ) -> GraphColumns:
     D, S = models.Document, models.DocumentSource
     conds = _live(workspace_name, observer, observed)
-
-    # stops at max_nodes + 1, like the list's 100,001 cap, so an oversized graph costs a bounded scan
-    capped = (
-        select(literal(1)).select_from(D).where(*conds).limit(max_nodes + 1).subquery()
-    )
-    count = await db.scalar(select(func.count()).select_from(capped)) or 0
-    if count > max_nodes:
-        raise GraphTooLargeError(count, max_nodes)
 
     n = (
         select(D.id, D.observer, D.observed, D.level, D.created_at, D.times_derived)
@@ -199,8 +181,6 @@ async def get_graph_columns(
         if kind == 1:
             links.append((doc_id, num, source_id))
             continue
-        if len(index) >= max_nodes:
-            raise GraphTooLargeError(len(index) + 1, max_nodes)
         key = (obs, obd)
         p = perspective_index.get(key)
         if p is None:

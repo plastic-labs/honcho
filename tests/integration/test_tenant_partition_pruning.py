@@ -385,7 +385,7 @@ async def _conclusion_delete(db: AsyncSession, source_id: str) -> list[Any]:
 
 
 async def _graph_read(db: AsyncSession, _source_id: str) -> list[Any]:
-    cols = await graph_crud.get_graph_columns(db, "w", None, None, 1000)
+    cols = await graph_crud.get_graph_columns(db, "w", None, None)
     texts = await graph_crud.get_graph_text(db, "w", cols.ids)
     return [
         len(cols.ids),

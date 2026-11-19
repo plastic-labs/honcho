@@ -1,14 +1,12 @@
 import hashlib
 import logging
-import os
 import time
 
 from fastapi import APIRouter, Body, Depends, Header, Path, Query
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.crud.graph import (
-    GraphTooLargeError,
     get_graph_columns,
     get_graph_overview,
     get_graph_text,
@@ -18,9 +16,6 @@ from src.security import require_auth
 from src.utils.graph_wire import CONTENT_TYPE, encode_graph
 
 logger = logging.getLogger(__name__)
-
-# spike knob; a real limit belongs in settings once budgets are agreed
-GRAPH_MAX_NODES = int(os.getenv("GRAPH_MAX_NODES", "250000"))
 
 router = APIRouter(
     prefix="/workspaces/{workspace_id}/graph",
@@ -40,7 +35,6 @@ async def graph_overview(
         "workspace": overview.workspace,
         "version": overview.version,
         "conclusions": overview.conclusions,
-        "max_nodes": GRAPH_MAX_NODES,
         "perspectives": [
             {
                 "observer": p.observer,
@@ -66,20 +60,7 @@ async def graph(
 ):
     """Structure-only conclusion graph as columnar binary. Experimental."""
     started = time.perf_counter()
-    try:
-        cols = await get_graph_columns(
-            db, workspace_id, observer, observed, GRAPH_MAX_NODES
-        )
-    except GraphTooLargeError as e:
-        return JSONResponse(
-            status_code=413,
-            content={
-                "detail": "Graph exceeds node limit; request a single perspective",
-                "conclusions": e.count,
-                "total_kind": "at_least",
-                "max_nodes": e.limit,
-            },
-        )
+    cols = await get_graph_columns(db, workspace_id, observer, observed)
     queried = time.perf_counter()
     body = encode_graph(
         cols,
