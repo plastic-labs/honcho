@@ -77,6 +77,47 @@
           "title": "Name",
           "type": "string"
         },
+        "handle": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The account's username in the source, unique there: a GitHub login, a Discord username. Used only to suggest which accounts are one person.",
+          "title": "Handle"
+        },
+        "aliases": {
+          "description": "Other names the account goes by, such as a profile name or a server nickname. Used only to suggest which accounts are one person.",
+          "items": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Aliases",
+          "type": "array"
+        },
+        "email": {
+          "anyOf": [
+            {
+              "maxLength": 320,
+              "minLength": 3,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The account's email address. Ingest keeps only a digest of it, scoped to the workspace, to suggest which accounts are one person; the address itself is not stored.",
+          "title": "Email"
+        },
         "bot": {
           "default": false,
           "description": "The source marks this account as a bot or an integration. Ingest creates its peer with `observe_me` off, so nothing is derived about it; its messages are still stored and read as context.",

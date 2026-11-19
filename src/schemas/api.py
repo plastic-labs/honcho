@@ -557,6 +557,26 @@ class IngestParticipant(BaseModel):
         default=None, description="The person's ID in the source, if it has one"
     )
     name: _DisplayName = Field(..., description="The person's display name")
+    handle: _DisplayName | None = Field(
+        default=None,
+        description="The account's username in the source, unique there: a GitHub"
+        + " login, a Discord username. Used only to suggest which accounts are one"
+        + " person.",
+    )
+    aliases: list[_DisplayName] = Field(
+        default_factory=list,
+        max_length=10,
+        description="Other names the account goes by, such as a profile name or a"
+        + " server nickname. Used only to suggest which accounts are one person.",
+    )
+    email: Annotated[str, NulStripped, Field(min_length=3, max_length=320)] | None = (
+        Field(
+            default=None,
+            description="The account's email address. Ingest keeps only a digest of"
+            + " it, scoped to the workspace, to suggest which accounts are one"
+            + " person; the address itself is not stored.",
+        )
+    )
     bot: bool = Field(
         default=False,
         description="The source marks this account as a bot or an integration. "

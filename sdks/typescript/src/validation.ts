@@ -386,12 +386,17 @@ const IngestTimestampSchema = z.union([z.string().min(1), z.date()])
 /**
  * Schema for a person on an ingested record. `id` is what connects them
  * across records; `bot` marks an account the source flags as a bot, whose
- * peer is created with `observeMe` off.
+ * peer is created with `observeMe` off. `handle`, `aliases` and `email` are
+ * used only to suggest which accounts are one person; the server keeps only a
+ * workspace-scoped digest of the email.
  */
 export const IngestParticipantSchema = z
   .object({
     id: IngestExternalIdSchema.nullish(),
     name: z.string().min(1),
+    handle: z.string().min(1).nullish(),
+    aliases: z.array(z.string().min(1)).max(10).nullish(),
+    email: z.string().min(3).nullish(),
     bot: z.boolean().nullish(),
   })
   .strict()
@@ -445,6 +450,9 @@ export function ingestRecordToApi(
   const participant = (p: z.infer<typeof IngestParticipantSchema>) => ({
     id: p.id ?? undefined,
     name: p.name,
+    handle: p.handle ?? undefined,
+    aliases: p.aliases ?? undefined,
+    email: p.email ?? undefined,
     bot: p.bot ?? undefined,
   })
   return {
