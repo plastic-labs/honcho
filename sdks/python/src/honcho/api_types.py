@@ -6,9 +6,10 @@ These types mirror the server's Pydantic schemas for API responses and requests.
 from __future__ import annotations
 
 import datetime
-from typing import Any, Literal
+import re
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
 
 # Reasoning level of a conclusion. "explicit" conclusions are extracted directly
 # from messages; the others are derived during dreaming.
@@ -561,14 +562,77 @@ class QueueStatusResponse(BaseModel):
 # ==============================================================================
 
 
+# The rules ingest applies to a record, so a record validated here is one the
+# server accepts (`honcho ingest import --check` relies on it). The differences
+# are deliberate: unknown fields are rejected here, where the server ignores
+# them, and two limits are server settings not known here: `content`'s length
+# (MAX_MESSAGE_SIZE) and the token budget for custom instructions.
+_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
+# NUL and lone surrogates: the characters Postgres can't store in text.
+_UNSTORABLE = re.compile("[\x00\ud800-\udfff]")
+
+
+def _storable(value: str) -> str:
+    if _UNSTORABLE.search(value):
+        raise ValueError("must not contain NUL or unpaired surrogate characters")
+    return value
+
+
+def _strip_nul(value: Any) -> Any:
+    """NUL characters dropped from a string, or from a dict's or list's strings."""
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, dict):
+        return {_strip_nul(k): _strip_nul(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(value, list):
+        return [_strip_nul(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
+    return value
+
+
+_METADATA_MAX_KEYS = 100
+_METADATA_MAX_DEPTH = 5
+
+
+def _metadata(value: Any) -> Any:
+    """The server's limits on metadata, then NUL dropped from its strings."""
+    if not isinstance(value, dict):
+        return value
+
+    def check(data: dict[Any, Any], depth: int) -> None:
+        if depth > _METADATA_MAX_DEPTH:
+            raise ValueError(
+                f"Metadata nesting exceeds maximum depth of {_METADATA_MAX_DEPTH}"
+            )
+        for item in data.values():
+            if isinstance(item, dict):
+                check(item, depth + 1)  # pyright: ignore[reportUnknownArgumentType]
+
+    if len(value) > _METADATA_MAX_KEYS:  # pyright: ignore[reportUnknownArgumentType]
+        raise ValueError(
+            f"Metadata exceeds maximum of {_METADATA_MAX_KEYS} top-level keys"
+        )
+    check(value, 1)  # pyright: ignore[reportUnknownArgumentType]
+    return _strip_nul(value)
+
+
+# An identifier is a lookup key: one the server can't store is refused, not
+# changed. A display name has NUL characters dropped, as the server does.
+_ExternalId = Annotated[
+    str, AfterValidator(_storable), Field(min_length=1, max_length=512)
+]
+_DisplayName = Annotated[
+    str, BeforeValidator(_strip_nul), Field(min_length=1, max_length=512)
+]
+
+
 class IngestParticipant(BaseModel):
     """A person on a source record. ``id`` is what connects them across records."""
 
     model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
-    id: str | None = Field(None, min_length=1, max_length=512)
+    id: _ExternalId | None = None
     """The person's ID in the source, if it has one."""
-    name: str = Field(min_length=1, max_length=512)
+    name: _DisplayName
     """The person's display name."""
     bot: bool = False
     """The source marks this account as a bot. Its peer is created with
@@ -580,9 +644,9 @@ class IngestContainer(BaseModel):
 
     model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
-    id: str = Field(min_length=1, max_length=512)
-    name: str | None = Field(None, min_length=1, max_length=512)
-    parent_id: str | None = Field(None, min_length=1, max_length=512)
+    id: _ExternalId
+    name: _DisplayName | None = None
+    parent_id: _ExternalId | None = None
     """The parent container's ID, e.g. a thread's channel."""
 
 
@@ -594,14 +658,14 @@ class IngestRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
-    source: str = Field(min_length=1, max_length=64)
+    source: str = Field(min_length=1, max_length=64, pattern=_NAME_PATTERN)
     """The source type, e.g. ``discord``."""
-    source_instance: str = Field(min_length=1, max_length=128)
+    source_instance: str = Field(min_length=1, max_length=128, pattern=_NAME_PATTERN)
     """The server, team or account inside the source."""
     created_at: datetime.datetime
     """The source's timestamp."""
-    content: str
-    source_id: str | None = Field(None, min_length=1, max_length=512)
+    content: Annotated[str, BeforeValidator(_strip_nul)]
+    source_id: _ExternalId | None = None
     """The record's ID in that instance. Without it, the record is identified by
     a hash of its content, so only identical content is deduplicated."""
     revised_at: datetime.datetime | None = None
@@ -610,12 +674,19 @@ class IngestRecord(BaseModel):
     """Where the record lives; omit for a standalone record."""
     author: IngestParticipant | None = None
     """Who wrote it; omit when there is no single author."""
-    participants: list[IngestParticipant] = Field(default_factory=list)
-    metadata: dict[str, Any] | None = None
+    participants: list[IngestParticipant] = Field(default_factory=list, max_length=100)
+    metadata: Annotated[dict[str, Any], BeforeValidator(_metadata)] | None = None
     configuration: MessageConfiguration | None = None
-    session_id: str | None = Field(None, min_length=1, max_length=512)
+    session_id: (
+        Annotated[
+            str,
+            AfterValidator(_storable),
+            Field(min_length=1, max_length=512, pattern=_NAME_PATTERN),
+        ]
+        | None
+    ) = None
     """An explicit session, used instead of mapping the container."""
-    peer_id: str | None = Field(None, min_length=1, max_length=512)
+    peer_id: _ExternalId | None = None
     """An explicit author peer, used instead of mapping the author."""
 
 

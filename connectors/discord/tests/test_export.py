@@ -678,3 +678,63 @@ def test_the_git_guard_expands_home_and_runs_before_any_read(
                 "~/repo/export",
             ]
         )
+
+
+# --- honcho ingest from discord -------------------------------------------------
+
+
+class _CliSink:
+    """Stands in for the CLI's record sink."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str]] = []
+
+    def container(self, name: str) -> None:
+        self.events.append(("container", name))
+
+    def record(self, record: Any) -> None:
+        self.events.append(("record", record["source_id"]))
+
+
+def test_ingest_from_discord_hands_each_container_to_the_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from honcho_discord import source
+
+    fake = FakeDiscord(page=3)
+    token = tmp_path / "token"
+    token.write_text("test-token")
+
+    def fake_client(*_args: object, **_kwargs: object) -> DiscordClient:
+        return _client(fake)
+
+    monkeypatch.setattr(source, "DiscordClient", fake_client)
+    sink = _CliSink()
+
+    code = source.SOURCE.main(["--token-file", str(token), "--guild", GUILD], sink)
+
+    assert code == 0
+    records = [name for kind, name in sink.events if kind == "record"]
+    assert records == [str(i) for i in range(1, 8)] + ["20", "30", "40", "50"]
+    containers = [name for kind, name in sink.events if kind == "container"]
+    assert containers and all(name.startswith("#") for name in containers)
+    # Each container's records follow it: the first event names a container.
+    assert sink.events[0][0] == "container"
+
+
+def test_the_discord_source_is_registered() -> None:
+    from importlib.metadata import entry_points
+
+    from honcho_discord.source import SOURCE
+
+    points = {p.name: p for p in entry_points(group="honcho.ingest_sources")}
+    assert points["discord"].load() is SOURCE
+    assert SOURCE.help
+
+
+def test_the_discord_source_help_exits_cleanly() -> None:
+    from honcho_discord.source import SOURCE
+
+    with pytest.raises(SystemExit) as helped:
+        SOURCE.main(["--help"], _CliSink())
+    assert helped.value.code == 0

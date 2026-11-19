@@ -1,0 +1,122 @@
+---
+title: Writing an Exporter
+description: Turn another system's history into ingest records, and run it from the Honcho CLI
+icon: 'file-export'
+---
+
+<Warning>
+Ingest is experimental: the record format (v0), the CLI commands and the source interface described here may change or stop working without notice. The CLI's ingest commands run only with `HONCHO_EXPERIMENTAL=1` set.
+</Warning>
+
+An exporter reads another system (a chat, a tracker, a mailbox) and turns its history into [ingest records](/v3/documentation/features/advanced/ingest). There are two ways to use one:
+
+- **Print JSONL.** Write one record per line and pipe it in: `my-exporter | honcho ingest import - -w acme`. Any language works.
+- **Register it as a source.** A Python package can plug into the CLI so it runs as `honcho ingest from <name>`, with the CLI handling the workspace, credentials and sending.
+
+## The record format
+
+The format is published as a JSON Schema: [`ingest-record.v0.json`](https://github.com/plastic-labs/honcho/blob/main/docs/schemas/ingest-record.v0.json). It is generated from the server's own model, so it has the same fields, types, required fields, patterns and lengths. Unknown fields are rejected, so a misspelled field fails rather than being dropped. A few rules are beyond a JSON Schema: IDs can't contain NUL characters; `metadata` has at most 100 top-level keys, nested at most 5 levels; `content` is limited by the server's `MAX_MESSAGE_SIZE` setting, 25,000 characters by default; and `custom_instructions` in `configuration` by a token budget the server sets. `honcho ingest import --check` checks all but the last.
+
+| Field | | What it is |
+|---|---|---|
+| `source` | required | The system, e.g. `github`, `discord` |
+| `source_instance` | required | The server, team, account or host inside the source. Letters, digits, `-` and `_` |
+| `source_id` | | The record's ID in that instance. Ingest deduplicates on `source`, `source_instance` and `source_id`, so sending a record again is safe. Without it, the record is identified by a hash of its content |
+| `revised_at` | | When the source last changed the record |
+| `created_at` | required | When it was written, ISO 8601 |
+| `container` | | Where it lives: `{id, name, parent_id}`. One container becomes one session |
+| `author` | | Who wrote it: `{id, name, bot}`. Accounts are matched across records by `id` within the source and instance |
+| `participants` | | Others it's addressed to or mentions, in the same shape |
+| `content` | required | The text, as it should be read |
+| `metadata` | | Anything else to keep. Two keys have a meaning: `reply_to` (the `source_id` replied to) and `thread` (a narrower conversation inside a container, such as `pr:12`) |
+| `configuration` | | Per-message settings, such as `{"reasoning": {"enabled": false}}` to store a record as context only |
+| `session_id`, `peer_id` | | An explicit session or author peer, used instead of mapping the container or author. Most exporters leave these out |
+
+A record already stored that comes again with a newer `revised_at` is rejected as `edit_not_supported` for now, and the stored version stays. Send `revised_at` anyway: it is how an edit will be recognized.
+
+## What makes a clean import
+
+- **Stable IDs.** Use the source's own IDs for `source_id`, containers and accounts, never something that changes between runs, like a position or a display name.
+- **Accounts by ID, not by name.** Names change and collide; an `id` keeps one person one account. Linking one person's accounts across sources is done after the import, with `honcho ingest link`.
+- **Mark bots.** Set `bot: true` on accounts the source flags as bots or integrations. Nothing is derived about them, and `honcho ingest import` holds back bot records no person replied to or mentioned (`--bots`).
+- **Fill `reply_to` and `thread`** when the source has them: they decide which bot records a person interacted with.
+- **Clean the text.** Remove text a person didn't write, such as a bot's summary quoted into their post or signature footers, so it isn't attributed to them.
+- **Oldest first within a container.**
+- **No secrets.** Records are stored and read by models: leave tokens and keys out of `content` and `metadata`.
+
+## Check the output
+
+`--check` validates every line without a workspace or credentials, and sends nothing:
+
+```bash
+export HONCHO_EXPERIMENTAL=1
+my-exporter > records.jsonl
+honcho ingest import records.jsonl --check
+```
+
+It applies the rules ingest applies, checking `content` against the default limit and leaving the custom-instructions budget to the server, and lists the invalid lines with what's wrong. Then it counts the records by source, the containers and authors, and how many bot records an import would hold back. A JSON Schema validator checks everything but the rules listed above.
+
+## Import it
+
+```bash
+honcho workspace create acme --auto
+honcho ingest import records.jsonl -w acme      # or: my-exporter | honcho ingest import - -w acme
+honcho ingest status -w acme
+```
+
+## Run it as `honcho ingest from`
+
+A Python package registers an object under the `honcho.ingest_sources` entry point, named for its source:
+
+```toml pyproject.toml
+[project.entry-points."honcho.ingest_sources"]
+mychat = "mychat_exporter.source:SOURCE"
+```
+
+The object needs a one-line `help` and a `main(argv, sink)` that parses its own options, reads the source, and hands the records to the sink: `sink.container(name)` before each container's records, then `sink.record(record)` for each one. It returns its exit code, non-zero when the read was incomplete.
+
+```python mychat_exporter/source.py
+import argparse
+
+
+class MyChatSource:
+    help = "MyChat rooms"
+
+    def main(self, argv, sink):
+        parser = argparse.ArgumentParser(prog="honcho ingest from mychat")
+        parser.add_argument("--token-file", required=True)
+        parser.add_argument("--room", action="append", required=True)
+        args = parser.parse_args(argv)
+
+        for room in read_rooms(args.token_file, args.room):
+            sink.container(room.name)
+            for message in room.messages:  # oldest first
+                sink.record(
+                    {
+                        "source": "mychat",
+                        "source_instance": room.team_id,
+                        "source_id": message.id,
+                        "created_at": message.sent_at,
+                        "container": {"id": room.id, "name": room.name},
+                        "author": {"id": message.user_id, "name": message.user_name},
+                        "content": message.text,
+                    }
+                )
+        return 0
+
+
+SOURCE = MyChatSource()
+```
+
+Install it next to the CLI, and it shows up:
+
+```bash
+pip install honcho-cli ./mychat-exporter
+honcho ingest from                                   # lists the installed sources
+honcho ingest from mychat --help                     # its own options
+honcho ingest from mychat --token-file ~/.mychat.token --room general -w acme
+```
+
+The CLI does the rest: the workspace and API key from its configuration, validating each record, holding back bot records no person interacted with (judged one container at a time), sending in batches without deriving, and the summary `ingest import` prints. `-w`, `--derive`, `--bots` and `--json` are the CLI's own options; everything else goes to the source. A source doesn't import anything from Honcho.
+
+The Honcho repository's [GitHub](https://github.com/plastic-labs/honcho/tree/main/connectors/github) and [Discord](https://github.com/plastic-labs/honcho/tree/main/connectors/discord) connectors are complete examples, registered as `github` and `discord`.

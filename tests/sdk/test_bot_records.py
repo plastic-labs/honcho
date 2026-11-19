@@ -336,3 +336,14 @@ def test_a_mention_names_the_whole_bot_name() -> None:
             "reply",
             "later",
         ]
+
+
+def test_a_nul_in_a_bot_name_and_its_mention_still_match() -> None:
+    # Ingest drops NUL from names and text alike, so the mention still names it.
+    bot = {"id": "9", "name": "bo\x00t", "bot": True}
+    records = [
+        _record("post", 0, bot),
+        _record("ask", 1, ALEX, participants=[bot], content="@bo\x00t please explain"),
+    ]
+
+    assert _ids(filter_bot_records(records)[0]) == ["post", "ask"]

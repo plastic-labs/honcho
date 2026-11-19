@@ -182,3 +182,5 @@ honcho peer exclude "Usage Stats" -w acme
 honcho session exclude 12 -w acme                # after the last reset: a reset deletes sessions
 honcho ingest derive -w acme --watch
 ```
+
+`honcho ingest import FILE --check` validates a file without a workspace or credentials and sends nothing. Installed connectors run straight from the CLI: `honcho ingest from` lists them, and `honcho ingest from github --repo OWNER/NAME --token-file FILE -w acme` reads and imports in one step, holding back unanswered bot records the same way. To write your own exporter or connector, see [Writing an Exporter](/v3/documentation/features/advanced/ingest-exporters).

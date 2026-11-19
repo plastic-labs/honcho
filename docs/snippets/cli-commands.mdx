@@ -215,6 +215,27 @@ honcho ingest derive
   Follow the queue until derivation finishes.
 </ParamField>
 </Accordion>
+<Accordion title="from">
+Experimental: import straight from an installed connector, such as `github`.
+
+The source's own options follow its name: `honcho ingest from github --help`
+shows them. Records are sent the way `ingest import` sends a file: deriving
+later, and holding back bot records no person interacted with, judged one
+container at a time. `--derive`, `--bots`, `-w` and `--json` are this
+command's own; everything else goes to the source.
+
+```bash
+honcho ingest from [<source>]
+```
+
+<ParamField path="source" type="string" />
+<ParamField path="--derive" type="string" default="later">
+  later (default): store without deriving until `honcho ingest derive`; now: derive as records arrive.
+</ParamField>
+<ParamField path="--bots" type="string" default="interacted">
+  Bot records to import. interacted (default): only those a person replied to or mentioned the bot about; all; none.
+</ParamField>
+</Accordion>
 <Accordion title="import">
 Experimental: Import source records, such as a connector's `records.jsonl`.
 
@@ -227,6 +248,9 @@ derived about a bot, but its text is read as context around the people, so
 unanswered bot posts cost tokens. The file is read whole first, since a
 reply can come after what it answers. `--bots all` imports them too.
 
+`--check` validates every line against the ingest record format without a
+workspace or credentials, and sends nothing.
+
 ```bash
 honcho ingest import <file>
 ```
@@ -237,6 +261,9 @@ honcho ingest import <file>
 </ParamField>
 <ParamField path="--bots" type="string" default="interacted">
   Bot records to import. interacted (default): only those a person replied to or mentioned the bot about; all; none.
+</ParamField>
+<ParamField path="--check" type="boolean">
+  Validate every line and report what would be sent; send nothing.
 </ParamField>
 </Accordion>
 <Accordion title="link">

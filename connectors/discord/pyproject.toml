@@ -19,6 +19,10 @@ Repository = "https://github.com/plastic-labs/honcho"
 [project.scripts]
 honcho-discord = "honcho_discord.__main__:main"
 
+# `honcho ingest from discord`: see honcho_cli.ingest_sources.
+[project.entry-points."honcho.ingest_sources"]
+discord = "honcho_discord.source:SOURCE"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
