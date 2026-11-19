@@ -4745,20 +4745,13 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "pattern": "^(open|accepted|dismissed)$"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Only suggestions in this state; omit the value for every state",
+              "type": "string",
+              "pattern": "^(open|accepted|dismissed|all)$",
+              "description": "Only suggestions in this state, or `all`",
               "default": "open",
               "title": "Status"
             },
-            "description": "Only suggestions in this state; omit the value for every state"
+            "description": "Only suggestions in this state, or `all`"
           },
           {
             "name": "confidence",
@@ -8077,16 +8070,14 @@
           "email": {
             "anyOf": [
               {
-                "type": "string",
-                "maxLength": 320,
-                "minLength": 3
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
             "title": "Email",
-            "description": "The account's email address. Ingest keeps only a digest of it, scoped to the workspace, to suggest which accounts are one person; the address itself is not stored."
+            "description": "The account's email address. Ingest keeps only a digest of it, scoped to the workspace, to suggest which accounts are one person; the address itself is not stored. A value that isn't an address is ignored."
           },
           "bot": {
             "type": "boolean",

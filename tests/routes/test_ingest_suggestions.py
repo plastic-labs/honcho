@@ -1,5 +1,6 @@
 """Suggested links: refresh, review, accept (a link) or dismiss, across a reset."""
 
+import datetime
 import json
 from typing import Any
 
@@ -273,3 +274,120 @@ async def test_an_explicit_peer_id_matches_a_username_exactly(
     assert accepted.status_code == 200, accepted.text
     # The explicit peer can't be merged away: it is kept.
     assert accepted.json()["link"]["peer_id"] == "alex-nguyen-4f2a"
+
+
+@pytest.mark.asyncio
+async def test_a_refresh_writes_nothing_to_a_workspace_deleted_meanwhile(
+    client: TestClient, db_session: AsyncSession
+) -> None:
+    from src.crud.ingest_suggestions import load_inputs, save_suggestions
+    from src.organizer.identity import suggest
+
+    workspace = _workspace(client)
+    _import(client, workspace)
+    old_id = await db_session.scalar(
+        select(models.Workspace.id).where(models.Workspace.name == workspace)
+    )
+    inputs = await load_inputs(db_session, workspace)
+    found = suggest(inputs.accounts, inputs.posts)
+    assert found
+
+    # Deleted, then made again under the same name, after the refresh read it.
+    await crud.delete_workspace(db_session, workspace)
+    await db_session.commit()
+    _workspace_named(client, workspace)
+    written = await save_suggestions(
+        db_session, workspace, old_id or "", found, inputs.snapshots,
+        datetime.datetime.now(datetime.UTC),
+    )  # fmt: skip
+    await db_session.commit()
+    assert written == 0
+    assert _suggestions(client, workspace, status="all") == []
+
+
+def _workspace_named(client: TestClient, name: str) -> None:
+    response = client.post("/v3/workspaces", json={"id": name, "auto": True})
+    assert response.status_code in (200, 201), response.text
+
+
+@pytest.mark.asyncio
+async def test_a_refresh_requested_while_one_runs_is_queued_behind_it(
+    client: TestClient, db_session: AsyncSession
+) -> None:
+    from src.deriver.enqueue import insert_organize_task
+    from src.utils.queue_payload import create_organize_payload
+    from src.utils.work_unit import construct_work_unit_key
+
+    workspace = _workspace(client)
+    assert await insert_organize_task(db_session, workspace) is True
+    assert await insert_organize_task(db_session, workspace) is False
+    # A worker claims it: the running refresh may have read too early.
+    key = construct_work_unit_key(workspace, create_organize_payload())
+    db_session.add(models.ActiveQueueSession(work_unit_key=key))
+    await db_session.flush()
+    assert await insert_organize_task(db_session, workspace) is True
+    assert await insert_organize_task(db_session, workspace) is False
+    await db_session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_status_all_lists_every_state(client: TestClient) -> None:
+    workspace = _workspace(client)
+    _import(client, workspace)
+    await _refresh(client, workspace)
+    [low] = _suggestions(client, workspace, confidence="low")
+    client.post(f"/v3/workspaces/{workspace}/ingest/suggestions/{low['id']}/dismiss")
+
+    assert {s["status"] for s in _suggestions(client, workspace, status="all")} == {
+        "open",
+        "dismissed",
+    }
+    assert len(_suggestions(client, workspace)) == 1  # open, the default
+
+
+@pytest.mark.asyncio
+async def test_accept_keeps_a_peer_link_cant_merge_away(
+    client: TestClient, db_session: AsyncSession
+) -> None:
+    """An account already linked into an explicit peer keeps that peer."""
+    workspace = _workspace(client)
+    discord_alex = {"id": "u9", "name": "Alex", "handle": "alexn"}
+    github_alex = {"id": "g9", "name": "alexn", "handle": "alexn"}
+    explicit = {**_record(1, ALEX, "From the app", "app"), "author": None}
+    explicit["peer_id"] = "alex-nguyen"
+    records = [
+        explicit,
+        _record(2, discord_alex, "I'm alexn on GitHub, by the way."),
+        *(_record(10 + n, github_alex, f"PR {n}", "github") for n in range(3)),
+    ]
+
+    def send() -> None:
+        response = client.post(
+            f"/v3/workspaces/{workspace}/ingest",
+            json={"derive": "later", "records": records},
+        )
+        assert response.status_code == 200, response.text
+
+    send()
+    discord_peer = next(
+        p["peer_id"]
+        for p in client.get(f"/v3/workspaces/{workspace}/ingest/people").json()["items"]
+        if any(a["source"] == "discord" for a in p["accounts"])
+    )
+    await _reset(client, db_session, workspace)
+    linked = client.post(
+        f"/v3/workspaces/{workspace}/ingest/link",
+        json={"peers": ["alex-nguyen", discord_peer]},
+    )
+    assert linked.status_code == 200, linked.text
+    send()
+    await _refresh(client, workspace)
+    [high] = _suggestions(client, workspace, confidence="high")
+    await _reset(client, db_session, workspace)
+
+    # GitHub has more records, but the explicit peer can't be merged away.
+    accepted = client.post(
+        f"/v3/workspaces/{workspace}/ingest/suggestions/{high['id']}/accept"
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["link"]["peer_id"] == "alex-nguyen"

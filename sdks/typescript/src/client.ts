@@ -1585,7 +1585,7 @@ export class Honcho {
           query: {
             page,
             size,
-            ...(status === null ? {} : { status }),
+            status: status ?? 'all',
             ...(options?.confidence ? { confidence: options.confidence } : {}),
           },
         }

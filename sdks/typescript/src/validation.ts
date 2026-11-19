@@ -396,7 +396,8 @@ export const IngestParticipantSchema = z
     name: z.string().min(1),
     handle: z.string().min(1).nullish(),
     aliases: z.array(z.string().min(1)).max(10).nullish(),
-    email: z.string().min(3).nullish(),
+    // The server ignores a value that isn't an address.
+    email: z.string().nullish(),
     bot: z.boolean().nullish(),
   })
   .strict()

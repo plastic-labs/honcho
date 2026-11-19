@@ -891,9 +891,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
 
         See `Honcho.ingest_suggestions`.
         """
-        query: dict[str, Any] = {"page": page, "size": size}
-        if status is not None:
-            query["status"] = status
+        query: dict[str, Any] = {"page": page, "size": size, "status": status or "all"}
         if confidence is not None:
             query["confidence"] = confidence
 

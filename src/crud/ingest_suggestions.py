@@ -321,17 +321,25 @@ def subject_key(accounts: Sequence[str]) -> str:
 async def save_suggestions(
     db: AsyncSession,
     workspace_name: str,
+    workspace_id: str,
     found: Iterable[Suggestion],
     snapshots: Mapping[str, dict[str, Any]],
     refreshed_at: datetime.datetime,
+    demoted: Mapping[tuple[str, str], str] | None = None,
 ) -> int:
     """Store a refresh's suggestions; return how many rows it added or updated.
 
     New pairs are added as `open`. An `open` suggestion the refresh made again
     gets its new evidence, unless a later refresh already wrote it. Accepted
     and dismissed suggestions, and open ones this refresh didn't make, are
-    left as they are. Takes the shared workspace fence first, so workspace
-    deletion can't interleave; rows are written in key order.
+    left as they are. `demoted` names earlier open `high` suggestions this
+    refresh found would now join two people: they drop to `low`, with why.
+
+    Takes the shared workspace fence first, so workspace deletion can't
+    interleave, then writes nothing unless the workspace is still the one the
+    refresh read (`workspace_id`): a workspace deleted, or deleted and made
+    again under its name, after the read gets no suggestions from it. Rows are
+    written in key order.
     """
     rows = [
         {
@@ -353,12 +361,43 @@ async def save_suggestions(
         }
         for s in found
     ]
-    if not rows:
+    await take_workspace_fence(db, workspace_name, mode="shared")
+    current = await db.scalar(
+        select(models.Workspace.id).where(
+            models.Workspace.tenant_id == models.scoped_tenant_id(),
+            models.Workspace.name == workspace_name,
+            models.Workspace.auto_enabled_at.is_not(None),
+        )
+    )
+    if current != workspace_id:
         return 0
     rows.sort(key=lambda r: r["subject_key"])
-    await take_workspace_fence(db, workspace_name, mode="shared")
     table = models.IngestSuggestion
     written = 0
+    for pair, reason in sorted((demoted or {}).items()):
+        conflict = func.jsonb_build_array(
+            func.jsonb_build_object(
+                "signal", "conflict", "level", "strong", "detail", reason
+            )
+        )
+        result = await db.execute(
+            update(table)
+            .where(
+                table.tenant_id == models.scoped_tenant_id(),
+                table.workspace_name == workspace_name,
+                table.kind == "same_person",
+                table.subject_key == subject_key(pair),
+                table.status == "open",
+                table.confidence == "high",
+            )
+            .values(
+                confidence="low",
+                evidence=table.evidence.op("||")(conflict),
+                refreshed_at=refreshed_at,
+            )
+            .returning(table.id)
+        )
+        written += len(result.all())
     for start in range(0, len(rows), 500):
         statement = pg_insert(table).values(rows[start : start + 500])
         statement = statement.on_conflict_do_update(
@@ -381,6 +420,28 @@ async def save_suggestions(
         ).returning(table.id)
         written += len((await db.execute(statement)).all())
     return written
+
+
+async def open_high_pairs(
+    db: AsyncSession, workspace_name: str
+) -> list[tuple[str, str]]:
+    """The account pairs of the workspace's open `high` suggestions."""
+    table = models.IngestSuggestion
+    keys = await db.scalars(
+        select(table.subject_key).where(
+            table.tenant_id == models.scoped_tenant_id(),
+            table.workspace_name == workspace_name,
+            table.kind == "same_person",
+            table.status == "open",
+            table.confidence == "high",
+        )
+    )
+    pairs: list[tuple[str, str]] = []
+    for key in keys:
+        first, _, second = key.partition("|")
+        if first and second:
+            pairs.append((first, second))
+    return pairs
 
 
 # ---------------------------------------------------------------------------
@@ -472,17 +533,40 @@ async def _locked(
     return row
 
 
-def _kept(row: models.IngestSuggestion, peers: Mapping[str, str]) -> list[str]:
+async def _kept(
+    db: AsyncSession,
+    workspace_name: str,
+    row: models.IngestSuggestion,
+    peers: Mapping[str, str],
+) -> list[str]:
     """The two peers to link, the one to keep first.
 
-    A peer the link can't merge away is kept: an explicit peer, or a person
-    known only by name in one place (a provisional account). Otherwise the
-    account with more records when the suggestion was made, so its name and
-    configuration stay; on a tie, the suggestion's first account.
+    Link merges away only a person an import created for a source account,
+    so a peer anything else made is kept: an explicit peer, one made by hand
+    that an account was linked into, or a person known only by name in one
+    place (a provisional account). Otherwise the account with more records
+    when the suggestion was made, so its name and configuration stay; on a
+    tie, the suggestion's first account.
     """
+    names = sorted({peers[a["subject"]] for a in row.accounts})
+    created_by_import = set(
+        await db.scalars(
+            select(models.Peer.name).where(
+                models.Peer.tenant_id == models.scoped_tenant_id(),
+                models.Peer.workspace_name == workspace_name,
+                models.Peer.name.in_(names),
+                models.Peer.internal_metadata["ingest"]["binding_id"].is_not(None),
+            )
+        )
+    )
 
     def rank(account: Mapping[str, Any]) -> tuple[bool, int]:
-        must_keep = account["kind"] in ("explicit", "provisional", "source")
+        peer = peers[account["subject"]]
+        must_keep = peer not in created_by_import or account["kind"] in (
+            "explicit",
+            "provisional",
+            "source",
+        )
         return (must_keep, int(account.get("records", 0)))
 
     # A stable sort: on a tie the first account stays first.
@@ -516,7 +600,7 @@ async def accept_suggestion(
         raise ResourceNotFoundException(
             f"An account of suggestion {suggestion_id} no longer exists: {missing}"
         )
-    order = _kept(row, peers)
+    order = await _kept(db, workspace_name, row, peers)
     result: schemas.IngestLinkResult | None = None
     if len(order) > 1:
         if keep is not None:

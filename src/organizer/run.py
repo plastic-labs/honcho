@@ -14,9 +14,9 @@ import time
 from sqlalchemy import select
 
 from src import models
-from src.crud.ingest_suggestions import load_inputs, save_suggestions
+from src.crud.ingest_suggestions import load_inputs, open_high_pairs, save_suggestions
 from src.dependencies import tracked_db
-from src.organizer.identity import suggest
+from src.organizer.identity import suggest_with
 
 logger = logging.getLogger(__name__)
 
@@ -25,24 +25,34 @@ async def refresh_suggestions(workspace_name: str) -> None:
     """Run the identity rules over the workspace's imports and store what they suggest."""
     started = datetime.datetime.now(datetime.UTC)
     async with tracked_db("organize_read", read_only=True) as db:
-        auto = await db.scalar(
-            select(models.Workspace.auto_enabled_at).where(
+        workspace_id = await db.scalar(
+            select(models.Workspace.id).where(
                 models.Workspace.tenant_id == models.scoped_tenant_id(),
                 models.Workspace.name == workspace_name,
+                models.Workspace.auto_enabled_at.is_not(None),
             )
         )
-        if auto is None:
+        if workspace_id is None:
             logger.info("Not organizing %s: no such auto workspace", workspace_name)
             return
         inputs = await load_inputs(db, workspace_name)
+        retained = await open_high_pairs(db, workspace_name)
 
     clock = time.monotonic()
-    found = suggest(inputs.accounts, inputs.posts)
+    # Checked with the `high` suggestions still open from earlier refreshes:
+    # accepting them all must not join two people either.
+    found, demoted = suggest_with(inputs.accounts, inputs.posts, retained)
     elapsed = time.monotonic() - clock
 
     async with tracked_db("organize_write") as db:
         written = await save_suggestions(
-            db, workspace_name, found, inputs.snapshots, started
+            db,
+            workspace_name,
+            workspace_id,
+            found,
+            inputs.snapshots,
+            started,
+            demoted,
         )
         await db.commit()
     logger.info(

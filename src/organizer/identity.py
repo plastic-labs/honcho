@@ -17,10 +17,11 @@ A pair of accounts gets at most one level of evidence from each family:
 - **shared work:** one account links, in another source, to records the other
   created there, within 6 hours of their creation: two or more distinct
   records (strong), or one, or links later on (weak).
-- **self-reference:** one account gives the other's handle as its own, naming
-  the other's source in the same sentence: "on GitHub as alexdev", "my GitHub
-  username is alexdev", "I'm alexdev on GitHub" (strong). Quoted lines, code
-  and injected system reminders don't count.
+- **self-reference:** one account gives the other's handle as its own, in the
+  first person and naming the other's source in the same sentence: "I'm on
+  GitHub as alexdev", "my GitHub username is alexdev", "I'm alexdev on GitHub"
+  (strong). Negated sentences, quoted lines, code and injected system
+  reminders don't count.
 
 A `high` suggestion has evidence a person can accept at a glance: an email, a
 self-reference, two agreeing names, a specific name plus shared work, or a
@@ -136,7 +137,8 @@ def email_digest(tenant_id: str, workspace_name: str, email: str) -> str:
     """
     scope = f"{len(tenant_id)}:{tenant_id}:{len(workspace_name)}:{workspace_name}"
     value = f"honcho-ingest-email:v1:{scope}:{email.strip().casefold()}"
-    return hashlib.sha256(value.encode()).hexdigest()
+    # surrogatepass: never raise, so an address can't reach an error report.
+    return hashlib.sha256(value.encode("utf-8", "surrogatepass")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -334,15 +336,16 @@ def normalize_url(url: str) -> str | None:
 
 
 def _addresses(url: str) -> Iterator[str]:
-    """The URL, then without its fragment, then up to two path segments shorter.
+    """The URL, then up to two path segments shorter.
 
-    A link to a comment is the comment's; a link to a pull request's `/files`
-    page is the pull request's.
+    A link to a pull request's `/files` page is the pull request's. A link
+    with a fragment names one item, such as a comment: it is that item's or
+    no one's, never the page's author's.
     """
     yield url
-    base = url.split("#", 1)[0]
-    if base != url:
-        yield base
+    if "#" in url:
+        return
+    base = url
     for _ in range(2):
         head = base.rpartition("/")[0]
         if head.count("/") < 3:
@@ -388,14 +391,22 @@ def _shared_work(
 
 _SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
 _ACCOUNT_WORDS = r"(?:account|handle|username|user\s*name|login|name|id)"
+_FIRST_PERSON = re.compile(r"\b(?:i|i'm|im|me|my|mine)\b", re.IGNORECASE)
+_NEGATION = re.compile(r"\b(?:not|never|no\s+longer)\b|n't\b", re.IGNORECASE)
 
 
 def _claims_handle(sentence: str, handle: str, source: str) -> bool:
-    """Does the sentence give `handle` on `source` as the writer's own?"""
+    """Does the sentence give `handle` on `source` as the writer's own?
+
+    Only in the first person and not negated: "Bob is on GitHub as bobdev" and
+    "I'm not on GitHub as bobdev" say nothing about the writer.
+    """
+    if not _FIRST_PERSON.search(sentence) or _NEGATION.search(sentence):
+        return False
     h = r"@?" + re.escape(handle) + r"(?![\w-])"
     s = re.escape(source)
     patterns = (
-        # "... on GitHub as alexdev", "logged into GitHub as alexdev"
+        # "I'm on GitHub as alexdev", "I opened it on GitHub as alexdev"
         rf"\b{s}\b.*\bas\s+{h}",
         # "my GitHub (username) is alexdev", "my GitHub: alexdev"
         rf"\bmy\s+{s}(?:\s+{_ACCOUNT_WORDS})?\s*(?:is|:|=)\s*{h}",
@@ -484,15 +495,26 @@ def _without_conflicts(
     suggestions: list[Suggestion],
     accounts: Mapping[str, Account],
     talks: set[tuple[str, str]],
-) -> list[Suggestion]:
+    retained: Iterable[tuple[str, str]] = (),
+) -> tuple[list[Suggestion], dict[tuple[str, str], str]]:
     """Make `low` every `high` suggestion of a group accepting them would break.
 
-    The group is what accepting every `high` suggestion would make, together
-    with the accounts that already share a peer. It breaks when it would hold
-    two accounts of one source instance with no direct `high` suggestion or
-    shared peer between them, or two accounts that talk to each other.
+    The group is what accepting every `high` suggestion would make, the ones
+    made now and the `retained` ones still open from earlier, together with
+    the accounts that already share a peer. It breaks when it would hold two
+    accounts of one source instance with no direct `high` suggestion or shared
+    peer between them, or two accounts that talk to each other.
+
+    Returns the suggestions made now, and the retained pairs that must drop to
+    `low` too, with why.
     """
-    direct = {s.accounts for s in suggestions if s.confidence == "high"}
+    made = {s.accounts for s in suggestions}
+    kept = {
+        pair
+        for pair in retained
+        if pair[0] in accounts and pair[1] in accounts and pair not in made
+    }
+    direct = {s.accounts for s in suggestions if s.confidence == "high"} | kept
     groups = _Groups()
     by_peer: dict[str, list[str]] = defaultdict(list)
     for key, account in accounts.items():
@@ -529,7 +551,12 @@ def _without_conflicts(
                 )
                 break
     if not broken:
-        return suggestions
+        return suggestions, {}
+    demoted = {
+        pair: broken[groups.find(pair[0])]
+        for pair in kept
+        if groups.find(pair[0]) in broken
+    }
     return [
         Suggestion(
             s.accounts,
@@ -540,11 +567,25 @@ def _without_conflicts(
         if s.confidence == "high" and (reason := broken.get(groups.find(s.accounts[0])))
         else s
         for s in suggestions
-    ]
+    ], demoted
 
 
 def suggest(accounts: Iterable[Account], posts: Iterable[Post]) -> list[Suggestion]:
     """Pairs of accounts that look like one person, best first."""
+    return suggest_with(accounts, posts, retained=())[0]
+
+
+def suggest_with(
+    accounts: Iterable[Account],
+    posts: Iterable[Post],
+    retained: Iterable[tuple[str, str]],
+) -> tuple[list[Suggestion], dict[tuple[str, str], str]]:
+    """`suggest`, checked against the `high` pairs still open from earlier.
+
+    Returns the suggestions, best first, and the retained pairs that would
+    now join two people (each with why): they must drop to `low` as well.
+    Each retained pair is its two account keys in sorted order.
+    """
     by_key = {a.key: a for a in accounts}
     people = {k: a for k, a in by_key.items() if not a.bot and a.kind != "source"}
     post_list = [p for p in posts if p.author in by_key]
@@ -622,8 +663,8 @@ def suggest(accounts: Iterable[Account], posts: Iterable[Post]) -> list[Suggesti
         suggestions.append(
             Suggestion((a_key, b_key), confidence, score, tuple(evidence))
         )
-    suggestions = _without_conflicts(suggestions, people, talks)
-    return sorted(suggestions, key=lambda s: (-s.score, s.accounts))
+    suggestions, demoted = _without_conflicts(suggestions, people, talks, retained)
+    return sorted(suggestions, key=lambda s: (-s.score, s.accounts)), demoted
 
 
 def _label(account: Account) -> str:

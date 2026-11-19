@@ -1300,14 +1300,14 @@ def accept_suggestions(
         _reset(client, wid, yes=yes)
     accepted: list[dict[str, Any]] = []
     failed: list[dict[str, str]] = []
+    # Each accept is its own link: one refused leaves the others done, so keep
+    # going and report both.
     for suggestion_id in ids:
         try:
             result = client.ingest_accept_suggestion(suggestion_id, keep=keep)
-        except (ConflictError, NotFoundError) as e:
+        except Exception as e:
             failed.append({"suggestion": suggestion_id, "reason": str(e)})
             continue
-        except Exception as e:
-            _ingest_error(e, wid)
         accepted.append(result.model_dump(mode="json"))
         if not use_json():
             if result.link is None:
@@ -1345,18 +1345,22 @@ def dismiss_suggestions(
     client, config = get_client()
     wid = config.workspace_id
     dismissed: list[dict[str, Any]] = []
+    failed: list[dict[str, str]] = []
     for suggestion_id in _suggestion_ids(client, wid, refs):
         try:
             result = client.ingest_dismiss_suggestion(suggestion_id)
-        except (ConflictError, NotFoundError) as e:
-            print_error("DISMISS_REFUSED", f"{suggestion_id}: {e}")
-            raise typer.Exit(1) from None
         except Exception as e:
-            _ingest_error(e, wid)
+            failed.append({"suggestion": suggestion_id, "reason": str(e)})
+            continue
         dismissed.append(result.model_dump(mode="json"))
         if not use_json():
             stdout_console.print(
                 "Dismissed: " + " + ".join(_account_label(a) for a in result.accounts)
             )
     if use_json():
-        print_json(dismissed)
+        print_json({"dismissed": dismissed, "failed": failed})
+    else:
+        for failure in failed:
+            print_error("DISMISS_REFUSED", f"{failure['suggestion']}: {failure['reason']}")
+    if failed:
+        raise typer.Exit(1)
