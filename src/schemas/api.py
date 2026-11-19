@@ -746,11 +746,20 @@ class IngestRecordCounts(BaseModel):
     queued: int = Field(..., description="Queued for derivation, or derived")
 
 
-class IngestSuggestionCounts(BaseModel):
-    """The workspace's open suggestions, and whether a refresh is under way."""
+class IngestSuggestionStageCounts(BaseModel):
+    """Open suggestions one stage made, by confidence."""
 
     high: int = 0
     low: int = 0
+
+
+class IngestSuggestionCounts(BaseModel):
+    """The workspace's open suggestions by stage, and whether a refresh is under way."""
+
+    rules: IngestSuggestionStageCounts = Field(
+        default_factory=IngestSuggestionStageCounts,
+        description="Made by the identity rules",
+    )
     refreshing: bool = False
 
 
@@ -780,7 +789,7 @@ class IngestStatus(BaseModel):
     )
     suggestions: IngestSuggestionCounts = Field(
         default_factory=IngestSuggestionCounts,
-        description="Open suggested links between accounts, by confidence",
+        description="Open suggested links between accounts, by stage and confidence",
     )
 
 
@@ -913,6 +922,11 @@ class IngestSuggestion(BaseModel):
 
     id: str
     kind: Literal["same_person"]
+    stage: Literal["rules"] = Field(
+        ...,
+        description="What made it: `rules`, the identity rules. With `confidence`,"
+        + " it names a group of suggestions, such as `rules:high`",
+    )
     confidence: Literal["high", "low"] = Field(
         ...,
         description="`high`: evidence to accept at a glance. `low`: needs a closer"
@@ -925,7 +939,6 @@ class IngestSuggestion(BaseModel):
     )
     accounts: list[IngestSuggestionAccount]
     evidence: list[IngestSuggestionEvidence]
-    stage: str = Field(..., description="What made it: `rules`")
     refreshed_at: datetime.datetime = Field(
         ..., description="When a refresh last made it"
     )

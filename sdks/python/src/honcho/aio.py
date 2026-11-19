@@ -882,6 +882,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
         *,
         status: Literal["open", "accepted", "dismissed"] | None = "open",
         confidence: Literal["high", "low"] | None = None,
+        stage: Literal["rules"] | None = None,
         page: int = 1,
         size: int = 50,
     ) -> AsyncPage[IngestSuggestion, IngestSuggestion]:
@@ -894,6 +895,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
         query: dict[str, Any] = {"page": page, "size": size, "status": status or "all"}
         if confidence is not None:
             query["confidence"] = confidence
+        if stage is not None:
+            query["stage"] = stage
 
         async def fetch(next_page: int) -> dict[str, Any]:
             return await self._honcho._async_http_client.get(

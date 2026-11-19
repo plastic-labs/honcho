@@ -93,14 +93,21 @@ async def test_a_suggestion_accepted_after_a_reset_links_the_accounts(
         ("discord", "alex_d"),
         ("github", "alexdev"),
     }
+    assert (high["stage"], high["confidence"]) == ("rules", "high")
     assert high["evidence"][0]["signal"] == "self_reference"
     assert high["linked"] is False
     # A handle shared across platforms is only worth a look.
     [low] = _suggestions(client, workspace, confidence="low")
     assert {a["handle"] for a in low["accounts"]} == {"samwise"}
+    # A stage and a confidence name one group, as `rules:low` does.
+    assert _suggestions(client, workspace, stage="rules", confidence="low") == [low]
+    assert len(_suggestions(client, workspace, stage="rules")) == 2
+    unknown = client.get(
+        f"/v3/workspaces/{workspace}/ingest/suggestions", params={"stage": "judge"}
+    )
+    assert unknown.status_code == 422, unknown.text
     status = client.get(f"/v3/workspaces/{workspace}/ingest/status").json()
-    assert status["suggestions"]["high"] == 1
-    assert status["suggestions"]["low"] == 1
+    assert status["suggestions"]["rules"] == {"high": 1, "low": 1}
 
     # Accepting is linking: refused while the people hold imported messages.
     url = f"/v3/workspaces/{workspace}/ingest/suggestions/{high['id']}/accept"

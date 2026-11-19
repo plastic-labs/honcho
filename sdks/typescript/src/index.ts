@@ -77,6 +77,7 @@ export type {
   IngestSuggestion,
   IngestSuggestionAccepted,
   IngestSuggestionAccount,
+  IngestSuggestionCounts,
   IngestUnlinkResult,
   MessageResponse,
   PageResponse,

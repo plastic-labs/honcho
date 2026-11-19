@@ -1239,6 +1239,7 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         *,
         status: Literal["open", "accepted", "dismissed"] | None = "open",
         confidence: Literal["high", "low"] | None = None,
+        stage: Literal["rules"] | None = None,
         page: int = 1,
         size: int = 50,
     ) -> SyncPage[IngestSuggestion, IngestSuggestion]:
@@ -1248,11 +1249,15 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         Experimental: ingest may change or stop working without notice.
 
         Nothing is linked until a suggestion is accepted with
-        ``ingest_accept_suggestion``. ``status=None`` lists every state.
+        ``ingest_accept_suggestion``. ``status=None`` lists every state;
+        ``stage`` and ``confidence`` narrow it to one group, such as
+        ``stage="rules", confidence="high"``.
         """
         query: dict[str, Any] = {"page": page, "size": size, "status": status or "all"}
         if confidence is not None:
             query["confidence"] = confidence
+        if stage is not None:
+            query["stage"] = stage
 
         def fetch(next_page: int) -> dict[str, Any]:
             return self._http.get(

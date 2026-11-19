@@ -550,6 +550,11 @@ async def list_suggestions(
     confidence: str | None = Query(
         None, pattern="^(high|low)$", description="Only `high` or only `low`"
     ),
+    stage: str | None = Query(
+        None,
+        pattern="^(rules)$",
+        description="Only suggestions this stage made: `rules`",
+    ),
     params: AbstractParams = Depends(pagination_params),
     db: AsyncSession = read_db,
 ):
@@ -577,6 +582,7 @@ async def list_suggestions(
             workspace_id,
             status=None if status == "all" else status,
             confidence=confidence,
+            stage=stage,
         ),
         params,
         transformer=resolve,

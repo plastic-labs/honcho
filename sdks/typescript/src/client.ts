@@ -1538,7 +1538,10 @@ export class Honcho {
       sessions: s.sessions,
       sessionsNotModeled: s.sessions_not_modeled,
       sessionsBeingDeleted: s.sessions_being_deleted ?? 0,
-      suggestions: s.suggestions ?? { high: 0, low: 0, refreshing: false },
+      suggestions: s.suggestions ?? {
+        rules: { high: 0, low: 0 },
+        refreshing: false,
+      },
     }
   }
 
@@ -1564,13 +1567,16 @@ export class Honcho {
    * Accounts that look like one person, strongest first, with the evidence.
    *
    * Nothing is linked until a suggestion is accepted with
-   * `ingestAcceptSuggestion`. `status: null` lists every state.
+   * `ingestAcceptSuggestion`. `status: null` lists every state; `stage` and
+   * `confidence` narrow it to one group, such as `{ stage: 'rules',
+   * confidence: 'high' }`.
    *
    * @experimental Ingest may change or stop working without notice.
    */
   async ingestSuggestions(options?: {
     status?: 'open' | 'accepted' | 'dismissed' | null
     confidence?: 'high' | 'low'
+    stage?: 'rules'
     page?: number
     size?: number
   }): Promise<Page<IngestSuggestion, IngestSuggestionResponse>> {
@@ -1587,6 +1593,7 @@ export class Honcho {
             size,
             status: status ?? 'all',
             ...(options?.confidence ? { confidence: options.confidence } : {}),
+            ...(options?.stage ? { stage: options.stage } : {}),
           },
         }
       )
