@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
 from functools import cache
@@ -9,13 +9,14 @@ from inspect import cleandoc as c
 from typing import Any, TypedDict
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import case, func, literal, select, update
+from sqlalchemy import DateTime, case, cast, func, literal, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import schemas
 from src.cache.client import cache as cache_client
 from src.config import ConfiguredModelSettings, settings
+from src.crud.lifecycle import live_session_row
 from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
 from src.exceptions import EmptySummaryError, ResourceNotFoundException
@@ -1320,6 +1321,81 @@ async def get_summary(
     if not summaries or summary_type.value not in summaries:
         return None
     return summaries[summary_type.value]
+
+
+async def get_recent_peer_summaries(
+    db: AsyncSession,
+    workspace_name: str,
+    peer_names: Sequence[str],
+    *,
+    limit: int,
+    offset: int = 0,
+) -> list[tuple[str, Summary]]:
+    """
+    Get the latest summary of the sessions a set of peers most recently shared.
+
+    A session qualifies when every named peer has a membership row in it, current
+    or ended. Each session contributes its long summary when it has one, since that
+    covers the whole session, and its short summary otherwise. Sessions are
+    ordered by their newest summary, most recent first, as a proxy for recent
+    activity that needs no message scan.
+
+    Args:
+        db: Database session
+        workspace_name: The workspace name
+        peer_names: Peers that must all be members of a returned session
+        limit: Maximum number of sessions to return
+        offset: Number of most recent sessions to skip
+
+    Returns:
+        (session name, summary) pairs, most recently summarized first
+    """
+    tenant_id = models.scoped_tenant_id()
+    summaries = models.Session.internal_metadata[SUMMARIES_KEY]
+    long_summarized_at = cast(
+        summaries[SummaryType.LONG.value]["created_at"].astext,
+        DateTime(timezone=True),
+    )
+    short_summarized_at = cast(
+        summaries[SummaryType.SHORT.value]["created_at"].astext,
+        DateTime(timezone=True),
+    )
+    last_summarized_at = func.greatest(long_summarized_at, short_summarized_at)
+
+    stmt = (
+        select(models.Session.name, summaries)
+        .where(models.Session.tenant_id == tenant_id)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(live_session_row())
+        .where(last_summarized_at.is_not(None))
+    )
+    for peer_name in dict.fromkeys(peer_names):
+        stmt = stmt.where(
+            select(models.SessionPeer.peer_name)
+            .where(
+                models.SessionPeer.tenant_id == tenant_id,
+                models.SessionPeer.workspace_name == workspace_name,
+                models.SessionPeer.session_name == models.Session.name,
+                models.SessionPeer.peer_name == peer_name,
+            )
+            .exists()
+        )
+    stmt = (
+        stmt.order_by(last_summarized_at.desc(), models.Session.id.asc())
+        .limit(limit)
+        .offset(offset)
+    )
+
+    rows = (await db.execute(stmt)).all()
+    results: list[tuple[str, Summary]] = []
+    for session_name, session_summaries in rows:
+        stored: dict[str, Summary] = session_summaries or {}
+        summary = stored.get(SummaryType.LONG.value) or stored.get(
+            SummaryType.SHORT.value
+        )
+        if summary is not None:
+            results.append((session_name, summary))
+    return results
 
 
 async def get_both_summaries(

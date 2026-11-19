@@ -159,6 +159,39 @@ async def set_peer_card(
     return PostCommit(on_commit)
 
 
+async def get_peer_card_for_update(
+    db: AsyncSession,
+    workspace_name: str,
+    *,
+    observer: str,
+    observed: str,
+) -> list[str] | None:
+    """
+    Read a peer card from the database and lock the observer's row.
+
+    For a read-modify-write of the card: the caller computes the new card and
+    writes it with ``set_peer_card`` in the same transaction, so no concurrent
+    write can land in between. Reads the row, not the peer cache.
+
+    Args:
+        db: Database session (a write session; the lock is held until commit)
+        workspace_name: Name of the workspace
+        observer: Peer name of the observer
+        observed: Peer name of the peer described in the peer card
+
+    Returns:
+        The card, or None when there is none or the observer does not exist yet.
+    """
+    label = construct_peer_card_label(observer=observer, observed=observed)
+    card = await db.scalar(
+        select(models.Peer.internal_metadata[label])
+        .where(models.Peer.workspace_name == workspace_name)
+        .where(models.Peer.name == observer)
+        .with_for_update()
+    )
+    return cast(list[str] | None, card)
+
+
 def construct_peer_card_label(*, observer: str, observed: str) -> str:
     if observer == observed:
         return "peer_card"

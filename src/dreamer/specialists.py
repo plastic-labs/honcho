@@ -47,6 +47,7 @@ from src.utils.agent_tools import (
     CARD_REFRESH_SPECIALIST_TOOLS,
     DEDUCTION_SPECIALIST_TOOLS,
     INDUCTION_SPECIALIST_TOOLS,
+    MAX_PEER_CARD_FACTS,
     ToolContext,
     create_tool_executor,
     get_tool_handler,
@@ -87,7 +88,7 @@ class SpecialistResult:
 
 
 # Tool names to exclude when peer card creation is disabled
-PEER_CARD_TOOL_NAMES = {"update_peer_card"}
+PEER_CARD_TOOL_NAMES = {"update_peer_card", "edit_peer_card"}
 
 # Opening instruction when the since-last-dream list is in the prompt; it
 # replaces "start with get_recent_observations", which would re-fetch it.
@@ -99,7 +100,12 @@ WORK_LIST_START = (
 # Tools that only read memory. They are refused during the write window and
 # left out of the final call at the limit.
 SEARCH_TOOL_NAMES = frozenset(
-    {"get_recent_observations", "search_memory", "search_messages"}
+    {
+        "get_recent_observations",
+        "get_session_summaries",
+        "search_memory",
+        "search_messages",
+    }
 )
 
 
@@ -187,8 +193,9 @@ def _handler_resolver(
 
 
 # Shared PEER CARD system-prompt section (identity-store taxonomy + rules).
-# Used verbatim by DeductionSpecialist and CardRefreshSpecialist.
-PEER_CARD_SYSTEM_SECTION = """
+# Used by DeductionSpecialist and CardRefreshSpecialist; the closing paragraph
+# depends on whether the specialist can edit single entries.
+_PEER_CARD_RULES = """
 
 ## PEER CARD (REQUIRED)
 
@@ -210,6 +217,8 @@ Each entry must start with one of these four prefixes (exact case, followed by a
   - `ATTRIBUTE: Language: Python`
   - `ATTRIBUTE: Prefers tea`
   - `ATTRIBUTE: Charter: ship Honcho infrastructure`
+  - `ATTRIBUTE: Maintains: the billing service`
+  - `ATTRIBUTE: Tool: Zed`
 - `RELATIONSHIP: ...` — durable link to another entity
   - `RELATIONSHIP: Spouse: Bob`
   - `RELATIONSHIP: Maintainer: vineeth`
@@ -220,12 +229,13 @@ Each entry must start with one of these four prefixes (exact case, followed by a
 
 ### Rules
 
-1. **Stable.** If the value plausibly changes within six months absent a deliberate announcement, it does not belong on the card. Prefer leaving the card empty over filling it with volatile content.
+1. **Durable.** An entry must hold for months, not just for the current task, week, or conversation. Ongoing roles and responsibilities, projects the target observee works on, things it owns or maintains, and the tools and environments it works in all qualify. One-off events, single tasks, and current state do not. When evidence shows an entry has ended (a project finished, a tool replaced), remove or update it.
 2. **Subject is the target observee.** Every entry must be a fact about the target observee, not about another participant in the session. Never write facts about co-occurring peers into the card, no matter how frequently they appear in the messages.
 3. **Evidence-grounded.** Only write what the target observee has explicitly stated, or what another participant has explicitly stated about the target observee with the target observee's assent. No "general knowledge" inferences (`"co-founder"` does not imply an age; mentioning a colleague does not imply a family relationship).
 4. **Type-agnostic.** The target observee may not be human. Do not require name/age/location/family/occupation fields.
 5. **No behavioral content.** TRAITs, behavioral tendencies, patterns, and inferred preferences belong in observations, not on the peer card. Do not write `TRAIT:` entries or behavioral `PREFERENCE:` entries — they will be rejected.
 6. **No evidence bundles.** Each entry is one concise fact. No `e.g.` clauses, no parenthetical example lists, no semicolon-separated value dumps.
+7. **No pronouns.** Write each entry without a pronoun for the target observee (`ATTRIBUTE: Works on an Azure VM`, not "where he works"). Never infer gender or pronouns; record pronouns only as an `IDENTITY:` entry the target observee stated.
 
 ### Migrating an existing peer card
 
@@ -240,9 +250,32 @@ For each legacy entry:
   - `INSTRUCTION: Call me Vee` → keep as is (already correctly prefixed)
 - Drop entries that violate the rules above: behavioral `TRAIT:` lines, inferred behavioral `PREFERENCE:` lines, one-off events, transient state, evidence bundles. Do not re-prefix them — they are not identity markers.
 
-When in doubt about a specific legacy entry, prefer migrating it (so valid info isn't lost) over dropping it. Splitting one dense legacy entry into multiple correctly-prefixed entries is fine and encouraged (e.g. a semicolon-separated `Tech Stack:` dump can become several `ATTRIBUTE:` lines, one per durable tool/platform).
+When in doubt about a specific legacy entry, prefer migrating it (so valid info isn't lost) over dropping it. Splitting one dense legacy entry into multiple correctly-prefixed entries is fine and encouraged (e.g. a semicolon-separated `Tech Stack:` dump can become several `ATTRIBUTE:` lines, one per durable tool/platform)."""
 
-Call `update_peer_card` with the complete deduplicated list when there is a durable identity update to record, or when the existing card needs migration. Entries that do not start with one of the four allowed prefixes will be rejected. Keep concise (max 40 entries)."""
+_PEER_CARD_REWRITE_ONLY = f"""
+
+Call `update_peer_card` with the complete deduplicated list when there is a durable identity update to record, or when the existing card needs migration. Entries that do not start with one of the four allowed prefixes will be rejected. The card holds at most {MAX_PEER_CARD_FACTS} entries."""
+
+_PEER_CARD_WITH_EDITS = f"""
+
+### Changing the card
+
+Use `edit_peer_card` for changes: put new entries in `add`, and entries that are wrong, ended, or superseded in `remove`, copied exactly from the card. Replace an entry by removing its old text and adding the new text in one call. Use `update_peer_card` only to rewrite the whole card, such as when migrating legacy entries. Entries that do not start with one of the four allowed prefixes will be rejected.
+
+The card holds at most {MAX_PEER_CARD_FACTS} entries. A full card still takes changes: make room by removing the entries that matter least in the same call that adds new ones."""
+
+
+def peer_card_system_section(*, can_edit: bool) -> str:
+    """The PEER CARD system-prompt section.
+
+    Args:
+        can_edit: Whether the specialist has `edit_peer_card`. Without it the
+            section tells the agent to send the complete list to
+            `update_peer_card`.
+    """
+    return _PEER_CARD_RULES + (
+        _PEER_CARD_WITH_EDITS if can_edit else _PEER_CARD_REWRITE_ONLY
+    )
 
 
 def custom_instructions_prompt(
@@ -302,7 +335,8 @@ class BaseSpecialist(ABC):
     inject_peer_card: bool = True
     # Subclasses can override to customize the peer card update instruction
     peer_card_update_instruction: str = (
-        "Only update this with durable identity markers via `update_peer_card`."
+        "Only update this with durable identity markers via `update_peer_card`.\n"
+        + "If you update it, send the full deduplicated list and remove stale entries."
     )
     # Whether the working-memory settings apply: DREAM.BRIEF_ENABLED (memory
     # layout, counts, work list), DREAM.BUDGET_ENABLED (budget line, write
@@ -342,11 +376,13 @@ class BaseSpecialist(ABC):
         peer_card: list[str] | None = None,
         *,
         work_list_shown: bool = False,
+        peer_card_enabled: bool = False,
     ) -> str:
         """Build the user prompt with optional exploration hints and current peer card.
 
         `work_list_shown` means the since-last-dream list precedes this prompt,
         so the agent starts from it instead of re-fetching recent conclusions.
+        `peer_card_enabled` means the agent has the card tools this run.
         """
         ...
 
@@ -364,12 +400,11 @@ The target observee is the peer identified above. When created observations need
             return ""
         facts = "\n".join(f"- {fact}" for fact in peer_card)
         return f"""
-## CURRENT PEER CARD
+## CURRENT PEER CARD ({len(peer_card)} of {MAX_PEER_CARD_FACTS} entries)
 
 {facts}
 
 {self.peer_card_update_instruction}
-If you update it, send the full deduplicated list and remove stale entries.
 
 """
 
@@ -544,6 +579,7 @@ If you update it, send the full deduplicated list and remove stale entries.
                 hints=hints,
                 peer_card=current_peer_card,
                 work_list_shown=work_list_shown,
+                peer_card_enabled=peer_card_enabled,
             )
             if work_list_shown and work_list is not None:
                 user_prompt = f"{format_work_list(work_list)}\n\n{user_prompt}"
@@ -835,6 +871,14 @@ If you update it, send the full deduplicated list and remove stale entries.
                 logger.debug("Failed to emit DreamSpecialistEvent", exc_info=True)
 
 
+# Deduction's card duty, ahead of the shared PEER CARD section. Without it the
+# card reads as optional, and a long card is left alone.
+DEDUCTION_CARD_STEP = """
+
+### Peer Card Upkeep
+Before you output DONE, check the conclusions you reviewed against the peer card: a durable fact the card lacks goes on it, and an entry they show is wrong or has ended comes off. Do this every dream, including when the card is long or full."""
+
+
 class DeductionSpecialist(BaseSpecialist):
     """
     Creates deductive observations from explicit observations.
@@ -848,7 +892,7 @@ class DeductionSpecialist(BaseSpecialist):
     """
 
     name: str = "deduction"
-    peer_card_update_instruction: str = "Update this with `update_peer_card` only for stable identity markers. See the PEER CARD section in the system prompt for the allowed entry kinds and rules."
+    peer_card_update_instruction: str = "Change this with `edit_peer_card` when the conclusions you review add a durable fact it lacks, or show that an entry is wrong or has ended. See the PEER CARD section in the system prompt for the allowed entry kinds and rules."
 
     def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
         if peer_card_enabled:
@@ -877,7 +921,9 @@ class DeductionSpecialist(BaseSpecialist):
         _ = observed
         peer_card_section = ""
         if peer_card_enabled:
-            peer_card_section = PEER_CARD_SYSTEM_SECTION
+            peer_card_section = DEDUCTION_CARD_STEP + peer_card_system_section(
+                can_edit=True
+            )
 
         return f"""You are a deductive reasoning agent analyzing observations about the target observee.
 
@@ -946,9 +992,15 @@ Use `create_observations_deductive`.
         peer_card: list[str] | None = None,
         *,
         work_list_shown: bool = False,
+        peer_card_enabled: bool = False,
     ) -> str:
         target_observee_context = self._build_target_observee_context(observed)
         peer_card_context = self._build_peer_card_context(peer_card)
+        card_task = (
+            "\n4. Durable facts the peer card lacks, and card entries that are wrong or have ended: change the card with `edit_peer_card` before DONE"
+            if peer_card_enabled
+            else ""
+        )
 
         if hints:
             hints_str = "\n".join(f"- {q}" for q in hints[:5])
@@ -961,7 +1013,7 @@ Use `create_observations_deductive`.
 
 {hints_str}
 
-But follow the evidence - if you find something more interesting, pursue that instead.
+But follow the evidence - if you find something more interesting, pursue that instead.{card_task.replace("4. ", "Also look for ")}
 
 {begin}"""
 
@@ -977,7 +1029,7 @@ But follow the evidence - if you find something more interesting, pursue that in
 Look for:
 1. Knowledge updates (same fact, different values over time)
 2. Logical implications that haven't been made explicit
-3. Contradictions that need flagging
+3. Contradictions that need flagging{card_task}
 
 Go."""
 
@@ -1091,11 +1143,13 @@ Use `create_observations_inductive`.
         peer_card: list[str] | None = None,
         *,
         work_list_shown: bool = False,
+        peer_card_enabled: bool = False,
     ) -> str:
         target_observee_context = self._build_target_observee_context(observed)
         # Induction does not consume peer card context — it produces inductive
         # observations, not identity-marker updates.
         _ = peer_card
+        _ = peer_card_enabled
 
         if hints:
             hints_str = "\n".join(f"- {q}" for q in hints[:5])
@@ -1119,17 +1173,20 @@ class CardRefreshSpecialist(BaseSpecialist):
     """
     Card-only maintenance specialist for the ``card_refresh`` dream type.
 
-    Restricted to peer-card work: it may discover observations
-    (get_recent_observations, search_memory) and rewrite the peer card
-    (update_peer_card). It has NO observation-mutating tools — a card refresh
+    Restricted to peer-card work: it may read evidence (get_recent_observations,
+    search_memory, get_session_summaries) and write the peer card
+    (edit_peer_card, update_peer_card; a rebuild only the latter). It has NO observation-mutating tools — a card refresh
     must never create or delete observations.
 
     Two modes:
     - refresh (default): the current card is injected into the prompt and the
       specialist folds in new identity markers.
     - rebuild: the current card is NOT injected; the specialist reconstructs
-      the card solely from observations present in the collection. Used after
-      removals, where the old card may contain facts whose support was deleted.
+      the card from the evidence it can find now. Used after removals, where
+      the old card may contain facts whose support was deleted, and on request.
+      It starts from nothing, so it gets a higher iteration ceiling and is told
+      to survey session summaries before searching, since a vector search for
+      the peer can return near-duplicate or nearly empty conclusions.
 
     Not a singleton — instantiated per run because ``rebuild`` is per-dream
     state.
@@ -1137,10 +1194,12 @@ class CardRefreshSpecialist(BaseSpecialist):
 
     name: str = "card_refresh"
     uses_working_memory: bool = False
-    peer_card_update_instruction: str = "Update this with `update_peer_card`. See the PEER CARD section in the system prompt for the allowed entry kinds and rules."
+    peer_card_update_instruction: str = "Change this with `edit_peer_card`. See the PEER CARD section in the system prompt for the allowed entry kinds and rules."
 
     # Low iteration ceiling for this lightweight, single-purpose run.
     MAX_ITERATIONS_CEILING: int = 6
+    # A rebuild reads several pages of evidence before writing.
+    REBUILD_MAX_ITERATIONS_CEILING: int = 20
 
     def __init__(self, *, rebuild: bool = False) -> None:
         self.rebuild: bool = rebuild
@@ -1149,6 +1208,14 @@ class CardRefreshSpecialist(BaseSpecialist):
 
     def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
         if peer_card_enabled:
+            if self.rebuild:
+                # A rebuild writes a whole new card; editing entries of a card
+                # it cannot see makes no sense.
+                return [
+                    t
+                    for t in CARD_REFRESH_SPECIALIST_TOOLS
+                    if t["name"] != "edit_peer_card"
+                ]
             return CARD_REFRESH_SPECIALIST_TOOLS
         # Defensive: a card refresh without card write access is a no-op, and
         # the orchestrator skips the run entirely when peer cards are disabled.
@@ -1169,35 +1236,50 @@ class CardRefreshSpecialist(BaseSpecialist):
         return 8192
 
     def get_max_iterations(self) -> int:
-        return min(self.MAX_ITERATIONS_CEILING, settings.DREAM.MAX_TOOL_ITERATIONS)
+        ceiling = (
+            self.REBUILD_MAX_ITERATIONS_CEILING
+            if self.rebuild
+            else self.MAX_ITERATIONS_CEILING
+        )
+        return min(ceiling, settings.DREAM.MAX_TOOL_ITERATIONS)
 
     def build_system_prompt(
         self, observed: str, *, peer_card_enabled: bool = True
     ) -> str:
         _ = observed
         _ = peer_card_enabled
-        rebuild_section = ""
         if self.rebuild:
-            rebuild_section = """
+            process_section = """## REBUILD MODE
 
-## REBUILD MODE
+The existing peer card is deliberately NOT shown to you: it may contain entries whose supporting evidence has since been removed. Build the card only from evidence you find now. Do not carry over or guess at prior card content — if an identity marker is not supported by current evidence, it does not go on the card.
 
-The existing peer card is deliberately NOT shown to you: it may contain entries whose supporting observations have since been removed. Build the card solely from the observations you find in the collection right now. Do not carry over or guess at prior card content — if an identity marker is not supported by a current observation, it does not go on the card."""
+A rebuild starts from nothing, so it needs a thorough survey over several turns, not a quick look. Search alone is unreliable here: a query that names the target observee can return many near-duplicate or nearly empty conclusions, and the most recent conclusions cover only a short stretch of time.
+
+## PROCESS
+
+1. Read session summaries with `get_session_summaries`, then page back with `offset` to older sessions. Summaries are written from whole conversations and are the broadest view of who the target observee is.
+2. Read recent conclusions with `get_recent_observations`, using a large `limit`.
+3. Go through each allowed entry kind and use `search_memory` to confirm the candidates you found and look for others: names, aliases and IDs (IDENTITY); roles and responsibilities, projects, things the target observee owns or maintains, the tools and environments it works in, and stated preferences (ATTRIBUTE); durable links to other entities (RELATIONSHIP); standing rules it has stated (INSTRUCTION). Phrase each query by the kind of fact you are looking for, not by the target observee's name. When results repeat one conclusion or say nothing, rephrase rather than conclude the fact is absent.
+4. Call `update_peer_card` once, at the end, with the complete deduplicated list.
+
+Prefer specific entries over generic ones: name the project, the system, the tool. A peer with many sessions of history usually supports many entries, so keep surveying until the sources stop turning up new durable facts. An entry kind with no supporting evidence stays empty, but conclude that only after looking in every source."""
+        else:
+            process_section = """## PROCESS
+
+1. Survey the evidence: start with `get_recent_observations`, use `search_memory` for targeted follow-ups, and `get_session_summaries` for what the latest sessions covered.
+2. Find durable facts the card lacks, and entries the evidence shows are wrong or have ended.
+3. Change the card with `edit_peer_card` (or `update_peer_card` when migrating legacy entries).
+
+Keep it short — a handful of tool calls at most."""
 
         return f"""You are a peer-card maintenance agent for the target observee.
 
 ## YOUR JOB
 
-Refresh the peer card and nothing else. You cannot create or delete observations — you have no tools for that. Your only write operation is `update_peer_card`.
+Refresh the peer card and nothing else. You cannot create or delete observations — you have no tools for that. Your only write operations are on the peer card.
 
-## PROCESS
-
-1. Survey the observation space: start with `get_recent_observations`, then use `search_memory` for targeted follow-ups (names, roles, locations, standing instructions).
-2. Extract stable identity markers supported by the observations you found.
-3. Call `update_peer_card` once with the complete deduplicated list.
-
-Keep it short — a handful of tool calls at most.{rebuild_section}
-{PEER_CARD_SYSTEM_SECTION}"""
+{process_section}
+{peer_card_system_section(can_edit=not self.rebuild)}"""
 
     def build_user_prompt(
         self,
@@ -1206,22 +1288,24 @@ Keep it short — a handful of tool calls at most.{rebuild_section}
         peer_card: list[str] | None = None,
         *,
         work_list_shown: bool = False,
+        peer_card_enabled: bool = False,
     ) -> str:
         _ = hints
         _ = work_list_shown
+        _ = peer_card_enabled
         target_observee_context = self._build_target_observee_context(observed)
         peer_card_context = self._build_peer_card_context(peer_card)
 
         if self.rebuild:
             return f"""{target_observee_context}Rebuild the peer card from scratch.
 
-The previous card is not shown and must not be assumed: reconstruct the card solely from observations currently in the collection. Start with `get_recent_observations`, verify with `search_memory` where needed, then call `update_peer_card` with the complete list.
+The previous card is not shown and must not be assumed: reconstruct it from the evidence available now. Follow the REBUILD MODE process — session summaries first, then recent conclusions, then searches for each entry kind — and call `update_peer_card` once with the complete list.
 
 Go."""
 
         return f"""{target_observee_context}{peer_card_context}Refresh the peer card.
 
-Review recent observations with `get_recent_observations` (and `search_memory` for targeted checks), then call `update_peer_card` with the complete deduplicated list if there is anything to add, correct, or migrate. If the card is already accurate and complete, finish without updating it.
+Review recent observations with `get_recent_observations` (and `search_memory` for targeted checks), then change the card with `edit_peer_card` if there is anything to add, correct, or remove. If the card is already accurate and complete, finish without changing it.
 
 Go."""
 

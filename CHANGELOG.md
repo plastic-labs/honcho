@@ -9,7 +9,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- Dreams edit the peer card one entry at a time. A new `edit_peer_card` tool adds, removes or replaces entries without resending the card, and the deduction specialist is asked, every dream, to check the conclusions it reviewed against the card. Before, the only write was `update_peer_card` with the complete list, and dreams almost never rewrote a long card: a card at the 40-entry limit stayed unchanged. An edit that would take the card past 40 entries is refused, so the dreamer makes room by removing the entries that matter least. `update_peer_card` remains for rewriting the whole card, and a card rebuild still uses it
+- Card rebuilds read session summaries: the `get_session_summaries` tool lists the summaries of the sessions the peer took part in, newest first, with `offset` to page back. A rebuild surveys summaries, recent conclusions and a search per entry kind before writing the card, with up to 20 tool rounds instead of 6
+
 - A peer's session join time can be set by the caller. `joined_at` is accepted next to `observe_me` and `observe_others` wherever a session-peer configuration is sent: `peers` on `POST /sessions`, `POST` and `PUT /sessions/{session_id}/peers`, and `PUT /sessions/{session_id}/peers/{peer_id}/config`. A search with `peer_perspective` only returns messages created at or after the peer's join time, and that time was always the moment the peer was added, so messages imported with their original dates were hidden from it. A supplied `joined_at` always applies, including to a peer that is already in the session, which is how an existing import is repaired; without one nothing changes. It is write-only (not stored in the configuration, not returned), a timestamp without a timezone is read as UTC, and a time more than five minutes in the future is a 422. Changing the join time of a peer that is already in a session needs a key that can edit the session (session-level or broader): a peer-scoped key that sends `joined_at` to `POST /sessions` for an existing session gets a 401.
+
+### Changed
+
+- Peer card entries may cover durable work facts: ongoing roles and responsibilities, projects, things the peer owns or maintains, and the tools and environments it works in. The rule was that anything likely to change within six months stayed off the card, which kept rebuilt cards to a few lines. Entries carry no pronouns for the peer, and the dreamer never infers them
 
 ## [3.6.1] - 2026-11-10
 

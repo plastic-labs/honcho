@@ -67,6 +67,7 @@ def test_induction_specialist_cannot_update_peer_card() -> None:
 
     tool_names = {t["name"] for t in specialist.get_tools()}
     assert "update_peer_card" not in tool_names
+    assert "edit_peer_card" not in tool_names
     # Sanity: induction still has the discovery and create tools it actually needs.
     assert "create_observations_inductive" in tool_names
     assert "search_memory" in tool_names
@@ -77,10 +78,29 @@ def test_deduction_specialist_can_update_peer_card() -> None:
     assert specialist.can_update_peer_card is True
 
     tool_names = {t["name"] for t in specialist.get_tools(peer_card_enabled=True)}
-    assert "update_peer_card" in tool_names
+    assert {"update_peer_card", "edit_peer_card"} <= tool_names
 
     disabled_names = {t["name"] for t in specialist.get_tools(peer_card_enabled=False)}
-    assert "update_peer_card" not in disabled_names
+    assert not disabled_names & {"update_peer_card", "edit_peer_card"}
+
+
+def test_deduction_prompt_asks_for_card_upkeep_with_edits() -> None:
+    """Deduction is told to keep the card current, and to do it entry by entry."""
+    specialist = DeductionSpecialist()
+    prompt = specialist.build_system_prompt("alice", peer_card_enabled=True)
+    assert "Peer Card Upkeep" in prompt
+    assert "including when the card is long or full" in prompt
+    assert "edit_peer_card" in prompt
+
+    user = specialist.build_user_prompt(
+        "alice", None, peer_card=["IDENTITY: Name: Alice"], peer_card_enabled=True
+    )
+    assert "## CURRENT PEER CARD (1 of 40 entries)" in user
+    assert "4. Durable facts the peer card lacks" in user
+    assert "send the full deduplicated list" not in user
+    # With the card tools off, the checklist does not ask for card changes.
+    disabled = specialist.build_user_prompt("alice", None)
+    assert "edit_peer_card" not in disabled
 
 
 @pytest.mark.asyncio
