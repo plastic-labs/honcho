@@ -450,7 +450,11 @@ async def open_high_pairs(
 
 
 def suggestions_query(
-    workspace_name: str, *, status: str | None, confidence: str | None
+    workspace_name: str,
+    *,
+    status: str | None,
+    confidence: str | None,
+    stage: str | None = None,
 ) -> Select[tuple[models.IngestSuggestion]]:
     """A workspace's suggestions, best first."""
     table = models.IngestSuggestion
@@ -462,6 +466,8 @@ def suggestions_query(
         query = query.where(table.status == status)
     if confidence is not None:
         query = query.where(table.confidence == confidence)
+    if stage is not None:
+        query = query.where(table.stage == stage)
     return query.order_by(table.score.desc(), table.id)
 
 
@@ -510,7 +516,7 @@ def to_schema(
         linked=None not in now and len(set(now)) == 1,
         accounts=accounts,
         evidence=[schemas.IngestSuggestionEvidence(**e) for e in row.evidence],
-        stage=row.stage,
+        stage=row.stage,  # pyright: ignore[reportArgumentType]
         refreshed_at=row.refreshed_at,
     )
 
@@ -665,21 +671,23 @@ async def dismiss_suggestion(
     return row
 
 
-async def suggestion_counts(db: AsyncSession, workspace_name: str) -> dict[str, int]:
-    """Open suggestions by confidence."""
+async def suggestion_counts(
+    db: AsyncSession, workspace_name: str
+) -> dict[tuple[str, str], int]:
+    """Open suggestions by (stage, confidence)."""
     table = models.IngestSuggestion
-    counts: defaultdict[str, int] = defaultdict(int)
+    counts: defaultdict[tuple[str, str], int] = defaultdict(int)
     rows = await db.execute(
-        select(table.confidence, func.count(table.id))
+        select(table.stage, table.confidence, func.count(table.id))
         .where(
             table.tenant_id == models.scoped_tenant_id(),
             table.workspace_name == workspace_name,
             table.status == "open",
         )
-        .group_by(table.confidence)
+        .group_by(table.stage, table.confidence)
     )
-    for confidence, n in rows.tuples():
-        counts[confidence] = n
+    for stage, confidence, n in rows.tuples():
+        counts[(stage, confidence)] = n
     return dict(counts)
 
 

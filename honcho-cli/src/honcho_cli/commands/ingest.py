@@ -1124,6 +1124,33 @@ app.add_typer(suggestions_app, name="suggestions")
 REFRESH_POLL_SECONDS = 1
 REFRESH_WAIT_SECONDS = 300
 
+# A suggestion's label is the stage that made it and its confidence, such as
+# `rules:high`. Labels name groups to list or accept.
+SUGGESTION_STAGES = ("rules",)
+SUGGESTION_CONFIDENCES = ("high", "low")
+SUGGESTION_LABELS = tuple(
+    f"{stage}:{confidence}"
+    for stage in SUGGESTION_STAGES
+    for confidence in SUGGESTION_CONFIDENCES
+)
+
+
+def _suggestion_label(suggestion: Any) -> str:
+    return f"{suggestion.stage}:{suggestion.confidence}"
+
+
+def _parse_label(value: str) -> tuple[str, str]:
+    """A label's stage and confidence; exits on one that isn't a label."""
+    if value not in SUGGESTION_LABELS:
+        print_error(
+            "INVALID_ARGUMENT",
+            f"Unknown suggestion label {value!r}: use one of "
+            + ", ".join(SUGGESTION_LABELS),
+        )
+        raise typer.Exit(1)
+    stage, confidence = value.split(":")
+    return stage, confidence
+
 
 def _wait_for_refresh(client: Honcho) -> bool:
     """Wait until no refresh is waiting or running; False if it outlasted the wait."""
@@ -1150,24 +1177,25 @@ def _print_suggestions(found: list[Any], total: int) -> None:
         title=f"Suggested links ({total})", show_header=True, header_style="bold"
     )
     table.add_column("#", justify="right", style="dim")
-    table.add_column("confidence")
+    table.add_column("label")
     table.add_column("accounts", overflow="fold")
     table.add_column("why", overflow="fold")
     for number, s in enumerate(found, start=1):
-        confidence = Text(
-            s.confidence, style="green" if s.confidence == "high" else "yellow"
+        label = Text(
+            _suggestion_label(s), style="green" if s.confidence == "high" else "yellow"
         )
         accounts = " + ".join(_account_label(a) for a in s.accounts)
         if s.linked:
             accounts += " (already one person)"
         why = "; ".join(e.detail for e in s.evidence)
-        table.add_row(str(number), confidence, accounts, why)
+        table.add_row(str(number), label, accounts, why)
     stdout_console.print(table)
     if found:
         status(
-            "Accept with `honcho ingest suggestions accept N --reset` (or"
-            + " --all-high), dismiss with `honcho ingest suggestions dismiss N`,"
-            + " then run `honcho ingest import` again."
+            "Accept with `honcho ingest suggestions accept N --reset` (or a label,"
+            + " such as `accept rules:high --reset`), dismiss with"
+            + " `honcho ingest suggestions dismiss N`, then run `honcho ingest"
+            + " import` again."
         )
 
 
@@ -1180,8 +1208,10 @@ def list_suggestions(
         "--refresh/--no-refresh",
         help="Refresh the suggestions first and wait for it (on by default)",
     ),
-    confidence: str | None = typer.Option(
-        None, "--confidence", help="Only `high` or only `low`"
+    only: str | None = typer.Option(
+        None,
+        "--only",
+        help="Only suggestions with this label: " + ", ".join(SUGGESTION_LABELS),
     ),
     state: str = typer.Option(
         "open", "--status", help="open (default), accepted, dismissed or all"
@@ -1193,16 +1223,15 @@ def list_suggestions(
     """Accounts from different sources that look like one person, with the evidence.
 
     Refreshes the suggestions from the imported records first (run it after
-    importing, before a reset), then lists them numbered, strongest first.
-    `high` ones have evidence to accept at a glance; `low` ones need a closer
-    look. Nothing is linked until you accept one.
+    importing, before a reset), then lists them numbered, strongest first. Each
+    has a label: the stage that made it and its confidence. `rules:high` ones
+    have evidence to accept at a glance; `rules:low` ones need a closer look.
+    Nothing is linked until you accept one.
     """
     if ctx.invoked_subcommand is not None:
         return
     handle_cmd_flags(json_output=json_output, workspace=workspace)
-    if confidence not in (None, "high", "low"):
-        print_error("INVALID_ARGUMENT", "--confidence must be 'high' or 'low'")
-        raise typer.Exit(1)
+    stage, confidence = _parse_label(only) if only else (None, None)
     if state not in ("open", "accepted", "dismissed", "all"):
         print_error(
             "INVALID_ARGUMENT", "--status must be open, accepted, dismissed or all"
@@ -1221,6 +1250,7 @@ def list_suggestions(
         page = client.ingest_suggestions(
             status=None if state == "all" else state,  # pyright: ignore[reportArgumentType]
             confidence=confidence,  # pyright: ignore[reportArgumentType]
+            stage=stage,  # pyright: ignore[reportArgumentType]
             size=min(limit, 100),
         )
         found = _first(page, limit)
@@ -1229,7 +1259,9 @@ def list_suggestions(
         _ingest_error(e, wid)
     save_suggestions(str(client.base_url), _credential(client), wid, [s.id for s in found])
     if use_json():
-        print_json([s.model_dump(mode="json") for s in found])
+        print_json(
+            [{**s.model_dump(mode="json"), "label": _suggestion_label(s)} for s in found]
+        )
         return
     _print_suggestions(found, total)
 
@@ -1245,10 +1277,9 @@ def _suggestion_ids(client: Honcho, wid: str, refs: list[str]) -> list[str]:
 @experimental
 def accept_suggestions(
     refs: list[str] | None = typer.Argument(
-        None, help="Suggestions: numbers from `ingest suggestions`, or IDs"
-    ),
-    all_high: bool = typer.Option(
-        False, "--all-high", help="Accept every open high-confidence suggestion"
+        None,
+        help="Suggestions: numbers from `ingest suggestions`, IDs, or labels such as"
+        + " `rules:high` for every open one with that label",
     ),
     keep: str | None = typer.Option(
         None,
@@ -1268,33 +1299,50 @@ def accept_suggestions(
 ) -> None:
     """Accept suggestions: link each one's two accounts into one person.
 
-    Accepting is `honcho ingest link` for the suggestion's two people, so it
-    applies from the next import on: reset first (`--reset`), accept, then run
-    `honcho ingest import` again. The suggestions are found before the reset,
-    so their numbers stay right.
+    Name them by number, by ID, or by label: `rules:high` accepts every open
+    suggestion with that label. Accepting is `honcho ingest link` for the
+    suggestion's two people, so it applies from the next import on: reset first
+    (`--reset`), accept, then run `honcho ingest import` again. The suggestions
+    are found before the reset, so their numbers stay right.
     """
     handle_cmd_flags(json_output=json_output, workspace=workspace)
-    if not refs and not all_high:
-        print_error("INVALID_ARGUMENT", "Name suggestions to accept, or pass --all-high.")
+    if not refs:
+        print_error(
+            "INVALID_ARGUMENT",
+            "Name suggestions to accept: numbers, IDs, or a label such as rules:high.",
+        )
         raise typer.Exit(1)
-    if keep and (all_high or len(refs or []) != 1):
+    # Suggestion IDs never contain a colon, so one marks a label.
+    labels = [_parse_label(ref) for ref in refs if ":" in ref]
+    named = [ref for ref in refs if ":" not in ref]
+    if keep and (labels or len(named) != 1):
         print_error("INVALID_ARGUMENT", "--keep goes with exactly one suggestion.")
         raise typer.Exit(1)
     client, config = get_client()
     wid = config.workspace_id
-    ids = _suggestion_ids(client, wid, refs or [])
-    if all_high:
+    ids = _suggestion_ids(client, wid, named)
+    for stage, confidence in labels:
         try:
             ids += [
                 s.id
-                for s in client.ingest_suggestions(status="open", confidence="high", size=100)
+                for s in client.ingest_suggestions(
+                    status="open",
+                    stage=stage,  # pyright: ignore[reportArgumentType]
+                    confidence=confidence,  # pyright: ignore[reportArgumentType]
+                    size=100,
+                )
                 if not s.linked
             ]
         except Exception as e:
             _ingest_error(e, wid)
     ids = list(dict.fromkeys(ids))
     if not ids:
-        print_error("NOTHING_TO_ACCEPT", "No open high-confidence suggestions.")
+        print_error(
+            "NOTHING_TO_ACCEPT",
+            "No open suggestions with "
+            + " or ".join(f"{stage}:{confidence}" for stage, confidence in labels)
+            + ".",
+        )
         raise typer.Exit(1)
     if reset:
         _reset(client, wid, yes=yes)

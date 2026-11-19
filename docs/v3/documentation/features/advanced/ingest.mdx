@@ -168,13 +168,13 @@ await honcho.ingest(records, { derive: 'later' });
 
 ### Suggested links
 
-Honcho can suggest which accounts are one person, with the evidence: the same email, an account that gives its handle on another source as its own ("I'm alexdev on GitHub"), names only those two accounts share, or someone linking their own pull requests right after opening them. `ingest_refresh_suggestions()` queues a refresh that reads the imported records, so run it after importing and before a reset. `ingest_suggestions()` lists them, strongest first: `high` ones have evidence to accept at a glance, `low` ones need a closer look. Accepting one is a link, refused the same way while the people have imported messages; a dismissed one never comes back. Nothing is linked until you accept. A walkthrough with two sources is in [One Workspace from Several Sources](/v3/documentation/features/advanced/ingest-sources).
+Honcho can suggest which accounts are one person, with the evidence: the same email, an account that gives its handle on another source as its own ("I'm alexdev on GitHub"), names only those two accounts share, or someone linking their own pull requests right after opening them. `ingest_refresh_suggestions()` queues a refresh that reads the imported records, so run it after importing and before a reset. `ingest_suggestions()` lists them, strongest first. Each has a `stage`, what made it (`rules`, the identity rules), and a `confidence`; together they name a group, such as `rules:high`. `rules:high` ones have evidence to accept at a glance, `rules:low` ones need a closer look. Accepting one is a link, refused the same way while the people have imported messages; a dismissed one never comes back. Nothing is linked until you accept. A walkthrough with two sources is in [One Workspace from Several Sources](/v3/documentation/features/advanced/ingest-sources).
 
 <CodeGroup>
 ```python Python
 honcho.ingest_refresh_suggestions()
 # ... wait until ingest_status().suggestions.refreshing is False ...
-high = list(honcho.ingest_suggestions(confidence="high"))
+high = list(honcho.ingest_suggestions(stage="rules", confidence="high"))
 for s in high:
     print([a.display_name for a in s.accounts], [e.detail for e in s.evidence])
 honcho.ingest_reset()
@@ -187,7 +187,7 @@ honcho.ingest(records, derive="later")
 ```typescript TypeScript
 await honcho.ingestRefreshSuggestions();
 // ... wait until (await honcho.ingestStatus()).suggestions.refreshing is false ...
-const page = await honcho.ingestSuggestions({ confidence: 'high' });
+const page = await honcho.ingestSuggestions({ stage: 'rules', confidence: 'high' });
 await honcho.ingestReset();
 // ... wait for the reset ...
 for (const s of page.items) await honcho.ingestAcceptSuggestion(s.id);
@@ -206,6 +206,7 @@ honcho ingest import records.jsonl -w acme
 honcho ingest status -w acme
 honcho ingest suggestions -w acme                # accounts that look like one person
 honcho ingest suggestions accept 1 --reset -w acme   # links them: resets the import
+honcho ingest suggestions accept rules:high --reset -w acme   # every rules:high one
 honcho ingest link 1 2 --reset -w acme          # or link two people yourself
 honcho ingest import records.jsonl -w acme       # their records now go to one person
 honcho ingest status -w acme                     # numbers change after a reset

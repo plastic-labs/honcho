@@ -4773,6 +4773,25 @@
             "description": "Only `high` or only `low`"
           },
           {
+            "name": "stage",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(rules)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only suggestions this stage made: `rules`",
+              "title": "Stage"
+            },
+            "description": "Only suggestions this stage made: `rules`"
+          },
+          {
             "name": "page",
             "in": "query",
             "required": false,
@@ -8548,7 +8567,7 @@
           },
           "suggestions": {
             "$ref": "#/components/schemas/IngestSuggestionCounts",
-            "description": "Open suggested links between accounts, by confidence"
+            "description": "Open suggested links between accounts, by stage and confidence"
           }
         },
         "type": "object",
@@ -8573,6 +8592,12 @@
             "type": "string",
             "const": "same_person",
             "title": "Kind"
+          },
+          "stage": {
+            "type": "string",
+            "const": "rules",
+            "title": "Stage",
+            "description": "What made it: `rules`, the identity rules. With `confidence`, it names a group of suggestions, such as `rules:high`"
           },
           "confidence": {
             "type": "string",
@@ -8616,11 +8641,6 @@
             "type": "array",
             "title": "Evidence"
           },
-          "stage": {
-            "type": "string",
-            "title": "Stage",
-            "description": "What made it: `rules`"
-          },
           "refreshed_at": {
             "type": "string",
             "format": "date-time",
@@ -8632,13 +8652,13 @@
         "required": [
           "id",
           "kind",
+          "stage",
           "confidence",
           "score",
           "status",
           "linked",
           "accounts",
           "evidence",
-          "stage",
           "refreshed_at"
         ],
         "title": "IngestSuggestion",
@@ -8762,15 +8782,9 @@
       },
       "IngestSuggestionCounts": {
         "properties": {
-          "high": {
-            "type": "integer",
-            "title": "High",
-            "default": 0
-          },
-          "low": {
-            "type": "integer",
-            "title": "Low",
-            "default": 0
+          "rules": {
+            "$ref": "#/components/schemas/IngestSuggestionStageCounts",
+            "description": "Made by the identity rules"
           },
           "refreshing": {
             "type": "boolean",
@@ -8780,7 +8794,7 @@
         },
         "type": "object",
         "title": "IngestSuggestionCounts",
-        "description": "The workspace's open suggestions, and whether a refresh is under way."
+        "description": "The workspace's open suggestions by stage, and whether a refresh is under way."
       },
       "IngestSuggestionEvidence": {
         "properties": {
@@ -8817,6 +8831,23 @@
         ],
         "title": "IngestSuggestionEvidence",
         "description": "One reason for a suggestion."
+      },
+      "IngestSuggestionStageCounts": {
+        "properties": {
+          "high": {
+            "type": "integer",
+            "title": "High",
+            "default": 0
+          },
+          "low": {
+            "type": "integer",
+            "title": "Low",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "IngestSuggestionStageCounts",
+        "description": "Open suggestions one stage made, by confidence."
       },
       "IngestSuggestionsRefresh": {
         "properties": {

@@ -625,7 +625,7 @@ export interface IngestStatusResponse {
   sessions: number
   sessions_not_modeled: number
   sessions_being_deleted?: number
-  suggestions?: { high: number; low: number; refreshing: boolean }
+  suggestions?: IngestSuggestionCounts
 }
 
 export interface IngestAccountResponse {
@@ -668,8 +668,15 @@ export interface IngestStatus {
   sessionsNotModeled: number
   /** Sessions a reset is still deleting; 0 once it has finished. */
   sessionsBeingDeleted: number
-  /** Open suggested links by confidence, and whether a refresh is under way. */
-  suggestions: { high: number; low: number; refreshing: boolean }
+  /** Open suggested links by stage, and whether a refresh is under way. */
+  suggestions: IngestSuggestionCounts
+}
+
+/** Open suggested links by stage, and whether a refresh is under way. */
+export interface IngestSuggestionCounts {
+  /** Made by the identity rules, by confidence. */
+  rules: { high: number; low: number }
+  refreshing: boolean
 }
 
 /** One source account mapped to a peer. */
@@ -744,13 +751,13 @@ export interface IngestSuggestionAccountResponse {
 export interface IngestSuggestionResponse {
   id: string
   kind: string
+  stage: 'rules'
   confidence: 'high' | 'low'
   score: number
   status: 'open' | 'accepted' | 'dismissed'
   linked: boolean
   accounts: IngestSuggestionAccountResponse[]
   evidence: { signal: string; level: string; detail: string }[]
-  stage: string
   refreshed_at: string
 }
 
@@ -776,6 +783,11 @@ export interface IngestSuggestionAccount {
 export interface IngestSuggestion {
   id: string
   kind: string
+  /**
+   * What made it: `rules`, the identity rules. With `confidence`, it names a
+   * group of suggestions, such as `rules:high`.
+   */
+  stage: 'rules'
   /** `high`: evidence to accept at a glance. `low`: needs a closer look. */
   confidence: 'high' | 'low'
   score: number
@@ -784,7 +796,6 @@ export interface IngestSuggestion {
   linked: boolean
   accounts: IngestSuggestionAccount[]
   evidence: { signal: string; level: string; detail: string }[]
-  stage: string
   refreshedAt: string
 }
 
