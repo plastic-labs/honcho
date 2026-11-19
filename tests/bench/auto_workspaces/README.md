@@ -84,6 +84,15 @@ replayed data a person and the channels they post in. A stable hash assigns
 30% of units to `heldout` (`split.py`). Build and tune on `dev`; report
 `heldout`.
 
+## Workspaces
+
+A fixture instance is one team, so the runner organizes each as its own
+workspace, blind, as a deployment would: the fixtures draw names and customers
+from small pools, and teams organized together would meet strangers with the
+same full name working on the same customer, which no one workspace sees.
+`--one-workspace` organizes every team together. A saved dataset (`--data`) is
+organized as one workspace: a replayed export is one team.
+
 ## Metrics
 
 | Metric | How | Why |
@@ -120,14 +129,14 @@ uses (`src/organizer/identity.py`): the same email, a first-person
 self-reference naming the other source ("I'm alexdev on GitHub"), names only
 the two accounts share, and linking your own work in another source. It only
 suggests; the score accepts every `high` suggestion, as `honcho ingest
-suggestions accept --all-high` does, and counts the `low` ones as the review
+suggestions accept rules:high` does, and counts the `low` ones as the review
 load. Bots and groups are the baseline's. On the synthetic data (seed 7, 30
 instances per case):
 
 | Split | Identity F0.5 | Precision | Recall | False merges | Review load (per 1,000 records) |
 | -- | -- | -- | -- | -- | -- |
-| dev | 0.878 | 1.000 | 0.589 | 0 | 29.2 |
-| held-out | 0.844 | 1.000 | 0.520 | 0 | 34.4 |
+| dev | 0.878 | 1.000 | 0.589 | 0 | 20.0 |
+| held-out | 0.844 | 1.000 | 0.520 | 0 | 24.1 |
 
 Its recall is lower than the baseline's: the baseline links any username
 shared across sources, which finds more true pairs and makes every false

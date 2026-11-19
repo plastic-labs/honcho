@@ -8,6 +8,11 @@
 `--organizer baseline` (the default) is the exact-rules baseline;
 `--organizer rules` is the identity rules (`rules_identity.py`). Another
 organizer plugs in as an `organize(dataset) -> Prediction`.
+
+Each synthetic team (a fixture instance) is organized as its own workspace, as
+a deployment would see it: names from different teams never meet.
+`--one-workspace` organizes them all in one. A saved dataset (`--data`) is
+organized as one workspace, since a replayed export is one team.
 """
 
 import argparse
@@ -26,6 +31,34 @@ _ORGANIZERS: dict[str, Callable[[Dataset], Prediction]] = {
     "baseline": baseline.organize,
     "rules": rules_identity.organize,
 }
+
+
+def organize_each_team(
+    organize: Callable[[Dataset], Prediction], dataset: Dataset
+) -> Prediction:
+    """Organize each unit as its own workspace; keep their people and groups apart.
+
+    Each unit is passed blind, like the whole dataset otherwise is. Its people
+    and groups are prefixed with the unit, so two teams' predictions never
+    share a person or a group.
+    """
+    units = sorted(
+        {r.unit for r in dataset.records} | set(dataset.truth.unit_of_account.values())
+    )
+    merged = Prediction()
+    for unit in units:
+        team = organize(dataset.subset([unit]).blind())
+        merged.person_of.update({k: f"{unit}/{p}" for k, p in team.person_of.items()})
+        merged.groups_of.update(
+            {
+                k: frozenset(f"{unit}/{g}" for g in gs)
+                for k, gs in team.groups_of.items()
+            }
+        )
+        merged.bots |= team.bots
+        merged.organizer_tokens += team.organizer_tokens
+        merged.suggestions += team.suggestions
+    return merged
 
 
 def _table(report: Report) -> str:
@@ -69,6 +102,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--write", type=Path, help="write the dataset to DIR and exit")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
     parser.add_argument("--organizer", choices=sorted(_ORGANIZERS), default="baseline")
+    parser.add_argument(
+        "--one-workspace",
+        action="store_true",
+        help="organize every synthetic team in one workspace, not one each",
+    )
     args = parser.parse_args(argv)
 
     dataset = (
@@ -88,7 +126,12 @@ def main(argv: list[str] | None = None) -> int:
             + "generate more --instances"
         )
     # The organizer sees records and profiles, never labels or truth.
-    report = score(part, _ORGANIZERS[args.organizer](part.blind()))
+    organize = _ORGANIZERS[args.organizer]
+    if args.data or args.one_workspace:
+        prediction = organize(part.blind())
+    else:
+        prediction = organize_each_team(organize, part)
+    report = score(part, prediction)
     print(json.dumps(report.as_dict(), indent=1) if args.json else _table(report))
     return 0
 
