@@ -1,6 +1,7 @@
 """Read-only listing of the collections whose next dream is due. Enqueues nothing."""
 
 from datetime import UTC, datetime, timedelta
+from itertools import batched
 from logging import getLogger
 from typing import Any, NamedTuple, cast
 
@@ -26,6 +27,9 @@ from src.utils.config_helpers import get_configuration
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
 logger = getLogger(__name__)
+
+# Keys per row-value IN lookup.
+_LOOKUP_BATCH_SIZE = 500
 
 
 def _observed_key(
@@ -317,23 +321,28 @@ async def _filter_dreams_enabled(
     # The tenant goes in the SQL, not only in the dicts below, so each lookup is a
     # probe of the (tenant_id, name[, workspace_name]) unique index instead of a
     # scan of every tenant's same-named rows.
-    workspaces = {
-        (workspace.tenant_id, workspace.name): workspace
-        for workspace in (
-            await db.execute(
-                select(models.Workspace).where(
-                    tuple_(models.Workspace.tenant_id, models.Workspace.name).in_(
-                        workspace_keys
+    # Batched: Postgres parses a row-value IN list as one nested expression, so
+    # a long list fails with "stack depth limit exceeded".
+    workspaces: dict[tuple[str, str], models.Workspace] = {}
+    for workspace_batch in batched(workspace_keys, _LOOKUP_BATCH_SIZE, strict=False):
+        workspace_rows = (
+            (
+                await db.execute(
+                    select(models.Workspace).where(
+                        tuple_(models.Workspace.tenant_id, models.Workspace.name).in_(
+                            workspace_batch
+                        )
                     )
                 )
             )
+            .scalars()
+            .all()
         )
-        .scalars()
-        .all()
-    }
+        for workspace in workspace_rows:
+            workspaces[(workspace.tenant_id, workspace.name)] = workspace
 
     sessions: dict[tuple[str, str, str], models.Session] = {}
-    if session_keys:
+    for session_batch in batched(session_keys, _LOOKUP_BATCH_SIZE, strict=False):
         session_rows = (
             (
                 await db.execute(
@@ -342,17 +351,17 @@ async def _filter_dreams_enabled(
                             models.Session.tenant_id,
                             models.Session.workspace_name,
                             models.Session.name,
-                        ).in_(session_keys)
+                        ).in_(session_batch)
                     )
                 )
             )
             .scalars()
             .all()
         )
-        sessions = {
-            (session.tenant_id, session.workspace_name, session.name): session
-            for session in session_rows
-        }
+        for session in session_rows:
+            sessions[(session.tenant_id, session.workspace_name, session.name)] = (
+                session
+            )
 
     enabled: list[DueDream] = []
     for due_dream in candidates:
