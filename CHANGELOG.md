@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 - A peer's session join time can be set by the caller. `joined_at` is accepted next to `observe_me` and `observe_others` wherever a session-peer configuration is sent: `peers` on `POST /sessions`, `POST` and `PUT /sessions/{session_id}/peers`, and `PUT /sessions/{session_id}/peers/{peer_id}/config`. A search with `peer_perspective` only returns messages created at or after the peer's join time, and that time was always the moment the peer was added, so messages imported with their original dates were hidden from it. A supplied `joined_at` always applies, including to a peer that is already in the session, which is how an existing import is repaired; without one nothing changes. It is write-only (not stored in the configuration, not returned), a timestamp without a timezone is read as UTC, and a time more than five minutes in the future is a 422. Changing the join time of a peer that is already in a session needs a key that can edit the session (session-level or broader): a peer-scoped key that sends `joined_at` to `POST /sessions` for an existing session gets a 401.
+- Offset list pages carry two new fields. `total_kind` says how to read `total`: `exact`, `estimate` (a full count taken in the background), `at_least` (the `PAGINATION_COUNT_LIMIT` cap of 100,001, or one more than the page's last row while a next page exists) or `at_most`, so a display can show `950,040`, `~950,000` or `100,000+` instead of an exact-looking `100001`. `next_cursor` is the cursor-mode position after the page's last row: send it as `cursor` to read the rest of the list without offsets or counts. A walk that follows it does not skip or repeat rows while the list changes, which an offset walk does without the cache (2.6% of rows skipped in a 47,500-row walk with concurrent writes). Both fields are additive; installed SDKs ignore them
+- With the cache enabled, a list longer than `PAGINATION_COUNT_LIMIT` reports a full count instead of the limit plus one, so its `total` keeps growing past 100,000. The full count runs in the background after a response, at most once per `CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS` (default 600) per distinct list query, under a cache lock so one process counts at a time, and is abandoned after 30 seconds. While it is fresh, requests report it without running the capped count: page 1 of a 950,000-conclusion workspace went from a ~30 ms count to 7.9 ms in total in a local measurement
+
+### Changed
+
+- A page that ends its list (a non-empty page with no next page, or an empty page 1) reports the rows up to its end as `total` without running a count, so page 1 of a list that fits on one page runs one query instead of two
+
+### Fixed
+
+- A `total` that is too high (a cached count taken before rows were deleted, or a full count taken in the background) no longer walks SDK clients past the end of a list. The page that ends the list reports the rows up to its end, and an empty page after the first reports at most the rows before it, so a client paging while `page < pages` stops there; before, it fetched empty pages up to the stale `pages`
 
 ## [3.6.1] - 2026-11-10
 

@@ -1457,6 +1457,11 @@ class CacheSettings(HonchoSettings):
     ] = 600
     # How stale `total` may be on pages after the first.
     PAGINATION_COUNT_TTL_SECONDS: Annotated[int, Field(default=60, ge=1, le=3_600)] = 60
+    # How stale `total` may be on a list past PAGINATION_COUNT_LIMIT: such a list
+    # reports a full count taken in the background at most this often.
+    PAGINATION_ESTIMATE_REFRESH_SECONDS: Annotated[
+        int, Field(default=600, ge=1, le=86_400)
+    ] = 600
 
     # Polling interval while waiting for another worker's fetch lock. cashews
     # defaults to 0, which busy-spins the event loop for the whole wait.

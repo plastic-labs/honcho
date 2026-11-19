@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- Iterating a list page (`for await (const item of page)`, `page.toArray()`) reads every page after the first in cursor mode when the server sends `next_cursor`: each request seeks past the last row read and runs no count, so a long walk is faster and does not skip or repeat rows when the list changes during it. Servers that predate cursor mode are still walked by page number, and `getNextPage()` stays in offset mode. Requires a Honcho release after v3.6.1 for cursor mode
+- `page.totalKind` says what `page.total` is: `'exact'`, `'estimate'` (a background count past the server's count limit), `'at_least'` or `'at_most'`. Display anything but `'exact'` as approximate. For older servers it is `'at_least'` past 100,000 and `'exact'` otherwise. `page.nextCursor` returns the cursor that reads the rest of the list. New types `TotalKind` and `CursorPageResponse`
 - `joinedAt` on a session-peer configuration (an ISO 8601 string) sets when a peer joined a session, in `honcho.session(id, { peers })`, `session.addPeers()`, `session.setPeers()` and `session.setPeerConfiguration()`. Set it when importing messages with their original dates: a search with `peer_perspective` only returns messages created at or after the peer's join time. Write-only, so `getPeerConfiguration()` does not return it. Requires a Honcho release after v3.6.1
 
 ## [2.9.0] - 2026-11-05

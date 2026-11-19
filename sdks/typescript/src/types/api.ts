@@ -740,10 +740,31 @@ export interface IngestDeriveResult {
 // Pagination Types
 // =============================================================================
 
+/**
+ * What a list page's `total` is: `exact` (a count), `estimate` (a full count
+ * taken in the background, up to about 10 minutes old), `at_least` (a lower
+ * bound, such as the server's count limit plus one) or `at_most` (an upper
+ * bound, on an empty page after the first).
+ */
+export type TotalKind = 'exact' | 'estimate' | 'at_least' | 'at_most'
+
 export interface PageResponse<T> {
   items: T[]
   page: number
   size: number
   total: number
   pages: number
+  /** What `total` is (see `TotalKind`); absent from servers that predate it. */
+  total_kind?: TotalKind
+  /** Cursor that reads the rest of the list in cursor mode; absent from servers that predate it. */
+  next_cursor?: string | null
+}
+
+/**
+ * One page of a list read in cursor mode (`cursor` query parameter).
+ */
+export interface CursorPageResponse<T> {
+  items: T[]
+  /** Cursor for the page after this one; null at the end of the list. */
+  next_page?: string | null
 }

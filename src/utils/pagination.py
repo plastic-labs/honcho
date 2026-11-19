@@ -21,13 +21,24 @@ per page. Two things here remove that cost:
   for clients that keep sending `?page=N`: after each page the position of its
   last row is cached, so the next page seeks instead of scanning. It needs the
   cache, and turns off with `CACHE_PAGINATION_OFFSET_SHIM`.
+- With the cache enabled, a list past the limit reports a full count instead
+  of the limit plus one. The full count runs in the background after the
+  response, at most once per `CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS` per
+  statement, so a large list's `total` keeps growing at that resolution.
+- An offset page's `total` is a headline number, not a way to enumerate: it
+  carries `total_kind` so a display can tell a count from an estimate or a
+  bound, and
+  `next_cursor` so a client can read the rest of the list in cursor mode,
+  which stays exact under concurrent writes where offsets skip and repeat rows.
 """
 
 import asyncio
 import hashlib
 import logging
+import time
+import uuid
 from collections.abc import Coroutine
-from typing import Any, ClassVar, Generic, TypeVar
+from typing import Any, ClassVar, Generic, Literal, TypeVar
 
 from fastapi import HTTPException, Query, status
 from fastapi_pagination import Page as _Page
@@ -41,7 +52,7 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from fastapi_pagination.types import GreaterEqualZero
 from pydantic import Field
 from sqlakeyset import InvalidPage, unserialize_bookmark
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, select, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import DataError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,6 +60,7 @@ from sqlalchemy.orm import noload
 
 from src.cache.client import cache, cache_key_namespace, safe_cache_get
 from src.config import settings
+from src.dependencies import tracked_db
 from src.telemetry.prometheus.metrics import PaginationShimOutcomes, prometheus_metrics
 
 logger = logging.getLogger(__name__)
@@ -57,6 +69,17 @@ T = TypeVar("T")
 
 # ai: the shim's cache traffic is an optimization on the request path, so a slow cache costs at most this per call, then counts as a miss
 _CACHE_TIMEOUT_SECONDS = 0.25
+# ai: the full count of a list past the limit runs off the request path; one that takes longer than this is abandoned and the list keeps its last count
+_ESTIMATE_COUNT_TIMEOUT_SECONDS = 30
+# ai: longer than the whole refresh (checkout, count, store), which _ESTIMATE_COUNT_TIMEOUT_SECONDS bounds, so the lock never lapses under a running count
+_ESTIMATE_LOCK_SECONDS = 2 * _ESTIMATE_COUNT_TIMEOUT_SECONDS
+# ai: far longer than the refresh interval, so a list that stays large keeps reporting its last count while the next one runs
+_ESTIMATE_TTL_SECONDS = 86_400
+# Strong references to running background counts, so they are not collected mid-run.
+_estimate_tasks: set[asyncio.Task[None]] = set()
+
+
+TotalKind = Literal["exact", "estimate", "at_least", "at_most"]
 
 
 class Page(_Page[T], Generic[T]):
@@ -65,11 +88,37 @@ class Page(_Page[T], Generic[T]):
     total: GreaterEqualZero = Field(
         description=(
             "Number of matching rows, exact up to the server's "
-            "PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit "
-            "plus one when there are more. While a next page exists it is at "
-            "least one more than this page's last row, so `pages` always "
-            "reaches the end of the list."
+            "PAGINATION_COUNT_LIMIT (default 100000). Past the limit it is the "
+            "limit plus one, or, with the server's cache enabled, the list's last "
+            "full count, which may be up to "
+            "CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. While a "
+            "next page exists it is at least one more than this page's last row, "
+            "so `pages` always reaches the end of the list. On the page that ends "
+            "the list it is the number of rows up to that page's last row; an "
+            "empty page after the first reports at most the rows before it, so "
+            "`pages` ends a walk there. `total_kind` says which of these applies."
         )
+    )
+    total_kind: TotalKind = Field(
+        default="exact",
+        description=(
+            'How to read `total`. "exact": a count of the matching rows (pages '
+            "after the first may reuse one taken up to "
+            'CACHE_PAGINATION_COUNT_TTL_SECONDS, default 60, earlier). "estimate": '
+            "a full count taken in the background, up to "
+            'CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. "at_least": '
+            "a lower bound, either the limit plus one or one more than this "
+            'page\'s last row (display as "100,000+"). "at_most": an upper bound, '
+            "reported by an empty page after the first."
+        ),
+    )
+    next_cursor: str | None = Field(
+        default=None,
+        description=(
+            "Send as `cursor` to read the rest of the list in cursor mode, which "
+            "seeks past this page's last row and runs no count. Null on the page "
+            "that ends the list."
+        ),
     )
 
 
@@ -174,23 +223,118 @@ def _capped_count_query(stmt: Select[Any]) -> Select[Any]:
     return select(func.count()).select_from(bounded.subquery())
 
 
+async def _read_estimate(key: str) -> tuple[int, float]:
+    """Return the stored full count under `key` and when it was taken (0, 0.0 if none)."""
+    stored = await safe_cache_get(key, timeout=_CACHE_TIMEOUT_SECONDS)
+    if not isinstance(stored, dict):
+        return 0, 0.0
+    count = int(stored.get("count", 0))  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+    taken_at = float(stored.get("at", 0.0))  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+    return count, taken_at
+
+
+def _is_fresh(taken_at: float) -> bool:
+    return time.time() - taken_at < settings.CACHE.PAGINATION_ESTIMATE_REFRESH_SECONDS
+
+
+async def _refresh_estimate(stmt: Select[Any], key: str) -> None:
+    """Take a full count of `stmt` and store it under `key`.
+
+    A cache lock, held under a token of this task's own, lets one process per
+    statement count at a time; a holder that finds a fresh count already
+    stored skips its own. The lock outlives the whole refresh, connection
+    checkout included, so it cannot expire under a running count. A count that
+    succeeds releases the lock; one that fails leaves it to expire, so a count
+    that keeps timing out runs at most once per lock period.
+    """
+    lock_key, token = f"{key}:lock", uuid.uuid4().hex
+    try:
+        async with asyncio.timeout(_CACHE_TIMEOUT_SECONDS):
+            if not await cache.set_lock(lock_key, token, expire=_ESTIMATE_LOCK_SECONDS):
+                return
+    except Exception:
+        # ai: the cache is down or slow; requests carry on without an estimate, so this is not worth a warning per request
+        logger.debug("Could not take the estimate lock for %s", key, exc_info=True)
+        return
+    try:
+        _, taken_at = await _read_estimate(key)
+        if not _is_fresh(taken_at):
+            full = stmt.order_by(None).options(noload("*"))
+            async with (
+                asyncio.timeout(_ESTIMATE_COUNT_TIMEOUT_SECONDS),
+                tracked_db("pagination.estimate") as db,
+            ):
+                await db.execute(
+                    text(
+                        "SET LOCAL statement_timeout = "
+                        + str(_ESTIMATE_COUNT_TIMEOUT_SECONDS * 1000)
+                    )
+                )
+                count = await db.scalar(
+                    select(func.count()).select_from(full.subquery())
+                )
+            await _cache_set_once(
+                key,
+                {"count": int(count or 0), "at": time.time()},
+                _ESTIMATE_TTL_SECONDS,
+            )
+    except Exception:
+        logger.warning("Background count of a large list failed", exc_info=True)
+        return
+    try:
+        async with asyncio.timeout(_CACHE_TIMEOUT_SECONDS):
+            await cache.unlock(lock_key, token)
+    except Exception:
+        logger.debug("Could not release the estimate lock for %s", key, exc_info=True)
+
+
+async def _fresh_estimate_past_limit(prefix: str) -> int | None:
+    """Return the stored full count if it is fresh and past the limit, else None.
+
+    Such a list's capped count would only return the limit plus one, so a
+    request can report the stored count without running it.
+    """
+    count, taken_at = await _read_estimate(f"{prefix}:estimate")
+    if count > settings.PAGINATION_COUNT_LIMIT and _is_fresh(taken_at):
+        return count
+    return None
+
+
+async def _estimated_total(stmt: Select[Any], prefix: str) -> int:
+    """Return the last full count of a list past the limit (0 if none yet).
+
+    Starts a background recount when the stored one is older than
+    `CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS`. The request never waits for it.
+    """
+    key = f"{prefix}:estimate"
+    count, taken_at = await _read_estimate(key)
+    if not _is_fresh(taken_at):
+        task = asyncio.create_task(_refresh_estimate(stmt, key))
+        _estimate_tasks.add(task)
+        task.add_done_callback(_estimate_tasks.discard)
+    return count
+
+
 async def _paginate_offset(
     db: AsyncSession,
     stmt: Select[Any],
     params: Params,
     *,
     use_cache: bool,
+    estimate: bool = False,
     **apaginate_kwargs: Any,
 ) -> Page[Any]:
     """
     Serve an offset request through a keyset seek wherever possible.
 
     Every page runs through the cursor machinery, so it knows whether a next
-    page exists. `total` comes from `_capped_count_query`, and while a next
-    page exists it is kept large enough that `pages` reaches past this page,
-    so neither the cap nor a stale cached count can end a walk early. On the
-    last page `total` is at least the number of rows walked so far, so a
-    client that walks to the end sees an exact count.
+    page exists. A page that ends the list (a non-empty page with no next
+    page, or an empty page 1) reports the rows up to its end as `total`
+    without counting, so page 1 of a short list runs no count, and a cached
+    count that is too high cannot send a walk past the last page. Otherwise
+    `total` comes from `_capped_count_query`, and while a next page exists it
+    is kept large enough that `pages` reaches past this page, so neither the
+    cap nor a stale cached count can end a walk early.
 
     With `use_cache`, after serving page N the position of its last row is
     stored under page N+1, so a sequential walk seeks instead of scanning past
@@ -199,7 +343,19 @@ async def _paginate_offset(
     but still record a position for the page after them. On pages after the
     first, `total` comes from the cache and is recounted when it expires, so a
     long walk counts about once per TTL instead of once per page. Page 1
-    always counts, so a list read right after a write is exact.
+    never reads the cached count, so a list read right after a write is exact.
+
+    With `estimate`, a list whose count reaches the limit reports the larger
+    of the limit plus one and its last full count (see `_estimated_total`),
+    and while that full count is fresh the capped count is skipped.
+
+    An empty page after the first reports at most the rows before it, so a
+    walk whose tail was deleted stops there instead of following a stale
+    total through empty pages. `total_kind` says whether `total` is a count, a
+    full count from the background, or one of these bounds (the limit plus one
+    is a lower bound). Every page carries `next_cursor`, the cursor-mode position
+    after its last row, so a client can read the rest of the list without
+    offsets or counts.
 
     Positions are shared by every caller that runs the same query. A client
     that jumps ahead instead of walking can get a page positioned by another
@@ -207,15 +363,15 @@ async def _paginate_offset(
     repeated, for up to the position TTL. A sequential walker re-seeds every
     position it uses.
     """
-    count_key = position_key = ""
-    if use_cache:
+    prefix = count_key = position_key = ""
+    if use_cache or estimate:
         try:
             prefix = f"{cache_key_namespace()}:v1:pagination:{_statement_digest(stmt)}"
             count_key = f"{prefix}:count"
             position_key = f"{prefix}:size={params.size}:page="
         except Exception:
             logger.warning("Pagination shim could not key a statement", exc_info=True)
-            use_cache = False
+            use_cache = estimate = False
 
     position, cached_total = None, None
     outcome = PaginationShimOutcomes.FIRST
@@ -250,21 +406,51 @@ async def _paginate_offset(
                 settings.CACHE.PAGINATION_POSITION_TTL_SECONDS,
             )
         )
-    total = cached_total
+    items = list(cursor_page.items)
+    rows_before = (params.page - 1) * params.size
+    seen = rows_before + len(items) if items else 0
+    # ai: an empty page past page 1 doesn't show where the list ends, so it keeps the count (clamped below)
+    ends_list = not cursor_page.next_page and (bool(items) or params.page == 1)
+    total: int | None = seen if ends_list else cached_total
+    estimated = False
+    if total is None and estimate:
+        fresh = await _fresh_estimate_past_limit(prefix)
+        if fresh is not None:
+            total, estimated = fresh, True
+    counted = total is None
     if total is None:
         total = await db.scalar(_capped_count_query(stmt))
-        if use_cache:
-            writes.append(
-                _cache_set_once(
-                    count_key, total, settings.CACHE.PAGINATION_COUNT_TTL_SECONDS
-                )
+    total = total or 0
+    if use_cache and not estimated and (counted or params.page == 1):
+        writes.append(
+            _cache_set_once(
+                count_key, total, settings.CACHE.PAGINATION_COUNT_TTL_SECONDS
             )
+        )
     await asyncio.gather(*writes)
 
-    items = list(cursor_page.items)
-    seen = (params.page - 1) * params.size + len(items) if items else 0
-    total = max(total or 0, seen + 1 if cursor_page.next_page else seen)
-    return Page[Any].create(items, params=params, total=total)
+    kind: TotalKind = "exact"
+    if estimated:
+        kind = "estimate"
+    elif not ends_list and total > settings.PAGINATION_COUNT_LIMIT:
+        kind = "at_least"
+        if estimate:
+            full = await _estimated_total(stmt, prefix)
+            if full > total:
+                total, kind = full, "estimate"
+    floor = seen + 1 if cursor_page.next_page else seen
+    if total < floor:
+        total, kind = floor, "at_least"
+    if not items and params.page > 1 and total > rows_before:
+        # ai: no row sits at or past this page's start, so a higher total (stale, estimated, or counted after rows moved) would walk clients through empty pages
+        total, kind = rows_before, "at_most"
+    return Page[Any].create(
+        items,
+        params=params,
+        total=total,
+        total_kind=kind,
+        next_cursor=cursor_page.next_page,
+    )
 
 
 async def paginate_offset_or_cursor(
@@ -297,6 +483,7 @@ async def paginate_offset_or_cursor(
         stmt,
         params,
         use_cache=settings.CACHE.ENABLED and settings.CACHE.PAGINATION_OFFSET_SHIM,
+        estimate=settings.CACHE.ENABLED,
         **apaginate_kwargs,
     )
 

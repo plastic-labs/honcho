@@ -8293,7 +8293,7 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Total",
-            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000). Past the limit it is the limit plus one, or, with the server's cache enabled, the list's last full count, which may be up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list. On the page that ends the list it is the number of rows up to that page's last row; an empty page after the first reports at most the rows before it, so `pages` ends a walk there. `total_kind` says which of these applies."
           },
           "page": {
             "type": "integer",
@@ -8309,6 +8309,30 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Pages"
+          },
+          "total_kind": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "estimate",
+              "at_least",
+              "at_most"
+            ],
+            "title": "Total Kind",
+            "description": "How to read `total`. \"exact\": a count of the matching rows (pages after the first may reuse one taken up to CACHE_PAGINATION_COUNT_TTL_SECONDS, default 60, earlier). \"estimate\": a full count taken in the background, up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. \"at_least\": a lower bound, either the limit plus one or one more than this page's last row (display as \"100,000+\"). \"at_most\": an upper bound, reported by an empty page after the first.",
+            "default": "exact"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Send as `cursor` to read the rest of the list in cursor mode, which seeks past this page's last row and runs no count. Null on the page that ends the list."
           }
         },
         "type": "object",
@@ -8334,7 +8358,7 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Total",
-            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000). Past the limit it is the limit plus one, or, with the server's cache enabled, the list's last full count, which may be up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list. On the page that ends the list it is the number of rows up to that page's last row; an empty page after the first reports at most the rows before it, so `pages` ends a walk there. `total_kind` says which of these applies."
           },
           "page": {
             "type": "integer",
@@ -8350,6 +8374,30 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Pages"
+          },
+          "total_kind": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "estimate",
+              "at_least",
+              "at_most"
+            ],
+            "title": "Total Kind",
+            "description": "How to read `total`. \"exact\": a count of the matching rows (pages after the first may reuse one taken up to CACHE_PAGINATION_COUNT_TTL_SECONDS, default 60, earlier). \"estimate\": a full count taken in the background, up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. \"at_least\": a lower bound, either the limit plus one or one more than this page's last row (display as \"100,000+\"). \"at_most\": an upper bound, reported by an empty page after the first.",
+            "default": "exact"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Send as `cursor` to read the rest of the list in cursor mode, which seeks past this page's last row and runs no count. Null on the page that ends the list."
           }
         },
         "type": "object",
@@ -8375,7 +8423,7 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Total",
-            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000). Past the limit it is the limit plus one, or, with the server's cache enabled, the list's last full count, which may be up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list. On the page that ends the list it is the number of rows up to that page's last row; an empty page after the first reports at most the rows before it, so `pages` ends a walk there. `total_kind` says which of these applies."
           },
           "page": {
             "type": "integer",
@@ -8391,6 +8439,30 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Pages"
+          },
+          "total_kind": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "estimate",
+              "at_least",
+              "at_most"
+            ],
+            "title": "Total Kind",
+            "description": "How to read `total`. \"exact\": a count of the matching rows (pages after the first may reuse one taken up to CACHE_PAGINATION_COUNT_TTL_SECONDS, default 60, earlier). \"estimate\": a full count taken in the background, up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. \"at_least\": a lower bound, either the limit plus one or one more than this page's last row (display as \"100,000+\"). \"at_most\": an upper bound, reported by an empty page after the first.",
+            "default": "exact"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Send as `cursor` to read the rest of the list in cursor mode, which seeks past this page's last row and runs no count. Null on the page that ends the list."
           }
         },
         "type": "object",
@@ -8416,7 +8488,7 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Total",
-            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000). Past the limit it is the limit plus one, or, with the server's cache enabled, the list's last full count, which may be up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list. On the page that ends the list it is the number of rows up to that page's last row; an empty page after the first reports at most the rows before it, so `pages` ends a walk there. `total_kind` says which of these applies."
           },
           "page": {
             "type": "integer",
@@ -8432,6 +8504,30 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Pages"
+          },
+          "total_kind": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "estimate",
+              "at_least",
+              "at_most"
+            ],
+            "title": "Total Kind",
+            "description": "How to read `total`. \"exact\": a count of the matching rows (pages after the first may reuse one taken up to CACHE_PAGINATION_COUNT_TTL_SECONDS, default 60, earlier). \"estimate\": a full count taken in the background, up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. \"at_least\": a lower bound, either the limit plus one or one more than this page's last row (display as \"100,000+\"). \"at_most\": an upper bound, reported by an empty page after the first.",
+            "default": "exact"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Send as `cursor` to read the rest of the list in cursor mode, which seeks past this page's last row and runs no count. Null on the page that ends the list."
           }
         },
         "type": "object",
@@ -8457,7 +8553,7 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Total",
-            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000). Past the limit it is the limit plus one, or, with the server's cache enabled, the list's last full count, which may be up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list. On the page that ends the list it is the number of rows up to that page's last row; an empty page after the first reports at most the rows before it, so `pages` ends a walk there. `total_kind` says which of these applies."
           },
           "page": {
             "type": "integer",
@@ -8473,6 +8569,30 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Pages"
+          },
+          "total_kind": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "estimate",
+              "at_least",
+              "at_most"
+            ],
+            "title": "Total Kind",
+            "description": "How to read `total`. \"exact\": a count of the matching rows (pages after the first may reuse one taken up to CACHE_PAGINATION_COUNT_TTL_SECONDS, default 60, earlier). \"estimate\": a full count taken in the background, up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. \"at_least\": a lower bound, either the limit plus one or one more than this page's last row (display as \"100,000+\"). \"at_most\": an upper bound, reported by an empty page after the first.",
+            "default": "exact"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Send as `cursor` to read the rest of the list in cursor mode, which seeks past this page's last row and runs no count. Null on the page that ends the list."
           }
         },
         "type": "object",
@@ -8498,7 +8618,7 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Total",
-            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000). Past the limit it is the limit plus one, or, with the server's cache enabled, the list's last full count, which may be up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list. On the page that ends the list it is the number of rows up to that page's last row; an empty page after the first reports at most the rows before it, so `pages` ends a walk there. `total_kind` says which of these applies."
           },
           "page": {
             "type": "integer",
@@ -8514,6 +8634,30 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Pages"
+          },
+          "total_kind": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "estimate",
+              "at_least",
+              "at_most"
+            ],
+            "title": "Total Kind",
+            "description": "How to read `total`. \"exact\": a count of the matching rows (pages after the first may reuse one taken up to CACHE_PAGINATION_COUNT_TTL_SECONDS, default 60, earlier). \"estimate\": a full count taken in the background, up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. \"at_least\": a lower bound, either the limit plus one or one more than this page's last row (display as \"100,000+\"). \"at_most\": an upper bound, reported by an empty page after the first.",
+            "default": "exact"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Send as `cursor` to read the rest of the list in cursor mode, which seeks past this page's last row and runs no count. Null on the page that ends the list."
           }
         },
         "type": "object",
@@ -8539,7 +8683,7 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Total",
-            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000). Past the limit it is the limit plus one, or, with the server's cache enabled, the list's last full count, which may be up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list. On the page that ends the list it is the number of rows up to that page's last row; an empty page after the first reports at most the rows before it, so `pages` ends a walk there. `total_kind` says which of these applies."
           },
           "page": {
             "type": "integer",
@@ -8555,6 +8699,30 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Pages"
+          },
+          "total_kind": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "estimate",
+              "at_least",
+              "at_most"
+            ],
+            "title": "Total Kind",
+            "description": "How to read `total`. \"exact\": a count of the matching rows (pages after the first may reuse one taken up to CACHE_PAGINATION_COUNT_TTL_SECONDS, default 60, earlier). \"estimate\": a full count taken in the background, up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. \"at_least\": a lower bound, either the limit plus one or one more than this page's last row (display as \"100,000+\"). \"at_most\": an upper bound, reported by an empty page after the first.",
+            "default": "exact"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Send as `cursor` to read the rest of the list in cursor mode, which seeks past this page's last row and runs no count. Null on the page that ends the list."
           }
         },
         "type": "object",
@@ -8580,7 +8748,7 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Total",
-            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000). Past the limit it is the limit plus one, or, with the server's cache enabled, the list's last full count, which may be up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list. On the page that ends the list it is the number of rows up to that page's last row; an empty page after the first reports at most the rows before it, so `pages` ends a walk there. `total_kind` says which of these applies."
           },
           "page": {
             "type": "integer",
@@ -8596,6 +8764,30 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Pages"
+          },
+          "total_kind": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "estimate",
+              "at_least",
+              "at_most"
+            ],
+            "title": "Total Kind",
+            "description": "How to read `total`. \"exact\": a count of the matching rows (pages after the first may reuse one taken up to CACHE_PAGINATION_COUNT_TTL_SECONDS, default 60, earlier). \"estimate\": a full count taken in the background, up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. \"at_least\": a lower bound, either the limit plus one or one more than this page's last row (display as \"100,000+\"). \"at_most\": an upper bound, reported by an empty page after the first.",
+            "default": "exact"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Send as `cursor` to read the rest of the list in cursor mode, which seeks past this page's last row and runs no count. Null on the page that ends the list."
           }
         },
         "type": "object",
@@ -8621,7 +8813,7 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Total",
-            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000). Past the limit it is the limit plus one, or, with the server's cache enabled, the list's last full count, which may be up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list. On the page that ends the list it is the number of rows up to that page's last row; an empty page after the first reports at most the rows before it, so `pages` ends a walk there. `total_kind` says which of these applies."
           },
           "page": {
             "type": "integer",
@@ -8637,6 +8829,30 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Pages"
+          },
+          "total_kind": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "estimate",
+              "at_least",
+              "at_most"
+            ],
+            "title": "Total Kind",
+            "description": "How to read `total`. \"exact\": a count of the matching rows (pages after the first may reuse one taken up to CACHE_PAGINATION_COUNT_TTL_SECONDS, default 60, earlier). \"estimate\": a full count taken in the background, up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. \"at_least\": a lower bound, either the limit plus one or one more than this page's last row (display as \"100,000+\"). \"at_most\": an upper bound, reported by an empty page after the first.",
+            "default": "exact"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Send as `cursor` to read the rest of the list in cursor mode, which seeks past this page's last row and runs no count. Null on the page that ends the list."
           }
         },
         "type": "object",
@@ -8662,7 +8878,7 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Total",
-            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000) and reported as that limit plus one when there are more. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list."
+            "description": "Number of matching rows, exact up to the server's PAGINATION_COUNT_LIMIT (default 100000). Past the limit it is the limit plus one, or, with the server's cache enabled, the list's last full count, which may be up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. While a next page exists it is at least one more than this page's last row, so `pages` always reaches the end of the list. On the page that ends the list it is the number of rows up to that page's last row; an empty page after the first reports at most the rows before it, so `pages` ends a walk there. `total_kind` says which of these applies."
           },
           "page": {
             "type": "integer",
@@ -8678,6 +8894,30 @@
             "type": "integer",
             "minimum": 0.0,
             "title": "Pages"
+          },
+          "total_kind": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "estimate",
+              "at_least",
+              "at_most"
+            ],
+            "title": "Total Kind",
+            "description": "How to read `total`. \"exact\": a count of the matching rows (pages after the first may reuse one taken up to CACHE_PAGINATION_COUNT_TTL_SECONDS, default 60, earlier). \"estimate\": a full count taken in the background, up to CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS (default 600) old. \"at_least\": a lower bound, either the limit plus one or one more than this page's last row (display as \"100,000+\"). \"at_most\": an upper bound, reported by an empty page after the first.",
+            "default": "exact"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Send as `cursor` to read the rest of the list in cursor mode, which seeks past this page's last row and runs no count. Null on the page that ends the list."
           }
         },
         "type": "object",

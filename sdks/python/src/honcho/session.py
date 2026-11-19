@@ -25,7 +25,7 @@ from .base import PeerBase, ScopeBase, SessionBase
 from .http import routes
 from .message import Message
 from .mixins import MetadataConfigMixin
-from .pagination import SyncPage
+from .pagination import SyncPage, cursor_query
 from .peer import Peer
 from .session_context import SessionContext, SessionSummaries, Summary
 from .utils import (
@@ -520,9 +520,18 @@ class Session(SessionBase, MetadataConfigMixin):
                 body={"filters": filters} if filters else None,
                 query=next_query,
             )
-            return SyncPage(next_data, MessageResponse, transform, fetch_next)
+            return SyncPage(
+                next_data, MessageResponse, transform, fetch_next, fetch_cursor
+            )
 
-        return SyncPage(data, MessageResponse, transform, fetch_next)
+        def fetch_cursor(cursor: str) -> dict[str, Any]:
+            return self._honcho._http.post(
+                routes.messages_list(self.workspace_id, self.id),
+                body={"filters": filters} if filters else None,
+                query=cursor_query(query, cursor),
+            )
+
+        return SyncPage(data, MessageResponse, transform, fetch_next, fetch_cursor)
 
     def delete(self) -> None:
         """
