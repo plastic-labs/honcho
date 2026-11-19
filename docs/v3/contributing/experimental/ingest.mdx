@@ -174,11 +174,13 @@ Honcho can suggest which accounts are one person, with the evidence: the same em
 ```python Python
 honcho.ingest_refresh_suggestions()
 # ... wait until ingest_status().suggestions.refreshing is False ...
-for s in honcho.ingest_suggestions(confidence="high"):
+high = list(honcho.ingest_suggestions(confidence="high"))
+for s in high:
     print([a.display_name for a in s.accounts], [e.detail for e in s.evidence])
 honcho.ingest_reset()
 # ... wait for the reset ...
-honcho.ingest_accept_suggestion(s.id)
+for s in high:
+    honcho.ingest_accept_suggestion(s.id)
 honcho.ingest(records, derive="later")
 ```
 

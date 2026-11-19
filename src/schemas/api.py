@@ -548,6 +548,31 @@ class MessageUploadCreate(BaseModel):
 # refused (422) rather than stripped into a different key.
 _ExternalId = Annotated[str, StorableOnly, Field(min_length=1, max_length=512)]
 _DisplayName = Annotated[str, NulStripped, Field(min_length=1, max_length=512)]
+_EMAIL = re.compile(r"[^@\s]+@[^@\s]+")
+# NUL and lone surrogates: what Postgres can't store in text.
+_UNSTORABLE_TEXT = re.compile("[\x00\ud800-\udfff]")
+
+
+def _email_or_none(value: Any) -> str | None:
+    """An email address, trimmed; anything that isn't one is ignored, not refused.
+
+    A placeholder ("N/A", blank) would make unrelated accounts match, and a
+    value Postgres can't store would fail the whole batch, so both become
+    None. An ignored value is never stored or echoed back.
+    """
+    if not isinstance(value, str):
+        return None
+    address = value.strip()
+    if (
+        len(address) > 320
+        or not _EMAIL.fullmatch(address)
+        or _UNSTORABLE_TEXT.search(address)
+    ):
+        return None
+    return address
+
+
+_Email = Annotated[str | None, BeforeValidator(_email_or_none)]
 
 
 class IngestParticipant(BaseModel):
@@ -569,13 +594,11 @@ class IngestParticipant(BaseModel):
         description="Other names the account goes by, such as a profile name or a"
         + " server nickname. Used only to suggest which accounts are one person.",
     )
-    email: Annotated[str, NulStripped, Field(min_length=3, max_length=320)] | None = (
-        Field(
-            default=None,
-            description="The account's email address. Ingest keeps only a digest of"
-            + " it, scoped to the workspace, to suggest which accounts are one"
-            + " person; the address itself is not stored.",
-        )
+    email: _Email = Field(
+        default=None,
+        description="The account's email address. Ingest keeps only a digest of it,"
+        + " scoped to the workspace, to suggest which accounts are one person; the"
+        + " address itself is not stored. A value that isn't an address is ignored.",
     )
     bot: bool = Field(
         default=False,

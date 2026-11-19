@@ -625,6 +625,26 @@ _DisplayName = Annotated[
 ]
 
 
+_EMAIL = re.compile(r"[^@\s]+@[^@\s]+")
+
+
+def _email_or_none(value: Any) -> str | None:
+    """An email address, trimmed; anything else (a placeholder, blank) is None.
+
+    Mirrors the server, which ignores such a value rather than refusing it.
+    """
+    if not isinstance(value, str):
+        return None
+    address = value.strip()
+    if (
+        len(address) > 320
+        or not _EMAIL.fullmatch(address)
+        or _UNSTORABLE.search(address)
+    ):
+        return None
+    return address
+
+
 class IngestParticipant(BaseModel):
     """A person on a source record. ``id`` is what connects them across records."""
 
@@ -640,12 +660,10 @@ class IngestParticipant(BaseModel):
     aliases: list[_DisplayName] = Field(default_factory=list, max_length=10)
     """Other names the account goes by, such as a profile name or a server
     nickname. Used only to suggest which accounts are one person."""
-    email: (
-        Annotated[str, BeforeValidator(_strip_nul), Field(min_length=3, max_length=320)]
-        | None
-    ) = None
+    email: Annotated[str | None, BeforeValidator(_email_or_none)] = None
     """The account's email address. The server keeps only a digest of it,
-    scoped to the workspace, to suggest which accounts are one person."""
+    scoped to the workspace, to suggest which accounts are one person. A value
+    that isn't an address is ignored, as the server ignores it."""
     bot: bool = False
     """The source marks this account as a bot. Its peer is created with
     ``observe_me`` off, so nothing is derived about it."""

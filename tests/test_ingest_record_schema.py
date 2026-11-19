@@ -136,6 +136,9 @@ _PARITY_CASES: list[tuple[str, dict[str, Any]]] = [
     ("11 aliases", _with(author={**_PERSON, "aliases": ["a"] * 11})),
     ("empty alias", _with(author={**_PERSON, "aliases": [""]})),
     ("email too long", _with(author={**_PERSON, "email": "e" * 321})),
+    ("email placeholder", _with(author={**_PERSON, "email": "N/A"})),
+    ("email blank", _with(author={**_PERSON, "email": "   "})),
+    ("email with a lone surrogate", _with(author={**_PERSON, "email": "a@b\ud800"})),
     ("handle with NUL", _with(author={**_PERSON, "handle": "al\x00ex"})),
 ]
 
@@ -183,3 +186,13 @@ def test_the_deliberate_differences() -> None:
     )
     assert not _accepts(IngestRecordCreate, instructed)
     assert _accepts(IngestRecord, instructed)
+
+
+def test_an_email_that_isnt_one_is_ignored_on_both_sides() -> None:
+    from src.schemas.api import IngestRecordCreate
+
+    for value in ("N/A", "   ", "a@b\ud800", "e" * 321 + "@x"):
+        record = _with(author={**_PERSON, "email": value})
+        assert IngestRecord.model_validate(record).author.email is None  # pyright: ignore[reportOptionalMemberAccess]
+        server = IngestRecordCreate.model_validate(record)
+        assert server.author is not None and server.author.email is None

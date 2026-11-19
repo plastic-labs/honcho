@@ -113,6 +113,27 @@ aren't safe rules. On the synthetic data (seed 7, 30 instances per case):
 | dev | 0.825 | 0.877 | 0.668 | 0.728 | 0.808 |
 | held-out | 0.760 | 0.833 | 0.561 | 0.728 | 0.784 |
 
+## Identity rules
+
+`rules_identity.py` (`--organizer rules`) runs the identity rules the server
+uses (`src/organizer/identity.py`): the same email, a first-person
+self-reference naming the other source ("I'm alexdev on GitHub"), names only
+the two accounts share, and linking your own work in another source. It only
+suggests; the score accepts every `high` suggestion, as `honcho ingest
+suggestions accept --all-high` does, and counts the `low` ones as the review
+load. Bots and groups are the baseline's. On the synthetic data (seed 7, 30
+instances per case):
+
+| Split | Identity F0.5 | Precision | Recall | False merges | Review load (per 1,000 records) |
+| -- | -- | -- | -- | -- | -- |
+| dev | 0.878 | 1.000 | 0.589 | 0 | 29.2 |
+| held-out | 0.844 | 1.000 | 0.520 | 0 | 34.4 |
+
+Its recall is lower than the baseline's: the baseline links any username
+shared across sources, which finds more true pairs and makes every false
+merge it has. What the rules leave out (a handle shared across platforms, a
+name match alone) is `low`, for a person or a later judge stage.
+
 ## Thresholds
 
 Agreed 2026-11-12, before any organizer work. On held-out data, an organizer
