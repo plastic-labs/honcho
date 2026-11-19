@@ -181,8 +181,8 @@ honcho ingest derive -w acme --watch
 | `honcho ingest reset` | Delete the imported sessions and their messages, to import again; people, exclusions and links stay. Asks first (`--yes` to skip) and waits for the deletion |
 | `honcho ingest link <ref> <ref>...` | Treat several imported people as one, from the next import on: every account of the others maps to the first (`--keep <peer-id>` keeps any peer). Nothing imported moves, so `--reset` resets the import first, finding the people before the reset so their numbers stay right |
 | `honcho ingest unlink <person> <account>` | Take a linked account back out (`<account>` = its ID, display name, or `SOURCE:ID`); `--reset` as for link |
-| `honcho ingest suggestions` | Refresh and list, numbered, the accounts that look like one person, with the evidence (the same email, "I'm X on GitHub", names only they share, linking their own work). `high` ones can be accepted at a glance; `low` ones need a look. `--no-refresh` lists without refreshing; `--confidence`, `--status` filter. Run it after importing, before a reset |
-| `honcho ingest suggestions accept <n>...` | Accept suggestions: link each one's accounts, as `ingest link` does (`--all-high` for every high one; `--keep` the peer to keep). `--reset` resets the import first, then import again |
+| `honcho ingest suggestions` | Refresh and list, numbered, the accounts that look like one person, with the evidence (the same email, "I'm X on GitHub", names only they share, linking their own work). Each has a label, the stage that made it and its confidence: `rules:high` ones can be accepted at a glance; `rules:low` ones need a look. `--no-refresh` lists without refreshing; `--only <label>`, `--status` filter. Run it after importing, before a reset |
+| `honcho ingest suggestions accept <n or label>...` | Accept suggestions: link each one's accounts, as `ingest link` does. A label, such as `rules:high`, takes every open one with it; `--keep` the peer to keep. `--reset` resets the import first, then import again |
 | `honcho ingest suggestions dismiss <n>...` | Dismiss suggestions; a refresh never brings them back |
 
 ### Config

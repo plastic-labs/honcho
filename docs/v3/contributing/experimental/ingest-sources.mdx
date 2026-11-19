@@ -42,22 +42,22 @@ This page walks through Discord and GitHub. Any two sources work the same way.
    ```
 
    ```text
-   #  confidence  accounts                                       why
-   1  high        discord Alex (alex_d) + github alexdev         discord account alex_d gives alexdev on github as its own
-   2  high        discord Sam (samk) + github samk-dev            same name: samkowalski; discord account samk linked 4 github records the other created, 3 within 6 h of their creation
-   3  low         discord Riley (rokafor) + github rokafor        same name: rokafor
+   #  label       accounts                                       why
+   1  rules:high  discord Alex (alex_d) + github alexdev         discord account alex_d gives alexdev on github as its own
+   2  rules:high  discord Sam (samk) + github samk-dev            same name: samkowalski; discord account samk linked 4 github records the other created, 3 within 6 h of their creation
+   3  rules:low   discord Riley (rokafor) + github rokafor        same name: rokafor
    ```
 
-   `high` suggestions have evidence you can accept at a glance. `low` ones need a closer look: the same handle on two platforms, for instance, can belong to two people. Dismiss any that are wrong; a dismissed suggestion never comes back.
+   Each suggestion's label is what made it and how sure it is. `rules:high` suggestions have evidence from the identity rules that you can accept at a glance. `rules:low` ones need a closer look: the same handle on two platforms, for instance, can belong to two people. `--only rules:low` lists just those. Dismiss any that are wrong; a dismissed suggestion never comes back.
 
    ```bash
    honcho ingest suggestions dismiss 3 -w acme-team
    ```
 
-4. **Accept, reset and import again.** Accepting links the accounts' people, which applies from the next import on: `--reset` deletes the imported sessions first (nothing is derived yet, so this costs nothing).
+4. **Accept, reset and import again.** Accepting links the accounts' people, which applies from the next import on: `--reset` deletes the imported sessions first (nothing is derived yet, so this costs nothing). Name suggestions by number, or by label to take every one with it.
 
    ```bash
-   honcho ingest suggestions accept --all-high --reset -w acme-team
+   honcho ingest suggestions accept rules:high --reset -w acme-team
    honcho ingest import ~/discord-export/records.jsonl -w acme-team
    honcho ingest import ~/github-export/records.jsonl -w acme-team
    honcho ingest status -w acme-team        # Alex now has accounts on discord and github
@@ -84,12 +84,12 @@ Each suggestion pairs two accounts and lists its evidence:
 | Names only the two share | Handle `thrialectics` on both; or `VVoruganti` and "Vineeth Voruganti" | `handle`, `aliases` |
 | Linking your own work | Posting your pull request in Discord right after opening it | Records with their own address in `metadata.url` |
 
-Some evidence keeps two people apart. A handle alone is never enough, since a username is unique only on its own platform. Two accounts in one source are suggested only on an email or a self-reference. Someone who posts a colleague's pull requests links to work that isn't theirs, so shared work alone is never enough either. And accepting every `high` suggestion never joins two accounts of one source without direct evidence between them.
+Some evidence keeps two people apart. A handle alone is never enough, since a username is unique only on its own platform. Two accounts in one source are suggested only on an email or a self-reference. Someone who posts a colleague's pull requests links to work that isn't theirs, so shared work alone is never enough either. And accepting every `rules:high` suggestion never joins two accounts of one source without direct evidence between them.
 
-Nothing is linked until you accept. The rules are cheap and explainable; what they can't settle stays `low` for a person to judge.
+Nothing is linked until you accept. The rules are cheap and explainable; what they can't settle stays `rules:low` for a person to judge.
 
 ## Not yet
 
 - **Linking after deriving.** A link applies to records imported after it. Once a workspace is derived, changing who is who needs the rebuild engine that is still to come.
 - **People who appear later.** During live sync, a new account becomes its own person as soon as it posts.
-- **A model to judge the unclear cases.** The `low` suggestions are left to a person for now.
+- **A model to judge the unclear cases.** The `rules:low` suggestions are left to a person for now.

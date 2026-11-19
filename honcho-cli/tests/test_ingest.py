@@ -22,6 +22,7 @@ from honcho.api_types import (
     IngestSuggestion,
     IngestSuggestionAccepted,
     IngestSuggestionCounts,
+    IngestSuggestionStageCounts,
     PeerConfig,
     QueueStatusResponse,
     SessionConfiguration,
@@ -1140,7 +1141,11 @@ def _invoke(runner, client, *args: str):
 
 def test_suggestions_refresh_wait_and_list_numbered(cfg, runner):
     refreshing = STATUS.model_copy(
-        update={"suggestions": IngestSuggestionCounts(high=1, low=1, refreshing=True)}
+        update={
+            "suggestions": IngestSuggestionCounts(
+                rules=IngestSuggestionStageCounts(high=1, low=1), refreshing=True
+            )
+        }
     )
     client = _suggestions_client()
     client.ingest_status = MagicMock(side_effect=[refreshing, STATUS])
@@ -1162,17 +1167,30 @@ def test_suggestions_refresh_wait_and_list_numbered(cfg, runner):
     accept.assert_called_once_with("sg2", keep=None)
 
 
-def test_suggestions_without_refresh_show_the_evidence(cfg, runner):
+def test_suggestions_without_refresh_show_the_label_and_evidence(cfg, runner):
     client = _suggestions_client()
-    result = _invoke(runner, client, "--no-refresh", "--confidence", "high")
+    result = _invoke(runner, client, "--no-refresh", "--only", "rules:high")
 
     assert result.exit_code == 0, result.stderr
     client.ingest_refresh_suggestions.assert_not_called()
-    assert client.ingest_suggestions.call_args.kwargs["confidence"] == "high"
+    kwargs = client.ingest_suggestions.call_args.kwargs
+    assert (kwargs["stage"], kwargs["confidence"]) == ("rules", "high")
+    # Each suggestion carries its label, as `accept` takes it.
+    assert [s["label"] for s in json.loads(result.stdout)] == ["rules:high", "rules:low"]
     assert "alexdev on github as its own" in result.stdout
 
 
-def test_accept_all_high_resets_once_then_links_each(cfg, runner):
+def test_an_unknown_label_is_refused(cfg, runner):
+    result = _invoke(runner, _suggestions_client(), "--no-refresh", "--only", "high")
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["error"]["code"] == "INVALID_ARGUMENT"
+
+    result = _invoke(runner, _suggestions_client(), "accept", "rules:medium")
+    assert result.exit_code == 1
+    assert "rules:high, rules:low" in json.loads(result.stderr)["error"]["message"]
+
+
+def test_accept_by_label_resets_once_then_links_each(cfg, runner):
     from honcho.api_types import IngestLinkResponse, IngestResetResponse
 
     calls: list[str] = []
@@ -1195,11 +1213,40 @@ def test_accept_all_high_resets_once_then_links_each(cfg, runner):
     client.ingest_suggestions = MagicMock(
         return_value=_Page([SUGGESTIONS[0], _suggestion(3, linked=True)])
     )
-    result = _invoke(runner, client, "accept", "--all-high", "--reset", "--yes")
+    result = _invoke(runner, client, "accept", "rules:high", "--reset", "--yes")
 
     assert result.exit_code == 0, result.stderr
+    kwargs = client.ingest_suggestions.call_args.kwargs
+    assert (kwargs["status"], kwargs["stage"], kwargs["confidence"]) == (
+        "open",
+        "rules",
+        "high",
+    )
     # Already one person: nothing to accept for it.
     assert calls == ["reset", "accept sg1"]
+
+
+def test_accept_mixes_numbers_and_labels_once_each(cfg, runner):
+    accept = MagicMock(
+        return_value=IngestSuggestionAccepted(suggestion=SUGGESTIONS[0], link=None)
+    )
+    client = _suggestions_client(ingest_accept_suggestion=accept)
+    client.ingest_suggestions = MagicMock(return_value=_Page([SUGGESTIONS[0]]))
+    result = _invoke(runner, client, "accept", "sg2", "rules:high", "sg1", "--json")
+
+    assert result.exit_code == 0, result.stderr
+    assert [c.args[0] for c in accept.call_args_list] == ["sg2", "sg1"]
+
+
+def test_nothing_to_accept_names_the_label(cfg, runner):
+    client = _suggestions_client()
+    client.ingest_suggestions = MagicMock(return_value=_Page([]))
+    result = _invoke(runner, client, "accept", "rules:low")
+
+    assert result.exit_code == 1
+    error = json.loads(result.stderr)["error"]
+    assert error["code"] == "NOTHING_TO_ACCEPT"
+    assert "rules:low" in error["message"]
 
 
 def test_a_refused_accept_is_reported_and_fails(cfg, runner):
@@ -1216,6 +1263,9 @@ def test_a_refused_accept_is_reported_and_fails(cfg, runner):
 def test_accept_needs_a_suggestion_and_keep_needs_exactly_one(cfg, runner):
     assert _invoke(runner, _suggestions_client(), "accept").exit_code == 1
     result = _invoke(runner, _suggestions_client(), "accept", "sg1", "sg2", "--keep", "x")
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["error"]["code"] == "INVALID_ARGUMENT"
+    result = _invoke(runner, _suggestions_client(), "accept", "rules:high", "--keep", "x")
     assert result.exit_code == 1
     assert json.loads(result.stderr)["error"]["code"] == "INVALID_ARGUMENT"
 

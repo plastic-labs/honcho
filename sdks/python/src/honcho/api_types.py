@@ -754,11 +754,20 @@ class IngestRecordCounts(BaseModel):
     """Queued for derivation, or derived."""
 
 
-class IngestSuggestionCounts(BaseModel):
-    """Open suggested links by confidence, and whether a refresh is under way."""
+class IngestSuggestionStageCounts(BaseModel):
+    """Open suggestions one stage made, by confidence."""
 
     high: int = 0
     low: int = 0
+
+
+class IngestSuggestionCounts(BaseModel):
+    """Open suggested links by stage, and whether a refresh is under way."""
+
+    rules: IngestSuggestionStageCounts = Field(
+        default_factory=IngestSuggestionStageCounts
+    )
+    """Made by the identity rules."""
     refreshing: bool = False
 
 
@@ -858,6 +867,9 @@ class IngestSuggestion(BaseModel):
 
     id: str
     kind: str
+    stage: Literal["rules"]
+    """What made it: ``rules``, the identity rules. With ``confidence``, it names a
+    group of suggestions, such as ``rules:high``."""
     confidence: Literal["high", "low"]
     """``high``: evidence to accept at a glance. ``low``: needs a closer look."""
     score: float
@@ -866,7 +878,6 @@ class IngestSuggestion(BaseModel):
     """The two accounts map to one person now, however it happened."""
     accounts: list[IngestSuggestionAccount]
     evidence: list[IngestSuggestionEvidence]
-    stage: str
     refreshed_at: datetime.datetime
 
 

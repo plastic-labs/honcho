@@ -200,7 +200,10 @@ describe('ingest', () => {
     expect(await client.ingestRefreshSuggestions()).toBe(true)
     expect(await client.ingestRefreshSuggestions()).toBe(false)
     const status = await client.ingestStatus()
-    expect(status.suggestions).toEqual({ high: 0, low: 0, refreshing: true })
+    expect(status.suggestions).toEqual({
+      rules: { high: 0, low: 0 },
+      refreshing: true,
+    })
     expect((await client.ingestSuggestions()).items).toEqual([])
     await expect(
       client.ingestAcceptSuggestion('missing')
