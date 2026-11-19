@@ -49,6 +49,7 @@ from src.exceptions import (
     ResourceNotFoundException,
     ValidationException,
 )
+from src.organizer.identity import email_digest
 from src.schemas.api import IngestRejectionReason
 from src.telemetry.events import PeerCreatedEvent, SessionCreatedEvent, emit
 
@@ -760,20 +761,43 @@ def _newest_display_names(
     return newest
 
 
-def _source_context(record: schemas.IngestRecordCreate) -> dict[str, Any]:
-    """A record's container, author and participants as received."""
+def _source_context(
+    record: schemas.IngestRecordCreate, tenant_id: str, workspace_name: str
+) -> dict[str, Any]:
+    """A record's container, author and participants as received, emails as digests."""
+
+    def person(p: schemas.IngestParticipant) -> dict[str, Any]:
+        return _person_context(p, tenant_id, workspace_name)
+
     return {
         "container": record.container.model_dump(mode="json")
         if record.container is not None
         else None,
-        "author": _person_context(record.author) if record.author is not None else None,
-        "participants": [_person_context(p) for p in record.participants],
+        "author": person(record.author) if record.author is not None else None,
+        "participants": [person(p) for p in record.participants],
     }
 
 
-def _person_context(person: schemas.IngestParticipant) -> dict[str, Any]:
-    """A person as received; the bot flag only when the source set it."""
-    return person.model_dump(mode="json", exclude=None if person.bot else {"bot"})
+def _person_context(
+    person: schemas.IngestParticipant, tenant_id: str, workspace_name: str
+) -> dict[str, Any]:
+    """A person as received, keeping only what the source set.
+
+    The bot flag, handle and aliases appear only when the source sent them. The
+    email never does: only its workspace-scoped digest, which the identity
+    suggestions compare.
+    """
+    unset = {"email"}
+    if not person.bot:
+        unset.add("bot")
+    if person.handle is None:
+        unset.add("handle")
+    if not person.aliases:
+        unset.add("aliases")
+    context = person.model_dump(mode="json", exclude=unset)
+    if person.email is not None:
+        context["email_digest"] = email_digest(tenant_id, workspace_name, person.email)
+    return context
 
 
 def _first_parents(records: Sequence[_Record]) -> dict[BindingKey, str]:
@@ -1454,7 +1478,7 @@ async def _write_group(
                     dict.fromkeys(peer_bindings[k] for k in r.participant_keys)
                 )
                 or None,
-                source_context=_source_context(r.record),
+                source_context=_source_context(r.record, tenant_id, workspace_name),
             )
             .on_conflict_do_nothing(constraint="uq_ingest_records_identity")
             .returning(models.IngestRecord.id)

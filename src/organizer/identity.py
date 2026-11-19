@@ -42,6 +42,7 @@ What keeps two people apart:
 """
 
 import datetime
+import hashlib
 import re
 import unicodedata
 from collections import Counter, defaultdict
@@ -123,6 +124,19 @@ class Suggestion:
     confidence: Confidence
     score: float
     evidence: tuple[Evidence, ...]
+
+
+def email_digest(tenant_id: str, workspace_name: str, email: str) -> str:
+    """What ingest keeps of an email address: a digest scoped to one workspace.
+
+    The address is trimmed and casefolded first, so `Alex@Example.com ` and
+    `alex@example.com` match. The tenant and workspace go into the digest, so the
+    same address digests differently in two workspaces and digests can't be
+    compared across them. `v1` names the scheme, so it can change later.
+    """
+    scope = f"{len(tenant_id)}:{tenant_id}:{len(workspace_name)}:{workspace_name}"
+    value = f"honcho-ingest-email:v1:{scope}:{email.strip().casefold()}"
+    return hashlib.sha256(value.encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------

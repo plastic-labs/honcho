@@ -634,6 +634,18 @@ class IngestParticipant(BaseModel):
     """The person's ID in the source, if it has one."""
     name: _DisplayName
     """The person's display name."""
+    handle: _DisplayName | None = None
+    """The account's username in the source, unique there (a GitHub login, a
+    Discord username). Used only to suggest which accounts are one person."""
+    aliases: list[_DisplayName] = Field(default_factory=list, max_length=10)
+    """Other names the account goes by, such as a profile name or a server
+    nickname. Used only to suggest which accounts are one person."""
+    email: (
+        Annotated[str, BeforeValidator(_strip_nul), Field(min_length=3, max_length=320)]
+        | None
+    ) = None
+    """The account's email address. The server keeps only a digest of it,
+    scoped to the workspace, to suggest which accounts are one person."""
     bot: bool = False
     """The source marks this account as a bot. Its peer is created with
     ``observe_me`` off, so nothing is derived about it."""

@@ -38,8 +38,8 @@ def test_a_message_keeps_what_the_source_sent() -> None:
         "created_at": "2026-11-04T20:47:00.000000+00:00",
         "revised_at": None,
         "container": {"id": "200", "name": "dev", "parent_id": "100"},
-        "author": {"id": "1", "name": "Jess"},
-        "participants": [{"id": "2", "name": "aakash"}],
+        "author": {"id": "1", "name": "Jess", "handle": "jess"},
+        "participants": [{"id": "2", "name": "aakash", "handle": "aakash"}],
         # Mentions stay as written; resolving them is Honcho's job.
         "content": "Northstar needs SSO before <@2> ships it.",
         "metadata": {"discord_message_type": "default"},
@@ -60,7 +60,12 @@ def test_names_prefer_the_server_nickname() -> None:
     members = {"1": {"nick": "JessD", "user": {"id": "1"}}}
     record = to_record(message(), CHANNEL, "77", members)
     assert record is not None
-    assert record["author"] == {"id": "1", "name": "JessD"}
+    assert record["author"] == {
+        "id": "1",
+        "name": "JessD",
+        "handle": "jess",
+        "aliases": ["Jess"],
+    }
     assert display_name(user("5", "plain")) == "plain"
     assert display_name(user("5", "plain", global_name="  ")) == "plain"
 
@@ -79,7 +84,7 @@ def test_a_reply_names_who_it_answers_and_links_the_message() -> None:
         members={},
     )
     assert record is not None
-    assert record["participants"] == [{"id": "3", "name": "maya"}]
+    assert record["participants"] == [{"id": "3", "name": "maya", "handle": "maya"}]
     assert record["metadata"] == {"discord_message_type": "reply", "reply_to": "8000"}
 
 
@@ -161,7 +166,9 @@ def test_a_reply_to_a_webhook_message_marks_its_author_a_bot() -> None:
         members={},
     )
     assert record is not None
-    assert {"id": "8", "name": "deploys", "bot": True} in record["participants"]
+    assert {"id": "8", "name": "deploys", "handle": "deploys", "bot": True} in record[
+        "participants"
+    ]
 
 
 def test_a_webhook_mentioned_and_replied_to_is_still_a_bot() -> None:
@@ -180,7 +187,9 @@ def test_a_webhook_mentioned_and_replied_to_is_still_a_bot() -> None:
         members={},
     )
     assert record is not None
-    assert record["participants"] == [{"id": "8", "name": "deploys", "bot": True}]
+    assert record["participants"] == [
+        {"id": "8", "name": "deploys", "handle": "deploys", "bot": True}
+    ]
 
 
 def test_a_bot_named_in_a_message_is_marked() -> None:
@@ -192,8 +201,8 @@ def test_a_bot_named_in_a_message_is_marked() -> None:
     )
     assert record is not None
     assert record["participants"] == [
-        {"id": "9", "name": "sentry", "bot": True},
-        {"id": "2", "name": "aakash"},
+        {"id": "9", "name": "sentry", "handle": "sentry", "bot": True},
+        {"id": "2", "name": "aakash", "handle": "aakash"},
     ]
 
 
@@ -232,7 +241,7 @@ def test_a_forward_keeps_the_forwarded_text_and_its_mentions() -> None:
     assert record is not None
     assert record["content"] == "[forwarded message]\nship it <@4>"
     assert record["author"]["id"] == "1"
-    assert record["participants"] == [{"id": "4", "name": "omar"}]
+    assert record["participants"] == [{"id": "4", "name": "omar", "handle": "omar"}]
     assert record["metadata"]["forwarded"] is True
     assert record["metadata"]["forwarded_from"] == "555"
 
