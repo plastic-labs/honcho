@@ -6,7 +6,11 @@ import httpx
 import pytest
 from sqlalchemy.exc import DBAPIError, OperationalError
 
-from src.utils.retryable_errors import is_retryable_db_error, is_retryable_error
+from src.utils.retryable_errors import (
+    is_retryable_conflict,
+    is_retryable_db_error,
+    is_retryable_error,
+)
 
 
 class FakePGError(Exception):
@@ -52,6 +56,31 @@ def test_sqlstate_classification(sqlstate: str, expected: bool):
     exc = _dbapi_error(sqlstate)
     assert is_retryable_db_error(exc) is expected
     assert is_retryable_error(exc) is expected
+
+
+@pytest.mark.parametrize(
+    ("sqlstate", "expected"),
+    [
+        ("40P01", True),  # deadlock_detected
+        ("40001", True),  # serialization_failure
+        ("55P03", False),  # lock_not_available: already waited the timeout
+        ("57014", False),  # query_canceled: already waited the timeout
+        ("08006", False),  # connection_failure
+        ("23505", False),  # unique_violation
+    ],
+)
+def test_conflict_classification(sqlstate: str, expected: bool):
+    assert is_retryable_conflict(_dbapi_error(sqlstate)) is expected
+
+
+def test_a_lost_connection_is_not_a_conflict():
+    assert not is_retryable_conflict(_dbapi_error(None, connection_invalidated=True))
+
+
+def test_a_wrapped_deadlock_is_a_conflict():
+    wrapper = RuntimeError("enqueue failed")
+    wrapper.__cause__ = _dbapi_error("40P01")
+    assert is_retryable_conflict(wrapper)
 
 
 def test_orig_none_is_terminal():

@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - A peer's session join time can be set by the caller. `joined_at` is accepted next to `observe_me` and `observe_others` wherever a session-peer configuration is sent: `peers` on `POST /sessions`, `POST` and `PUT /sessions/{session_id}/peers`, and `PUT /sessions/{session_id}/peers/{peer_id}/config`. A search with `peer_perspective` only returns messages created at or after the peer's join time, and that time was always the moment the peer was added, so messages imported with their original dates were hidden from it. A supplied `joined_at` always applies, including to a peer that is already in the session, which is how an existing import is repaired; without one nothing changes. It is write-only (not stored in the configuration, not returned), a timestamp without a timezone is read as UTC, and a time more than five minutes in the future is a 422. Changing the join time of a peer that is already in a session needs a key that can edit the session (session-level or broader): a peer-scoped key that sends `joined_at` to `POST /sessions` for an existing session gets a 401.
 
+### Fixed
+
+- A message is saved together with the queue work that derives it. `POST /sessions/{session_id}/messages` and `POST /sessions/{session_id}/messages/upload` committed the messages first and queued them afterwards in a background task that logged and dropped any failure, so a message could be saved and never derived. Both now insert the messages and their queue rows in one transaction: if queuing fails, the request fails and nothing is saved, so the client can retry it. A deadlock or serialization failure reruns the write up to twice before failing; a lock or statement timeout fails it at once
+
 ## [3.6.2] - 2026-11-19
 
 ### Fixed
