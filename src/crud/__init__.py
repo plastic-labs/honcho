@@ -63,7 +63,7 @@ from .peer import (
     reject_scope_peers,
     update_peer,
 )
-from .peer_card import get_peer_card, set_peer_card
+from .peer_card import get_peer_card, get_peer_card_for_update, set_peer_card
 from .representation import (
     get_working_representation,
 )
@@ -185,6 +185,7 @@ __all__ = [
     "get_sessions_for_peer",
     # Peer Card
     "get_peer_card",
+    "get_peer_card_for_update",
     "set_peer_card",
     # Representation
     "get_working_representation",

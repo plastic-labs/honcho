@@ -104,6 +104,7 @@ def _no_metrics(  # pyright: ignore[reportUnusedFunction]
             [
                 "create_observations_deductive",
                 "delete_observations",
+                "edit_peer_card",
                 "update_peer_card",
             ],
         ),

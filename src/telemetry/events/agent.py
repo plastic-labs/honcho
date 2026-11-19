@@ -153,7 +153,7 @@ class AgentToolConclusionsDeletedEvent(BaseEvent):
 
 
 class AgentToolPeerCardUpdatedEvent(BaseEvent):
-    """Emitted when the update_peer_card tool is executed.
+    """Emitted when the update_peer_card or edit_peer_card tool writes the card.
 
     Tracks peer card updates during dream consolidation.
     """

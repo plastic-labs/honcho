@@ -36,6 +36,7 @@ from src.utils.agent_tools import (
     _handle_create_observations_impl,  # pyright: ignore[reportPrivateUsage]
     _handle_create_observations_inductive,  # pyright: ignore[reportPrivateUsage]
     _handle_delete_observations,  # pyright: ignore[reportPrivateUsage]
+    _handle_edit_peer_card,  # pyright: ignore[reportPrivateUsage]
     _handle_get_messages_by_date_range,  # pyright: ignore[reportPrivateUsage]
     _handle_get_observation_context,  # pyright: ignore[reportPrivateUsage]
     _handle_get_peer_card,  # pyright: ignore[reportPrivateUsage]
@@ -53,6 +54,7 @@ from src.utils.agent_tools import (
     get_observation_context,
 )
 from src.utils.evidence import EvidenceAccumulator
+from src.utils.types import ToolResult
 
 # =============================================================================
 # Fixtures
@@ -1675,6 +1677,152 @@ class TestGetReasoningChain:
 # =============================================================================
 # Unit Tests: Peer Card Tools
 # =============================================================================
+
+
+@pytest.mark.asyncio
+class TestEditPeerCard:
+    """Tests for _handle_edit_peer_card."""
+
+    async def _card(
+        self, db_session: AsyncSession, workspace: Any, peer1: Any, peer2: Any
+    ) -> list[str] | None:
+        await db_session.refresh(peer1)
+        return await crud.get_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+
+    async def test_adds_removes_and_replaces_in_one_call(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+        await _handle_update_peer_card(
+            ctx,
+            {
+                "content": [
+                    "IDENTITY: Name: John",
+                    "ATTRIBUTE: Location: NYC",
+                    "ATTRIBUTE: Tool: Vim",
+                ]
+            },
+        )
+
+        result = await _handle_edit_peer_card(
+            ctx,
+            {
+                "add": ["ATTRIBUTE: Tool: Zed", "ATTRIBUTE: Employer: Acme"],
+                # Matched case- and whitespace-insensitively.
+                "remove": ["attribute: tool:   vim"],
+            },
+        )
+
+        assert isinstance(result, ToolResult)
+        assert result.metadata["peer_card_updated"] is True
+        assert "added 2, removed 1" in result.content
+        assert await self._card(db_session, workspace, peer1, peer2) == [
+            "IDENTITY: Name: John",
+            "ATTRIBUTE: Location: NYC",
+            "ATTRIBUTE: Tool: Zed",
+            "ATTRIBUTE: Employer: Acme",
+        ]
+
+    async def test_creates_a_card_when_there_is_none(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+        await _handle_edit_peer_card(ctx, {"add": ["IDENTITY: Name: John"]})
+        assert await self._card(db_session, workspace, peer1, peer2) == [
+            "IDENTITY: Name: John"
+        ]
+
+    async def test_full_card_takes_a_swap_but_refuses_growth(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+        full = [f"IDENTITY: Aliases: alias-{i}" for i in range(MAX_PEER_CARD_FACTS)]
+        await _handle_update_peer_card(ctx, {"content": full})
+
+        refused = await _handle_edit_peer_card(
+            ctx, {"add": ["ATTRIBUTE: Employer: Acme"]}
+        )
+        assert isinstance(refused, str)
+        assert "Not applied" in refused and "Remove at least 1" in refused
+        assert await self._card(db_session, workspace, peer1, peer2) == full
+
+        swapped = await _handle_edit_peer_card(
+            ctx,
+            {
+                "add": ["ATTRIBUTE: Employer: Acme"],
+                "remove": ["IDENTITY: Aliases: alias-0"],
+            },
+        )
+        assert isinstance(swapped, ToolResult)
+        assert await self._card(db_session, workspace, peer1, peer2) == [
+            *full[1:],
+            "ATTRIBUTE: Employer: Acme",
+        ]
+
+    async def test_reports_removals_not_on_the_card_and_invalid_additions(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+        await _handle_update_peer_card(ctx, {"content": ["IDENTITY: Name: John"]})
+
+        result = await _handle_edit_peer_card(
+            ctx,
+            {
+                "add": ["ATTRIBUTE: Location: NYC", "TRAIT: Analytical"],
+                "remove": ["ATTRIBUTE: Location: Boston"],
+            },
+        )
+
+        assert isinstance(result, ToolResult)
+        assert "not on the card" in result.content
+        assert "ATTRIBUTE: Location: Boston" in result.content
+        assert "Rejected 1 of 2" in result.content
+        assert await self._card(db_session, workspace, peer1, peer2) == [
+            "IDENTITY: Name: John",
+            "ATTRIBUTE: Location: NYC",
+        ]
+
+    async def test_no_op_and_empty_edits_do_not_write(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+        await _handle_update_peer_card(ctx, {"content": ["IDENTITY: Name: John"]})
+
+        assert "Nothing to edit" in await _handle_edit_peer_card(ctx, {})
+        assert "No change" in await _handle_edit_peer_card(
+            ctx, {"add": ["IDENTITY: name:  JOHN"]}
+        )
+        assert "leave the card empty" in await _handle_edit_peer_card(
+            ctx, {"remove": ["IDENTITY: Name: John"]}
+        )
+        assert await self._card(db_session, workspace, peer1, peer2) == [
+            "IDENTITY: Name: John"
+        ]
 
 
 @pytest.mark.asyncio
