@@ -133,10 +133,20 @@ def _person(
 ) -> dict[str, Any]:
     """An author or participant; `bot` only when the account is one."""
     user_id = str(user["id"])
-    person: dict[str, Any] = {
-        "id": user_id,
-        "name": display_name(user, members.get(user_id)),
-    }
+    member = members.get(user_id)
+    name = display_name(user, member)
+    person: dict[str, Any] = {"id": user_id, "name": name}
+    # The username is the handle; the other names the account goes by are
+    # aliases. Ingest uses them only to suggest which accounts are one person.
+    if handle := clean_name(user.get("username")):
+        person["handle"] = handle
+    aliases = [
+        alias
+        for candidate in ((member or {}).get("nick"), user.get("global_name"))
+        if (alias := clean_name(candidate)) and alias not in (name, handle)
+    ]
+    if aliases:
+        person["aliases"] = list(dict.fromkeys(aliases))
     if bot or is_bot(user):
         person["bot"] = True
     return person

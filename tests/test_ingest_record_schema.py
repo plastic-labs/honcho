@@ -120,6 +120,23 @@ _PARITY_CASES: list[tuple[str, dict[str, Any]]] = [
     ("metadata 5 deep", _with(metadata=_nested(5))),
     ("metadata 6 deep", _with(metadata=_nested(6))),
     ("metadata with NUL", _with(metadata={"thread": "pr:\x0012"})),
+    (
+        "identity hints",
+        _with(
+            author={
+                "id": "1",
+                "name": "alex",
+                "handle": "alexdev",
+                "aliases": ["Alex Doe"],
+                "email": "alex@example.com",
+            }
+        ),
+    ),
+    ("10 aliases", _with(author={**_PERSON, "aliases": ["a"] * 10})),
+    ("11 aliases", _with(author={**_PERSON, "aliases": ["a"] * 11})),
+    ("empty alias", _with(author={**_PERSON, "aliases": [""]})),
+    ("email too long", _with(author={**_PERSON, "email": "e" * 321})),
+    ("handle with NUL", _with(author={**_PERSON, "handle": "al\x00ex"})),
 ]
 
 

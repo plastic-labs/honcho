@@ -88,10 +88,21 @@ def test_a_bot_mention_is_never_a_person_with_the_same_name() -> None:
 
 
 def test_person_uses_the_numeric_id_and_flags_bots() -> None:
-    assert person(ALEX) == {"name": "alex", "id": "11"}
-    assert person(RABBIT) == {"name": "coderabbitai", "id": "99", "bot": True}
+    assert person(ALEX) == {
+        "name": "alex",
+        "handle": "alex",
+        "aliases": ["Alex Doe"],
+        "id": "11",
+    }
+    assert person(RABBIT) == {
+        "name": "coderabbitai",
+        "handle": "coderabbitai",
+        "id": "99",
+        "bot": True,
+    }
     assert person({"__typename": "User", "login": "dependabot[bot]"}) == {
         "name": "dependabot[bot]",
+        "handle": "dependabot[bot]",
         "bot": True,
     }
     assert person(None) is None  # a deleted account
@@ -118,7 +129,7 @@ def test_an_issue_or_pr_opens_with_its_title() -> None:
 
     assert record["content"] == "Opened issue #3: Crash\nIt crashes when @sam logs in."
     assert record["container"] == {"id": "R_1", "name": "acme/web", "parent_id": "O_1"}
-    assert record["participants"] == [{"name": "sam", "id": "22"}]
+    assert record["participants"] == [{"name": "sam", "handle": "sam", "id": "22"}]
     assert record["metadata"] == {
         "repo": "acme/web",
         "kind": "issue",
@@ -175,7 +186,7 @@ def test_a_review_reply_names_the_comment_it_answers() -> None:
 
     assert record is not None
     assert record["content"] == "Review comment on PR #12, src/a.py:4:\nBecause."
-    assert record["participants"] == [{"name": "sam", "id": "22"}]
+    assert record["participants"] == [{"name": "sam", "handle": "sam", "id": "22"}]
     assert record["metadata"]["reply_to"] == "C_1"
     assert record["metadata"]["path"] == "src/a.py"
 
@@ -197,7 +208,12 @@ def test_a_bot_keeps_its_words_but_not_its_collapsed_machinery() -> None:
 
     assert record is not None
     assert "<details>" not in record["content"]
-    assert record["author"] == {"name": "coderabbitai", "id": "99", "bot": True}
+    assert record["author"] == {
+        "name": "coderabbitai",
+        "handle": "coderabbitai",
+        "id": "99",
+        "bot": True,
+    }
 
 
 def test_long_text_is_cut_at_the_ingest_limit() -> None:
@@ -244,7 +260,7 @@ def test_a_commit_is_what_shipped_with_what_it_touched() -> None:
         "Commit (PR #12):\nfeat: add login (#12)\n\nBody."
         + "\n\ntouched: src/auth/, tests/"
     )
-    assert record["author"] == {"name": "alex", "id": "11"}
+    assert record["author"] == {"name": "alex", "handle": "alex", "id": "11"}
     assert record["metadata"]["ai_assisted"] is True
     assert record["metadata"]["sha"] == "0123456789ab"
 
