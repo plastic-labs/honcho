@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [3.6.2] - 2026-11-19
+
+### Fixed
+
+- The check for due dreams no longer fails when many collections are due. It loaded every candidate's workspace and session in one row-value `IN` list, which Postgres rejects with `stack depth limit exceeded` once the list is long enough, and its other lookups bound one parameter per candidate. The deriver metrics poller runs the same check, so a failure also froze the deriver queue metrics and, with `DERIVER_SCHEDULER=api`, stopped due dreams from being enqueued. The lookups now run in batches, and the work-unit and tenant lists are each sent as one array parameter. (#1623)
+
 ## [3.6.1] - 2026-11-10
 
 ### Changed

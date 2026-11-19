@@ -27,7 +27,13 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v3.6.1 (Current)">
+        <Update label="v3.6.2 (Current)">
+        ### Fixed
+
+        - The check for due dreams no longer fails when many collections are due. It loaded every candidate's workspace and session in one row-value `IN` list, which Postgres rejects with `stack depth limit exceeded` once the list is long enough, and its other lookups bound one parameter per candidate. The deriver metrics poller runs the same check, so a failure also froze the deriver queue metrics and, with `DERIVER_SCHEDULER=api`, stopped due dreams from being enqueued. The lookups now run in batches, and the work-unit and tenant lists are each sent as one array parameter. (#1623)
+        </Update>
+
+        <Update label="v3.6.1">
         ### Changed
 
         - Migration `e5fe7f8bcf62`, the 3.6.0 revision that adds `tenant_id` to every tenant-scoped table, no longer blocks reads and writes while it runs. It did all of its work in one transaction, so every table whose keys it rebuilt stayed locked until the end, which took longer the bigger the database was. It now commits after each statement: the new unique and primary-key indexes build concurrently, the new foreign keys are added `NOT VALID` and then validated, and each primary key is swapped onto its new index in one short statement, so the previous release can keep serving during the upgrade. The index builds and the foreign-key validation run under a 60-minute `statement_timeout` instead of the migrations' 5 minutes. A run that stops part-way can be run again, and each step skips what is already done. The revision id and the resulting schema are unchanged. An instance already on 3.6.0 ran the earlier version and is not affected; an upgrade from 3.5.x or earlier runs this one (#1574)
