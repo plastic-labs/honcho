@@ -10,7 +10,7 @@ from collections.abc import Iterator
 import httpx
 from sqlalchemy.exc import DBAPIError
 
-__all__ = ["is_retryable_db_error", "is_retryable_error"]
+__all__ = ["is_retryable_conflict", "is_retryable_db_error", "is_retryable_error"]
 
 _RETRYABLE_SQLSTATES = frozenset(
     {
@@ -28,6 +28,14 @@ _RETRYABLE_SQLSTATES = frozenset(
 
 # Provider/network transport failures. SDK wrappers (anthropic/openai
 # APIConnectionError etc.) chain to these via __cause__.
+# Lost a race with another transaction; rerunning it from the start can succeed.
+_CONFLICT_SQLSTATES = frozenset(
+    {
+        "40001",  # serialization_failure
+        "40P01",  # deadlock_detected
+    }
+)
+
 _TRANSPORT_ERRORS = (
     httpx.TransportError,
     ConnectionError,
@@ -83,4 +91,16 @@ def is_retryable_error(exc: BaseException) -> bool:
         return True
     return any(
         isinstance(current, _TRANSPORT_ERRORS) for current in _iter_cause_chain(exc)
+    )
+
+
+def is_retryable_conflict(exc: BaseException) -> bool:
+    """True when the transaction lost a deadlock or a serialization race.
+
+    Narrower than ``is_retryable_db_error``: a lock or statement timeout means
+    the work is already slow, and rerunning it would multiply the wait.
+    """
+    return any(
+        isinstance(current, DBAPIError) and _sqlstate(current) in _CONFLICT_SQLSTATES
+        for current in _iter_cause_chain(exc)
     )

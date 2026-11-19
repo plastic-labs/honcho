@@ -461,6 +461,7 @@ class CreateMessagesResult:
     """Messages staged by ``create_messages``, and the work to run once committed."""
 
     messages: list[models.Message]
+    session: models.Session
     on_commit: Callable[[], Awaitable[None]] | None = field(default=None, repr=False)
 
     async def post_commit(self) -> None:
@@ -492,8 +493,8 @@ async def create_messages(
             order as ``messages``, written with the insert
 
     Returns:
-        The created messages, flushed so their ids are assigned, and the
-        session's deferred cache and event work
+        The created messages, flushed so their ids are assigned, the session
+        they were added to, and the session's deferred cache and event work
 
     Raises:
         ValidationException: If a message is authored by a scope peer
@@ -534,7 +535,11 @@ async def create_messages(
     # function, not from the caller's commit.
     await db.flush()
 
-    return CreateMessagesResult(message_objects, on_commit=session_result.post_commit)
+    return CreateMessagesResult(
+        message_objects,
+        session=session_result.resource,
+        on_commit=session_result.post_commit,
+    )
 
 
 async def insert_messages_locked(

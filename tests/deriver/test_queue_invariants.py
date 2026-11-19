@@ -37,7 +37,7 @@ class Scenario:
     deriver_errors: tuple[Exception, ...] = ()
     # Raised by every deriver call
     deriver_error_forever: Exception | None = None
-    # The queue insert in enqueue() hits a statement timeout
+    # The queue insert hits a statement timeout, which fails the message write
     enqueue_insert_fails: bool = False
     # A queue row whose key parse_work_unit_key rejects
     unparsable_work_unit_key: bool = False
@@ -64,15 +64,7 @@ SCENARIOS = [
         id="deriver-fails-terminally",
         marks=_STATUS_HIDES_ERRORS,
     ),
-    pytest.param(
-        Scenario(enqueue_insert_fails=True),
-        id="enqueue-insert-fails",
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason="enqueue() logs and drops a failed queue insert; the saved "
-            + "message is never derived",
-        ),
-    ),
+    pytest.param(Scenario(enqueue_insert_fails=True), id="enqueue-insert-fails"),
     pytest.param(
         Scenario(unparsable_work_unit_key=True),
         id="unparsable-work-unit-key",
@@ -152,7 +144,12 @@ async def test_queue_invariants_hold_after_drain(
 
     with contextlib.ExitStack() as faults:
         _inject_faults(scenario, faults)
-        _create_messages(client, workspace, session)
+        if scenario.enqueue_insert_fails:
+            # The write fails as a whole: no message is saved without its work.
+            with pytest.raises(OperationalError):
+                _create_messages(client, workspace, session)
+        else:
+            _create_messages(client, workspace, session)
         if scenario.unparsable_work_unit_key:
             await _add_unparsable_work_unit(db_session, workspace)
         queue_manager = QueueManager()
@@ -175,6 +172,16 @@ async def test_queue_invariants_hold_after_drain(
         )
     ).scalar_one()
     assert messages_without_items == 0, "messages saved with no representation item"
+    saved = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(models.Message)
+            .where(models.Message.workspace_name == workspace)
+            .where(models.Message.session_name == session)
+        )
+    ).scalar_one()
+    expected = 0 if scenario.enqueue_insert_fails else MESSAGES_PER_SCENARIO
+    assert saved == expected, "a failed enqueue must fail the message write"
 
     # Nothing gets stuck
     unprocessed = (

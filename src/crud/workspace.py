@@ -281,6 +281,27 @@ async def get_all_workspaces(
     return stmt
 
 
+async def get_workspace_uncached(
+    db: AsyncSession, workspace_name: str
+) -> models.Workspace:
+    """Get an existing workspace straight from the database, never the cache.
+
+    For a transaction that may have created the workspace: a cached copy of an
+    uncommitted row would outlive a rollback.
+
+    Raises:
+        ResourceNotFoundException: If the workspace does not exist
+    """
+    workspace = await db.scalar(
+        select(models.Workspace).where(
+            models.Workspace.name == workspace_name, live_workspace_row()
+        )
+    )
+    if workspace is None:
+        raise ResourceNotFoundException(f"Workspace {workspace_name} not found")
+    return workspace
+
+
 async def get_workspace(
     db: AsyncSession,
     workspace_name: str,
