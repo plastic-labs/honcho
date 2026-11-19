@@ -495,27 +495,60 @@ async def get_scope_sessions(
     return stmt.order_by(models.SessionPeer.joined_at.asc(), models.Session.id.asc())
 
 
-def session_in_scope_clause(scope_name: str | None) -> ColumnElement[bool]:
+def session_in_scope_clause(scope_name: str) -> ColumnElement[bool]:
     """Correlated EXISTS: the outer ``Session`` is an active member of a scope.
 
     Membership as ``_active_scope_membership`` defines it, like every other
     scope membership read.
 
     Args:
-        scope_name: Unprefixed scope name, or None to match membership of any
-            scope. Callers check a named scope exists (``get_scope_or_raise``).
+        scope_name: Unprefixed scope name. Callers check the scope exists
+            (``get_scope_or_raise``).
 
     Returns:
         A clause to put in the WHERE of a query over ``models.Session``
     """
-    stmt = (
+    return (
         select(models.SessionPeer.peer_name)
         .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
         .where(_active_scope_membership())
+        .where(models.SessionPeer.peer_name == scope_peer_name(scope_name))
+        .exists()
     )
-    if scope_name is not None:
-        stmt = stmt.where(models.SessionPeer.peer_name == scope_peer_name(scope_name))
-    return stmt.exists()
+
+
+def session_in_no_scope_clause(workspace_name: str) -> ColumnElement[bool]:
+    """The outer ``Session`` is an active member of no scope.
+
+    Not correlated on purpose: the workspace's scope members are read once per
+    query. A correlated NOT EXISTS can re-read every membership in the
+    workspace for each session. The caller's query already requires an active,
+    live session in a live workspace, so only the membership and its scope peer
+    are checked here.
+
+    Args:
+        workspace_name: Name of the workspace the outer query lists
+
+    Returns:
+        A clause to put in the WHERE of a query over ``models.Session``
+    """
+    scope_members = (
+        select(models.SessionPeer.session_name)
+        .join(
+            models.Peer,
+            and_(
+                models.Peer.tenant_id == models.SessionPeer.tenant_id,
+                models.Peer.workspace_name == models.SessionPeer.workspace_name,
+                models.Peer.name == models.SessionPeer.peer_name,
+            ),
+        )
+        .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
+        .where(models.SessionPeer.workspace_name == workspace_name)
+        .where(models.SessionPeer.left_at.is_(None))
+        .where(models.Peer.deleted_at.is_(None))
+        .where(scope_peer_clause())
+    )
+    return models.Session.name.not_in(scope_members)
 
 
 async def get_session_scopes(
