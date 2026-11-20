@@ -94,12 +94,14 @@ class FakeDiscord:
         ]
         # Called with the channel ID whenever a page of its history is read.
         self.on_history: Callable[[str], None] | None = None
+        # Threads found by ID but in no listing (a private archived thread).
+        self.unlisted: list[dict[str, Any]] = []
         # Server errors to answer, by request (as `requests` records it), first.
         self.failures: dict[str, int] = {}
 
     def all_channels(self) -> list[dict[str, Any]]:
         archived = [t for threads in self.archived.values() for t in threads]
-        return [*self.channels, *self.active, *archived]
+        return [*self.channels, *self.active, *archived, *self.unlisted]
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path.removeprefix("/api/v10")

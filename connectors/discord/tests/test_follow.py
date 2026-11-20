@@ -105,6 +105,8 @@ class Script:
         self.sink: FakeSink = sink
         self.steps: list[Step] = list(steps)
         self.overflow: bool = False
+        # What was waiting in the queue when it overflowed.
+        self.queued: list[dict[str, Any]] = []
         self.fail: str | None = None
         self.closed: bool = False
 
@@ -129,6 +131,10 @@ class Script:
     def take_overflow(self) -> bool:
         overflow, self.overflow = self.overflow, False
         return overflow
+
+    def drain(self) -> list[dict[str, Any]]:
+        drained, self.queued = self.queued, []
+        return drained
 
     def failure(self) -> str | None:
         return self.fail
@@ -456,6 +462,91 @@ def test_a_long_honcho_outage_backs_off_without_overflowing() -> None:
         follower = Follower(client, GUILD, sink, Script(sink, []), clock=Clock())
         follower._failures = 5_000  # pyright: ignore[reportPrivateUsage]
         assert not follower._flush()  # pyright: ignore[reportPrivateUsage]
+
+
+def test_an_overflow_empties_the_queue_keeping_deletes_and_new_threads() -> None:
+    fake, sink = FakeDiscord(), FakeSink()
+    script = Script(sink, [READY])
+    thread = {"id": "320", "type": 11, "name": "new", "parent_id": "200"}
+
+    def overflow() -> None:
+        fake.active.append(thread)
+        fake.messages["320"] = [msg(41, "320", JESS, "in the new thread")]
+        script.queued = [
+            ev("MESSAGE_DELETE", id="4", channel_id="200"),
+            created(msg(99, "200", JESS, "comes back with the history, or not")),
+            ev("MESSAGE_UPDATE", id="3", channel_id="200", edited_timestamp="x"),
+            ev("THREAD_CREATE", **thread),
+        ]
+        script.overflow = True
+
+    script.steps.append(overflow)
+    script.steps.append(ev("RESUMED"))
+    with client_for(fake) as client:
+        follower = Follower(
+            client, GUILD, sink, script, channel_ids={"200"}, clock=Clock()
+        )
+        follower.run()
+
+    assert script.queued == []
+    after = sink.ids()[8:]
+    assert after == ["4", "41"]
+    assert sink.sent[8]["op"] == "delete"
+    assert follower.stats.catch_ups == 2
+
+
+def test_a_channel_found_again_is_read_before_its_cursor_moves() -> None:
+    fake = FakeDiscord()
+    sink = FakeSink({"messages": {"200": "8", "300": "20", "330": "60"}})
+    clock = Clock()
+    hidden = {"id": "330", "type": 12, "name": "private", "parent_id": "200"}
+    fake.unlisted.append(hidden)
+    fake.messages["330"] = [
+        msg(60, "330", JESS, "seen"),
+        msg(61, "330", MAYA, "posted while it was down"),
+    ]
+
+    def later() -> None:
+        clock.now += 10
+
+    follow(
+        fake,
+        sink,
+        [READY, later, created(msg(62, "330", JESS, "live"))],
+        channel_ids={"200"},
+        clock=clock,
+    )
+
+    assert "61" in sink.ids()
+    for (position, _), sent in zip(sink.saved, sink.sent_when_saved, strict=True):
+        assert int(position["messages"].get("330", "0")) < 61 or "61" in sent
+    assert sink.cursors()["330"] == "62"
+
+
+def test_a_deleted_channel_leaves_the_rest_followed() -> None:
+    fake, sink = FakeDiscord(), FakeSink()
+    later_thread = {
+        "id": "340",
+        "type": 11,
+        "name": "while-down",
+        "parent_id": "200",
+        "thread_metadata": {"archive_timestamp": "2026-11-20T00:00:00+00:00"},
+    }
+
+    def while_disconnected() -> None:
+        fake.channels = [c for c in fake.channels if c["id"] != "210"]
+        fake.archived["200"] = [later_thread]
+        fake.messages["340"] = [msg(70, "340", MAYA, "archived while it was down")]
+
+    follower, _ = follow(
+        fake,
+        sink,
+        [READY, while_disconnected, READY],
+        channel_ids={"200", "210"},
+    )
+
+    assert "70" in sink.ids()
+    assert follower.channel_ids == {"200"}
 
 
 def test_a_fresh_session_catches_up_and_a_resumed_one_doesnt() -> None:

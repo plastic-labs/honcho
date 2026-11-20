@@ -86,6 +86,9 @@ class _Entry:
     record: IngestRecord
     received: datetime.datetime
     sent: bool = False
+    kept: bool = False
+    """The bot filter kept it once: it's sent even if the context that made it
+    qualify is pruned before a send succeeds."""
 
 
 def _utc(moment: datetime.datetime) -> datetime.datetime:
@@ -179,7 +182,8 @@ class FollowSink:
             newest = max(_utc(e.record.created_at) for e in entries)
             for entry in pending:
                 key = _key(entry.record)
-                if id(entry.record) in kept:
+                if entry.kept or id(entry.record) in kept:
+                    entry.kept = True
                     sending.append(entry)
                     continue
                 expired = newest - _utc(entry.record.created_at) > self.window or (

@@ -142,6 +142,31 @@ def test_a_failure_that_may_pass_keeps_the_records_pending():
     assert sink.sent == 2
 
 
+def test_a_bot_reply_that_qualified_is_still_sent_after_a_failed_send():
+    calls = {"n": 0}
+
+    def flaky(chunk, derive):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise ServerError("unavailable", status=503)
+        return _ingest_response(len(chunk))
+
+    sink, ingest, _ = _sink(ingest=MagicMock(side_effect=flaky))
+    sink.record(_rec(0, 0))
+    sink.flush()
+    # The bot answers the person; a newer record is past the window, so the
+    # person's record is pruned when the send fails.
+    sink.record(_rec(1, 1, bot=True, metadata={"reply_to": "m0"}))
+    sink.record(_rec(2, 121))
+    assert sink.flush().error is not None
+
+    retried = sink.flush()
+    assert retried.settled == {"m1", "m2"}
+    (last_chunk,), _ = ingest.call_args
+    assert [r.source_id for r in last_chunk] == ["m1", "m2"]
+    assert sink.held_back == 0
+
+
 def test_any_other_failure_is_raised_and_keeps_the_records_pending():
     sink, _, _ = _sink(ingest=MagicMock(side_effect=UnprocessableEntityError("bad")))
     sink.record(_rec(0, 0))
