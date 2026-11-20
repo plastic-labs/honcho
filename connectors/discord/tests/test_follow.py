@@ -495,6 +495,66 @@ def test_an_overflow_empties_the_queue_keeping_deletes_and_new_threads() -> None
     assert follower.stats.catch_ups == 2
 
 
+def test_an_overflow_still_follows_a_thread_its_queued_messages_name() -> None:
+    fake, sink = FakeDiscord(), FakeSink()
+    script = Script(sink, [READY])
+    hidden = {"id": "330", "type": 12, "name": "private", "parent_id": "200"}
+
+    def overflow() -> None:
+        fake.unlisted.append(hidden)
+        fake.messages["330"] = [msg(60, "330", MAYA, "in a thread no listing shows")]
+        script.queued = [created(msg(60, "330", MAYA, "in a thread no listing shows"))]
+        script.overflow = True
+
+    script.steps.append(overflow)
+    script.steps.append(ev("RESUMED"))
+    with client_for(fake) as client:
+        Follower(client, GUILD, sink, script, channel_ids={"200"}, clock=Clock()).run()
+
+    assert sink.ids()[-1] == "60"
+    assert sink.cursors()["330"] == "60"
+
+
+def test_a_thread_seen_before_its_channel_is_followed_once_the_channel_is() -> None:
+    fake, sink = FakeDiscord(), FakeSink()
+    hidden = {"id": "330", "type": 12, "name": "private", "parent_id": "200"}
+    fake.unlisted.append(hidden)
+    fake.messages["330"] = [msg(60, "330", MAYA, "in a thread no listing shows")]
+    # Behind before the first listing: its channel isn't followed yet.
+    script = Script(sink, [])
+    script.queued = [created(msg(60, "330", MAYA, "in a thread no listing shows"))]
+    script.overflow = True
+    with client_for(fake) as client:
+        Follower(client, GUILD, sink, script, channel_ids={"200"}, clock=Clock()).run()
+
+    assert "60" in sink.ids()
+    assert sink.cursors()["330"] == "60"
+    assert fake.requests.count("/channels/330") == 1
+
+
+def test_losing_every_selected_channel_sends_and_saves_before_stopping() -> None:
+    fake, sink = FakeDiscord(), FakeSink()
+    clock = Clock()
+
+    def deleted() -> None:
+        fake.channels = [c for c in fake.channels if c["id"] != "210"]
+
+    script = Script(
+        sink, [READY, created(msg(31, "210", JESS, "last words")), deleted, READY]
+    )
+    with client_for(fake) as client:
+        follower = Follower(
+            client, GUILD, sink, script, channel_ids={"210"}, clock=clock
+        )
+        with pytest.raises(SystemExit, match="Not exportable"):
+            follower.run()
+
+    assert sink.ids() == ["30", "31"]
+    position, error = sink.saved[-1]
+    assert position == {"messages": {"210": "31"}}
+    assert error is not None and "Not exportable" in error
+
+
 def test_a_channel_found_again_is_read_before_its_cursor_moves() -> None:
     fake = FakeDiscord()
     sink = FakeSink({"messages": {"200": "8", "300": "20", "330": "60"}})
