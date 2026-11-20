@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - A peer's session join time can be set by the caller. `joined_at` is accepted next to `observe_me` and `observe_others` wherever a session-peer configuration is sent: `peers` on `POST /sessions`, `POST` and `PUT /sessions/{session_id}/peers`, and `PUT /sessions/{session_id}/peers/{peer_id}/config`. A search with `peer_perspective` only returns messages created at or after the peer's join time, and that time was always the moment the peer was added, so messages imported with their original dates were hidden from it. A supplied `joined_at` always applies, including to a peer that is already in the session, which is how an existing import is repaired; without one nothing changes. It is write-only (not stored in the configuration, not returned), a timestamp without a timezone is read as UTC, and a time more than five minutes in the future is a 422. Changing the join time of a peer that is already in a session needs a key that can edit the session (session-level or broader): a peer-scoped key that sends `joined_at` to `POST /sessions` for an existing session gets a 401.
 
+## [3.6.2] - 2026-11-19
+
+### Fixed
+
+- The check for due dreams no longer fails when many collections are due. It loaded every candidate's workspace and session in one row-value `IN` list, which Postgres rejects with `stack depth limit exceeded` once the list is long enough, and its other lookups bound one parameter per candidate. The deriver metrics poller runs the same check, so a failure also froze the deriver queue metrics and, with `DERIVER_SCHEDULER=api`, stopped due dreams from being enqueued. The lookups now run in batches, and the work-unit and tenant lists are each sent as one array parameter. (#1623)
+
 ## [3.6.1] - 2026-11-10
 
 ### Changed
