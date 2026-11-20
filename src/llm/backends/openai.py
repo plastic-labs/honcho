@@ -11,6 +11,7 @@ from pydantic import BaseModel, ValidationError
 
 from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
+from src.llm.capabilities import capabilities_for
 from src.llm.request_builder import (
     apply_sdk_passthroughs,
     request_timeout_from_extra_params,
@@ -86,24 +87,12 @@ def _unparseable_body(exc: ValidationError) -> str | None:
     return None
 
 
-def _uses_max_completion_tokens(model: str) -> bool:
-    """OpenAI reasoning models (gpt-5+ family + o-series) require
-    ``max_completion_tokens`` instead of the classic ``max_tokens`` parameter.
-
-    Matches: gpt-5, gpt-5-anything, gpt-5.anything (incl. gpt-5.4, gpt-5.4-mini,
-    gpt-5.6-sol), gpt-6, gpt-6-anything and gpt-6.anything (gpt-6-astra,
-    gpt-6-sol, gpt-6-luna), o1*, o3*, o4*.
-    Anything else (gpt-4.x, gpt-4o, chat models on proxies) stays on
-    ``max_tokens``.
-    """
-    m = model.lower()
-    for base in ("gpt-5", "gpt-6"):
-        if m == base or m.startswith(base + "-") or m.startswith(base + "."):
-            return True
-    for prefix in ("o1", "o3", "o4"):
-        if m == prefix or m.startswith(prefix + "-"):
-            return True
-    return False
+def _forces_tool(tool_choice: Any) -> bool:
+    """Whether an OpenAI-format tool_choice requires a tool call."""
+    return tool_choice == "required" or (
+        isinstance(tool_choice, dict)
+        and cast(dict[str, Any], tool_choice).get("type") == "function"
+    )
 
 
 def extract_openai_reasoning_content(response: Any) -> str | None:
@@ -407,7 +396,8 @@ class OpenAIBackend:
             "messages": messages,
         }
 
-        if _uses_max_completion_tokens(model):
+        caps = capabilities_for("openai", model)
+        if caps.max_tokens_param == "max_completion_tokens":
             params["max_completion_tokens"] = max_tokens
             if extra_params and extra_params.get("verbosity"):
                 params["verbosity"] = extra_params["verbosity"]
@@ -437,6 +427,16 @@ class OpenAIBackend:
         if tools:
             params["tools"] = self._convert_tools(tools)
             converted_tool_choice = self._convert_tool_choice(tool_choice)
+            if (
+                _forces_tool(converted_tool_choice)
+                and caps.forced_tool_choice == "rejected"
+            ):
+                logger.warning(
+                    "Relaxing tool_choice %s to auto: model %s rejects forced tool use",
+                    converted_tool_choice,
+                    model,
+                )
+                converted_tool_choice = "auto"
             if converted_tool_choice is not None:
                 params["tool_choice"] = converted_tool_choice
         if extra_params:
@@ -591,10 +591,7 @@ class OpenAIBackend:
             return configured_mode
 
         tool_choice = params.get("tool_choice")
-        forced_tool = tool_choice == "required" or (
-            isinstance(tool_choice, dict)
-            and cast(dict[str, Any], tool_choice).get("type") == "function"
-        )
+        forced_tool = _forces_tool(tool_choice)
         schema_requested = (
             isinstance(response_format, type) and configured_mode != "json_object"
         )
