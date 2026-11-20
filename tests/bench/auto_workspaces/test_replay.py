@@ -40,9 +40,10 @@ def test_every_fixture_ingests_and_maps_one_peer_per_account(
 
     creates = sum(1 for r in dataset.records if r.op == "create")
     edits = sum(1 for r in dataset.records if r.op == "edit")
-    assert report.outcomes == {"created": creates, "rejected": edits}
-    assert report.rejections == {"edit_not_supported": edits}
-    assert report.deletes_not_sent > 0
+    deletes = sum(1 for r in dataset.records if r.op == "delete")
+    assert edits and deletes
+    assert report.outcomes == {"created": creates, "updated": edits, "deleted": deletes}
+    assert report.rejections == {}
     assert report.accounts_with_several_peers == []
     assert report.peers_shared_by_accounts == {}
     # Authors and participants alike.
@@ -108,14 +109,11 @@ def _fake_server(
         body: dict[str, Any] = json.loads(request.content)
         results: list[dict[str, Any]] = []
         for index, record in enumerate(body["records"]):
+            if record.get("op") == "delete":
+                results.append({"index": index, "outcome": "deleted"})
+                continue
             if record.get("revised_at"):
-                results.append(
-                    {
-                        "index": index,
-                        "outcome": "rejected",
-                        "reason": "edit_not_supported",
-                    }
-                )
+                results.append({"index": index, "outcome": "updated"})
                 continue
             if reject:
                 results.append(

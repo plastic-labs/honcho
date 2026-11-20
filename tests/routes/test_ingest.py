@@ -105,9 +105,10 @@ def test_resending_a_batch_is_a_duplicate_with_the_same_message(
 @pytest.mark.parametrize(
     ("changes", "reason"),
     [
+        # Ingested to derive now, so the dry run is over: edits are refused.
         (
             {"revised_at": "2026-11-05T00:00:00Z", "content": "edited"},
-            "edit_not_supported",
+            "edited_after_derivation",
         ),
         ({"content": "same revision, different words"}, "content_conflict"),
     ],
@@ -453,14 +454,15 @@ def test_provisional_people_cannot_be_spelled_across_containers() -> None:
 def test_a_repeat_matching_the_stored_record_is_a_duplicate(
     client: TestClient,
 ) -> None:
-    """A repeat is classified against the stored row its first copy was."""
+    """The newest copy in a batch is classified against the stored row."""
     workspace = _workspace(client)
     record = _record(revised_at="2026-11-06T00:00:00Z")
     [stored] = _ingest(client, workspace, record)
     older, same = _ingest(
         client, workspace, {**record, "revised_at": "2026-11-05T00:00:00Z"}, record
     )
-    assert (older["outcome"], older["reason"]) == ("rejected", "stale_revision")
+    # An older copy in the same batch is superseded by the newer one.
+    assert (older["outcome"], older["reason"]) == ("rejected", "superseded")
     assert same["outcome"] == "duplicate"
     assert same["message_id"] == stored["message_id"]
 

@@ -5,14 +5,20 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Mapping
 from typing import Any
 
-from .api_types import IngestRecord, IngestRecordResult, IngestResponse
+from .api_types import (
+    IngestRecord,
+    IngestRecordDelete,
+    IngestRecordResult,
+    IngestResponse,
+    parse_ingest_record,
+)
 
 INGEST_BATCH_SIZE = 100
 """Records per request: the most the ingest route takes at once."""
 
 
 def ingest_batches(
-    records: Iterable[IngestRecord | Mapping[str, Any]],
+    records: Iterable[IngestRecord | IngestRecordDelete | Mapping[str, Any]],
 ) -> Iterator[tuple[int, list[dict[str, Any]]]]:
     """Yield ``(offset, batch)`` pairs of request-ready records.
 
@@ -22,11 +28,7 @@ def ingest_batches(
     batch: list[dict[str, Any]] = []
     offset = 0
     for record in records:
-        model = (
-            record
-            if isinstance(record, IngestRecord)
-            else IngestRecord.model_validate(record)
-        )
+        model = parse_ingest_record(record)
         batch.append(model.model_dump(mode="json", exclude_none=True))
         if len(batch) == INGEST_BATCH_SIZE:
             yield offset, batch

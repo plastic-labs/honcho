@@ -33,12 +33,12 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, TypeVar
 
-from .api_types import IngestParticipant, IngestRecord
+from .api_types import IngestParticipant, IngestRecord, IngestRecordDelete
 
 BotRecords = Literal["interacted", "all", "none"]
 """Which bot records to keep: those a person interacted with, all, or none."""
 
-R = TypeVar("R", IngestRecord, Mapping[str, Any])
+R = TypeVar("R", bound=IngestRecord | IngestRecordDelete | Mapping[str, Any])
 
 
 @dataclass(frozen=True)
@@ -136,6 +136,21 @@ def filter_bot_records(
     items = list(records)
     if keep == "all":
         return items, 0
+    # A delete has no author and nothing to read: it's always sent.
+    upserts = [r for r in items if not _is_delete(r)]
+    kept, held_back = _filter_upserts(upserts, keep)
+    kept_ids = {id(r) for r in kept}
+    return [r for r in items if _is_delete(r) or id(r) in kept_ids], held_back
+
+
+def _is_delete(record: Any) -> bool:
+    if isinstance(record, IngestRecordDelete):
+        return True
+    return isinstance(record, Mapping) and record.get("op") == "delete"  # pyright: ignore[reportUnknownMemberType]
+
+
+def _filter_upserts(items: list[Any], keep: BotRecords) -> tuple[list[Any], int]:
+    """filter_bot_records over records to ingest (no deletes)."""
     seen = [_seen(r, i) for i, r in enumerate(items)]
     if keep == "none":
         kept = [r for r, s in zip(items, seen, strict=True) if not s.bot]

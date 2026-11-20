@@ -37,6 +37,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 - Never run `honcho workspace delete` without `honcho workspace inspect` first.
 - `honcho ingest import` holds back bot records no person interacted with (`--bots interacted`, the default); `--bots all` imports every record.
 - After `honcho ingest import`, run `honcho ingest status` and exclude what shouldn't be modeled before `honcho ingest derive`: exclusions apply only to records not yet released.
+- Until the workspace first derives (its dry run), importing a record again with a later `revised_at` edits it and a line `{"op": "delete", ...}` deletes it; after `honcho ingest derive` both are refused (`edited_after_derivation`).
 - To find accounts across sources that are one person: `honcho ingest suggestions` (after importing, before any reset), then `honcho ingest suggestions accept N --reset --yes` (or a label: `accept rules:high --reset --yes`) and `honcho ingest import` again. Read the evidence of `rules:low` ones before accepting.
 - To make two imported accounts one person: `honcho ingest link <kept> <other> --reset --yes`, then `honcho ingest import` again. A link never moves imported messages, so it's refused without the reset. Resolve the people before any separate `ingest reset`: a reset re-sorts the numbered list.
 - Compare peer card with conclusions to understand memory state.

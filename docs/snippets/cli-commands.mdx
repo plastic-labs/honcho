@@ -230,7 +230,7 @@ honcho ingest from [<source>]
 
 <ParamField path="source" type="string" />
 <ParamField path="--derive" type="string" default="later">
-  later (default): store without deriving until `honcho ingest derive`; now: derive as records arrive.
+  later (default): store without deriving until `honcho ingest derive`; now: derive as records arrive, which ends the dry run; auto: later during the dry run, now after it.
 </ParamField>
 <ParamField path="--bots" type="string" default="interacted">
   Bot records to import. interacted (default): only those a person replied to or mentioned the bot about; all; none.
@@ -257,7 +257,7 @@ honcho ingest import <file>
 
 <ParamField path="file" type="string" required />
 <ParamField path="--derive" type="string" default="later">
-  later (default): store without deriving until `honcho ingest derive`; now: derive as records arrive.
+  later (default): store without deriving until `honcho ingest derive`; now: derive as records arrive, which ends the dry run; auto: later during the dry run, now after it.
 </ParamField>
 <ParamField path="--bots" type="string" default="interacted">
   Bot records to import. interacted (default): only those a person replied to or mentioned the bot about; all; none.

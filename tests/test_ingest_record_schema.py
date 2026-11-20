@@ -16,6 +16,8 @@ from sdks.python.src.honcho.api_types import (
     IngestContainer,
     IngestParticipant,
     IngestRecord,
+    IngestRecordDelete,
+    parse_ingest_record,
 )
 
 RECORD: dict[str, Any] = {
@@ -58,7 +60,8 @@ def test_a_connector_record_validates_and_a_bad_one_does_not() -> None:
 @pytest.mark.parametrize(
     ("model", "schema_path"),
     [
-        (IngestRecord, ()),
+        (IngestRecord, ("$defs", "IngestRecordCreate")),
+        (IngestRecordDelete, ("$defs", "IngestRecordDelete")),
         (IngestContainer, ("$defs", "IngestContainer")),
         (IngestParticipant, ("$defs", "IngestParticipant")),
     ],
@@ -193,3 +196,63 @@ def test_an_email_that_isnt_one_is_ignored_on_both_sides() -> None:
         assert IngestRecord.model_validate(record).author.email is None  # pyright: ignore[reportOptionalMemberAccess]
         server = IngestRecordCreate.model_validate(record)
         assert server.author is not None and server.author.email is None
+
+
+DELETE: dict[str, Any] = {
+    "op": "delete",
+    "source": "github",
+    "source_instance": "github-com",
+    "source_id": "IC_kwDO123",
+}
+
+_DELETE_CASES: list[tuple[str, dict[str, Any]]] = [
+    ("valid", DELETE),
+    ("with a time", {**DELETE, "revised_at": "2026-11-03T00:00:00Z"}),
+    ("no source_id", {k: v for k, v in DELETE.items() if k != "source_id"}),
+    ("an unknown op", {**DELETE, "op": "edit"}),
+    ("an upsert without op", RECORD),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "record"), _DELETE_CASES, ids=[c for c, _ in _DELETE_CASES]
+)
+def test_both_forms_are_told_apart_the_same_way(
+    case: str, record: dict[str, Any]
+) -> None:
+    from pydantic import TypeAdapter
+
+    from src.schemas.api import IngestRecordCreate, IngestRecordItem
+    from src.schemas.api import IngestRecordDelete as ServerDelete
+
+    adapter: TypeAdapter[IngestRecordCreate | ServerDelete] = TypeAdapter(
+        IngestRecordItem
+    )
+
+    def server(r: dict[str, Any]) -> str | None:
+        try:
+            return type(adapter.validate_python(r)).__name__
+        except ValueError:
+            return None
+
+    def sdk(r: dict[str, Any]) -> str | None:
+        try:
+            return type(parse_ingest_record(r)).__name__
+        except ValueError:
+            return None
+
+    def form(name: str | None) -> str | None:
+        if name is None:
+            return None
+        return "upsert" if name in ("IngestRecordCreate", "IngestRecord") else "delete"
+
+    assert form(server(record)) == form(sdk(record)), case
+
+
+def test_the_published_schema_takes_a_delete() -> None:
+    jsonschema = pytest.importorskip("jsonschema")
+    validator = jsonschema.Draft202012Validator(_schema())
+    assert list(validator.iter_errors(DELETE)) == []
+    assert list(validator.iter_errors({**DELETE, "content": "gone"}))
+    without_id = {k: v for k, v in DELETE.items() if k != "source_id"}
+    assert list(validator.iter_errors(without_id))

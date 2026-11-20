@@ -32,7 +32,7 @@ The format is published as a JSON Schema: [`ingest-record.v0.json`](https://gith
 | `configuration` | | Per-message settings, such as `{"reasoning": {"enabled": false}}` to store a record as context only |
 | `session_id`, `peer_id` | | An explicit session or author peer, used instead of mapping the container or author. Most exporters leave these out |
 
-A record already stored that comes again with a newer `revised_at` is rejected as `edit_not_supported` for now, and the stored version stays. Send `revised_at` anyway: it is how an edit will be recognized.
+A record already stored that comes again with a newer `revised_at` is an edit: during the workspace's dry run (before it first derives) it replaces the stored text, and after it it's refused and the stored version stays. A record the source deleted is a line of its own, `{"op": "delete", "source": ..., "source_instance": ..., "source_id": ...}`, with `revised_at` if the source says when; during the dry run it removes the message and keeps a tombstone, so the record never comes back. See [the dry run](/v3/documentation/features/advanced/ingest#the-dry-run-edits-and-deletes).
 
 ## What makes a clean import
 

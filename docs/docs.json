@@ -465,7 +465,11 @@
               "v3/api-reference/endpoint/ingest/suggestions-refresh",
               "v3/api-reference/endpoint/ingest/suggestions",
               "v3/api-reference/endpoint/ingest/suggestions-accept",
-              "v3/api-reference/endpoint/ingest/suggestions-dismiss"
+              "v3/api-reference/endpoint/ingest/suggestions-dismiss",
+              "v3/api-reference/endpoint/ingest/sync-list",
+              "v3/api-reference/endpoint/ingest/sync-get",
+              "v3/api-reference/endpoint/ingest/sync-save",
+              "v3/api-reference/endpoint/ingest/sync-forget"
             ]
           },
           {

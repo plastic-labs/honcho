@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import asyncio
 import logging
 import os
@@ -22,11 +23,14 @@ from .api_types import (
     IngestSuggestionAccepted,
     IngestPerson,
     IngestRecord,
+    IngestRecordDelete,
     IngestRecordResult,
     IngestResetResponse,
     IngestResponse,
     IngestSession,
     IngestStatusResponse,
+    IngestSyncSource,
+    IngestSyncState,
     IngestUnlinkResponse,
     MessageResponse,
     PeerConfig,
@@ -42,6 +46,7 @@ from .api_types import (
 from .base import PeerBase, ScopeBase, SessionBase
 from .conclusions import WorkspaceConclusions
 from .http import AsyncHonchoHTTPClient, HonchoHTTPClient, routes
+from .http.exceptions import NotFoundError
 from .ingest import ingest_batches, offset_results
 from .message import Message
 from .mixins import MetadataConfigMixin
@@ -1054,9 +1059,9 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
 
     def ingest(
         self,
-        records: Iterable[IngestRecord | Mapping[str, Any]],
+        records: Iterable[IngestRecord | IngestRecordDelete | Mapping[str, Any]],
         *,
-        derive: Literal["now", "later"] = "now",
+        derive: Literal["now", "later", "auto"] = "now",
     ) -> IngestResponse:
         """
         Ingest source records into this auto workspace.
@@ -1073,9 +1078,13 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         (``NotFoundError``) and be auto (``ConflictError``).
 
         Args:
-            records: ``IngestRecord`` objects or dicts with the same fields.
-            derive: ``"now"`` queues derivation as records arrive; ``"later"``
-                stores them without deriving until ``ingest_derive()``.
+            records: ``IngestRecord`` and ``IngestRecordDelete`` objects, or
+                dicts with the same fields (``"op": "delete"`` for a delete).
+            derive: ``"now"`` queues derivation as records arrive, which ends
+                the workspace's dry run; ``"later"`` stores them without
+                deriving until ``ingest_derive()``; ``"auto"`` is ``"later"``
+                during the dry run and ``"now"`` after it, for a connector
+                following a source live.
 
         Returns:
             One result per record, with ``index`` counted across all batches.
@@ -1191,6 +1200,77 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         return IngestStatusResponse.model_validate(
             self._http.get(routes.workspace_ingest_status(self.workspace_id))
         )
+
+    def ingest_sync_states(self) -> list[IngestSyncSource]:
+        """
+        The sources connectors follow in this workspace, with each one's last sync.
+
+        Experimental: ingest may change or stop working without notice.
+        """
+        data = self._http.get(routes.workspace_ingest_sync(self.workspace_id))
+        return [IngestSyncSource.model_validate(item) for item in data]
+
+    def ingest_sync_state(
+        self, source: str, source_instance: str
+    ) -> IngestSyncState | None:
+        """
+        Where the connector following a source has got to; None to start afresh.
+
+        Experimental: ingest may change or stop working without notice.
+        """
+        try:
+            data = self._http.get(
+                routes.workspace_ingest_sync(self.workspace_id, source, source_instance)
+            )
+        except NotFoundError:
+            return None
+        return IngestSyncState.model_validate(data)
+
+    def ingest_save_sync_state(
+        self,
+        source: str,
+        source_instance: str,
+        position: dict[str, Any],
+        *,
+        revision: str | None = None,
+        last_record_at: datetime.datetime | None = None,
+        error: str | None = None,
+    ) -> IngestSyncState:
+        """
+        Save where the connector following a source has got to.
+
+        Experimental: ingest may change or stop working without notice.
+
+        With ``revision`` (the one read), the save is refused with
+        ``ConflictError`` if another runner saved since or a reset forgot the
+        state. The result has the new revision.
+        """
+        body: dict[str, Any] = {"position": position, "error": error}
+        if revision is not None:
+            body["revision"] = revision
+        if last_record_at is not None:
+            body["last_record_at"] = last_record_at.isoformat()
+        return IngestSyncState.model_validate(
+            self._http.put(
+                routes.workspace_ingest_sync(
+                    self.workspace_id, source, source_instance
+                ),
+                body=body,
+            )
+        )
+
+    def ingest_forget_sync_state(self, source: str, source_instance: str) -> bool:
+        """
+        Forget a source's sync state, so its connector reads it from the start.
+
+        Experimental: ingest may change or stop working without notice.
+
+        Returns whether there was one.
+        """
+        data = self._http.delete(
+            routes.workspace_ingest_sync(self.workspace_id, source, source_instance)
+        )
+        return bool(data.get("forgotten"))
 
     def ingest_people(
         self, *, page: int = 1, size: int = 50

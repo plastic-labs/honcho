@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/plastic-labs/honcho/main/docs/schemas/ingest-record.v0.json",
   "title": "Honcho ingest record (v0)",
-  "description": "One source record for Honcho's ingest API: a line of a JSONL file for `honcho ingest import`, or an item of the `records` array of `POST /v3/workspaces/{workspace_id}/ingest`. Experimental: v0 may change until edits and deletes settle. Unknown fields are rejected, as `honcho ingest import` and the SDKs reject them; the API itself ignores them.",
+  "description": "One source record for Honcho's ingest API: a line of a JSONL file for `honcho ingest import`, or an item of the `records` array of `POST /v3/workspaces/{workspace_id}/ingest`: a record to ingest (`op` left out, or `upsert`), or a record the source deleted (`op: delete`). Experimental: v0 may still change. Unknown fields are rejected, as `honcho ingest import` and the SDKs reject them; the API itself ignores them.",
   "$defs": {
     "IngestContainer": {
       "description": "Where a record lives in its source: a channel, a thread, a repository.",
@@ -130,6 +130,221 @@
       "type": "object",
       "additionalProperties": false
     },
+    "IngestRecordCreate": {
+      "description": "One source record to ingest, or a newer version of one already ingested.",
+      "properties": {
+        "op": {
+          "const": "upsert",
+          "default": "upsert",
+          "description": "`upsert`, the default: ingest the record, or replace it with a newer version (a later `revised_at`) during the dry run",
+          "title": "Op",
+          "type": "string"
+        },
+        "source": {
+          "description": "The source type, e.g. `discord`",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "title": "Source",
+          "type": "string"
+        },
+        "source_instance": {
+          "description": "The server, team or account inside the source",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "title": "Source Instance",
+          "type": "string"
+        },
+        "source_id": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The record's ID in that instance. Without it, the record is identified by a hash of its content, so only identical content dedups; sources whose records can change must send it.",
+          "title": "Source Id"
+        },
+        "revised_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the source last changed this record",
+          "title": "Revised At"
+        },
+        "created_at": {
+          "description": "The source's timestamp",
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "container": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IngestContainer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Where the record lives; omit for a standalone record"
+        },
+        "author": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IngestParticipant"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Who wrote it; omit when there is no single author"
+        },
+        "participants": {
+          "items": {
+            "$ref": "#/$defs/IngestParticipant"
+          },
+          "maxItems": 100,
+          "title": "Participants",
+          "type": "array"
+        },
+        "content": {
+          "maxLength": 25000,
+          "title": "Content",
+          "type": "string"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        },
+        "configuration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MessageConfiguration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "An explicit session, used instead of mapping the container",
+          "title": "Session Id"
+        },
+        "peer_id": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "An explicit author peer, used instead of mapping the author",
+          "title": "Peer Id"
+        }
+      },
+      "required": [
+        "source",
+        "source_instance",
+        "created_at",
+        "content"
+      ],
+      "title": "IngestRecordCreate",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "IngestRecordDelete": {
+      "description": "A record the source deleted.\n\nDuring the workspace's dry run its message is removed and a tombstone kept,\nso the record never comes back; a delete for a record not seen yet leaves a\ntombstone too. After the dry run it's refused. A delete is final: a later\nversion of the record is refused.",
+      "properties": {
+        "op": {
+          "const": "delete",
+          "title": "Op",
+          "type": "string"
+        },
+        "source": {
+          "description": "The source type, e.g. `discord`",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "title": "Source",
+          "type": "string"
+        },
+        "source_instance": {
+          "description": "The server, team or account inside the source",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "title": "Source Instance",
+          "type": "string"
+        },
+        "source_id": {
+          "description": "The deleted record's ID in that instance",
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Source Id",
+          "type": "string"
+        },
+        "revised_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When the source deleted it. A delete older than the stored version changes nothing",
+          "title": "Revised At"
+        }
+      },
+      "required": [
+        "op",
+        "source",
+        "source_instance",
+        "source_id"
+      ],
+      "title": "IngestRecordDelete",
+      "type": "object",
+      "additionalProperties": false
+    },
     "MessageConfiguration": {
       "description": "The set of options that can be in a message DB-level configuration dictionary.\n\nAll fields are optional. Message-level configuration overrides all other configurations.",
       "properties": {
@@ -184,154 +399,12 @@
       "additionalProperties": false
     }
   },
-  "properties": {
-    "source": {
-      "description": "The source type, e.g. `discord`",
-      "maxLength": 64,
-      "pattern": "^[a-zA-Z0-9_-]+$",
-      "title": "Source",
-      "type": "string"
+  "oneOf": [
+    {
+      "$ref": "#/$defs/IngestRecordCreate"
     },
-    "source_instance": {
-      "description": "The server, team or account inside the source",
-      "maxLength": 128,
-      "pattern": "^[a-zA-Z0-9_-]+$",
-      "title": "Source Instance",
-      "type": "string"
-    },
-    "source_id": {
-      "anyOf": [
-        {
-          "maxLength": 512,
-          "minLength": 1,
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "The record's ID in that instance. Without it, the record is identified by a hash of its content, so only identical content dedups; sources whose records can change must send it.",
-      "title": "Source Id"
-    },
-    "revised_at": {
-      "anyOf": [
-        {
-          "format": "date-time",
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "When the source last changed this record",
-      "title": "Revised At"
-    },
-    "created_at": {
-      "description": "The source's timestamp",
-      "format": "date-time",
-      "title": "Created At",
-      "type": "string"
-    },
-    "container": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/IngestContainer"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Where the record lives; omit for a standalone record"
-    },
-    "author": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/IngestParticipant"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Who wrote it; omit when there is no single author"
-    },
-    "participants": {
-      "items": {
-        "$ref": "#/$defs/IngestParticipant"
-      },
-      "maxItems": 100,
-      "title": "Participants",
-      "type": "array"
-    },
-    "content": {
-      "maxLength": 25000,
-      "title": "Content",
-      "type": "string"
-    },
-    "metadata": {
-      "anyOf": [
-        {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Metadata"
-    },
-    "configuration": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/MessageConfiguration"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null
-    },
-    "session_id": {
-      "anyOf": [
-        {
-          "maxLength": 512,
-          "minLength": 1,
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "An explicit session, used instead of mapping the container",
-      "title": "Session Id"
-    },
-    "peer_id": {
-      "anyOf": [
-        {
-          "maxLength": 512,
-          "minLength": 1,
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "An explicit author peer, used instead of mapping the author",
-      "title": "Peer Id"
+    {
+      "$ref": "#/$defs/IngestRecordDelete"
     }
-  },
-  "required": [
-    "source",
-    "source_instance",
-    "created_at",
-    "content"
-  ],
-  "type": "object",
-  "additionalProperties": false
+  ]
 }

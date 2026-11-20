@@ -23,6 +23,7 @@ read when records are released. Needs a workspace or admin key.
 
 from __future__ import annotations
 
+import datetime
 import json
 import sys
 import time
@@ -34,10 +35,12 @@ import typer
 from honcho import ConflictError, Honcho, NotFoundError, Peer, filter_bot_records
 from honcho.api_types import (
     IngestRecord,
+    IngestRecordDelete,
     IngestStatusResponse,
     PeerConfig,
     ReasoningConfiguration,
     SessionConfiguration,
+    parse_ingest_record,
 )
 from pydantic import ValidationError
 from rich.table import Table
@@ -109,13 +112,13 @@ def _lines(path: str) -> Iterator[tuple[int, str]]:
         raise typer.Exit(1) from None
 
 
-def _records(path: str) -> Iterator[IngestRecord]:
+def _records(path: str) -> Iterator[IngestRecord | IngestRecordDelete]:
     """Each non-blank line as a validated record; a bad line stops the import."""
     for number, line in _lines(path):
         if not line.strip():
             continue
         try:
-            yield IngestRecord.model_validate(json.loads(line))
+            yield parse_ingest_record(json.loads(line))
         except (ValueError, ValidationError) as e:
             detail = (
                 e.errors(include_url=False, include_input=False)[0]["msg"]
@@ -143,7 +146,8 @@ def _chunks(items: Iterable[T], size: int) -> Iterator[list[T]]:
 
 _DERIVE_HELP = (
     "later (default): store without deriving until `honcho ingest derive`;"
-    + " now: derive as records arrive"
+    + " now: derive as records arrive, which ends the dry run; auto: later during"
+    + " the dry run, now after it"
 )
 _BOTS_HELP = (
     "Bot records to import. interacted (default): only those a person replied to"
@@ -152,8 +156,8 @@ _BOTS_HELP = (
 
 
 def _check_choices(derive: str, bots: str) -> None:
-    if derive not in ("now", "later"):
-        print_error("INVALID_ARGUMENT", "--derive must be 'now' or 'later'")
+    if derive not in ("now", "later", "auto"):
+        print_error("INVALID_ARGUMENT", "--derive must be 'now', 'later' or 'auto'")
         raise typer.Exit(1)
     if bots not in ("interacted", "all", "none"):
         print_error("INVALID_ARGUMENT", "--bots must be 'interacted', 'all' or 'none'")
@@ -161,8 +165,8 @@ def _check_choices(derive: str, bots: str) -> None:
 
 
 def _hold_back(
-    records: Iterable[IngestRecord], bots: str
-) -> tuple[Iterable[IngestRecord], int]:
+    records: Iterable[IngestRecord | IngestRecordDelete], bots: str
+) -> tuple[Iterable[IngestRecord | IngestRecordDelete], int]:
     """The records to send, and how many bot records `bots` holds back.
 
     With `all` the records stream through; otherwise they're read whole, since
@@ -186,11 +190,9 @@ class _Sender:
         self.sent = 0
         self.held_back = 0
 
-    def send(self, records: Iterable[IngestRecord]) -> None:
+    def send(self, records: Iterable[IngestRecord | IngestRecordDelete]) -> None:
         for chunk in _chunks(records, CHUNK):
-            result = self.client.ingest(
-                chunk, derive="now" if self.derive == "now" else "later"
-            )
+            result = self.client.ingest(chunk, derive=self.derive)  # pyright: ignore[reportArgumentType]
             for record in result.records:
                 self.outcomes[record.outcome] += 1
                 if record.reason:
@@ -213,6 +215,8 @@ class _Sender:
             "workspace": workspace,
             "records": self.sent,
             "created": self.outcomes["created"],
+            "updated": self.outcomes["updated"],
+            "deleted": self.outcomes["deleted"],
             "duplicate": self.outcomes["duplicate"],
             "rejected": self.outcomes["rejected"],
             "rejected_reasons": dict(self.reasons),
@@ -228,8 +232,11 @@ def _print_import_summary(summary: dict[str, Any], bots: str) -> None:
         print_json(summary)
         return
     sent = summary["records"]
+    changed = "".join(
+        f"{summary[key]:,} {key} · " for key in ("updated", "deleted") if summary[key]
+    )
     stdout_console.print(
-        f"{sent:,} records: {summary['created']:,} created · "
+        f"{sent:,} records: {summary['created']:,} created · {changed}"
         + f"{summary['duplicate']:,} duplicate · {summary['rejected']:,} rejected"
     )
     for reason, count in Counter(summary["rejected_reasons"]).most_common():
@@ -260,13 +267,17 @@ can have. A server can set another; `--check` checks against the default."""
 def _check_file(path: str, bots: str) -> None:
     """Validate every line of an import without sending anything."""
     valid: list[IngestRecord] = []
+    deletes = 0
     errors: list[dict[str, Any]] = []
     invalid = 0
     for number, line in _lines(path):
         if not line.strip():
             continue
         try:
-            record = IngestRecord.model_validate(json.loads(line))
+            record = parse_ingest_record(json.loads(line))
+            if isinstance(record, IngestRecordDelete):
+                deletes += 1
+                continue
             if len(record.content) > DEFAULT_MAX_CONTENT:
                 raise ValueError(
                     f"content: {len(record.content):,} characters, over the server's"
@@ -281,7 +292,8 @@ def _check_file(path: str, bots: str) -> None:
     sources = Counter(f"{r.source}:{r.source_instance}" for r in valid)
     summary: dict[str, Any] = {
         "valid": invalid == 0,
-        "records": len(valid) + invalid,
+        "records": len(valid) + deletes + invalid,
+        "deletes": deletes,
         "invalid": invalid,
         "errors": errors,
         "sources": dict(sources),
@@ -289,7 +301,7 @@ def _check_file(path: str, bots: str) -> None:
         "authors": len({(r.source, r.source_instance, r.author.id or r.author.name) for r in valid if r.author}),
         "bot_records": sum(1 for r in valid if r.author is not None and r.author.bot),
         "bot_records_held_back": held_back,
-        "would_send": len(valid) - held_back,
+        "would_send": len(valid) + deletes - held_back,
     }
     if use_json():
         print_json(summary)
@@ -299,7 +311,9 @@ def _check_file(path: str, bots: str) -> None:
         if invalid > len(errors):
             stdout_console.print(f"… and {invalid - len(errors):,} more invalid lines")
         stdout_console.print(
-            f"{summary['records']:,} records: {len(valid):,} valid · {invalid:,} invalid"
+            f"{summary['records']:,} records: {len(valid) + deletes:,} valid"
+            + (f" ({deletes:,} deletes)" if deletes else "")
+            + f" · {invalid:,} invalid"
         )
         for source, count in sources.most_common():
             stdout_console.print(f"  {source}: {count:,}")
@@ -385,7 +399,7 @@ class _SourceSink:
         self.bots = bots
         self.containers = 0
         self._name = "(before any container)"
-        self._buffer: list[IngestRecord] = []
+        self._buffer: list[IngestRecord | IngestRecordDelete] = []
 
     def container(self, name: str) -> None:
         self.flush()
@@ -394,7 +408,7 @@ class _SourceSink:
 
     def record(self, record: Mapping[str, Any]) -> None:
         try:
-            self._buffer.append(IngestRecord.model_validate(record))
+            self._buffer.append(parse_ingest_record(record))
         except ValidationError as e:
             raise _SourceRecordError(self._name, _validation_message(e)) from None
 
@@ -588,6 +602,16 @@ def _first(items: Iterable[T], limit: int) -> list[T]:
     return taken
 
 
+def _ago(moment: datetime.datetime) -> str:
+    """How long ago, roughly: `3 min ago`."""
+    when = moment if moment.tzinfo else moment.replace(tzinfo=datetime.UTC)
+    seconds = max(0, int((datetime.datetime.now(datetime.UTC) - when).total_seconds()))
+    for unit, size in (("d", 86400), ("h", 3600), ("min", 60)):
+        if seconds >= size:
+            return f"{seconds // size} {unit} ago"
+    return f"{seconds} s ago"
+
+
 def _modeled(modeled: bool) -> Text:
     return Text("yes", style="green") if modeled else Text("no", style="yellow")
 
@@ -648,6 +672,24 @@ def _print_status(
     stdout_console.print(sessions_table)
     if len(sessions) < st.sessions:
         status(f"showing {len(sessions)} of {st.sessions:,} sessions; --limit for more")
+    if st.sources:
+        sources_table = Table(
+            title=f"Synced sources ({len(st.sources):,})",
+            show_header=True,
+            header_style="bold",
+        )
+        sources_table.add_column("source", no_wrap=True)
+        sources_table.add_column("last sync")
+        sources_table.add_column("newest record")
+        sources_table.add_column("error", overflow="fold")
+        for source in st.sources:
+            sources_table.add_row(
+                f"{source.source}/{source.source_instance}",
+                _ago(source.last_synced_at),
+                _ago(source.last_record_at) if source.last_record_at else "",
+                Text(source.error, style="red") if source.error else "",
+            )
+        stdout_console.print(sources_table)
     if r.deferred:
         status(
             "Exclude with `honcho peer exclude N` or `honcho session exclude N`,"

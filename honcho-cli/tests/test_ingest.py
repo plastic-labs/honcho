@@ -122,6 +122,8 @@ def test_import_sends_the_file_deferred_and_summarizes(cfg, runner, tmp_path):
         "workspace": "ws1",
         "records": 3,
         "created": 3,
+        "updated": 0,
+        "deleted": 0,
         "duplicate": 0,
         "rejected": 0,
         "rejected_reasons": {},

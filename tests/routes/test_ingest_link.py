@@ -314,3 +314,42 @@ async def test_an_account_without_an_id_cant_be_linked(
 
     assert linked.status_code == 409, linked.text
     assert "without an ID" in linked.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_a_tombstone_doesnt_stop_an_unlink_after_a_reset(
+    client: TestClient, db_session: AsyncSession
+) -> None:
+    workspace = _workspace(client)
+    _import(client, workspace)
+    people = _people(client, workspace)
+    alex, alexdev = people["Alex"]["peer_id"], people["alexdev"]["peer_id"]
+    await _reset(client, db_session, workspace)
+    assert _link(client, workspace, alex, alexdev).status_code == 200
+    _import(client, workspace)
+    # The source deleted one of the linked account's records, in the dry run.
+    deleted = client.post(
+        f"/v3/workspaces/{workspace}/ingest",
+        json={
+            "derive": "later",
+            "records": [
+                {
+                    "op": "delete",
+                    "source": "github",
+                    "source_instance": "acme",
+                    "source_id": "github-4",
+                }
+            ],
+        },
+    )
+    assert deleted.json()["records"][0]["outcome"] == "deleted"
+
+    await _reset(client, db_session, workspace)
+    unlinked = client.post(
+        f"/v3/workspaces/{workspace}/ingest/unlink",
+        json={
+            "peer": alex,
+            "account": {"source": "github", "source_instance": "acme", "id": "g1"},
+        },
+    )
+    assert unlinked.status_code == 200, unlinked.text
