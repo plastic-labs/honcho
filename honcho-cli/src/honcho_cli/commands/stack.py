@@ -7,6 +7,9 @@ and a one-shot ``HONCHO_BASE_URL=...`` hint instead.
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any, NoReturn
+
 import typer
 from rich.console import Console
 
@@ -61,7 +64,7 @@ _MISSING_LLM_KEY = (
 )
 
 
-def _die(code: str, message: str, details: dict | None = None) -> None:
+def _die(code: str, message: str, details: dict[str, Any] | None = None) -> NoReturn:
     print_error(code, message, details)
     raise typer.Exit(1)
 
@@ -87,7 +90,7 @@ def _validate_setup(setup: str | None) -> str | None:
 
 def _payload(
     profile: LocalProfile, status: str, services: dict[str, str] | None = None
-) -> dict:
+) -> dict[str, Any]:
     return {
         "profile": profile.name,
         "status": status,
@@ -98,7 +101,7 @@ def _payload(
     }
 
 
-def _print_stack(payload: dict) -> None:
+def _print_stack(payload: dict[str, Any]) -> None:
     if use_json():
         print_json(payload)
         return
@@ -130,10 +133,37 @@ def _seed_config(profile: LocalProfile) -> None:
 
 def _inspect(profile: LocalProfile) -> tuple[dict[str, str], bool]:
     """Compose service states and whether the API is healthy."""
+    if profile.backend == "native":
+        from honcho_cli.local.native import payload
+
+        data = payload(profile)
+        return data["services"], data["status"] == "running"
     return services_running(compose_ps(profile)), stack_healthy(profile)
 
 
 def start(
+    backend: str | None = typer.Option(
+        None, "--backend", help="compose (default for new profiles) or native"
+    ),
+    source: Path | None = typer.Option(
+        None,
+        "--source",
+        help="Honcho checkout for the native backend (defaults to current checkout)",
+    ),
+    dependencies: str | None = typer.Option(
+        None, "--dependencies", help="Native dependencies: external (default) or docker"
+    ),
+    mode: str = typer.Option(
+        "processes", "--mode", help="Native topology (currently processes)"
+    ),
+    migrate: bool = typer.Option(
+        False,
+        "--migrate",
+        help="Apply migrations to external native dependencies before starting",
+    ),
+    api_workers: int = typer.Option(
+        1, "--api-workers", min=1, help="Native API worker processes"
+    ),
     profile_name: str = typer.Option(
         DEFAULT_PROFILE,
         "--profile",
@@ -164,13 +194,13 @@ def start(
         DEFAULT_HEALTH_TIMEOUT,
         "--timeout",
         min=1,
-        help="Seconds to wait for /health after compose up",
+        help="Seconds to wait for startup and /health",
     ),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Start a local Honcho stack (API, deriver, Postgres, Redis).
 
-    Requires Docker. Uses cloud LLM providers. Does not change the CLI's
+    Compose requires Docker; native runs a local checkout. Does not change the CLI's
     configured server URL — pass HONCHO_BASE_URL to talk to this stack.
     ``--setup basic`` or ``--setup advanced`` runs an interactive config wizard.
     """
@@ -185,6 +215,14 @@ def start(
         redis_port=redis_port,
         image=image,
     )
+    selected_backend = backend or profile.backend
+    if selected_backend not in {"native", "compose"}:
+        _die("INVALID_BACKEND", "Use --backend compose or --backend native.")
+    if profile.profile_file().exists() and selected_backend != profile.backend:
+        _die(
+            "BACKEND_MISMATCH",
+            "This profile belongs to another backend. Use a separate --profile for the new backend.",
+        )
     pinned_ports = frozenset(
         name
         for name, value in (
@@ -194,6 +232,68 @@ def start(
         )
         if value is not None
     )
+
+    if selected_backend == "native":
+        from honcho_cli.local import native
+        from honcho_cli.local.supervisor import read_state
+
+        dependencies = dependencies or read_state(profile.dir()).get(
+            "dependencies", "external"
+        )
+        if dependencies not in {"external", "docker"}:
+            _die(
+                "INVALID_DEPENDENCIES",
+                "Use --dependencies external or --dependencies docker.",
+            )
+        if mode != "processes":
+            _die(
+                "INVALID_MODE",
+                "The checkout launcher currently supports --mode processes. Embedded mode requires a newer runtime.",
+            )
+        if image:
+            _die(
+                "INVALID_OPTION",
+                "--image selects a Compose image. Native startup uses --source.",
+            )
+        try:
+            if setup:
+                from honcho_cli.local.env import upsert_env
+
+                profile.dir().mkdir(parents=True, exist_ok=True)
+                answers = run_setup(
+                    setup, profile.env_file(), config_path=profile.config_file()
+                )
+                upsert_env(
+                    profile.env_file(),
+                    answers_to_env(answers),
+                    drop=answers_drop_keys(answers),
+                )
+            data = native.start(
+                profile,
+                source=source,
+                dependencies=dependencies,
+                timeout=timeout,
+                migrate=migrate,
+                api_workers=api_workers,
+                pinned=pinned_ports,
+            )
+            _print_stack(data)
+        except DockerError as exc:
+            exc.exit()
+        except (OSError, ValueError) as exc:
+            _die("NATIVE_FAILED", str(exc))
+        return
+    if (
+        source is not None
+        or migrate
+        or dependencies is not None
+        or mode != "processes"
+        or api_workers != 1
+    ):
+        _die(
+            "INVALID_OPTION",
+            "--source, --migrate, --dependencies, --mode and --api-workers require --backend native.",
+        )
 
     if not use_json():
         _console.print(f"\n[bold {BRAND}]Honcho Start[/bold {BRAND}]\n")
@@ -238,7 +338,9 @@ def start(
         render_stack(profile, extra=extra, drop=drop)
         ok(f"Profile '{profile.name}'")
 
-        step("Starting containers" if not already_running else "Recreating api + deriver")
+        step(
+            "Starting containers" if not already_running else "Recreating api + deriver"
+        )
         compose_up(
             profile,
             recreate=("api", "deriver") if already_running else (),
@@ -283,6 +385,19 @@ def stop(
     name = resolve_profile_name(profile_name)
     profile = load_profile(name)
 
+    if profile.backend == "native":
+        from honcho_cli.local import native
+
+        try:
+            data = native.stop(profile, wipe=wipe)
+        except DockerError as exc:
+            exc.exit()
+        if use_json():
+            print_json(data)
+        else:
+            ok(f"Stopped profile '{name}'")
+        return
+
     try:
         if not profile.compose_file().exists():
             payload = _payload(profile, "stopped")
@@ -320,7 +435,12 @@ def _status_one(profile: LocalProfile) -> bool:
         services, running = _inspect(profile)
     except DockerError as e:
         e.exit()
-    data = _payload(profile, "running" if running else "stopped", services)
+    if profile.backend == "native":
+        from honcho_cli.local.native import payload
+
+        data = payload(profile)
+    else:
+        data = _payload(profile, "running" if running else "stopped", services)
     if not use_json():
         icon = ICON_OK if running else ICON_FAIL
         _console.print(f"\n  {icon}  profile '{profile.name}' is {data['status']}\n")
@@ -351,7 +471,10 @@ def status(
     if profile_name:
         name = resolve_profile_name(profile_name)
         profile = load_profile(name)
-        if not profile.compose_file().exists():
+        if (
+            not profile.compose_file().exists()
+            and not (profile.dir() / "native.json").exists()
+        ):
             _die(
                 "STACK_NOT_FOUND",
                 f"No local stack for profile '{profile.name}'. Run `honcho start` first.",
@@ -373,10 +496,15 @@ def status(
             raise typer.Exit(1)
         return
 
-    rows: list[dict] = []
+    rows: list[dict[str, Any]] = []
     try:
         for name in names:
             profile = load_profile(name)
+            if profile.backend == "native":
+                from honcho_cli.local.native import payload
+
+                rows.append(payload(profile))
+                continue
             services, running = _inspect(profile)
             rows.append(
                 _payload(profile, "running" if running else "stopped", services)
