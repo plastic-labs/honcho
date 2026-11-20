@@ -5,8 +5,9 @@ Three changes for following a source live:
 - `workspaces.ingest_derived_at`: when an auto workspace started deriving, which
   ends its dry run (edits and deletes are refused after it, and `derive: "auto"`
   queues). Backfilled for auto workspaces that already hold derived or queued
-  work: a non-deferred ingest record, a queue item (single-tenant ones have no
-  tenant), a collection, a session summary, or a message ingest didn't write.
+  work: a non-deferred ingest record, a queue item (one with no tenant is the
+  instance tenant's), a collection, a session summary, or a message ingest
+  didn't write.
 - `ingest_records` keeps a tombstone for a deleted record: `derivation` may be
   `deleted`, and a tombstone for a record never seen has no session or content
   hash. A CHECK keeps both on every other record. The CHECKs are added NOT VALID
@@ -33,6 +34,7 @@ from migrations.utils import (
     get_schema,
     table_exists,
 )
+from src.models import instance_tenant_id
 
 # revision identifiers, used by Alembic.
 revision: str = "c4d9e1a7b2f6"
@@ -68,7 +70,7 @@ def upgrade() -> None:
                           AND r.workspace_name = w.name
                           AND r.derivation IN ('pending', 'queued'))
                 OR EXISTS (SELECT 1 FROM {schema}.queue q
-                           WHERE (q.tenant_id = w.tenant_id OR q.tenant_id IS NULL)
+                           WHERE COALESCE(q.tenant_id, :instance_tenant) = w.tenant_id
                              AND q.workspace_name = w.name)
                 OR EXISTS (SELECT 1 FROM {schema}.collections c
                            WHERE c.tenant_id = w.tenant_id
@@ -87,7 +89,7 @@ def upgrade() -> None:
                                  AND r.message_public_id = m.public_id))
               )
             """
-        )
+        ).bindparams(instance_tenant=instance_tenant_id())
     )
 
     op.alter_column("ingest_records", "session_name", nullable=True, schema=schema)

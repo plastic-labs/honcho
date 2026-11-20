@@ -300,7 +300,7 @@ async def schedule_dream(
                 " observed peer of a dream."
             ),
         )
-        auto_workspace_id = await end_dry_run(dry_run_db, workspace_id)
+        seen_workspace_id = await end_dry_run(dry_run_db, workspace_id)
 
     await enqueue_dream(
         workspace_id,
@@ -316,7 +316,7 @@ async def schedule_dream(
         # analytics joins on `trigger_reason`.
         trigger_reason="manual",
         delay_reason="immediate",
-        auto_workspace_id=auto_workspace_id,
+        expected_workspace_id=seen_workspace_id,
     )
 
     logger.info(

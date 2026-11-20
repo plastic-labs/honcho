@@ -98,15 +98,18 @@ async def enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> No
 
             # A message written through the regular routes ends an auto
             # workspace's dry run, before its memory work is queued.
-            auto_workspace_id = await end_dry_run(db_session, workspace_name)
+            workspace_id = await end_dry_run(db_session, workspace_name)
+            if workspace_id is None:
+                # Deleted since the messages were written: they went with it.
+                return
 
             queue_records = await handle_session(
                 db_session, payload, workspace_name, session_name
             )
 
             async def stage() -> None:
-                if auto_workspace_id is not None and not await still_the_workspace(
-                    db_session, workspace_name, auto_workspace_id
+                if not await still_the_workspace(
+                    db_session, workspace_name, workspace_id
                 ):
                     # Deleted and created again since: these messages went with it.
                     raise _WorkspaceReplaced
@@ -590,7 +593,7 @@ async def enqueue_dream(
     documents_since_last_dream_at_schedule: int | None = None,
     document_threshold: int | None = None,
     rebuild: bool = False,
-    auto_workspace_id: str | None = None,
+    expected_workspace_id: str | None = None,
 ) -> None:
     """
     Enqueue a dream task for immediate processing by the deriver.
@@ -610,9 +613,9 @@ async def enqueue_dream(
         dream_type: Type of dream to execute
         session_name: Name of the session to scope the dream to if specified
         rebuild: card_refresh only — rebuild the card without the prior card
-        auto_workspace_id: The auto workspace whose dry run the caller ended
-            (`end_dry_run`); the dream isn't queued if the workspace has been
-            deleted and created again since
+        expected_workspace_id: The workspace the caller saw (`end_dry_run`);
+            the dream isn't queued if the workspace has been deleted and
+            created again since
     """
     # region ai
     # Per-tenant work, like message_enqueue: reject_scope_observed matches peers by
@@ -623,8 +626,8 @@ async def enqueue_dream(
     # has no RLS, so the insert is fine here too.
     # endregion
     async with tracked_db("dream_enqueue") as db_session:
-        if auto_workspace_id is not None and not await still_the_workspace(
-            db_session, workspace_name, auto_workspace_id
+        if expected_workspace_id is not None and not await still_the_workspace(
+            db_session, workspace_name, expected_workspace_id
         ):
             logger.info(
                 "Not queuing a dream for %s: the workspace was replaced", workspace_name
