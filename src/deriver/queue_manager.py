@@ -1484,8 +1484,7 @@ class QueueManager:
             await db.commit()
 
             if (
-                # Webhook deliveries are not counted. Reconciler tasks have no workspace.
-                work_unit.task_type != "webhook"
+                work_unit.task_type not in ("webhook", "reconciler")
                 and work_unit.workspace_name is not None
                 and settings.METRICS.ENABLED
             ):
