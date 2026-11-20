@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - `honcho ingest link`, `honcho ingest unlink` and `honcho ingest reset`: when one person shows up as several accounts in a dry run, `honcho ingest link 1 24 --reset` resets the import (deleting the imported sessions and waiting; people, exclusions and links stay), maps every account of the others to the first, and asks you to import again. A link never moves what was already imported. People are found before the reset, so the numbers from `ingest status` stay right. `--keep <peer-id>` keeps any peer, `unlink` takes one account back out the same way, and `reset` runs on its own
 - `honcho workspace create NAME --auto` creates an auto workspace. An existing workspace that isn't auto can't be made auto, and the command says so
 
+### Changed
+
+- Requires `honcho-ai` 2.10.0 or later
+
 ### Fixed
 
 - `uvx honcho-cli <command>` runs the CLI. The package now also installs a `honcho-cli` executable alongside `honcho`; before, uvx stopped with "An executable named `honcho-cli` is not provided", so the documented `uvx honcho-cli` and a one-line `uvx honcho-cli install` both failed
