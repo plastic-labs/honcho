@@ -221,19 +221,29 @@ Experimental: import straight from an installed connector, such as `github`.
 The source's own options follow its name: `honcho ingest from github --help`
 shows them. Records are sent the way `ingest import` sends a file: deriving
 later, and holding back bot records no person interacted with, judged one
-container at a time. `--derive`, `--bots`, `-w` and `--json` are this
-command's own; everything else goes to the source.
+container at a time. With `--follow`, a source that can follows its source
+live: it catches up from the position it saved, then sends new records,
+edits and deletes as they happen, deriving `auto` (later during the dry run,
+as they arrive after it), until stopped. `--derive`, `--bots`, `--follow`,
+`--bot-window`, `-w` and `--json` are this command's own; everything else
+goes to the source.
 
 ```bash
 honcho ingest from [<source>]
 ```
 
 <ParamField path="source" type="string" />
-<ParamField path="--derive" type="string" default="later">
-  later (default): store without deriving until `honcho ingest derive`; now: derive as records arrive.
+<ParamField path="--derive" type="string">
+  later (default): store without deriving until `honcho ingest derive`; now: derive as records arrive, which ends the dry run; auto: later during the dry run, now after it (default: later; auto with --follow).
 </ParamField>
 <ParamField path="--bots" type="string" default="interacted">
   Bot records to import. interacted (default): only those a person replied to or mentioned the bot about; all; none.
+</ParamField>
+<ParamField path="--follow" type="boolean">
+  Catch up from the saved position, then follow the source live until stopped (Ctrl-C); for sources that can.
+</ParamField>
+<ParamField path="--bot-window" type="number" default="60">
+  With --follow: minutes a bot record waits for a person to interact.
 </ParamField>
 </Accordion>
 <Accordion title="import">
@@ -257,7 +267,7 @@ honcho ingest import <file>
 
 <ParamField path="file" type="string" required />
 <ParamField path="--derive" type="string" default="later">
-  later (default): store without deriving until `honcho ingest derive`; now: derive as records arrive.
+  later (default): store without deriving until `honcho ingest derive`; now: derive as records arrive, which ends the dry run; auto: later during the dry run, now after it.
 </ParamField>
 <ParamField path="--bots" type="string" default="interacted">
   Bot records to import. interacted (default): only those a person replied to or mentioned the bot about; all; none.

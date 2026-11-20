@@ -1,4 +1,5 @@
-"""A small read-only client for GitHub's GraphQL API.
+"""A small read-only client for GitHub's GraphQL API, and a REST GET for what
+GraphQL can't do (comparing two commits).
 
 It waits out rate limits, both the hourly budget and secondary limits, retries
 server errors and network failures, and never echoes the token or a response
@@ -82,6 +83,14 @@ def _says_rate_limited(response: httpx.Response) -> bool:
     return isinstance(message, str) and "rate limit" in message.lower()
 
 
+def rest_url(host: str) -> str:
+    """The REST API's root: api.github.com, or `/api/v3` on Enterprise."""
+    name = canonical_host(host)
+    if name == "github.com":
+        return "https://api.github.com"
+    return f"https://{name}/api/v3"
+
+
 @final
 class GitHubClient:
     """Runs GraphQL queries with a token that can read the repositories."""
@@ -105,6 +114,7 @@ class GitHubClient:
             timeout=60,
         )
         self._url = graphql_url(host)
+        self._rest = rest_url(host)
         self._sleep = sleep
         self._now = now
         self.cost: int = 0
@@ -152,6 +162,62 @@ class GitHubClient:
         wait = min(_SECONDARY_WAIT * 2.0 ** (attempt - 1), 900.0)
         logger.info("GitHub secondary rate limit; waiting %.0fs", wait)
         self._sleep(wait)
+
+    def rest(self, path: str, params: dict[str, Any] | None = None) -> Any | None:
+        """GET a REST path and return its JSON; None when GitHub answers 404.
+
+        Rate limits, server errors and network failures are handled as `query`
+        handles them.
+        """
+        failures = 0
+        rate_limited = 0
+        headers = {"Accept": "application/vnd.github+json"}
+        while True:
+            try:
+                response = self._http.get(
+                    f"{self._rest}{path}", params=params, headers=headers
+                )
+            except httpx.TransportError as error:
+                failures += 1
+                if failures >= _RETRIES:
+                    raise GitHubError(0, type(error).__name__, retryable=True) from None
+                self._sleep(min(2.0**failures, 30.0))
+                continue
+            status = response.status_code
+            if status == 429 or (
+                status == 403
+                and (
+                    response.headers.get("Retry-After") is not None
+                    or response.headers.get("X-RateLimit-Remaining") == "0"
+                    or _says_rate_limited(response)
+                )
+            ):
+                rate_limited += 1
+                if rate_limited > _MAX_RATE_LIMIT_WAITS:
+                    raise GitHubError(status, "still rate limited", retryable=True)
+                self._wait_out_limit(response, rate_limited)
+                continue
+            if status >= 500:
+                failures += 1
+                if failures >= _RETRIES:
+                    raise GitHubError(status, "server error", retryable=True)
+                self._sleep(min(2.0**failures, 30.0))
+                continue
+            if status == 401:
+                raise GitHubError(status, "the token was refused", retryable=False)
+            if status == 404:
+                return None
+            if status >= 400:
+                raise GitHubError(status, "request refused", retryable=False)
+            try:
+                return response.json()
+            except ValueError:
+                failures += 1
+                if failures >= _RETRIES:
+                    raise GitHubError(
+                        status, "unreadable response", retryable=True
+                    ) from None
+                self._sleep(min(2.0**failures, 30.0))
 
     def query(
         self,

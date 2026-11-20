@@ -524,13 +524,14 @@ async def insert_messages_locked(
     session_name: str,
     *,
     internal_metadata: Sequence[dict[str, Any]] | None = None,
+    embed: bool = True,
 ) -> list[models.Message]:
     """Insert messages at the end of a session under its sequence lock. Does not commit.
 
     Takes the session's ``_ingest_lock`` for the rest of the transaction, assigns
     ``seq_in_session`` in list order after the session's last message, and adds a
-    pending embedding row per chunk when embedding is on. The session and every
-    author must already exist and be members.
+    pending embedding row per chunk when embedding is on and ``embed`` is set.
+    The session and every author must already exist and be members.
 
     Args:
         db: Database session, in the transaction that will commit the messages
@@ -539,6 +540,8 @@ async def insert_messages_locked(
         session_name: Name of the session
         internal_metadata: Internal metadata for each message, in the same
             order as ``messages``, written with the insert
+        embed: Whether to add the pending embedding rows now. Ingest leaves them
+            out for records it defers, and adds them when they're released.
 
     Returns:
         The message objects, flushed or pending flush
@@ -590,37 +593,55 @@ async def insert_messages_locked(
 
     db.add_all(message_objects)
 
-    # If embedding is enabled, locally chunk the content and insert
-    # one pending MessageEmbedding row per chunk in chunk order. The actual
-    # embedding work is deferred to the reconciler
-    if settings.EMBED_MESSAGES:
-        id_resource_dict = {
-            message_obj.public_id: message_obj.content
-            for message_obj in message_objects
-            if message_obj.content and message_obj.content.strip()
-        }
-        if id_resource_dict:
-            chunks_by_id = embedding_client.prepare_chunks(id_resource_dict)
-            peer_by_id = {m.public_id: m.peer_name for m in message_objects}
-            pending_rows: list[models.MessageEmbedding] = []
-            for message_obj in message_objects:
-                chunks = chunks_by_id.get(message_obj.public_id, [])
-                for chunk_text in chunks:
-                    pending_rows.append(
-                        models.MessageEmbedding(
-                            content=chunk_text,
-                            message_id=message_obj.public_id,
-                            workspace_name=workspace_name,
-                            session_name=session_name,
-                            peer_name=peer_by_id[message_obj.public_id],
-                            sync_state="pending",
-                            embedding=None,
-                        )
-                    )
-            if pending_rows:
-                db.add_all(pending_rows)
+    if embed:
+        add_pending_embeddings(
+            db,
+            workspace_name,
+            [
+                (m.public_id, m.content, session_name, m.peer_name)
+                for m in message_objects
+            ],
+        )
 
     return message_objects
+
+
+def add_pending_embeddings(
+    db: AsyncSession,
+    workspace_name: str,
+    messages: Sequence[tuple[str, str, str, str]],
+) -> None:
+    """Add a pending embedding row per chunk of each message, when embedding is on.
+
+    ``messages`` are ``(public_id, content, session_name, peer_name)``. The
+    content is chunked locally, in chunk order; the reconciler embeds the rows.
+    Does not flush or commit.
+    """
+    if not settings.EMBED_MESSAGES:
+        return
+    contents = {
+        public_id: content
+        for public_id, content, _, _ in messages
+        if content and content.strip()
+    }
+    if not contents:
+        return
+    chunks_by_id = embedding_client.prepare_chunks(contents)
+    db.add_all(
+        [
+            models.MessageEmbedding(
+                content=chunk_text,
+                message_id=public_id,
+                workspace_name=workspace_name,
+                session_name=session_name,
+                peer_name=peer_name,
+                sync_state="pending",
+                embedding=None,
+            )
+            for public_id, _, session_name, peer_name in messages
+            for chunk_text in chunks_by_id.get(public_id, [])
+        ]
+    )
 
 
 async def get_messages(

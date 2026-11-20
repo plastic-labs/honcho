@@ -54,12 +54,19 @@ from src.crud.ingest_suggestions import (
     suggestions_query,
     to_schema,
 )
+from src.crud.ingest_sync import (
+    forget_sync_state,
+    get_sync_state,
+    list_sync_states,
+    save_sync_state,
+)
 from src.crud.peer import peer_cache_key
 from src.crud.session import session_cache_key
 from src.dependencies import db, read_db
 from src.deriver.enqueue import insert_organize_task
 from src.deriver.ingest_enqueue import enqueue_session
 from src.dreamer.dream_scheduler import get_dream_scheduler
+from src.exceptions import ResourceNotFoundException
 from src.reconciler.embed_now import embed_task_gate
 from src.security import require_auth
 from src.telemetry import prometheus_metrics
@@ -204,6 +211,7 @@ async def ingest(
 
     Experimental: ingest may change or stop working without notice.
     """
+
     outcome = await _with_retries(
         db, workspace_id, lambda: ingest_batch(db, workspace_id, batch)
     )
@@ -211,7 +219,7 @@ async def ingest(
     await after_commit(workspace_id, outcome)
     await _cancel_dreams(workspace_id, outcome.authors)
     queued: set[str] = set()
-    if batch.derive == "now":
+    if outcome.derive == "now":
         queued = await _enqueue(db, workspace_id, outcome.created_messages)
     # Everything pending in a fully queued session is queued now, including a
     # duplicate of a record this batch or an earlier one left pending.
@@ -240,8 +248,9 @@ async def ingest(
             )
         )
         # Embed immediately so ingested messages are searchable within seconds;
-        # the reconciler is the fallback, as on the message route.
-        if settings.EMBED_MESSAGES:
+        # the reconciler is the fallback, as on the message route. Deferred
+        # messages have no embedding rows until they're released.
+        if settings.EMBED_MESSAGES and outcome.derive == "now":
             embed_task_gate.try_schedule(background_tasks, message_ids)
 
     return schemas.IngestResponse(records=results)
@@ -273,6 +282,7 @@ async def derive(
 
     Experimental: ingest may change or stop working without notice.
     """
+
     released = await _with_retries(
         db, workspace_id, lambda: release_deferred(db, workspace_id)
     )
@@ -480,6 +490,164 @@ async def reset(
     for name in sessions:
         await safe_cache_delete(session_cache_key(workspace_id, name))
     return schemas.IngestResetResponse(sessions=sessions)
+
+
+# ---------------------------------------------------------------------------
+# Sync states
+# ---------------------------------------------------------------------------
+
+_SYNC_RESPONSES: dict[int | str, dict[str, Any]] = {
+    404: {
+        "model": schemas.ErrorResponse,
+        "description": "Workspace not found, or no state saved for the source",
+    },
+    409: {
+        "model": schemas.ErrorResponse,
+        "description": "Not an auto workspace, or the state changed since the"
+        + " revision the connector read",
+    },
+}
+
+_SOURCE = Path(
+    ...,
+    max_length=64,
+    pattern=schemas.RESOURCE_NAME_PATTERN,
+    description="The source, e.g. `discord`",
+)
+_SOURCE_INSTANCE = Path(
+    ...,
+    max_length=128,
+    pattern=schemas.RESOURCE_NAME_PATTERN,
+    description="The server, team or account inside the source",
+)
+
+
+def _sync_state(state: models.IngestSyncState) -> schemas.IngestSyncState:
+    return schemas.IngestSyncState(
+        source=state.source,
+        source_instance=state.source_instance,
+        last_synced_at=state.last_synced_at,
+        last_record_at=state.last_record_at,
+        error=state.error,
+        position=state.position,
+        revision=state.revision,
+    )
+
+
+@router.get(
+    "/sync",
+    response_model=list[schemas.IngestSyncSource],
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    responses=_SYNC_RESPONSES,
+)
+async def list_sync(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    db: AsyncSession = read_db,
+) -> list[schemas.IngestSyncSource]:
+    """The sources connectors follow in this workspace, with each one's last sync.
+
+    Only workspace and admin keys may call it.
+
+    Experimental: ingest may change or stop working without notice.
+    """
+    await require_auto_workspace(db, workspace_id)
+    return [
+        schemas.IngestSyncSource(
+            source=state.source,
+            source_instance=state.source_instance,
+            last_synced_at=state.last_synced_at,
+            last_record_at=state.last_record_at,
+            error=state.error,
+        )
+        for state in await list_sync_states(db, workspace_id)
+    ]
+
+
+@router.get(
+    "/sync/{source}/{source_instance}",
+    response_model=schemas.IngestSyncState,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    responses=_SYNC_RESPONSES,
+)
+async def get_sync(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    source: str = _SOURCE,
+    source_instance: str = _SOURCE_INSTANCE,
+    db: AsyncSession = read_db,
+) -> schemas.IngestSyncState:
+    """Where the connector following a source has got to: its saved position.
+
+    A connector reads it when it starts, to carry on from there; 404 means read
+    the source from the start. Only workspace and admin keys may call it.
+
+    Experimental: ingest may change or stop working without notice.
+    """
+    await require_auto_workspace(db, workspace_id)
+    state = await get_sync_state(db, workspace_id, source, source_instance)
+    if state is None:
+        raise ResourceNotFoundException(
+            f"No sync state saved for {source}/{source_instance}"
+        )
+    return _sync_state(state)
+
+
+@router.put(
+    "/sync/{source}/{source_instance}",
+    response_model=schemas.IngestSyncState,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    responses=_SYNC_RESPONSES,
+)
+async def save_sync(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    source: str = _SOURCE,
+    source_instance: str = _SOURCE_INSTANCE,
+    body: schemas.IngestSyncStateSave = Body(...),
+    db: AsyncSession = db,
+) -> schemas.IngestSyncState:
+    """Save where the connector following a source has got to.
+
+    Pass the `revision` you read to save only if nothing else has saved since:
+    a second runner on the same source, or a reset that forgot the state, makes
+    it a 409. The response has the new revision. Only workspace and admin keys
+    may call it.
+
+    Experimental: ingest may change or stop working without notice.
+    """
+    state = await save_sync_state(
+        db,
+        workspace_id,
+        source,
+        source_instance,
+        position=body.position,
+        expected_revision=body.revision,
+        last_record_at=body.last_record_at,
+        error=body.error,
+    )
+    return _sync_state(state)
+
+
+@router.delete(
+    "/sync/{source}/{source_instance}",
+    response_model=schemas.IngestSyncForgotten,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    responses=_SYNC_RESPONSES,
+)
+async def forget_sync(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    source: str = _SOURCE,
+    source_instance: str = _SOURCE_INSTANCE,
+    db: AsyncSession = db,
+) -> schemas.IngestSyncForgotten:
+    """Forget a source's sync state, so its connector reads it from the start.
+
+    Only workspace and admin keys may call it.
+
+    Experimental: ingest may change or stop working without notice.
+    """
+    await require_auto_workspace(db, workspace_id)
+    return schemas.IngestSyncForgotten(
+        forgotten=await forget_sync_state(db, workspace_id, source, source_instance)
+    )
 
 
 # ---------------------------------------------------------------------------

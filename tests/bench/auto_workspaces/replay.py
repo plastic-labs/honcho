@@ -10,8 +10,9 @@ calls the embedding provider: for a replay that costs nothing, run the server
 with `EMBED_MESSAGES=false` or against the mock provider (`src/mock_provider`).
 
 History is sent oldest first, in batches of 100, as a connector should. Edits
-are sent after and must be rejected `edit_not_supported` until edits ship;
-deletes have no API yet and are only counted.
+are sent after, then deletes: nothing is derived yet, so this is the dry run,
+where an edit replaces its record (`updated`) and a delete removes it
+(`deleted`).
 
 Then it checks ingest's mapping against the dataset's accounts: every account
 of a stored record (authors and participants) must have exactly one peer, an
@@ -63,7 +64,6 @@ class ReplayReport:
     sent: int = 0
     outcomes: dict[str, int] = field(default_factory=dict)
     rejections: dict[str, int] = field(default_factory=dict)
-    deletes_not_sent: int = 0
     sessions: int = 0
     peers: int = 0
     # Tokens of the stored records left deferred: what deriving would process.
@@ -87,11 +87,27 @@ class ReplayReport:
         )
 
 
-def _ordered(records: list[BenchRecord]) -> list[BenchRecord]:
-    """Creates oldest first, then edits by revision time; deletes are left out."""
-    creates = [r for r in records if r.op == "create"]
-    edits = [r for r in records if r.op == "edit"]
-    return sorted(creates, key=event_time) + sorted(edits, key=event_time)
+def _batches(records: list[BenchRecord]) -> list[list[BenchRecord]]:
+    """Creates oldest first, then edits by revision time, then deletes, each in
+    batches of their own: within one batch, ingest keeps only a record's newest
+    version."""
+    batches: list[list[BenchRecord]] = []
+    for op in ("create", "edit", "delete"):
+        ordered = sorted((r for r in records if r.op == op), key=event_time)
+        batches += [ordered[i : i + BATCH] for i in range(0, len(ordered), BATCH)]
+    return batches
+
+
+def _wire(r: BenchRecord) -> dict[str, Any]:
+    """The record as ingest takes it: a delete names only the record."""
+    if r.op != "delete":
+        return r.record
+    return {
+        "op": "delete",
+        "source": r.record["source"],
+        "source_instance": r.record["source_instance"],
+        "source_id": r.record["source_id"],
+    }
 
 
 def _members(client: httpx.Client, workspace: str, session: str) -> set[str]:
@@ -213,7 +229,6 @@ def replay(
     response.raise_for_status()
 
     report = ReplayReport(workspace=workspace)
-    report.deletes_not_sent = sum(1 for r in dataset.records if r.op == "delete")
     outcomes: Counter[str] = Counter()
     rejections: Counter[str] = Counter()
     peers_of: dict[AccountKey, set[str]] = defaultdict(set)
@@ -227,12 +242,10 @@ def replay(
     participants_in: dict[str, set[AccountKey]] = defaultdict(set)
     deferred: dict[str, int] = {}
 
-    ordered = _ordered(dataset.records)
-    for start in range(0, len(ordered), BATCH):
-        batch = ordered[start : start + BATCH]
+    for batch in _batches(dataset.records):
         response = client.post(
             f"/v3/workspaces/{workspace}/ingest",
-            json={"derive": derive, "records": [r.record for r in batch]},
+            json={"derive": derive, "records": [_wire(r) for r in batch]},
             timeout=120,
         )
         response.raise_for_status()
@@ -244,9 +257,12 @@ def replay(
             outcomes[outcome] += 1
             if reason:
                 rejections[reason] += 1
-            if r.op == "edit":
-                if (outcome, reason) != ("rejected", "edit_not_supported"):
-                    report.unexpected_outcomes.append(f"{r.key}: edit {outcome}")
+            if r.op != "create":
+                expected_outcome = "updated" if r.op == "edit" else "deleted"
+                if outcome != expected_outcome:
+                    report.unexpected_outcomes.append(
+                        f"{r.key}: {r.op} {outcome} {reason or ''}".rstrip()
+                    )
                 continue
             if outcome == "rejected":
                 report.unexpected_outcomes.append(f"{r.key}: rejected {reason}")

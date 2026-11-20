@@ -174,6 +174,31 @@ class DiscordClient:
                 return
             after = str(max(int(m["user"]["id"]) for m in page))
 
+    def channel(self, channel_id: str) -> Json | None:
+        """A channel or thread, or None if it's gone or the bot can't see it."""
+        try:
+            return cast(Json, self.get(f"/channels/{channel_id}"))
+        except DiscordError as error:
+            if error.status in (403, 404):
+                return None
+            raise
+
+    def message(self, channel_id: str, message_id: str) -> Json | None:
+        """One message as it is now, or None if it's gone."""
+        try:
+            return cast(Json, self.get(f"/channels/{channel_id}/messages/{message_id}"))
+        except DiscordError as error:
+            if error.status == 404:
+                return None
+            raise
+
+    def newest_message_id(self, channel_id: str) -> str | None:
+        """The ID of a channel's or thread's newest message; None when it has none."""
+        page = cast(
+            list[Json], self.get(f"/channels/{channel_id}/messages", {"limit": 1})
+        )
+        return str(page[0]["id"]) if page else None
+
     def messages(self, channel_id: str, *, after: str = "0") -> Iterator[Json]:
         """A channel's or thread's messages after `after`, oldest first."""
         while True:

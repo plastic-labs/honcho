@@ -96,6 +96,7 @@ _RLS_REQUIRED_TABLES: tuple[str, ...] = (
     "ingest_session_bindings",
     "ingest_peer_bindings",
     "ingest_suggestions",
+    "ingest_sync_states",
 )
 
 # region ai

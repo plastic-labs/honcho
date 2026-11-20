@@ -39,8 +39,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
 from src.cache.client import safe_cache_delete
+from src.crud.ingest_dry_run import end_dry_run
 from src.crud.ingest_fence import take_session_fences, take_workspace_fence
-from src.crud.message import insert_messages_locked
+from src.crud.message import add_pending_embeddings, insert_messages_locked
 from src.crud.peer import peer_cache_key, reject_scope_observed
 from src.crud.session import session_cache_key, upsert_session_peers
 from src.exceptions import (
@@ -200,22 +201,27 @@ def _comparable(value: datetime.datetime | None) -> datetime.datetime:
     return value
 
 
+Change = Literal["edit", "bump"]
+
+
 def classify(
     stored_revised_at: datetime.datetime | None,
-    stored_sha256: str,
+    stored_sha256: str | None,
     incoming_revised_at: datetime.datetime | None,
     incoming_sha256: str,
-) -> IngestRejectionReason | None:
+) -> IngestRejectionReason | Change | None:
     """Classify a record against one already stored with the same identity.
 
-    Returns why it is rejected, or None when it is a duplicate.
+    Returns why it is rejected; `edit` (a newer revision with other content) or
+    `bump` (a newer revision with the same content), which change the stored
+    record; or None when it is a duplicate.
     """
     stored = _comparable(stored_revised_at)
     incoming = _comparable(incoming_revised_at)
     if incoming < stored:
         return "stale_revision"
     if incoming > stored:
-        return "edit_not_supported"
+        return "bump" if incoming_sha256 == stored_sha256 else "edit"
     if incoming_sha256 == stored_sha256:
         return None
     return "content_conflict"
@@ -256,6 +262,32 @@ class _Record:
 
 
 @dataclass
+class _Delete:
+    index: int
+    record: schemas.IngestRecordDelete
+
+    @property
+    def identity_tuple(self) -> _Identity:
+        r = self.record
+        return (r.source, r.source_instance, "source_id", r.source_id)
+
+
+_Item = _Record | _Delete
+
+
+def _rank(item: _Item) -> tuple[datetime.datetime, int]:
+    """Newest first: the later revision, and at the same revision a delete.
+
+    A delete without a time (a source that doesn't say when) is the newest.
+    """
+    if isinstance(item, _Delete):
+        if item.record.revised_at is None:
+            return (datetime.datetime.max.replace(tzinfo=datetime.UTC), 1)
+        return (_comparable(item.record.revised_at), 1)
+    return (_comparable(item.record.revised_at), 0)
+
+
+@dataclass
 class IngestResult:
     """The per-record outcomes, plus what the caller does after commit."""
 
@@ -267,6 +299,9 @@ class IngestResult:
     created_peers: list[str] = field(default_factory=list)
     # Authors of the created messages, whose pending dreams are cancelled.
     authors: set[str] = field(default_factory=set)
+    # What the batch's `derive` resolved to under the fence: `auto` is `later`
+    # during the workspace's dry run and `now` after it.
+    derive: Literal["now", "later"] = "later"
 
 
 class IngestRaced(Exception):
@@ -292,14 +327,18 @@ class _Refused(Exception):
 class _StoredRecord:
     id: str
     revised_at: datetime.datetime | None
-    content_sha256: str
+    content_sha256: str | None
     derivation: str
     message_public_id: str | None
-    session_name: str
+    session_name: str | None
     peer_name: str | None
 
+    @property
+    def tombstone(self) -> bool:
+        return self.derivation == "deleted"
 
-def _prepare(batch: schemas.IngestBatch) -> list[_Record]:
+
+def _prepare(batch: schemas.IngestBatch) -> list[_Item]:
     # One binding key per external identity across the batch: the first record
     # that names it supplies the display name, so a rename inside one batch still
     # maps every record to the same session or peer.
@@ -311,8 +350,11 @@ def _prepare(batch: schemas.IngestBatch) -> list[_Record]:
     def first_seen_any(key: BindingKey | str) -> BindingKey | str:
         return first_seen(key) if isinstance(key, BindingKey) else key
 
-    prepared: list[_Record] = []
+    prepared: list[_Item] = []
     for index, record in enumerate(batch.records):
+        if isinstance(record, schemas.IngestRecordDelete):
+            prepared.append(_Delete(index=index, record=record))
+            continue
         identity_kind, identity = record_identity(record)
         author_key = first_seen_any(author_key_for(record))
         participant_keys = [
@@ -374,43 +416,74 @@ async def ingest_batch(
             For these two, nothing was committed and the caller retries the whole
             batch, which is safe because records dedup on their identity.
     """
+    # Deriving now ends the workspace's dry run, in a transaction of its own
+    # before this one. A batch of deletes alone has nothing to derive.
+    derives_now = batch.derive == "now" and any(
+        isinstance(record, schemas.IngestRecordCreate) for record in batch.records
+    )
+    if derives_now:
+        await end_dry_run(db, workspace_name)
     tenant_id = models.scoped_tenant_id()
     prepared = _prepare(batch)
+    upserts = [r for r in prepared if isinstance(r, _Record)]
     # Checked first so a bad explicit peer is refused before anything else, and
     # again under the fence below.
-    await _validate_explicit_peers(db, tenant_id, workspace_name, prepared)
+    await _validate_explicit_peers(db, tenant_id, workspace_name, upserts)
     results: dict[int, schemas.IngestRecordResult] = {}
     outcome = IngestResult(results=[])
     # The stored row each identity was classified against, so a repeat inside the
     # batch is classified against that row too.
     basis: dict[_Identity, _StoredRecord] = {}
 
-    # A repeated identity inside the batch: the first occurrence is processed and
-    # later ones are classified once it has an outcome.
-    first_by_identity: dict[_Identity, _Record] = {}
-    repeats: list[tuple[_Record, _Record]] = []
-    unique: list[_Record] = []
-    for r in prepared:
-        first = first_by_identity.setdefault(r.identity_tuple, r)
-        if first is r:
-            unique.append(r)
-        else:
-            repeats.append((r, first))
+    # One identity, once per batch: the newest occurrence (the later revision,
+    # and at the same revision a delete) is processed. An occurrence just as new
+    # is a repeat, classified once the first has an outcome; an older one was
+    # superseded inside the batch.
+    by_identity: dict[_Identity, list[_Item]] = {}
+    for item in prepared:
+        by_identity.setdefault(item.identity_tuple, []).append(item)
+    unique: list[_Item] = []
+    repeats: list[tuple[_Item, _Item]] = []
+    for items in by_identity.values():
+        newest = max(_rank(i) for i in items)
+        first = next(i for i in items if _rank(i) == newest)
+        unique.append(first)
+        for item in items:
+            if item is first:
+                continue
+            if _rank(item) == newest:
+                repeats.append((item, first))
+            else:
+                results[item.index] = _rejected(item.index, "superseded")
+    unique.sort(key=lambda i: i.index)
 
     # Records already stored are classified and take no further part. This read,
-    # before the fence and without locks, only narrows which sessions to fence;
-    # its outcomes are discarded.
+    # before the fence and without locks, only narrows which sessions to fence
+    # and says whether the batch may change stored records; its outcomes are
+    # discarded.
     narrowed = await _classify_stored(db, tenant_id, workspace_name, unique, {}, {})
+    # A batch that may change stored records holds the workspace fence
+    # exclusive, from the start: no other batch, derive call or deletion runs
+    # beside it, so the end of the dry run can't pass it either.
+    exclusive = bool(narrowed.changes or narrowed.deletes)
 
-    # The fence, before any row lock: shared on the workspace, then every session
-    # this batch writes.
-    await take_workspace_fence(db, workspace_name, mode="shared")
-    session_names = await _fence_sessions(db, tenant_id, workspace_name, narrowed)
+    # The fence, before any row lock: the workspace, then every session this
+    # batch writes.
+    await take_workspace_fence(
+        db, workspace_name, mode="exclusive" if exclusive else "shared"
+    )
+    session_names = await _fence_sessions(
+        db, tenant_id, workspace_name, narrowed.remaining
+    )
 
     # Re-read under the fence: a workspace deleted while we waited is gone now.
     workspace = (
         await db.execute(
-            select(models.Workspace.id, models.Workspace.auto_enabled_at).where(
+            select(
+                models.Workspace.id,
+                models.Workspace.auto_enabled_at,
+                models.Workspace.ingest_derived_at,
+            ).where(
                 models.Workspace.tenant_id == tenant_id,
                 models.Workspace.name == workspace_name,
             )
@@ -423,19 +496,42 @@ async def ingest_batch(
             f"Workspace {workspace_name} isn't an auto workspace. Ingest writes"
             + " only to auto workspaces: create one with auto: true."
         )
+    in_dry_run = workspace.ingest_derived_at is None
+    if derives_now and in_dry_run:
+        # The dry run was ended above; a workspace deleted and created again
+        # since is in a new one, which the retry ends too.
+        raise IngestRaced
+    outcome.derive = (
+        "later"
+        if batch.derive == "later" or (batch.derive == "auto" and in_dry_run)
+        else "now"
+    )
     # Explicit peers again, against the workspace held under the fence: the one
     # checked above may since have been deleted and created again.
-    await _validate_explicit_peers(db, tenant_id, workspace_name, prepared)
+    await _validate_explicit_peers(db, tenant_id, workspace_name, upserts)
 
     # Every outcome comes from rows read under the fence. A record stored before
     # it may be gone now: a reset, or the workspace deleted and created again,
     # took the exclusive fence first and deleted it. Its session isn't fenced, so
-    # the batch starts over, and the next attempt fences it.
-    remaining = await _classify_stored(
+    # the batch starts over, and the next attempt fences it. A change to a stored
+    # record found only now, under the shared fence, starts over too: the next
+    # attempt reads it before the fence and takes it exclusive.
+    classified = await _classify_stored(
         db, tenant_id, workspace_name, unique, results, basis
     )
+    remaining = classified.remaining
     if any(r.session_key not in session_names for r in remaining):
         raise IngestRaced
+    if (classified.changes or classified.deletes) and not exclusive:
+        raise IngestRaced
+    await _apply_changes(
+        db,
+        tenant_id,
+        workspace_name,
+        classified,
+        in_dry_run=in_dry_run,
+        results=results,
+    )
 
     groups: dict[str, list[_Record]] = {}
     for r in remaining:
@@ -562,7 +658,7 @@ async def ingest_batch(
 
     # 4. Messages, under each session's sequence lock, in sorted session order.
     derivation: Literal["pending", "deferred"] = (
-        "deferred" if batch.derive == "later" else "pending"
+        "deferred" if outcome.derive == "later" else "pending"
     )
     for session_name in sorted(accepted):
         group = sorted(
@@ -585,6 +681,9 @@ async def ingest_batch(
             ],
             workspace_name,
             session_name,
+            # A deferred record is embedded when it's released, so an edit
+            # during the dry run never races its embedding.
+            embed=outcome.derive == "now",
         )
         await db.flush()
         for r, message in zip(group, created, strict=True):
@@ -612,7 +711,7 @@ async def ingest_batch(
     await db.commit()
 
     for r, first in repeats:
-        results[r.index] = _classified_repeat(r, first, results[first.index], basis)
+        results[r.index] = _classified_repeat(r, first, results[first.index])
     outcome.results = [results[i] for i in range(len(prepared))]
     return outcome
 
@@ -656,25 +755,231 @@ async def _validate_explicit_peers(
         )
 
 
+@dataclass
+class _Classified:
+    # Upserts not stored yet: the create path writes them.
+    remaining: list[_Record] = field(default_factory=list)
+    # Upserts that change a stored record: a newer revision.
+    changes: list[tuple[_Record, _StoredRecord, Change]] = field(default_factory=list)
+    # Deletes to apply: of a stored record, or (None) of one never seen.
+    deletes: list[tuple[_Delete, _StoredRecord | None]] = field(default_factory=list)
+
+
 async def _classify_stored(
     db: AsyncSession,
     tenant_id: str,
     workspace_name: str,
-    records: Sequence[_Record],
+    items: Sequence[_Item],
     results: dict[int, schemas.IngestRecordResult],
     basis: dict[_Identity, _StoredRecord],
-) -> list[_Record]:
-    """Classify the records already stored; return the ones that aren't."""
-    stored = await _stored_records(db, tenant_id, workspace_name, records)
-    remaining: list[_Record] = []
-    for r in records:
-        row = stored.get(r.identity_tuple)
+) -> _Classified:
+    """Classify each item against what's stored; sort out what still needs writing.
+
+    Outcomes that change nothing (duplicates, rejections) go into `results`.
+    """
+    stored = await _stored_records(db, tenant_id, workspace_name, items)
+    classified = _Classified()
+    for item in items:
+        row = stored.get(item.identity_tuple)
+        if row is not None:
+            basis[item.identity_tuple] = row
+        if isinstance(item, _Delete):
+            if row is not None and row.tombstone:
+                results[item.index] = _duplicate(item.index, row)
+            elif (
+                row is not None
+                and item.record.revised_at is not None
+                and _comparable(item.record.revised_at) < _comparable(row.revised_at)
+            ):
+                # The source changed the record after this delete: it stands.
+                results[item.index] = _rejected(item.index, "stale_revision")
+            else:
+                classified.deletes.append((item, row))
+            continue
         if row is None:
-            remaining.append(r)
+            classified.remaining.append(item)
+            continue
+        if row.tombstone:
+            results[item.index] = _rejected(item.index, "deleted")
+            continue
+        reason = classify(
+            row.revised_at, row.content_sha256, item.record.revised_at, item.sha256
+        )
+        if reason in ("edit", "bump"):
+            classified.changes.append((item, row, reason))
+        elif reason is None:
+            results[item.index] = _duplicate(item.index, row)
         else:
-            basis[r.identity_tuple] = row
-            results[r.index] = _classified(r, row)
-    return remaining
+            results[item.index] = _rejected(item.index, reason)
+    return classified
+
+
+async def _apply_changes(
+    db: AsyncSession,
+    tenant_id: str,
+    workspace_name: str,
+    classified: _Classified,
+    *,
+    in_dry_run: bool,
+    results: dict[int, schemas.IngestRecordResult],
+) -> None:
+    """Apply edits, newer revisions and deletes, under the exclusive workspace fence.
+
+    A newer revision with the same content only moves `revised_at` forward. An
+    edit or a delete changes a record only during the dry run, and only while
+    its message has never been embedded and its session is active; otherwise
+    it's refused and nothing changes. An edit replaces the text, metadata and
+    revision; who wrote it, who took part and where keep their first values.
+    """
+    record = models.IngestRecord
+    message = models.Message
+    rows = [row for _, row, _ in classified.changes] + [
+        row for _, row in classified.deletes if row is not None
+    ]
+    live_ids = [row.message_public_id for row in rows if row.message_public_id]
+    embedded = set(
+        (
+            await db.scalars(
+                select(models.MessageEmbedding.message_id)
+                .where(
+                    models.MessageEmbedding.tenant_id == tenant_id,
+                    models.MessageEmbedding.message_id.in_(live_ids),
+                )
+                .distinct()
+            )
+        ).all()
+        if live_ids
+        else ()
+    )
+    session_names = sorted({row.session_name for row in rows if row.session_name})
+    active = set(
+        (
+            await db.scalars(
+                select(models.Session.name).where(
+                    models.Session.tenant_id == tenant_id,
+                    models.Session.workspace_name == workspace_name,
+                    models.Session.name.in_(session_names),
+                    models.Session.is_active.is_(True),
+                )
+            )
+        ).all()
+        if session_names
+        else ()
+    )
+
+    def refusal(row: _StoredRecord) -> IngestRejectionReason | None:
+        if not in_dry_run or row.derivation != "deferred":
+            return "edited_after_derivation"
+        if row.message_public_id is None or row.message_public_id in embedded:
+            return "edited_after_derivation"
+        if row.session_name not in active:
+            return "session_inactive"
+        return None
+
+    for r, row, change in sorted(classified.changes, key=lambda c: c[1].id):
+        if change == "bump":
+            await db.execute(
+                update(record)
+                .where(record.tenant_id == tenant_id, record.id == row.id)
+                .values(revised_at=r.record.revised_at)
+                .execution_options(synchronize_session=False)
+            )
+            results[r.index] = _duplicate(r.index, row)
+            continue
+        if (reason := refusal(row)) is not None:
+            results[r.index] = _rejected(r.index, reason)
+            continue
+        await db.execute(
+            update(record)
+            .where(record.tenant_id == tenant_id, record.id == row.id)
+            .values(content_sha256=r.sha256, revised_at=r.record.revised_at)
+            .execution_options(synchronize_session=False)
+        )
+        await db.execute(
+            update(message)
+            .where(
+                message.tenant_id == tenant_id,
+                message.public_id == row.message_public_id,
+            )
+            .values(
+                content=r.record.content,
+                h_metadata=r.record.metadata or {},
+                token_count=len(r.record.encoded_content),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        results[r.index] = schemas.IngestRecordResult(
+            index=r.index,
+            outcome="updated",
+            record_id=row.id,
+            message_id=row.message_public_id,
+            session_id=row.session_name,
+            peer_id=row.peer_name,
+            derivation="deferred",
+        )
+
+    for d, row in sorted(
+        classified.deletes, key=lambda c: c[1].id if c[1] is not None else ""
+    ):
+        if not in_dry_run:
+            results[d.index] = _rejected(d.index, "edited_after_derivation")
+            continue
+        if row is None:
+            tombstone = await db.scalar(
+                pg_insert(record)
+                .values(
+                    workspace_name=workspace_name,
+                    source=d.record.source,
+                    source_instance=d.record.source_instance,
+                    identity_kind="source_id",
+                    identity=d.record.source_id,
+                    session_name=None,
+                    content_sha256=None,
+                    revised_at=d.record.revised_at,
+                    derivation="deleted",
+                )
+                .on_conflict_do_nothing(constraint="uq_ingest_records_identity")
+                .returning(record.id)
+            )
+            if tombstone is None:
+                # Stored since this batch read it, which the fence rules out.
+                raise IngestRaced
+            results[d.index] = schemas.IngestRecordResult(
+                index=d.index,
+                outcome="deleted",
+                record_id=tombstone,
+                derivation="deleted",
+            )
+            continue
+        if (reason := refusal(row)) is not None:
+            results[d.index] = _rejected(d.index, reason)
+            continue
+        await db.execute(
+            update(record)
+            .where(record.tenant_id == tenant_id, record.id == row.id)
+            .values(
+                derivation="deleted",
+                message_public_id=None,
+                revised_at=d.record.revised_at or row.revised_at,
+                derivation_changed_at=func.statement_timestamp(),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        await db.execute(
+            delete(message).where(
+                message.tenant_id == tenant_id,
+                message.public_id == row.message_public_id,
+            )
+        )
+        results[d.index] = schemas.IngestRecordResult(
+            index=d.index,
+            outcome="deleted",
+            record_id=row.id,
+            message_id=row.message_public_id,
+            session_id=row.session_name,
+            peer_id=row.peer_name,
+            derivation="deleted",
+        )
 
 
 async def _fence_sessions(
@@ -882,7 +1187,7 @@ def _peer_sort_key(key: BindingKey | str) -> tuple[int, str, str, str, str]:
 
 
 async def _stored_records(
-    db: AsyncSession, tenant_id: str, workspace_name: str, records: Sequence[_Record]
+    db: AsyncSession, tenant_id: str, workspace_name: str, records: Sequence[_Item]
 ) -> dict[_Identity, _StoredRecord]:
     if not records:
         return {}
@@ -919,12 +1224,9 @@ async def _stored_records(
     }
 
 
-def _classified(r: _Record, row: _StoredRecord) -> schemas.IngestRecordResult:
-    reason = classify(row.revised_at, row.content_sha256, r.record.revised_at, r.sha256)
-    if reason is not None:
-        return _rejected(r.index, reason)
+def _duplicate(index: int, row: _StoredRecord) -> schemas.IngestRecordResult:
     return schemas.IngestRecordResult(
-        index=r.index,
+        index=index,
         outcome="duplicate",
         record_id=row.id,
         message_id=row.message_public_id,
@@ -934,23 +1236,32 @@ def _classified(r: _Record, row: _StoredRecord) -> schemas.IngestRecordResult:
     )
 
 
-def _classified_repeat(
-    r: _Record,
-    first: _Record,
-    first_result: schemas.IngestRecordResult,
-    basis: dict[_Identity, _StoredRecord],
-) -> schemas.IngestRecordResult:
-    # The first occurrence was classified against a stored row: so is the repeat.
-    row = basis.get(r.identity_tuple)
-    if row is not None:
-        return _classified(r, row)
-    reason = classify(
-        first.record.revised_at, first.sha256, r.record.revised_at, r.sha256
-    )
+def _classified(r: _Record, row: _StoredRecord) -> schemas.IngestRecordResult | None:
+    """A record against a stored row; None when it would change the row."""
+    if row.tombstone:
+        return _rejected(r.index, "deleted")
+    reason = classify(row.revised_at, row.content_sha256, r.record.revised_at, r.sha256)
+    if reason in ("edit", "bump"):
+        return None
     if reason is not None:
         return _rejected(r.index, reason)
+    return _duplicate(r.index, row)
+
+
+def _classified_repeat(
+    r: _Item,
+    first: _Item,
+    first_result: schemas.IngestRecordResult,
+) -> schemas.IngestRecordResult:
+    """A repeat, as new as the first occurrence, against the first's outcome."""
     if first_result.reason is not None:
         return _rejected(r.index, first_result.reason)
+    if (
+        isinstance(r, _Record)
+        and isinstance(first, _Record)
+        and r.sha256 != first.sha256
+    ):
+        return _rejected(r.index, "content_conflict")
     return first_result.model_copy(update={"index": r.index, "outcome": "duplicate"})
 
 
@@ -1484,10 +1795,15 @@ async def _write_group(
             .returning(models.IngestRecord.id)
         )
         if claimed is None:
+            # Stored since this batch read it. A record this one would change
+            # starts the batch over, to read it before the fence.
             stored = await _stored_records(db, tenant_id, workspace_name, [r])
             row = stored[r.identity_tuple]
             basis[r.identity_tuple] = row
-            results[r.index] = _classified(r, row)
+            result = _classified(r, row)
+            if result is None:
+                raise IngestRaced
+            results[r.index] = result
         else:
             r.record_id = claimed
     live = [r for r in group if r.index not in results]
@@ -1564,6 +1880,9 @@ async def release_deferred(
         DBAPIError: A lock timeout or another transient failure; nothing was
             committed and the caller may retry.
     """
+    # Releasing is deriving: it ends the workspace's dry run first, in a
+    # transaction of its own.
+    await end_dry_run(db, workspace_name)
     tenant_id = models.scoped_tenant_id()
     record = models.IngestRecord
     workspace_id = await db.scalar(
@@ -1624,6 +1943,48 @@ async def release_deferred(
 
     await take_workspace_fence(db, workspace_name, mode="shared")
     await take_session_fences(db, workspace_name, {session for _, session in picked})
+    # The dry run was ended above; a workspace deleted and created again since
+    # is in a new one, which the retry ends too.
+    derived_at = await db.scalar(
+        select(models.Workspace.ingest_derived_at).where(
+            models.Workspace.tenant_id == tenant_id,
+            models.Workspace.name == workspace_name,
+        )
+    )
+    if derived_at is None:
+        raise IngestRaced
+    # Released records get their embedding rows now; a record stored before
+    # deferral skipped embedding may have them already.
+    embedding = models.MessageEmbedding
+    message = models.Message
+    unembedded = (
+        await db.execute(
+            select(
+                message.public_id,
+                message.content,
+                message.session_name,
+                message.peer_name,
+            )
+            .join(
+                record,
+                (record.tenant_id == message.tenant_id)
+                & (record.message_public_id == message.public_id),
+            )
+            .where(
+                record.tenant_id == tenant_id,
+                record.id.in_([record_id for record_id, _ in picked]),
+                record.derivation == "deferred",
+                ~select(embedding.id)
+                .where(
+                    embedding.tenant_id == message.tenant_id,
+                    embedding.message_id == message.public_id,
+                )
+                .exists(),
+            )
+            .order_by(message.public_id)
+        )
+    ).all()
+    add_pending_embeddings(db, workspace_name, [tuple(row) for row in unembedded])
     released = (
         (
             await db.execute(
@@ -1647,7 +2008,10 @@ async def release_deferred(
         .all()
     )
     await db.commit()
-    return Released(pending=len(released), sessions=sorted(set(released)))
+    return Released(
+        pending=len(released),
+        sessions=sorted({name for name in released if name is not None}),
+    )
 
 
 async def count_deferred(db: AsyncSession, workspace_name: str) -> int:

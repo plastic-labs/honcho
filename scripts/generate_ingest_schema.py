@@ -4,12 +4,12 @@
     uv run python -m scripts.generate_ingest_schema --check    # exit 1 on drift
 
 The schema is the server's own request model for one record
-(``src.schemas.api.IngestRecordCreate``), the same model the OpenAPI spec
-documents, so an exporter validates its output against exactly what ingest
-accepts. Unknown fields are rejected, as the SDK and `honcho ingest import`
-reject them, so a misspelled field fails validation instead of being dropped
-(the API itself ignores unknown fields). It is v0: the format may change until
-edits and deletes settle. Do not edit the file by hand.
+(``src.schemas.api.IngestRecordItem``: a record to ingest, or a delete), the
+same model the OpenAPI spec documents, so an exporter validates its output
+against exactly what ingest accepts. Unknown fields are rejected in each form,
+as the SDK and `honcho ingest import` reject them, so a misspelled field fails
+validation instead of being dropped (the API itself ignores unknown fields). It
+is v0: the format may still change. Do not edit the file by hand.
 """
 
 from __future__ import annotations
@@ -21,8 +21,11 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-# The record's nested types; their unknown fields are rejected like the record's.
+# The two forms of a record and their nested types: unknown fields are rejected in
+# each. Not at the root, which only chooses between the forms.
 _STRICT_DEFS = (
+    "IngestRecordCreate",
+    "IngestRecordDelete",
     "IngestContainer",
     "IngestParticipant",
     "MessageConfiguration",
@@ -37,9 +40,11 @@ SCHEMA_ID = (
 
 def build_schema() -> dict[str, Any]:
     """The JSON Schema for one ingest record, ready to publish."""
-    from src.schemas.api import IngestRecordCreate
+    from pydantic import TypeAdapter
 
-    schema = IngestRecordCreate.model_json_schema(mode="validation")
+    from src.schemas.api import IngestRecordItem
+
+    schema = TypeAdapter(IngestRecordItem).json_schema(mode="validation")
     published: dict[str, Any] = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": SCHEMA_ID,
@@ -47,10 +52,11 @@ def build_schema() -> dict[str, Any]:
         "description": (
             "One source record for Honcho's ingest API: a line of a JSONL file for"
             + " `honcho ingest import`, or an item of the `records` array of"
-            + " `POST /v3/workspaces/{workspace_id}/ingest`. Experimental: v0 may"
-            + " change until edits and deletes settle. Unknown fields are rejected,"
-            + " as `honcho ingest import` and the SDKs reject them; the API itself"
-            + " ignores them."
+            + " `POST /v3/workspaces/{workspace_id}/ingest`: a record to ingest"
+            + " (`op` left out, or `upsert`), or a record the source deleted"
+            + " (`op: delete`). Experimental: v0 may still change. Unknown fields"
+            + " are rejected, as `honcho ingest import` and the SDKs reject them;"
+            + " the API itself ignores them."
         ),
     }
     published.update(
@@ -60,7 +66,6 @@ def build_schema() -> dict[str, Any]:
             if key not in ("title", "description")
         }
     )
-    published["additionalProperties"] = False
     for name in _STRICT_DEFS:
         published["$defs"][name]["additionalProperties"] = False
     return published
