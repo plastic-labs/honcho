@@ -15,7 +15,6 @@ repositories only; name a private repository with `--repo` to read it.
 """
 
 import argparse
-import datetime
 import logging
 import os
 import sys
@@ -32,37 +31,16 @@ from honcho_github.export import (
     inside_git_worktree,
     select,
 )
-
-
-def _token(path: str) -> str:
-    """The token: one line of printable ASCII, never echoed."""
-    token = Path(path).expanduser().read_text(encoding="utf-8").strip()
-    if not token:
-        raise SystemExit(f"{path} is empty")
-    if (
-        not token.isascii()
-        or not token.isprintable()
-        or any(c.isspace() for c in token)
-    ):
-        raise SystemExit(f"{path} should hold just the token, on one line")
-    return token
-
-
-def _since(value: str | None) -> str | None:
-    """`--since` as GitHub's timestamp format, UTC: 2026-11-01T00:00:00Z."""
-    if value is None:
-        return None
-    try:
-        parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        raise SystemExit(f"--since {value!r} isn't a date (YYYY-MM-DD)") from None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=datetime.UTC)
-    return parsed.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+from honcho_github.options import (
+    add_read_options,
+    add_since_option,
+    parse_since,
+    read_token,
+)
 
 
 def _repos(args: argparse.Namespace) -> int:
-    with GitHubClient(_token(args.token_file), host=args.host) as client:
+    with GitHubClient(read_token(args.token_file), host=args.host) as client:
         selected = select(client, args.repo or [], args.org or [])
     for listed in selected:
         visibility = "private" if listed.repo.private else "public"
@@ -81,8 +59,8 @@ def _export(args: argparse.Namespace) -> int:
             f"{args.out} is inside a git checkout, where exported text could be"
             + " committed. Choose another directory, or pass --allow-git-dir."
         )
-    token = _token(args.token_file)
-    since = _since(args.since)
+    token = read_token(args.token_file)
+    since = parse_since(args.since)
 
     def make_sink() -> Sink:
         if out is not None:
@@ -122,31 +100,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="honcho-github", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    def common(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--token-file", required=True, help="File holding the token")
-        p.add_argument(
-            "--repo", action="append", help="A repository, OWNER/NAME; repeatable"
-        )
-        p.add_argument(
-            "--org",
-            action="append",
-            help="An organization or account whose public repositories to read;"
-            + " repeatable",
-        )
-        p.add_argument(
-            "--host", default="github.com", help="GitHub host (default github.com)"
-        )
-
     listing = sub.add_parser("repos", help="List the repositories an export would read")
-    common(listing)
+    add_read_options(listing)
 
     exporting = sub.add_parser("export", help="Export history as ingest records")
-    common(exporting)
-    exporting.add_argument(
-        "--since",
-        help="Only issues and pull requests updated since this date, and commits"
-        + " made since it",
-    )
+    add_read_options(exporting)
+    add_since_option(exporting)
     target = exporting.add_mutually_exclusive_group(required=True)
     target.add_argument("--out", help="Directory for the JSONL files")
     target.add_argument("--ingest-url", help="Honcho base URL to send records to")

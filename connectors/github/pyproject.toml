@@ -20,6 +20,10 @@ Repository = "https://github.com/plastic-labs/honcho"
 [project.scripts]
 honcho-github = "honcho_github.__main__:main"
 
+# `honcho ingest from github`: see honcho_cli.ingest_sources.
+[project.entry-points."honcho.ingest_sources"]
+github = "honcho_github.source:SOURCE"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",

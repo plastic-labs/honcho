@@ -30,43 +30,17 @@ from honcho_discord.export import (
     inside_git_worktree,
     select,
 )
-
-
-def _token(path: str) -> str:
-    """The bot token: one line of printable ASCII, never echoed."""
-    token = Path(path).expanduser().read_text(encoding="utf-8").strip()
-    if not token:
-        raise SystemExit(f"{path} is empty")
-    if (
-        not token.isascii()
-        or not token.isprintable()
-        or any(c.isspace() for c in token)
-    ):
-        raise SystemExit(f"{path} should hold just the token, on one line")
-    return token
-
-
-def _channel_ids(args: argparse.Namespace) -> set[str] | None:
-    """The channels asked for, or None to export every channel.
-
-    A channels file that lists nothing is an error, not "everything".
-    """
-    if not args.channel and not args.channels_file:
-        return None
-    ids = set(args.channel or [])
-    if args.channels_file:
-        for line in Path(args.channels_file).expanduser().read_text().splitlines():
-            line = line.split("#", 1)[0].strip()
-            if line:
-                ids.add(line)
-    if not ids:
-        raise SystemExit(f"{args.channels_file} lists no channel IDs")
-    return ids
+from honcho_discord.options import (
+    add_limit_option,
+    add_read_options,
+    channel_ids,
+    read_token,
+)
 
 
 def _channels(args: argparse.Namespace) -> int:
-    with DiscordClient(_token(args.token_file)) as client:
-        selection = select(client, args.guild, _channel_ids(args))
+    with DiscordClient(read_token(args.token_file)) as client:
+        selection = select(client, args.guild, channel_ids(args))
     for channel in selection.channels:
         category = selection.categories.get(channel.parent_id or "", "")
         threads = len(selection.threads.get(channel.id, []))
@@ -90,8 +64,8 @@ def _export(args: argparse.Namespace) -> int:
             f"{args.out} is inside a git checkout, where exported messages could be"
             + " committed. Choose another directory, or pass --allow-git-dir."
         )
-    channel_ids = _channel_ids(args)
-    token = _token(args.token_file)
+    selected = channel_ids(args)
+    token = read_token(args.token_file)
 
     def make_sink() -> Sink:
         if out is not None:
@@ -104,7 +78,7 @@ def _export(args: argparse.Namespace) -> int:
             client,
             args.guild,
             make_sink,
-            channel_ids=channel_ids,
+            channel_ids=selected,
             limit_per_container=args.limit_per_container,
         )
     print(f"{stats.records} records from {stats.containers} channels and threads")
@@ -131,19 +105,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="honcho-discord", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    def common(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--token-file", required=True, help="File holding the bot token")
-        p.add_argument("--guild", required=True, help="Server (guild) ID")
-        p.add_argument("--channel", action="append", help="Channel ID; repeatable")
-        p.add_argument(
-            "--channels-file", help="File of channel IDs, one per line; # comments"
-        )
-
     channels = sub.add_parser("channels", help="List the channels an export would read")
-    common(channels)
+    add_read_options(channels)
 
     exporting = sub.add_parser("export", help="Export history as ingest records")
-    common(exporting)
+    add_read_options(exporting)
     target = exporting.add_mutually_exclusive_group(required=True)
     target.add_argument("--out", help="Directory for the JSONL files")
     target.add_argument("--ingest-url", help="Honcho base URL to send records to")
@@ -151,9 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     exporting.add_argument(
         "--api-key-env", help="Environment variable holding the Honcho API key"
     )
-    exporting.add_argument(
-        "--limit-per-container", type=int, help="At most this many records per channel"
-    )
+    add_limit_option(exporting)
     exporting.add_argument(
         "--allow-git-dir", action="store_true", help="Allow --out inside a git checkout"
     )

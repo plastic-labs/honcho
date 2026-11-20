@@ -33,7 +33,16 @@ honcho-github export --token-file ~/.github.token \
 HONCHO_API_KEY=... honcho-github export --token-file ~/.github.token \
     --repo plastic-labs/honcho --ingest-url http://127.0.0.1:8000 \
     --workspace acme --api-key-env HONCHO_API_KEY
+
+# Or, installed next to the Honcho CLI, read and import in one step
+# with the CLI's own workspace and key
+export HONCHO_EXPERIMENTAL=1
+honcho ingest from github --token-file ~/.github.token --repo plastic-labs/honcho -w acme
 ```
+
+The package registers itself as the `github` source for `honcho ingest from`
+(`pip install honcho-cli ./connectors/github`). There the CLI sends the records
+and holds back unanswered bot records, so `--bots` is the CLI's option.
 
 `--org` reads an organization's or account's **public** repositories, skipping
 archived ones and forks. A private repository is read only when it's named with

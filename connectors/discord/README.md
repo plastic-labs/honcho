@@ -36,7 +36,16 @@ honcho-discord export --token-file ~/.discord.token --guild GUILD_ID \
 HONCHO_API_KEY=... honcho-discord export --token-file ~/.discord.token \
     --guild GUILD_ID --ingest-url http://127.0.0.1:8000 --workspace discord \
     --api-key-env HONCHO_API_KEY
+
+# Or, installed next to the Honcho CLI, read and import in one step
+# with the CLI's own workspace and key
+export HONCHO_EXPERIMENTAL=1
+honcho ingest from discord --token-file ~/.discord.token --guild GUILD_ID -w discord
 ```
+
+The package registers itself as the `discord` source for `honcho ingest from`
+(`pip install honcho-cli ./connectors/discord`). There the CLI sends the records
+and holds back bot records no person interacted with (`--bots`).
 
 `--channels-file` takes one channel ID per line (`#` starts a comment). A
 channel's threads, active and archived, come with it. Private archived threads
