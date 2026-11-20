@@ -532,6 +532,85 @@ def test_a_thread_seen_before_its_channel_is_followed_once_the_channel_is() -> N
     assert fake.requests.count("/channels/330") == 1
 
 
+def test_a_channel_it_couldnt_look_up_is_tried_once_a_minute() -> None:
+    fake, sink = FakeDiscord(), FakeSink()
+    clock = Clock()
+    hidden = {"id": "330", "type": 12, "name": "private", "parent_id": "200"}
+    fake.unlisted.append(hidden)
+    fake.messages["330"] = [
+        msg(60, "330", MAYA, "first"),
+        msg(61, "330", JESS, "second"),
+    ]
+    fake.failures["/channels/330"] = 12  # two lookups' worth of retries
+
+    def later() -> None:
+        clock.now += 61
+
+    lookups: list[int] = []
+
+    def count() -> None:
+        lookups.append(fake.requests.count("/channels/330"))
+
+    follow(
+        fake,
+        sink,
+        [
+            READY,
+            created(msg(60, "330", MAYA, "first")),
+            created(msg(61, "330", JESS, "second")),
+            count,
+            later,
+            ev("RESUMED"),
+            later,
+            ev("RESUMED"),
+        ],
+        channel_ids={"200"},
+        clock=clock,
+    )
+
+    # Six failed tries for the first message and none for the second; six more
+    # a minute later; then one that finds it and reads its history.
+    assert lookups == [6]
+    assert fake.requests.count("/channels/330") == 13
+    assert sorted(sink.ids()[-2:]) == ["60", "61"]
+    assert sink.cursors()["330"] == "61"
+
+
+def test_lookups_tried_again_take_turns_with_live_events() -> None:
+    fake, sink = FakeDiscord(), FakeSink()
+    clock = Clock()
+    for cid in ("330", "331"):
+        fake.failures[f"/channels/{cid}"] = 12
+    retried: list[int] = []
+
+    def later() -> None:
+        clock.now += 61
+
+    def before_the_live_message() -> None:
+        retried.append(fake.requests.count("/channels/331"))
+
+    follow(
+        fake,
+        sink,
+        [
+            READY,
+            created(msg(60, "330", MAYA, "unknown")),
+            created(msg(61, "331", MAYA, "unknown too")),
+            later,
+            ev("RESUMED"),
+            before_the_live_message,
+            created(msg(12, "210", JESS, "live")),
+        ],
+        channel_ids={"210"},
+        clock=clock,
+    )
+
+    # One channel was tried again, then the live message was handled before
+    # the other's turn.
+    assert retried == [6]
+    assert sink.ids()[-1] == "12"
+
+
 def test_losing_every_selected_channel_sends_and_saves_before_stopping() -> None:
     fake, sink = FakeDiscord(), FakeSink()
     clock = Clock()

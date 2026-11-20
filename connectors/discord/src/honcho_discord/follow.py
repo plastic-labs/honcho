@@ -343,6 +343,9 @@ class Follower:
         self._stopping: str | None = None
         # Threads seen whose channel isn't followed, by ID.
         self._unparented: dict[str, Json] = {}
+        # Channels a live event named that couldn't be looked up, and when to
+        # try again.
+        self._lookups: dict[str, float] = {}
         self._handed: int = 0
         self._failures: int = 0
         self._next_flush: float = clock() + FLUSH_SECONDS
@@ -391,6 +394,12 @@ class Follower:
             if self._rediscover_at is not None and self._rediscover_at <= now:
                 self._rediscover()
                 continue
+            due = [cid for cid, when in self._lookups.items() if when <= now]
+            if due:
+                # One a pass: live events and sending go on between them.
+                cid = min(due, key=self._lookups.__getitem__)
+                del self._lookups[cid]
+                self._container(cid)
             for cid, when in list(self._later.items()):
                 if when <= now:
                     del self._later[cid]
@@ -590,6 +599,8 @@ class Follower:
         # deletes and new threads are taken now; edits (each needs a request)
         # are let go: best effort.
         for event in self.events.drain():
+            if self.sink.stop.is_set():
+                break
             kind, data = event.get("t"), obj(event.get("d"))
             if kind not in ("MESSAGE_CREATE", "MESSAGE_UPDATE"):
                 self._handle(event)
@@ -691,11 +702,15 @@ class Follower:
             return known
         if channel_id in self._unparented:
             return None
+        if self._lookups.get(channel_id, 0.0) > self.clock():
+            return None  # it failed lately: the follow loop tries it again
         try:
             channel = self.client.channel(channel_id)
         except DiscordError as error:
             logger.warning("Couldn't look up channel %s: %s", channel_id, error)
+            self._lookups[channel_id] = self.clock() + RETRY_SECONDS
             return None
+        self._lookups.pop(channel_id, None)
         if channel is None:
             self._ignored.add(channel_id)
             return None
