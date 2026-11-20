@@ -111,7 +111,7 @@ def _run_map(monkeypatch, tmp_path, *, answers, cfg, db_rows=(), ws_peers=None, 
         "_host_key": lambda: "hermes",
         "_active_profile_name": lambda: "default",
         "_state_db_path": lambda: db,
-        "_local_config_path": lambda: tmp_path / "honcho.json",
+        "_config_path": lambda: tmp_path / "honcho.json",
         "_write_config": lambda c, path=None: written.update({"cfg": c}),
         "_all_profile_host_configs": lambda: profiles,
         "_peers_map_client": lambda workspace=None: (client, SimpleNamespace(workspace_id="hermes") if client else None),
@@ -144,20 +144,6 @@ class TestCmdPeersMap:
         written = _run_map(monkeypatch, tmp_path, answers=["111", "-", ""], cfg=_cfg(userPeerAliases=aliases))
         assert written["cfg"]["hosts"]["hermes"] == expected_host
 
-    def test_cleared_host_map_does_not_resurrect_root_aliases(self, monkeypatch, tmp_path, capsys):
-        """A host block without the key inherits root, so clearing must leave an empty map behind."""
-        from hermes_plugin_honcho.client import HonchoClientConfig
-
-        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-        cfg = _cfg(root={"userPeerAliases": {"111": "root-person"}}, userPeerAliases={"111": "host-person"})
-        written = _run_map(monkeypatch, tmp_path, answers=["111", "-", ""], cfg=cfg)
-        assert written["cfg"]["hosts"]["hermes"]["userPeerAliases"] == {}
-        assert "root aliases no longer apply to [hermes]" in capsys.readouterr().out
-
-        path = tmp_path / "honcho.json"
-        path.write_text(json.dumps(written["cfg"]))
-        assert HonchoClientConfig.from_global_config(host="hermes", config_path=path).user_peer_aliases == {}
-
     @pytest.mark.parametrize("cfg, answers, kwargs", [
         (_cfg(), [""], {}),
         (_cfg(userPeerAliases={"111": "eri"}), ["111", "eri", ""], {}),
@@ -177,15 +163,11 @@ class TestCmdPeersMap:
         (_cfg(peerName="eri"), [""], dict(ws_peers=[]), ["No peers here yet", "Wrong workspace?"]),
         (_cfg(peerName="eri"), [""], dict(ws_peers=["stranger1", "stranger2"]),
          ["None of these match your configured identity"]),
-        ({"apiKey": "***", "userPeerAliases": {},
-          "hosts": {"hermes": {"workspace": "hermes"}, "hermes.dreamer": {"workspace": "dreamland"}}},
-         ["222", "tek", "", "all"], {}, ["also apply in workspace 'dreamland'"]),
         ({"apiKey": "***", "hosts": {"hermes": {"peerName": "eri", "userPeerAliases": {"111": "eri"}},
                                      "hermes.dreamer": {"peerName": "eri", "userPeerAliases": {"111": "bob"}}}},
          [""], dict(db_rows=[_row("111", name="x")]), ["≠ dreamer→bob"]),
     ], ids=["new-peer-and-history-consequences", "exists-markers", "offline-typed-targets", "inspect-peer-card",
-            "empty-workspace-hint", "unrecognized-workspace-hint", "cross-workspace-root-write-warns",
-            "sibling-divergence-marked"])
+            "empty-workspace-hint", "unrecognized-workspace-hint", "sibling-divergence-marked"])
     def test_view_and_consequence_messages(self, monkeypatch, tmp_path, capsys, cfg, answers, kwargs, expected):
         _run_map(monkeypatch, tmp_path, answers=answers, cfg=cfg, **kwargs)
         out = capsys.readouterr().out
@@ -262,24 +244,6 @@ def test_api_workspace_peers_reads_only_the_pages_the_cap_needs():
     peers = honcho_cli._api_workspace_peers(client)
     assert len(peers) == len(set(peers)) == honcho_cli._PEERS_MAP_FETCH_CAP
     assert fetched == [0, 1, 2, 3]
-
-
-class TestSaveScope:
-    @pytest.mark.parametrize("hosts, answers", [
-        ({"hermes": {}}, ["222", "tek", ""]),
-        ({"hermes": {}, "hermes.dreamer": {}}, ["222", "tek", "", "all"]),
-    ], ids=["single-profile-no-prompt", "multi-profile-all"])
-    def test_root_sourced_aliases_write_back_to_root(self, monkeypatch, tmp_path, hosts, answers):
-        cfg = {"apiKey": "***", "userPeerAliases": {"111": "eri"}, "hosts": hosts}
-        written = _run_map(monkeypatch, tmp_path, answers=answers, cfg=cfg)
-        assert written["cfg"]["userPeerAliases"] == {"111": "eri", "222": "tek"}
-        assert "userPeerAliases" not in written["cfg"]["hosts"]["hermes"]
-
-    def test_scope_this_forks_host_block(self, monkeypatch, tmp_path):
-        cfg = {"apiKey": "***", "userPeerAliases": {"111": "eri"}, "hosts": {"hermes": {}, "hermes.dreamer": {}}}
-        written = _run_map(monkeypatch, tmp_path, answers=["222", "tek", "", "this"], cfg=cfg)
-        assert written["cfg"]["hosts"]["hermes"]["userPeerAliases"] == {"111": "eri", "222": "tek"}
-        assert written["cfg"]["userPeerAliases"] == {"111": "eri"}  # root stays the other profiles' baseline
 
 
 def test_classify_workspace_peers_labels_from_local_config(monkeypatch):

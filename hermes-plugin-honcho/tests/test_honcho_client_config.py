@@ -92,38 +92,6 @@ def test_save_config_sets_owner_only_permissions(tmp_path, monkeypatch):
     assert mode == 0o600, f"Expected 0o600 (owner-only), got {oct(mode)}"
 
 
-class TestLatencyFlagResolution:
-
-    def test_host_block_wins(self, tmp_path, monkeypatch):
-        monkeypatch.delenv('HONCHO_BASE_URL', raising=False)
-        config_path = tmp_path / 'config.json'
-        config_path.write_text(json.dumps({
-            'apiKey': 'k',
-            'queryRewrite': False,
-            'firstTurnBaseWait': 3,
-            'hosts': {'hermes': {
-                'queryRewrite': True,
-                'firstTurnBaseWait': 0,
-                'firstTurnDialecticWait': 0.5,
-            }},
-        }))
-        cfg = HonchoClientConfig.from_global_config(config_path=config_path)
-        assert cfg.query_rewrite is True
-        assert cfg.first_turn_base_wait == 0.0
-        assert cfg.first_turn_dialectic_wait == 0.5
-
-    def test_per_host_timeout_wins_over_global(self, tmp_path, monkeypatch):
-        monkeypatch.delenv('HONCHO_TIMEOUT', raising=False)
-        config_path = tmp_path / 'config.json'
-        config_path.write_text(json.dumps({
-            'apiKey': 'k',
-            'timeout': 30,
-            'hosts': {'hermes': {'timeout': 5}},
-        }))
-        cfg = HonchoClientConfig.from_global_config(config_path=config_path)
-        assert cfg.timeout == 5.0
-
-
 class TestHonchoBaseUrlSanitize:
     def test_clean_base_url_accepted(self, tmp_path, monkeypatch):
         monkeypatch.delenv('HONCHO_BASE_URL', raising=False)
@@ -161,12 +129,11 @@ class TestProfileKeyIsolationWarning:
     def test_keyless_profile_block_warns_when_default_has_key(self, tmp_path, monkeypatch, caplog):
         import logging
         monkeypatch.delenv('HONCHO_API_KEY', raising=False)
-        config_path = tmp_path / 'config.json'
+        from hermes_constants import get_hermes_home
+        (get_hermes_home() / 'honcho.json').write_text(json.dumps({'hosts': {'hermes': {'apiKey': 'shared-key'}}}))
+        config_path = tmp_path / 'config.json'  # the named profile's own file
         config_path.write_text(json.dumps({
-            'hosts': {
-                'hermes': {'apiKey': 'shared-key'},
-                'hermes_coder': {'baseUrl': 'http://192.168.1.50:8000'},
-            },
+            'hosts': {'hermes_coder': {'baseUrl': 'http://192.168.1.50:8000'}},
         }))
         with caplog.at_level(logging.WARNING, logger='hermes_plugin_honcho.client'):
             cfg = HonchoClientConfig.from_global_config(
@@ -220,7 +187,8 @@ def test_save_config_merges_into_a_parseable_file(tmp_path):
     config_path.write_text(json.dumps({"hosts": {"other": {"apiKey": "keep-me"}}}))
     HonchoMemoryProvider().save_config({"api_key": "hc-test-key"}, str(tmp_path))
     data = json.loads(config_path.read_text())
-    assert data["hosts"]["other"]["apiKey"] == "keep-me" and data["api_key"] == "hc-test-key"
+    assert data["hosts"]["other"]["apiKey"] == "keep-me" and data["hosts"]["hermes"]["api_key"] == "hc-test-key"
+    assert "api_key" not in data  # every setting is the profile's host block
 
 
 def test_save_config_holds_the_refresh_locks_so_a_rotation_survives(tmp_path, monkeypatch):
@@ -253,4 +221,4 @@ def test_save_config_holds_the_refresh_locks_so_a_rotation_survives(tmp_path, mo
     thread.join(2)
     assert rotation_done.is_set()
     data = json.loads(config_path.read_text())
-    assert data["hosts"]["hermes"]["apiKey"] == "hch-at-new" and data["logging"] is True
+    assert data["hosts"]["hermes"]["apiKey"] == "hch-at-new" and data["hosts"]["hermes"]["logging"] is True

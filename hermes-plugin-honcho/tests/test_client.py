@@ -40,11 +40,8 @@ class TestHonchoClientConfigDefaults:
         assert config.environment == "production"
         assert config.timeout is None
         assert config.enabled is False
-        assert config.save_messages is True
-        assert config.session_strategy == "per-directory"
-        assert config.recall_mode == "hybrid"
-        assert config.session_peer_prefix is False
-        assert config.sessions == {}
+        assert config.a2a_sessions is True
+        assert config.raw == {}
 
 
 class TestFromEnv:
@@ -182,26 +179,6 @@ class TestFromGlobalConfig:
         assert config.ai_peer == "host-ai"
 
 
-    def test_context_tokens_explicit_sets_cap(self, tmp_path):
-        """Explicit contextTokens in config sets the cap."""
-        config_file = tmp_path / "config.json"
-        config_file.write_text(json.dumps({"apiKey": "***", "contextTokens": 1200}))
-        config = HonchoClientConfig.from_global_config(config_path=config_file)
-        assert config.context_tokens == 1200
-
-
-    def test_recall_mode_from_config(self, tmp_path):
-        """recallMode is read from config, host block wins."""
-        config_file = tmp_path / "config.json"
-        config_file.write_text(json.dumps({
-            "apiKey": "key",
-            "recallMode": "tools",
-            "hosts": {"hermes": {"recallMode": "context"}},
-        }))
-        config = HonchoClientConfig.from_global_config(config_path=config_file)
-        assert config.recall_mode == "context"
-
-
     def test_corrupt_config_falls_back_to_env(self, tmp_path):
         config_file = tmp_path / "config.json"
         config_file.write_text("not valid json{{{")
@@ -259,23 +236,17 @@ class TestFromGlobalConfig:
 
 
 class TestResolveSessionName:
-    def test_manual_override(self):
-        config = HonchoClientConfig(sessions={"/home/user/proj": "custom-session"})
-        assert config.resolve_session_name("/home/user/proj") == "custom-session"
+    """One Honcho session per Hermes chat: the gateway's key when it routes the chat, else the session id."""
 
-    def test_derive_from_dirname(self):
-        config = HonchoClientConfig()
-        result = config.resolve_session_name("/home/user/my-project")
-        assert result == "my-project"
+    def test_session_id_names_the_session(self):
+        assert HonchoClientConfig.resolve_session_name(session_id="20260412_171002_69bb38") == "20260412_171002_69bb38"
 
+    def test_gateway_key_beats_session_id_including_local_chats(self):
+        local = "agent:main:local:dm:local-abc"
+        assert HonchoClientConfig.resolve_session_name(session_id="s1", gateway_session_key=local) == "agent-main-local-dm-local-abc"
 
-    def test_per_repo_uses_git_root(self):
-        config = HonchoClientConfig(session_strategy="per-repo")
-        with patch.object(
-            HonchoClientConfig, "_git_repo_name", return_value="hermes-agent"
-        ):
-            result = config.resolve_session_name("/home/user/hermes-agent/subdir")
-        assert result == "hermes-agent"
+    def test_no_chat_names_no_session(self):
+        assert HonchoClientConfig.resolve_session_name() is None
 
 
 class TestResolveConfigPath:
@@ -289,10 +260,11 @@ class TestResolveConfigPath:
             result = resolve_config_path()
         assert result == local_cfg
 
-    def test_falls_back_to_default_profile_when_no_local(self, tmp_path, monkeypatch):
+    def test_is_the_profiles_own_file_and_until_it_exists_reads_the_default_profiles(self, tmp_path, monkeypatch):
         # Profile mode: HERMES_HOME points at ~/.hermes/profiles/<name>, so
         # _get_default_hermes_home() must resolve back to ~/.hermes — that's
         # the bug the HOME-anchored helper fixes (vs. blindly using Path.home()).
+        from hermes_plugin_honcho.host_config import legacy_path
         fake_home = tmp_path / "fakehome"
         fake_home.mkdir()
         default_home = fake_home / ".hermes"
@@ -307,7 +279,8 @@ class TestResolveConfigPath:
         result = resolve_config_path()
 
         assert _get_default_hermes_home() == default_home
-        assert result == default_cfg
+        assert result == profile_home / "honcho.json"
+        assert legacy_path(result) == default_cfg  # what 1.1.0 read, which the migration copies from
 
 
 class TestResolveActiveHost:
@@ -347,49 +320,6 @@ class TestProfileScopedConfig:
         assert config.host == "hermes_coder"
         assert config.workspace_id == "hermes"  # shared workspace
         assert config.ai_peer == "hermes_coder"
-
-
-class TestObservationModeMigration:
-    """Existing configs without explicit observationMode keep 'unified' default."""
-
-    def test_existing_config_defaults_to_unified(self, tmp_path):
-        """Config with host block but no observationMode → 'unified' (old default)."""
-        cfg_file = tmp_path / "config.json"
-        cfg_file.write_text(json.dumps({
-            "apiKey": "k",
-            "hosts": {"hermes": {"enabled": True, "aiPeer": "hermes"}},
-        }))
-        cfg = HonchoClientConfig.from_global_config(config_path=cfg_file)
-        assert cfg.observation_mode == "unified"
-
-    def test_new_config_defaults_to_directional(self, tmp_path):
-        """Config with no host block and no credentials → 'directional' (new default)."""
-        cfg_file = tmp_path / "config.json"
-        cfg_file.write_text(json.dumps({}))
-        cfg = HonchoClientConfig.from_global_config(config_path=cfg_file)
-        assert cfg.observation_mode == "directional"
-
-
-    def test_granular_observation_overrides_preset(self, tmp_path):
-        """Explicit observation object overrides both preset and migration default."""
-        cfg_file = tmp_path / "config.json"
-        cfg_file.write_text(json.dumps({
-            "apiKey": "k",
-            "hosts": {"hermes": {
-                "enabled": True,
-                "observation": {
-                    "user": {"observeMe": True, "observeOthers": False},
-                    "ai": {"observeMe": False, "observeOthers": True},
-                },
-            }},
-        }))
-        cfg = HonchoClientConfig.from_global_config(config_path=cfg_file)
-        # observation_mode falls back to "unified" (migration), but
-        # granular booleans from the observation object win
-        assert cfg.user_observe_me is True
-        assert cfg.user_observe_others is False
-        assert cfg.ai_observe_me is False
-        assert cfg.ai_observe_others is True
 
 
 class TestGetHonchoClient:
@@ -583,7 +513,7 @@ class TestResolveSessionNameGatewayKey:
 
     def test_gateway_key_overrides_per_session_strategy(self):
         """gateway_session_key must win over per-session session_id."""
-        config = HonchoClientConfig(session_strategy="per-session")
+        config = HonchoClientConfig()
         result = config.resolve_session_name(
             session_id="20260412_171002_69bb38",
             gateway_session_key="agent:main:telegram:dm:8439114563",
@@ -601,15 +531,10 @@ class TestResolveSessionNameGatewayKey:
         assert ":" not in result
 
 
-class TestResolveSessionNameLocalGatewayKey:
-    """A LOCAL gateway key (``agent:<ns>:local:...``) falls through to ``sessionStrategy``.
-
-    Since Hermes routed its own CLI/TUI/Desktop/ACP chats through the gateway runtime, each of them
-    arrives with a gateway session key like a Telegram chat does. Honoring it opened one Honcho
-    session per chat (``agent-main-local-dm-local-<sha>``) and the configured per-repo /
-    per-directory strategy was never reached. Those chats have their own frozen workspace, so the
-    strategy applies to them; messaging platforms keep their per-chat isolation.
-    """
+class TestLocalGatewayKey:
+    """A LOCAL gateway key (``agent:<ns>:local:...``) is a Hermes CLI/TUI/Desktop/ACP chat the gateway routes.
+    It names its own Honcho session like any chat, but it has a real working directory, so it also joins its
+    repository's scope; a messaging chat joins only the machine's."""
 
     LOCAL_KEY = "agent:main:local:dm:local-98538a20971158c0308ab21c193d3dbc508f54b85c00b71677ae2a91caaa6f95"
     TELEGRAM_KEY = "agent:main:telegram:dm:8439114563"
@@ -627,7 +552,7 @@ class TestResolveSessionNameLocalGatewayKey:
         "agent:main:local:dm",                 # no chat id
     ])
     def test_recognizes_local_keys(self, key):
-        assert HonchoClientConfig._is_local_gateway_key(key) is True
+        assert HonchoClientConfig.is_local_gateway_key(key) is True
 
     @pytest.mark.parametrize("key", [
         TELEGRAM_KEY,
@@ -638,50 +563,7 @@ class TestResolveSessionNameLocalGatewayKey:
         "agent:local",                         # "local" in the namespace slot
     ])
     def test_rejects_non_local_keys(self, key):
-        assert HonchoClientConfig._is_local_gateway_key(key) is False
-
-    def test_local_key_falls_through_to_per_directory(self, tmp_path):
-        config = HonchoClientConfig(session_strategy="per-directory")
-        result = config.resolve_session_name(cwd=str(tmp_path), gateway_session_key=self.LOCAL_KEY)
-        assert result == tmp_path.name
-
-    def test_local_key_falls_through_to_sessions_map(self, tmp_path):
-        config = HonchoClientConfig(session_strategy="per-repo", sessions={str(tmp_path): "mapped-bucket"})
-        result = config.resolve_session_name(cwd=str(tmp_path), gateway_session_key=self.LOCAL_KEY)
-        assert result == "mapped-bucket"
-
-    def test_local_key_falls_through_to_explicit_title(self, tmp_path):
-        config = HonchoClientConfig(session_strategy="per-directory")
-        result = config.resolve_session_name(
-            cwd=str(tmp_path), gateway_session_key=self.LOCAL_KEY,
-            session_title="Refactor auth", session_title_source="user",
-        )
-        assert result == "Refactor-auth"
-
-    def test_local_key_with_per_session_isolates_by_session_id(self, tmp_path):
-        """Per-chat isolation stays available for local chats: ask for it with ``per-session``."""
-        config = HonchoClientConfig(session_strategy="per-session")
-        result = config.resolve_session_name(
-            cwd=str(tmp_path), session_id="local-98538a20971158", gateway_session_key=self.LOCAL_KEY,
-        )
-        assert result == "local-98538a20971158"
-
-    def test_local_key_with_global_strategy_uses_workspace(self, tmp_path):
-        config = HonchoClientConfig(session_strategy="global", workspace_id="agents")
-        result = config.resolve_session_name(cwd=str(tmp_path), gateway_session_key=self.LOCAL_KEY)
-        assert result == "agents"
-
-    def test_messaging_key_still_beats_directory_strategies(self, tmp_path):
-        """The fall-through is LOCAL-only: a Telegram chat never resolves by the gateway's cwd."""
-        config = HonchoClientConfig(session_strategy="per-repo", sessions={str(tmp_path): "mapped-bucket"})
-        result = config.resolve_session_name(cwd=str(tmp_path), gateway_session_key=self.TELEGRAM_KEY)
-        assert result == "agent-main-telegram-dm-8439114563"
-
-    def test_local_key_result_gets_ai_peer_prefix_like_any_other_path(self, tmp_path):
-        config = HonchoClientConfig(session_strategy="per-directory", ai_peer="ivy", session_ai_peer_prefix=True)
-        result = config.resolve_session_name(cwd=str(tmp_path), gateway_session_key=self.LOCAL_KEY)
-        assert result == f"ivy-{tmp_path.name}"
-
+        assert HonchoClientConfig.is_local_gateway_key(key) is False
 
 class TestResolveSessionNameLengthLimit:
     """Regression tests for Honcho's 100-char session ID limit (issue #13868).
@@ -725,17 +607,6 @@ class TestResolveSessionNameLengthLimit:
         assert result_a != result_b
         assert len(result_a) == self.HONCHO_MAX
         assert len(result_b) == self.HONCHO_MAX
-
-
-class TestDialecticDepthParsing:
-    """Tests for _parse_dialectic_depth and _parse_dialectic_depth_levels."""
-
-
-    def test_depth_clamped_high(self, tmp_path):
-        config_file = tmp_path / "config.json"
-        config_file.write_text(json.dumps({"apiKey": "***", "dialecticDepth": 10}))
-        config = HonchoClientConfig.from_global_config(config_path=config_file)
-        assert config.dialectic_depth == 3
 
 
 class TestGetHonchoClientBaseUrlDoublePrefixFix:

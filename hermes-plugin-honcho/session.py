@@ -15,7 +15,7 @@ from .client import get_honcho_client
 from .session_auth import HonchoAuthError, SessionAuthMixin
 from .session_context import SessionContextMixin
 from .session_migration import SessionMigrationMixin
-from .session_peers import SessionPeersMixin
+from .session_peers import SessionPeersMixin, observe_self
 
 if TYPE_CHECKING:
     from honcho import Honcho
@@ -61,15 +61,16 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
     Auth retry, peer-ID resolution, recall and memory-file migration live in the mixins."""
 
     def __init__(
-        self, honcho: Honcho | None = None, context_tokens: int | None = None, config: Any | None = None,
+        self, honcho: Honcho | None = None, config: Any | None = None,
         runtime_user_peer_name: str | None = None, runtime_user_peer_name_alt: str | None = None,
+        scopes: list[str] | None = None,
     ):
-        """``honcho`` defaults to the per-identity cached client; ``context_tokens`` caps
-        context() calls (None = Honcho default); the runtime peer names are the gateway
-        user identity (and a stable alternate) for per-user memory scoping."""
+        """``honcho`` defaults to the per-identity cached client; the runtime peer names are the gateway
+        user identity (and a stable alternate) for per-user memory scoping; ``scopes`` are the scopes a
+        session this manager creates joins (its repository and machine)."""
         self._honcho = honcho
-        self._context_tokens = context_tokens
         self._config = config
+        self._scopes = list(scopes or [])
         self._runtime_user_peer_name = runtime_user_peer_name
         self._runtime_user_peer_name_alt = runtime_user_peer_name_alt
         self._cache: dict[str, HonchoSession] = {}
@@ -89,32 +90,13 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         self._auth_failure: str | None = None
         self._auth_notice_emitted = False
 
-        # Behavior knobs copied from config (HonchoClientConfig defaults when absent); the
-        # observation booleans map 1:1 to Honcho's SessionPeerConfig toggles.
-        for name, default in (
-            ("write_frequency", "async"), ("dialectic_reasoning_level", "low"), ("dialectic_dynamic", True),
-            ("dialectic_max_chars", 600), ("dialectic_max_input_chars", 10000),
-            ("user_observe_me", True), ("user_observe_others", True),
-            ("ai_observe_me", True), ("ai_observe_others", True),
-        ):
-            setattr(self, f"_{name}", getattr(config, name) if config else default)
-        self._turn_counter: int = 0
-        # honcho session id -> observation booleans. Whole dicts are swapped in one assignment, so readers never see a partial one.
-        self._session_observation: dict[str, dict[str, bool]] = {}
-
-        # Prefetch cache: session_key -> last context result (consumed once per turn).
-        # Dialectic results are cached on the plugin side (HonchoMemoryProvider._prefetch_result)
-        # so session-start prewarm and turn-driven fires share one source of truth.
-        self._context_cache: dict[str, dict] = {}
-        self._prefetch_cache_lock = threading.Lock()
-
         # Async write queue — the writer thread starts lazily on first enqueue
         # (_ensure_async_writer_locked): constructing a manager must not spawn background
         # work or touch the network (unit tests build managers with mocked clients).
-        self._async_queue: queue.Queue | None = queue.Queue() if self._write_frequency == "async" else None
+        self._async_queue: queue.Queue = queue.Queue()
         self._async_thread: threading.Thread | None = None
         self._async_thread_lock = threading.Lock()
-        # Set by shutdown/stop_async_writer: no new threads after the join, late saves flush inline.
+        # Set by shutdown: no new threads after the join, late saves flush inline.
         self._shutting_down = False
 
     @property
@@ -170,103 +152,62 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
 
         return Peer(peer_id, self.honcho)
 
-    # ----- Observation config (per session) -----
-
-    def _observation_flags(self, honcho_session_id: str) -> dict[str, bool]:
-        """The four observation booleans for one session: the values synced from that session's
-        server config once setup ran, else the config snapshot held on the manager."""
-        synced = self._session_observation.get(honcho_session_id)
-        if synced is not None:
-            return dict(synced)
-        return {f"{kind}_{name}": getattr(self, f"_{kind}_{name}")
-                for kind in ("user", "ai") for name in ("observe_me", "observe_others")}
-
-    def _ai_observes_others(self, session: HonchoSession) -> bool:
-        """Whether the AI peer observes other peers in this session; this picks the recall observer."""
-        synced = self._session_observation.get(session.honcho_session_id)
-        return synced["ai_observe_others"] if synced is not None else self._ai_observe_others
-
     # ----- Session creation -----
 
-    def _configure_session_peers(self, session_id: str, user_peer: Any, assistant_peer: Any) -> dict[str, bool] | None:
-        """add_peers with this session's observation config, then adopt the server's effective
-        config (set via the Honcho UI, it wins over local defaults). Returns the effective flags for
-        get_or_create to store next to the cache entry, or None when auth died mid-way (already
-        recorded by _authed_call)."""
-        peers = (("user", user_peer), ("ai", assistant_peer))
-        flags = self._observation_flags(session_id)
-        synced = dict(flags)
+    def _configure_session_peers(self, session_id: str, user_peer: Any, assistant_peer: Any, *, existing: bool) -> bool:
+        """Join both peers to the session observing only themselves: each peer's memory is its own view, and
+        nobody observes the other. A session that already had messages may hold older flags (the AI peer used
+        to observe the user), and joining keeps stored flags, so those are set explicitly. False when auth died
+        mid-way (already recorded by _authed_call)."""
         try:
-            from honcho.session import SessionPeerConfig
-            peer_entries = [
-                (peer, SessionPeerConfig(observe_me=flags[f"{kind}_observe_me"], observe_others=flags[f"{kind}_observe_others"]))
-                for kind, peer in peers
-            ]
-            self._authed_call("session peer setup", lambda: self._sdk_session(session_id).add_peers(peer_entries))
-
-            def _adopt_server_config() -> None:
-                server_cfgs = self._authed_call(
-                    "peer configuration read",
-                    lambda: [self._sdk_session(session_id).get_peer_configuration(peer) for _, peer in peers],
-                )
-                for (kind, _), server_cfg in zip(peers, server_cfgs):
-                    for field_name in ("observe_me", "observe_others"):
-                        value = getattr(server_cfg, field_name)
-                        if value is not None:
-                            synced[f"{kind}_{field_name}"] = value
-                logger.debug("Honcho observation synced from server for session '%s': user(me=%s,others=%s) ai(me=%s,others=%s)",
-                             session_id, synced["user_observe_me"], synced["user_observe_others"],
-                             synced["ai_observe_me"], synced["ai_observe_others"])
-
-            self._guarded(_adopt_server_config, None, logging.DEBUG,
-                          "Honcho get_peer_configuration failed (using local config): %s")
+            peers = (user_peer, assistant_peer)
+            self._authed_call("session peer setup",
+                              lambda: self._sdk_session(session_id).add_peers([(peer, observe_self()) for peer in peers]))
+            if existing:
+                self._authed_call("session peer configuration", lambda: [
+                    self._sdk_session(session_id).set_peer_configuration(peer, observe_self()) for peer in peers])
         except HonchoAuthError:
-            return None
+            return False
         except Exception as e:
             logger.warning("Honcho session '%s' add_peers failed (non-fatal): %s", session_id, e)
-        return synced
+        return True
 
-    def _load_existing_messages(self, session_id: str) -> list:
-        """Load prior messages via context() (one call for messages + metadata), oldest first."""
+    def _session_has_messages(self, session_id: str) -> bool:
+        """Whether the session already holds a message (one page of one); True when the check fails, so a
+        failure never sends scopes, which would copy an existing session's memory into them again."""
         try:
-            ctx = self._authed_call(
-                "session context load",
-                lambda: self._sdk_session(session_id).context(summary=True, tokens=self._context_tokens))
-            existing_messages = ctx.messages or []
-            if len(existing_messages) > 1:
-                timestamps = [m.created_at for m in existing_messages if m.created_at]
-                if timestamps and timestamps != sorted(timestamps):
-                    logger.warning("Honcho messages not chronologically ordered for session '%s', sorting", session_id)
-                    existing_messages = sorted(existing_messages, key=lambda m: m.created_at or datetime.min)
-            if existing_messages:
-                logger.info("Honcho session '%s' retrieved (%d existing messages)", session_id, len(existing_messages))
-            else:
-                logger.info("Honcho session '%s' created (new)", session_id)
-            return existing_messages
+            page = self._authed_call("session message check", lambda: self._sdk_session(session_id).messages(size=1))
+            return bool(list(getattr(page, "items", None) or []))
         except HonchoAuthError:
-            logger.warning("Honcho session '%s' loaded without server context: auth failed", session_id)
+            raise
         except Exception as e:
-            logger.warning("Honcho session '%s' loaded (failed to fetch context: %s)", session_id, e)
-        return []
+            logger.debug("Honcho session '%s' message check failed: %s", session_id, e)
+            return True
 
-    def _get_or_create_honcho_session(self, session_id: str, user_peer: Any, assistant_peer: Any) -> tuple[Any, list, dict[str, bool] | None]:
-        """(honcho_session, existing_messages, observation flags) with peers configured; a cached session
-        yields no messages and the flags stored when it was configured."""
+    def _get_or_create_honcho_session(self, session_id: str, user_peer: Any, assistant_peer: Any) -> Any:
+        """The SDK session with its peers configured. A session with no messages yet joins this manager's
+        scopes: sending them for one that has messages would queue a copy of its memory into each scope again."""
         with self._cache_lock:
             if session_id in self._sessions_cache:
                 logger.debug("Honcho session '%s' retrieved from cache", session_id)
-                return self._sessions_cache[session_id], [], self._session_observation.get(session_id)
+                return self._sessions_cache[session_id]
 
         self._authed_call("session setup", lambda: self._sdk_session(session_id))
-        observation = self._configure_session_peers(session_id, user_peer, assistant_peer)
-        existing_messages: list = self._load_existing_messages(session_id) if observation is not None else []
+        existing = self._session_has_messages(session_id)
+        if self._scopes and not existing:
+            scopes = list(self._scopes)
+            created = self._authed_call("session scopes", lambda: self.honcho.session(session_id, scopes=scopes))
+            with self._cache_lock:
+                self._sessions_cache[session_id] = created
+        if self._configure_session_peers(session_id, user_peer, assistant_peer, existing=existing):
+            logger.info("Honcho session '%s' %s", session_id, "retrieved" if existing else "created")
 
         with self._cache_lock:
             honcho_session = self._sessions_cache.get(session_id)
         if honcho_session is None:
             # A mid-init client rebuild dropped the cached session; resolve a fresh one.
             honcho_session = self._authed_call("session setup", lambda: self._sdk_session(session_id))
-        return honcho_session, existing_messages, observation
+        return honcho_session
 
     @staticmethod
     def _has_unsynced(session: HonchoSession) -> bool:
@@ -276,9 +217,6 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         """Drop one session and every entry keyed to it. Caller holds _cache_lock."""
         del self._cache[key]
         self._sessions_cache.pop(session.honcho_session_id, None)
-        self._session_observation.pop(session.honcho_session_id, None)
-        with self._prefetch_cache_lock:
-            self._context_cache.pop(key, None)
 
     def _enforce_cache_caps_locked(self) -> None:
         """Evict least recently used entries above the hard caps. A session with unsynced messages
@@ -294,21 +232,16 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
                 break
             if session_id not in live_ids:
                 del self._sessions_cache[session_id]
-        for session_id in [sid for sid in self._session_observation if sid not in live_ids]:
-            del self._session_observation[session_id]
         live_peers = {p for s in self._cache.values() for p in (s.user_peer_id, s.assistant_peer_id)}
         for peer_id in list(self._peers_cache):
             if len(self._peers_cache) <= _PEERS_CACHE_MAX_SIZE:
                 break
             if peer_id not in live_peers:
                 del self._peers_cache[peer_id]
-        with self._prefetch_cache_lock:
-            for key in [k for k in self._context_cache if k not in self._cache]:
-                del self._context_cache[key]
 
     def _sweep_idle_sessions_locked(self) -> int:
-        """Evict sessions idle beyond _SESSION_IDLE_TTL_SECONDS together with their SDK session,
-        observation flags and prefetch entries, then enforce the caps. Caller holds _cache_lock."""
+        """Evict sessions idle beyond _SESSION_IDLE_TTL_SECONDS together with their SDK session, then enforce
+        the caps. Caller holds _cache_lock."""
         cutoff = time.time() - _SESSION_IDLE_TTL_SECONDS
         evicted = 0
         for key, session in list(self._cache.items()):
@@ -350,31 +283,16 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         honcho_session_id = self._sanitize_id(key)
         user_peer = self._get_or_create_peer(user_peer_id)
         assistant_peer = self._get_or_create_peer(assistant_peer_id)
-        _, existing_messages, observation = self._get_or_create_honcho_session(honcho_session_id, user_peer, assistant_peer)
+        self._get_or_create_honcho_session(honcho_session_id, user_peer, assistant_peer)
 
-        session = HonchoSession(
-            key=key, user_peer_id=user_peer_id, assistant_peer_id=assistant_peer_id, honcho_session_id=honcho_session_id,
-            messages=[
-                {"role": "assistant" if msg.peer_id == assistant_peer_id else "user", "content": msg.content,
-                 "timestamp": msg.created_at.isoformat() if msg.created_at else "", "_synced": True}
-                for msg in existing_messages
-            ],
-        )
+        session = HonchoSession(key=key, user_peer_id=user_peer_id, assistant_peer_id=assistant_peer_id,
+                                honcho_session_id=honcho_session_id)
         with self._cache_lock:
             self._cache[key] = session
-            # Stored with the cache entry and dropped with it, so the dict can hold no orphan ids.
-            if observation is not None:
-                self._session_observation[honcho_session_id] = observation
             self._enforce_cache_caps_locked()
         return session
 
     # ----- Writes -----
-
-    def _join_observation_flags(self, honcho_session_id: str) -> tuple[bool, bool]:
-        """(observe_me, observe_others) for an author peer joining ``honcho_session_id``: the session's
-        server-synced values once setup ran, else the manager's config snapshot."""
-        flags = self._observation_flags(honcho_session_id)
-        return flags["user_observe_me"], flags["user_observe_others"]
 
     def _author_peer_for_session(self, honcho_session: Any, honcho_session_id: str, author_peer_id: str) -> Any:
         """The author's peer, joined to the session the first time it writes.
@@ -385,10 +303,7 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
             if author_peer_id in self._joined_author_peers.get(honcho_session_id, ()):
                 return peer
         try:
-            from honcho.session import SessionPeerConfig
-            observe_me, observe_others = self._join_observation_flags(honcho_session_id)
-            config = SessionPeerConfig(observe_me=observe_me, observe_others=observe_others)
-            honcho_session.add_peers([(peer, config)])
+            honcho_session.add_peers([(peer, observe_self())])
         except Exception as e:
             # The write still lands under the right peer. Only the membership (observe config) is missing.
             logger.debug("Honcho author peer join failed for %s: %s", author_peer_id, e)
@@ -440,11 +355,7 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
             assistant_peer = self._get_or_create_peer(session.assistant_peer_id)
             honcho_session = self._sessions_cache.get(session.honcho_session_id)
             if honcho_session is None:
-                honcho_session, _, observation = self._get_or_create_honcho_session(
-                    session.honcho_session_id, user_peer, assistant_peer)
-                if observation is not None:
-                    with self._cache_lock:
-                        self._session_observation[session.honcho_session_id] = observation
+                honcho_session = self._get_or_create_honcho_session(session.honcho_session_id, user_peer, assistant_peer)
             honcho_messages = []
             for m in new_messages:
                 if m["role"] != "user":
@@ -517,35 +428,20 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
             if self._reclaim_key_locked(session) is not None and not any(s is session for s in self._retry_sessions):
                 self._retry_sessions.append(session)
 
-    def _keep_until_flushed(self, session: HonchoSession) -> None:
-        """Like _retain_for_retry, but when a newer object owns the key this batch is written now."""
-        with self._cache_lock:
-            owner = self._reclaim_key_locked(session)
-        if owner is not None:
-            self._flush_now(session)
-
     def _flush_now(self, session: HonchoSession) -> None:
         """A save-time flush whose failed batch stays reachable for flush_all(), even after an eviction."""
         if not self._flush_session(session):
             self._retain_for_retry(session)
 
     def save(self, session: HonchoSession) -> None:
-        """Save messages per write_frequency: "async" enqueues for the background thread, "turn"
-        flushes now, "session" defers until flush_all(), int N flushes every N turns."""
-        self._turn_counter += 1
-        wf = self._write_frequency
-        if wf == "async" and self._async_queue is not None:
-            # Under the writer lock, so a put cannot slip in after stop_async_writer() drained the queue.
-            with self._async_thread_lock:
-                if not self._shutting_down:
-                    self._ensure_async_writer_locked()
-                    self._async_queue.put(session)
-                    return
-            self._flush_now(session)
-        elif self._shutting_down or wf == "turn" or (isinstance(wf, int) and wf > 0 and self._turn_counter % wf == 0):
-            self._flush_now(session)
-        else:
-            self._keep_until_flushed(session)
+        """Queue the session's new messages for the background writer; once shutdown began, write them now."""
+        # Under the writer lock, so a put cannot slip in after shutdown drained the queue.
+        with self._async_thread_lock:
+            if not self._shutting_down:
+                self._ensure_async_writer_locked()
+                self._async_queue.put(session)
+                return
+        self._flush_now(session)
 
     def flush_all(self, timeout: float | None = None) -> None:
         """Flush unsynced messages for all cached sessions, then drain the async queue inline. ``timeout`` bounds
@@ -582,8 +478,6 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
     def _drain_async_queue(self, deadline: float | None = None) -> list[HonchoSession]:
         """Flush every queued session inline. Returns the sessions ``deadline`` left unflushed."""
         skipped: list[HonchoSession] = []
-        if self._async_queue is None:
-            return skipped
         while not self._async_queue.empty():
             try:
                 item = self._async_queue.get_nowait()
@@ -598,18 +492,13 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
             self._async_thread = spawn_context_thread(self._async_writer_loop, name="honcho-async-writer", owner=self)
             self._async_thread.start()
 
-    def stop_async_writer(self, timeout: float = 10.0) -> None:
-        """Join the async writer, then drain whatever was queued before the join, both within ``timeout``.
-        saveMessages: false never enqueues, so the drain is a no-op there and the exit stays clean."""
-        self._warn_unsynced(self._stop_async_writer_before(time.monotonic() + timeout), timeout)
-
     def _stop_async_writer_before(self, deadline: float) -> list[HonchoSession]:
         """Join the writer for what is left of ``deadline``, then drain the queue under the same deadline. A writer
         still inside an upload keeps running to the client's HTTP timeout; it holds the shared client, so it is
         joined, never abandoned."""
         with self._async_thread_lock:
             self._shutting_down = True
-        if self._async_queue is not None and self._async_thread is not None and self._async_thread.is_alive():
+        if self._async_thread is not None and self._async_thread.is_alive():
             self._async_queue.put(_ASYNC_SHUTDOWN)
             self._async_thread.join(timeout=max(0.0, deadline - time.monotonic()))
         return self._drain_async_queue(deadline)
@@ -620,39 +509,11 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         HTTP timeout. Whatever stayed unsynced is counted in one warning."""
         with self._async_thread_lock:
             self._shutting_down = True
-        if self._async_queue is not None:
-            deadline = time.monotonic() + timeout
-            skipped = self._flush_cached_before(deadline)
-            skipped.extend(self._drain_async_queue(deadline))
-            skipped.extend(self._stop_async_writer_before(deadline))
-            self._warn_unsynced(skipped, timeout)
-
-    # ----- Prefetch cache -----
-
-    def prefetch_context(self, session_key: str, user_message: str | None = None) -> None:
-        """Fire get_prefetch_context in a background thread; consumed next turn via pop_context_result().
-        No-op once shutdown began, so nothing is left running after the join."""
-        if self._shutting_down:
-            return
-
-        def _run():
-            result = self.get_prefetch_context(session_key, user_message)
-            if result:
-                self.set_context_result(session_key, result)
-
-        spawn_context_thread(_run, name="honcho-context-prefetch", owner=self).start()
-
-    def set_context_result(self, session_key: str, result: dict[str, str]) -> None:
-        """Store a prefetched context result in a thread-safe way."""
-        if not result:
-            return
-        with self._prefetch_cache_lock:
-            self._context_cache[session_key] = result
-
-    def pop_context_result(self, session_key: str) -> dict[str, str]:
-        """Return and clear the cached context result ({} if none ready yet)."""
-        with self._prefetch_cache_lock:
-            return self._context_cache.pop(session_key, {})
+        deadline = time.monotonic() + timeout
+        skipped = self._flush_cached_before(deadline)
+        skipped.extend(self._drain_async_queue(deadline))
+        skipped.extend(self._stop_async_writer_before(deadline))
+        self._warn_unsynced(skipped, timeout)
 
 
 # ---- BEGIN PLUGIN-COMPAT (revert-scheduled; see COMPAT_MANIFEST.md) ----

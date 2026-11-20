@@ -113,9 +113,7 @@ def _patch_manager_for_resolution_test(mgr: HonchoSessionManager) -> None:
     """
     fake_peer = MagicMock()
     mgr._get_or_create_peer = MagicMock(return_value=fake_peer)
-    mgr._get_or_create_honcho_session = MagicMock(
-        return_value=(MagicMock(), [], None)
-    )
+    mgr._get_or_create_honcho_session = MagicMock(return_value=MagicMock())
 
 
 class TestPeerResolutionOrder:
@@ -128,7 +126,6 @@ class TestPeerResolutionOrder:
         pin_peer_name: bool,
         user_peer_aliases: dict[str, str] | None = None,
         runtime_peer_prefix: str = "",
-        session_peer_prefix: bool = False,
     ) -> HonchoClientConfig:
         # The test doesn't need auth / Honcho — disable the provider so
         # the manager doesn't try to open a real client.
@@ -138,9 +135,7 @@ class TestPeerResolutionOrder:
             pin_peer_name=pin_peer_name,
             user_peer_aliases=user_peer_aliases or {},
             runtime_peer_prefix=runtime_peer_prefix,
-            session_peer_prefix=session_peer_prefix,
             enabled=False,
-            write_frequency="turn",  # avoid spawning the async writer thread
         )
 
     def test_runtime_wins_when_pin_is_false(self):
@@ -265,24 +260,6 @@ class TestPeerResolutionOrder:
         session = mgr.get_or_create("telegram:user:42")
         assert session.user_peer_id == "raw-match"
 
-    def test_session_peer_prefix_is_orthogonal_to_runtime_peer_prefix(self):
-        """sessionPeerPrefix scopes session IDs; runtimePeerPrefix scopes user peers."""
-        mgr = HonchoSessionManager(
-            honcho=MagicMock(),
-            config=self._config(
-                peer_name="Igor",
-                pin_peer_name=False,
-                runtime_peer_prefix="telegram_",
-                session_peer_prefix=True,
-            ),
-            runtime_user_peer_name="7654321",
-        )
-        _patch_manager_for_resolution_test(mgr)
-
-        session = mgr.get_or_create("telegram:7654321")
-        assert session.user_peer_id == "telegram_7654321"
-        assert session.honcho_session_id == "telegram-7654321"
-
     def test_config_wins_when_pin_is_true(self):
         """With pin enabled, configured peer_name beats runtime ID."""
         mgr = HonchoSessionManager(
@@ -406,7 +383,6 @@ class TestCrossPlatformMemoryUnification:
             peer_name="Igor",
             pin_peer_name=True,
             enabled=False,
-            write_frequency="turn",
         )
 
     def test_telegram_and_discord_collapse_to_one_peer_when_pinned(self):
@@ -447,7 +423,6 @@ class TestCrossPlatformMemoryUnification:
             peer_name="Igor",
             pin_peer_name=False,
             enabled=False,
-            write_frequency="turn",
         )
         mgr_a = HonchoSessionManager(
             honcho=MagicMock(), config=cfg, runtime_user_peer_name="user_a",
@@ -505,7 +480,6 @@ class TestPinTransition:
             peer_name="Igor",
             pin_peer_name=True,
             enabled=False,
-            write_frequency="turn",
         )
 
     def _unpinned(self) -> HonchoClientConfig:
@@ -514,7 +488,6 @@ class TestPinTransition:
             peer_name="Igor",
             pin_peer_name=False,
             enabled=False,
-            write_frequency="turn",
         )
 
     def test_fresh_manager_after_flip_resolves_to_runtime(self):
@@ -557,23 +530,6 @@ class TestPinTransition:
             "gateway cache must bust the whole manager instead."
         )
 
-    def test_identity_signature_reflects_both_session_prefixes(self, tmp_path, monkeypatch):
-        """Flipping either session prefix mid-flight must invalidate the cached agent: both feed the
-        ``resolve_session_name`` output frozen into the provider's ``_session_key`` at construction."""
-        from hermes_plugin_honcho import HonchoMemoryProvider
-
-        cfg_path = tmp_path / "honcho.json"
-        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-        base = {"apiKey": "k", "peerName": "Igor", "aiPeer": "hermes"}
-        provider = HonchoMemoryProvider()
-
-        cfg_path.write_text(json.dumps({**base, "sessionPeerPrefix": True, "sessionAiPeerPrefix": False}))
-        sig_user_only = provider.identity_signature()["session_prefixing"]
-        cfg_path.write_text(json.dumps({**base, "sessionPeerPrefix": True, "sessionAiPeerPrefix": True}))
-        sig_both = provider.identity_signature()["session_prefixing"]
-
-        assert sig_user_only != sig_both
-
     def test_identity_signature_reflects_a_repointed_host_workspace(self, tmp_path, monkeypatch):
         """``hermes honcho peers map`` can repoint a host block's workspace; the cached agent's manager
         is bound to the old one until the signature changes."""
@@ -607,7 +563,6 @@ class TestProfilePeerUniqueness:
             peer_name=name,
             pin_peer_name=True,
             enabled=False,
-            write_frequency="turn",
         )
 
     def test_two_profiles_pinned_to_different_peer_names_resolve_distinctly(self):

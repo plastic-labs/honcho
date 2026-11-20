@@ -20,43 +20,15 @@ class _FakeHonchoConfig(SimpleNamespace):
         return "test-session"
 
 
-def _configured_hybrid_config() -> _FakeHonchoConfig:
-    return _FakeHonchoConfig(
-        enabled=True,
-        api_key=None,
-        base_url="http://127.0.0.1:8000",
-        recall_mode="hybrid",
-        init_on_session_start=False,
-        injection_frequency="every-turn",
-        context_cadence=1,
-        dialectic_cadence=1,
-        query_rewrite=False,
-        first_turn_base_wait=3.0,
-        first_turn_dialectic_wait=2.0,
-        dialectic_depth=1,
-        dialectic_depth_levels=None,
-        reasoning_heuristic=True,
-        reasoning_level_cap="high",
-        context_tokens=None,
-        message_max_chars=25000,
-        session_strategy="per-directory",
-    )
-
-
-def _configured_tools_config(*, init_on_session_start: bool = False) -> _FakeHonchoConfig:
-    cfg = _configured_hybrid_config()
-    cfg.recall_mode = "tools"
-    cfg.init_on_session_start = init_on_session_start
-    return cfg
-
-
+def _configured_config() -> _FakeHonchoConfig:
+    return _FakeHonchoConfig(enabled=True, api_key=None, base_url="http://127.0.0.1:8000", timeout=None)
 
 
 def test_stalled_init_only_delays_first_turn_prefetch(monkeypatch):
     """A stalled session init may bound-wait on turn 1 only; every later
     prefetch must keep the fail-open contract and return immediately."""
     provider = HonchoMemoryProvider()
-    cfg = _configured_hybrid_config()
+    cfg = _configured_config()
     release = threading.Event()
 
     monkeypatch.setattr(
@@ -92,7 +64,7 @@ def test_stalled_init_only_delays_first_turn_prefetch(monkeypatch):
 def test_honcho_background_init_rechecks_state_after_lock_race():
     """Startup should not spawn/crash if init completes while waiting for lock."""
     provider = HonchoMemoryProvider()
-    provider._config = _configured_hybrid_config()
+    provider._config = _configured_config()
     provider._lazy_init_kwargs = {"platform": "cli"}
     provider._lazy_init_session_id = "session-1"
 
@@ -115,24 +87,16 @@ def test_honcho_background_init_rechecks_state_after_lock_race():
 
 
 
-def test_first_turn_base_wait_is_shared_by_init_and_context_fetch():
-    """Session init and base retrieval share one configured turn-1 deadline."""
+def test_first_turn_prefetch_waits_for_init_within_a_bound():
+    """Turn 1 waits for session init, then briefly for a dialectic, and never past those bounds."""
     provider = HonchoMemoryProvider()
-    cfg = _configured_hybrid_config()
-    cfg.first_turn_base_wait = 0.5
-    cfg.timeout = None
-    release_context = threading.Event()
+    cfg = _configured_config()
+    release_dialectic = threading.Event()
 
     class SlowManager:
-        def get_prefetch_context(self, session_key, user_message=None):
-            release_context.wait(timeout=5)
-            return {"representation": "late"}
-
-        def set_context_result(self, session_key, result):
-            pass
-
-        def pop_context_result(self, session_key):
-            return {}
+        def dialectic_query(self, *args, **kwargs):
+            release_dialectic.wait(timeout=5)
+            return "late"
 
     def finish_init():
         time.sleep(0.3)
@@ -141,10 +105,8 @@ def test_first_turn_base_wait_is_shared_by_init_and_context_fetch():
 
     provider._config = cfg
     provider._session_key = "test-session"
-    provider._recall_mode = "context"
     provider._turn_count = 1
-    provider._last_dialectic_turn = 0
-    provider._FIRST_TURN_BASE_TIMEOUT = cfg.first_turn_base_wait
+    provider._FIRST_TURN_BASE_TIMEOUT, provider._FIRST_TURN_DIALECTIC_CAP = 0.5, 0.2
     provider._init_thread = threading.Thread(target=finish_init, daemon=True)
     provider._init_thread.start()
 
@@ -152,27 +114,22 @@ def test_first_turn_base_wait_is_shared_by_init_and_context_fetch():
         started = time.perf_counter()
         assert provider.prefetch("what do you know about me?") == ""
         elapsed = time.perf_counter() - started
-        # Property: prefetch waits for init (0.3s sleep) but is bounded by
-        # first_turn_base_wait rather than blocking forever on the slow
-        # context fetch. The old 0.4..0.65 window was 0.25s wide — pure
-        # scheduler noise on a loaded runner. Lower bound proves the wait
-        # happened; loose upper bound proves it didn't hang.
+        # Lower bound proves the wait for init happened; the loose upper bound proves it didn't hang.
         assert 0.25 <= elapsed < 2.0
     finally:
-        release_context.set()
+        release_dialectic.set()
         provider._init_thread.join(timeout=10)
-
-
-
+        if provider._prefetch_thread:
+            provider._prefetch_thread.join(timeout=10)
 
 
 def test_honcho_sync_turn_waits_for_full_background_startup(monkeypatch):
     """Manager assignment alone is not readiness while background init continues."""
     provider = HonchoMemoryProvider()
-    cfg = _configured_hybrid_config()
+    cfg = _configured_config()
     session_created = threading.Event()
-    migration_started = threading.Event()
-    release_migration = threading.Event()
+    card_started = threading.Event()
+    release_card = threading.Event()
     get_calls = []
 
     class StartupManager:
@@ -184,12 +141,13 @@ def test_honcho_sync_turn_waits_for_full_background_startup(monkeypatch):
             session_created.set()
             return SimpleNamespace(messages=[])
 
-        def migrate_memory_files(self, session_key, mem_dir):
-            migration_started.set()
-            release_migration.wait(timeout=5)
+        def get_peer_card(self, session_key):
+            card_started.set()
+            release_card.wait(timeout=5)
+            return []
 
-        def prefetch_context(self, session_key, user_message=None):
-            pass
+        def dialectic_query(self, *args, **kwargs):
+            return ""
 
         def _flush_session(self, session):
             pass
@@ -204,7 +162,7 @@ def test_honcho_sync_turn_waits_for_full_background_startup(monkeypatch):
     provider.initialize("session-1", platform="cli")
     try:
         assert session_created.wait(timeout=1)
-        assert migration_started.wait(timeout=1)
+        assert card_started.wait(timeout=1)
         assert provider._manager is not None
         assert provider._session_initialized is False
 
@@ -213,7 +171,7 @@ def test_honcho_sync_turn_waits_for_full_background_startup(monkeypatch):
         assert provider._sync_thread is None
         assert get_calls == ["test-session"]
     finally:
-        release_migration.set()
+        release_card.set()
         init_thread = getattr(provider, "_init_thread", None)
         if init_thread:
             init_thread.join(timeout=1)
@@ -223,10 +181,10 @@ def test_honcho_sync_turn_waits_for_full_background_startup(monkeypatch):
     assert provider._session_initialized is True
 
 
-def test_honcho_system_prompt_advertises_active_while_background_init_runs(monkeypatch):
-    """Prompt metadata should not require a completed network session."""
+def test_honcho_system_prompt_gives_the_directives_while_background_init_runs(monkeypatch):
+    """The directives do not need a completed network session; only the card does, and its wait is bounded."""
     provider = HonchoMemoryProvider()
-    cfg = _configured_hybrid_config()
+    cfg = _configured_config()
     release = threading.Event()
 
     monkeypatch.setattr(
@@ -241,10 +199,11 @@ def test_honcho_system_prompt_advertises_active_while_background_init_runs(monke
     monkeypatch.setattr(HonchoMemoryProvider, "_do_session_init", slow_session_init)
 
     provider.initialize("session-1", platform="cli")
+    provider._FIRST_TURN_BASE_TIMEOUT = 0.1
     try:
         prompt = provider.system_prompt_block()
         assert "Honcho Memory" in prompt
-        assert "hybrid mode" in prompt
+        assert "honcho_chat" in prompt and "User profile" not in prompt
     finally:
         release.set()
         init_thread = getattr(provider, "_init_thread", None)
@@ -254,10 +213,10 @@ def test_honcho_system_prompt_advertises_active_while_background_init_runs(monke
 
 
 
-def test_honcho_tools_eager_init_failure_does_not_leave_ready_manager(monkeypatch):
-    """Failed eager tools startup must not leave hooks seeing a ready session."""
+def test_honcho_failed_init_does_not_leave_ready_manager(monkeypatch):
+    """Failed startup must not leave hooks seeing a ready session."""
     provider = HonchoMemoryProvider()
-    cfg = _configured_tools_config(init_on_session_start=True)
+    cfg = _configured_config()
 
     monkeypatch.setattr(
         "hermes_plugin_honcho.client.HonchoClientConfig.from_global_config",
@@ -272,16 +231,17 @@ def test_honcho_tools_eager_init_failure_does_not_leave_ready_manager(monkeypatc
     monkeypatch.setattr(HonchoMemoryProvider, "_do_session_init", failing_session_init)
 
     provider.initialize("session-1", platform="cli")
+    provider._init_thread.join(timeout=5)
     assert provider._session_initialized is False
     assert provider._manager is None
 
-    background_started = threading.Event()
-    provider._start_session_init_background = background_started.set
+    retries = []
+    provider._start_session_init_background = lambda *a, **k: retries.append(1)
     provider.sync_turn("hello", "world")
     provider.on_memory_write("add", "user", "prefers safe Honcho startup")
 
-    assert provider._sync_thread is None
-    assert not background_started.is_set()
+    assert provider._sync_thread is None and provider._memwrite_thread is None
+    assert retries  # writes retry init in the background instead of writing
 
     result = json.loads(provider.handle_tool_call("honcho_profile", {"peer": "user"}))
     assert "could not be initialized" in result["error"]
@@ -315,7 +275,7 @@ def test_honcho_unresolved_peer_notices_once_and_stops_retrying(monkeypatch, pla
     """No runtime identity and no peerName: memory stays off for the session, the model hears it once, and
     later turns do not re-run init for a config gap that cannot heal (#93326). The notice recommends peerName
     only on a local platform: on a multi-user gateway a shared peerName would merge every human onto one peer."""
-    provider, attempts = _init_with_unresolved_peer(monkeypatch, _configured_hybrid_config(), platform=platform)
+    provider, attempts = _init_with_unresolved_peer(monkeypatch, _configured_config(), platform=platform)
 
     assert provider._manager is None
     assert provider._can_start_init() is False
@@ -333,7 +293,7 @@ def test_honcho_unresolved_peer_notices_once_and_stops_retrying(monkeypatch, pla
     ("discord", "supplied no user id", "hermes honcho peer --user"),
 ])
 def test_honcho_unresolved_peer_tool_error_names_the_fix_for_the_platform(monkeypatch, platform, present, absent):
-    cfg = _configured_tools_config(init_on_session_start=True)
+    cfg = _configured_config()
     provider, _ = _init_with_unresolved_peer(monkeypatch, cfg, platform=platform)
 
     result = json.loads(provider.handle_tool_call("honcho_profile", {"peer": "user"}))
@@ -342,75 +302,9 @@ def test_honcho_unresolved_peer_tool_error_names_the_fix_for_the_platform(monkey
     assert present in result["error"] and absent not in result["error"]
 
 
-def test_honcho_tools_lazy_hooks_do_not_prestart_background_init(monkeypatch):
-    """tools lazy mode lets the first tool call own session initialization."""
-    provider = HonchoMemoryProvider()
-    cfg = _configured_tools_config(init_on_session_start=False)
-
-    monkeypatch.setattr(
-        "hermes_plugin_honcho.client.HonchoClientConfig.from_global_config",
-        lambda: cfg,
-    )
-
-    provider.initialize("session-1", platform="cli")
-    background_started = threading.Event()
-    provider._start_session_init_background = background_started.set
-
-    provider.prefetch("what do you know?")
-    provider.queue_prefetch("what do you know?")
-    provider.sync_turn("hello", "world")
-    provider.on_memory_write("add", "user", "prefers fail-open memory")
-
-    assert not background_started.is_set()
-    assert provider._session_initialized is False
-
-    class ToolManager:
-        def get_peer_card(self, session_key, peer="user"):
-            return ["ready"]
-
-    init_calls = []
-
-    def fake_session_init(self, cfg, session_id, **kwargs):
-        init_calls.append(session_id)
-        self._manager = ToolManager()
-        self._session_key = "test-session"
-        self._session_initialized = True
-
-    monkeypatch.setattr(HonchoMemoryProvider, "_do_session_init", fake_session_init)
-
-    result = json.loads(provider.handle_tool_call("honcho_profile", {"peer": "user"}))
-
-    assert result == {"result": ["ready"]}
-    assert init_calls == ["session-1"]
-    assert not background_started.is_set()
-
-
 # ---------------------------------------------------------------------------
 # Write-containment regression tests
 # ---------------------------------------------------------------------------
-
-
-def test_honcho_sync_turn_skips_write_when_save_messages_is_disabled():
-    """The resolved write-disable switch must gate an initialized provider."""
-    provider = HonchoMemoryProvider()
-    cfg = _configured_tools_config(init_on_session_start=True)
-    cfg.save_messages = False
-    manager_calls = []
-
-    class Manager:
-        def get_or_create(self, session_key):
-            manager_calls.append(session_key)
-            return SimpleNamespace()
-
-    provider._config = cfg
-    provider._manager = Manager()
-    provider._session_key = "test-session"
-    provider._session_initialized = True
-
-    provider.sync_turn("a genuine user turn", "a genuine assistant reply")
-
-    assert provider._sync_thread is None
-    assert manager_calls == []
 
 
 def test_honcho_sync_turn_skips_anchored_gateway_notifications():
@@ -425,6 +319,7 @@ def test_honcho_sync_turn_skips_anchored_gateway_notifications():
         "[Your active task list was preserved across context compression]",
         "[CONTEXT SUMMARY]: previous context",
         "[IMPORTANT: Background process 12 matched watch pattern \"foo\"\nCommand: x",
+        "[Heartbeat — recurring instruction, fires every 30m]\nCheck the inbox",
     )
 
     for wrapper in wrappers:
@@ -436,7 +331,7 @@ def test_honcho_sync_turn_skips_anchored_gateway_notifications():
                 manager_calls.append(session_key)
                 return SimpleNamespace()
 
-        provider._config = _configured_tools_config(init_on_session_start=True)
+        provider._config = _configured_config()
         provider._manager = Manager()
         provider._session_key = "test-session"
         provider._session_initialized = True
@@ -488,7 +383,7 @@ def test_honcho_sync_turn_skips_room_harness(harness):
             def save(self, session):
                 pass
 
-        provider._config = _configured_tools_config(init_on_session_start=True)
+        provider._config = _configured_config()
         provider._manager = Manager()
         provider._session_key = "test-session"
         provider._session_initialized = True
@@ -506,7 +401,7 @@ def test_honcho_sync_turn_skips_room_harness(harness):
 def test_honcho_sync_turn_skips_room_harness_before_session_init(monkeypatch, marker):
     """Dropping a room harness must not kick off lazy session initialization."""
     provider = HonchoMemoryProvider()
-    provider._config = _configured_hybrid_config()
+    provider._config = _configured_config()
 
     def unexpected_init():
         pytest.fail("room harness reached session initialization")
@@ -536,7 +431,7 @@ def test_honcho_sync_turn_skips_prose_gateway_notifications():
                 manager_calls.append(session_key)
                 return SimpleNamespace()
 
-        provider._config = _configured_tools_config(init_on_session_start=True)
+        provider._config = _configured_config()
         provider._manager = Manager()
         provider._session_key = "test-session"
         provider._session_initialized = True
@@ -585,7 +480,7 @@ def test_honcho_sync_turn_does_not_suppress_genuine_user_messages():
             def save(self, session):
                 saved_sessions.append(session)
 
-        provider._config = _configured_tools_config(init_on_session_start=True)
+        provider._config = _configured_config()
         provider._manager = Manager()
         provider._session_key = "test-session"
         provider._session_initialized = True
@@ -610,7 +505,7 @@ def test_honcho_sync_turn_skips_empty_content():
             manager_calls.append(session_key)
             return SimpleNamespace()
 
-    provider._config = _configured_tools_config(init_on_session_start=True)
+    provider._config = _configured_config()
     provider._manager = Manager()
     provider._session_key = "test-session"
     provider._session_initialized = True
@@ -621,71 +516,10 @@ def test_honcho_sync_turn_skips_empty_content():
     assert manager_calls == []
 
 
-def test_honcho_sync_turn_same_instance_config_flip_gates_writes():
-    """The cached-provider regression: flipping save_messages on the SAME
-    configured instance must stop writes without re-initialization."""
+def test_honcho_on_memory_write_mirrors_a_user_memory():
+    """The memory-tool mirror writes the user's memory as a conclusion."""
     provider = HonchoMemoryProvider()
-    cfg = _configured_tools_config(init_on_session_start=True)
-    cfg.save_messages = True
-    manager_calls = []
-    write_done = threading.Event()
-
-    class Manager:
-        def get_or_create(self, session_key):
-            manager_calls.append(session_key)
-            return SimpleNamespace(add_message=lambda role, content, **kwargs: None)
-
-        def resolve_author_peer_id(self, session_key, author_id, author_name=None):
-            return None
-
-        def save(self, session):
-            write_done.set()
-
-    provider._config = cfg
-    provider._manager = Manager()
-    provider._session_key = "test-session"
-    provider._session_initialized = True
-
-    # enabled -> write happens
-    provider.sync_turn("user turn", "assistant reply")
-    assert write_done.wait(timeout=5), "first write never completed"
-
-    # operator flips containment on the same cached config object
-    cfg.save_messages = False
-    manager_calls.clear()
-    provider.sync_turn("user turn two", "assistant reply two")
-
-    # no new write may occur; the stale _sync_thread from the enabled write is fine
-    assert manager_calls == []
-
-
-def test_honcho_on_memory_write_honors_save_messages_false():
-    """The memory-tool mirror is an automatic write path and must respect the
-    write-disable switch; otherwise containment only covers conversation turns."""
-    provider = HonchoMemoryProvider()
-    cfg = _configured_tools_config(init_on_session_start=True)
-    cfg.save_messages = False
-    conclusion_calls = []
-
-    class Manager:
-        def create_conclusion(self, session_key, content):
-            conclusion_calls.append((session_key, content))
-
-    provider._config = cfg
-    provider._manager = Manager()
-    provider._session_key = "test-session"
-    provider._session_initialized = True
-
-    provider.on_memory_write("add", "user", "prefers fail-open memory")
-
-    assert conclusion_calls == []
-
-
-def test_honcho_on_memory_write_still_writes_when_enabled():
-    """With save_messages enabled, the memory-tool mirror still writes."""
-    provider = HonchoMemoryProvider()
-    cfg = _configured_tools_config(init_on_session_start=True)
-    cfg.save_messages = True
+    cfg = _configured_config()
     conclusion_calls = []
     write_done = threading.Event()
 

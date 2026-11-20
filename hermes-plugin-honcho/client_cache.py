@@ -9,7 +9,6 @@ intercepting.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 import threading
@@ -30,12 +29,6 @@ _DEFAULT_HTTP_TIMEOUT = 30.0
 
 _client_slots: dict[tuple, SingletonSlot] = {}
 _client_slots_lock = threading.Lock()
-
-# honcho.json-derived timeout, keyed PER CONFIG PATH on mtime_ns (-1 = absent) so
-# the per-call staleness check costs one stat(). config.yaml needs no memo:
-# load_config_readonly() is already cached on its files' signatures.
-_honcho_json_timeout_memo: dict[str, tuple[int, float | None]] = {}
-
 
 def _fingerprint_basis(block: dict, key_fn) -> str:
     """OAuth grants hash the REFRESH token (stable across access-token rotation,
@@ -69,14 +62,17 @@ def _credential_fingerprint(config: HonchoClientConfig | None) -> str:
 
 
 def _ambient_host_block() -> tuple[dict | None, dict]:
-    """(raw honcho.json, active host block) for the ambient profile; (None, {}) when absent."""
-    from .client import _host_block, resolve_active_host, resolve_config_path
+    """(the config as the client reads it, active host block) for the ambient profile; (None, {}) when
+    there is no config file."""
+    from .client import resolve_active_host, resolve_config_path
+    from .host_config import effective_block, legacy_path
 
     path = resolve_config_path()
-    if not path.exists():
+    if legacy_path(path) is None:
         return None, {}
-    raw = json.loads(path.read_text(encoding="utf-8-sig"))
-    return raw, _host_block(raw, resolve_active_host())
+    host = resolve_active_host()
+    block = effective_block(path, host)
+    return {"hosts": {host: block}}, block
 
 
 def _client_cache_key(config: HonchoClientConfig | None) -> tuple:
@@ -133,41 +129,12 @@ def _config_yaml_timeout() -> float | None:
     return None
 
 
-def _honcho_json_timeout() -> float | None:
-    """Read timeout/requestTimeout from honcho.json (host block wins), memoized on mtime."""
-    from .client import _HostLookup, _resolve_optional_float, resolve_config_path
-
-    try:
-        path = resolve_config_path()
-        path_key = str(path)
-        try:
-            mtime_ns: int = path.stat().st_mtime_ns
-        except OSError:
-            mtime_ns = -1
-        memo = _honcho_json_timeout_memo.get(path_key)
-        if memo is not None and memo[0] == mtime_ns:
-            return memo[1]
-        timeout = None
-        if mtime_ns != -1:
-            raw, host_block = _ambient_host_block()
-            timeout = _resolve_optional_float(*_HostLookup(host_block, raw).vals("timeout", "requestTimeout"))
-        _honcho_json_timeout_memo[path_key] = (mtime_ns, timeout)
-        return timeout
-    except Exception:
-        return None
-
-
 def _resolve_timeout_from_sources(config: HonchoClientConfig | None) -> float:
     """Mirror the build path's timeout resolution exactly: any skew makes the staleness check
     disagree with the built client forever and rebuild it on every call."""
     from .client import _resolve_optional_float
 
-    if config is not None:
-        timeout = config.timeout
-    else:
-        timeout = _honcho_json_timeout()
-        if timeout is None:
-            timeout = _resolve_optional_float(os.environ.get("HONCHO_TIMEOUT"))
+    timeout = config.timeout if config is not None else _resolve_optional_float(os.environ.get("HONCHO_TIMEOUT"))
     if timeout is None:
         timeout = _config_yaml_timeout()
     return timeout if timeout is not None else _DEFAULT_HTTP_TIMEOUT
