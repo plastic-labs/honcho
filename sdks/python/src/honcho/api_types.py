@@ -8,7 +8,7 @@ from __future__ import annotations
 import datetime
 import re
 from collections.abc import Mapping
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
 
@@ -754,6 +754,9 @@ def parse_ingest_record(
     """A record as one of the two forms, by its ``op`` (an upsert may leave it out)."""
     if isinstance(record, IngestRecord | IngestRecordDelete):
         return record
+    # A JSONL line can hold any JSON value, whatever the annotation says.
+    if not isinstance(cast(object, record), Mapping):
+        raise ValueError("A record is a JSON object")
     if record.get("op", "upsert") == "delete":
         return IngestRecordDelete.model_validate(record)
     return IngestRecord.model_validate(record)
@@ -791,6 +794,8 @@ class IngestRecordCounts(BaseModel):
     """Released, about to be queued."""
     queued: int
     """Queued for derivation, or derived."""
+    deleted: int = 0
+    """Tombstones: records the source deleted, kept so they don't come back."""
 
 
 class IngestSuggestionStageCounts(BaseModel):

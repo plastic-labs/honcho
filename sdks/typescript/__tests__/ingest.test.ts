@@ -188,7 +188,12 @@ describe('ingest', () => {
     const reset = await client.ingestReset()
     expect(reset.sessions.length).toBe(3)
     const status = await client.ingestStatus()
-    expect(status.records).toEqual({ deferred: 0, pending: 0, queued: 0 })
+    expect(status.records).toEqual({
+      deferred: 0,
+      pending: 0,
+      queued: 0,
+      deleted: 0,
+    })
     expect(status.sessions).toBe(0)
   })
 

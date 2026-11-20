@@ -232,7 +232,7 @@ async def test_status_drops_a_reset_import_at_once(
     status = client.get(f"/v3/workspaces/{workspace}/ingest/status").json()
 
     # Deletion hasn't run yet; the sessions are already inactive.
-    assert status["records"] == {"deferred": 0, "pending": 0, "queued": 0}
+    assert status["records"] == {"deferred": 0, "pending": 0, "queued": 0, "deleted": 0}
     assert status["sessions"] == 0
     assert status["sessions_being_deleted"] == 2
     still_there = await db_session.scalar(

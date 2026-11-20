@@ -11,6 +11,8 @@ from tests.alembic.verifier import MigrationVerifier
 
 DERIVED = "live_sync_derived"
 DRY_RUN = "live_sync_dry_run"
+# Single-tenant queue rows carry no tenant: still evidence of work queued.
+QUEUED = "live_sync_queued"
 
 
 def _record(verifier: MigrationVerifier, workspace: str, derivation: str) -> None:
@@ -28,10 +30,11 @@ def _record(verifier: MigrationVerifier, workspace: str, derivation: str) -> Non
 
 @register_before_upgrade("c4d9e1a7b2f6")
 def prepare_live_sync(verifier: MigrationVerifier) -> None:
-    """Two auto workspaces: one has queued work, one is still in its dry run."""
+    """Auto workspaces with queued work, one with only a tenant-less queue row,
+    and one still in its dry run."""
     verifier.assert_table_exists("ingest_sync_states", exists=False)
     verifier.assert_column_exists("workspaces", "ingest_derived_at", exists=False)
-    for name in (DERIVED, DRY_RUN):
+    for name in (DERIVED, DRY_RUN, QUEUED):
         verifier.conn.execute(
             text(
                 f'INSERT INTO "{verifier.schema}".workspaces (id, name, auto_enabled_at)'
@@ -41,6 +44,13 @@ def prepare_live_sync(verifier: MigrationVerifier) -> None:
         )
     _record(verifier, DERIVED, "queued")
     _record(verifier, DRY_RUN, "deferred")
+    verifier.conn.execute(
+        text(
+            f'INSERT INTO "{verifier.schema}".queue (work_unit_key, task_type,'
+            + " payload, workspace_name) VALUES ('k', 'representation', '{}', :ws)"
+        ),
+        {"ws": QUEUED},
+    )
 
 
 @register_after_upgrade("c4d9e1a7b2f6")
@@ -49,12 +59,12 @@ def verify_live_sync(verifier: MigrationVerifier) -> None:
     rows = verifier.conn.execute(
         text(
             f'SELECT name, ingest_derived_at IS NOT NULL FROM "{verifier.schema}"'
-            + ".workspaces WHERE name IN (:a, :b)"
+            + ".workspaces WHERE name IN (:a, :b, :c)"
         ),
-        {"a": DERIVED, "b": DRY_RUN},
+        {"a": DERIVED, "b": DRY_RUN, "c": QUEUED},
     ).all()
     marked = {name: is_set for name, is_set in rows}
-    assert marked == {DERIVED: True, DRY_RUN: False}
+    assert marked == {DERIVED: True, DRY_RUN: False, QUEUED: True}
 
     table = "ingest_sync_states"
     verifier.assert_table_exists(table)

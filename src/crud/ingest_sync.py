@@ -113,7 +113,8 @@ async def save_sync_state(
 
     With `expected_revision`, the save happens only if the stored state still has
     that revision; without, it replaces whatever is there. `last_record_at` only
-    moves forward: a save without one keeps the stored value.
+    moves forward: a save without one, or with an older one, keeps the stored
+    value (Postgres' GREATEST skips nulls).
 
     Raises:
         ValidationException: The position is larger than MAX_POSITION_BYTES.
@@ -154,7 +155,7 @@ async def save_sync_state(
                     "position": position,
                     "revision": revision,
                     "last_synced_at": now,
-                    "last_record_at": func.coalesce(
+                    "last_record_at": func.greatest(
                         last_record_at, state.last_record_at
                     ),
                     "error": error,
@@ -174,7 +175,7 @@ async def save_sync_state(
                 position=position,
                 revision=revision,
                 last_synced_at=now,
-                last_record_at=func.coalesce(last_record_at, state.last_record_at),
+                last_record_at=func.greatest(last_record_at, state.last_record_at),
                 error=error,
             )
             .returning(state)

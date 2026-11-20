@@ -8550,6 +8550,12 @@
             "type": "integer",
             "title": "Queued",
             "description": "Queued for derivation, or derived"
+          },
+          "deleted": {
+            "type": "integer",
+            "title": "Deleted",
+            "description": "Tombstones: records the source deleted, kept so they don't come back",
+            "default": 0
           }
         },
         "type": "object",

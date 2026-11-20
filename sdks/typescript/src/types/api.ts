@@ -618,7 +618,12 @@ export interface IngestResult {
 }
 
 export interface IngestStatusResponse {
-  records: { deferred: number; pending: number; queued: number }
+  records: {
+    deferred: number
+    pending: number
+    queued: number
+    deleted?: number
+  }
   deferred_tokens: number
   people: number
   people_not_modeled: number
@@ -692,8 +697,16 @@ export interface IngestSessionResponse {
 
 /** What the workspace's imports produced, for review before deriving. */
 export interface IngestStatus {
-  /** Records by derivation state: `deferred` waits for `ingestDerive()`. */
-  records: { deferred: number; pending: number; queued: number }
+  /**
+   * Records by derivation state: `deferred` waits for `ingestDerive()`;
+   * `deleted` counts tombstones, records the source deleted.
+   */
+  records: {
+    deferred: number
+    pending: number
+    queued: number
+    deleted: number
+  }
   /** Tokens in the messages of deferred records. */
   deferredTokens: number
   /** Peers created for imported accounts. */

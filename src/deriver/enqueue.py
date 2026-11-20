@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
-from src.crud.ingest_dry_run import end_dry_run
+from src.crud.ingest_dry_run import end_dry_run, still_the_workspace
 from src.dependencies import service_db, tracked_db
 from src.dreamer.dream_scheduler import get_dream_scheduler
 from src.exceptions import ValidationException
@@ -36,6 +36,10 @@ logger = logging.getLogger(__name__)
 _ENQUEUE_DB_SLOTS = asyncio.Semaphore(
     max(1, (settings.DB.POOL_SIZE + settings.DB.MAX_OVERFLOW) // 4)
 )
+
+
+class _WorkspaceReplaced(Exception):
+    """The workspace was deleted and created again since its dry run was ended."""
 
 
 async def enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> None:
@@ -94,17 +98,29 @@ async def enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> No
 
             # A message written through the regular routes ends an auto
             # workspace's dry run, before its memory work is queued.
-            await end_dry_run(db_session, workspace_name)
+            auto_workspace_id = await end_dry_run(db_session, workspace_name)
 
             queue_records = await handle_session(
                 db_session, payload, workspace_name, session_name
             )
 
+            async def stage() -> None:
+                if auto_workspace_id is not None and not await still_the_workspace(
+                    db_session, workspace_name, auto_workspace_id
+                ):
+                    # Deleted and created again since: these messages went with it.
+                    raise _WorkspaceReplaced
+                await _insert_queue_records(db_session, queue_records)
+
             if queue_records:
-                await _commit_with_retry(
-                    db_session,
-                    lambda: _insert_queue_records(db_session, queue_records),
-                )
+                try:
+                    await _commit_with_retry(db_session, stage)
+                except _WorkspaceReplaced:
+                    await db_session.rollback()
+                    logger.info(
+                        "Not queuing messages for %s: the workspace was replaced",
+                        workspace_name,
+                    )
 
         except Exception as e:
             # Reached only after _commit_with_retry has exhausted its
@@ -574,6 +590,7 @@ async def enqueue_dream(
     documents_since_last_dream_at_schedule: int | None = None,
     document_threshold: int | None = None,
     rebuild: bool = False,
+    auto_workspace_id: str | None = None,
 ) -> None:
     """
     Enqueue a dream task for immediate processing by the deriver.
@@ -593,6 +610,9 @@ async def enqueue_dream(
         dream_type: Type of dream to execute
         session_name: Name of the session to scope the dream to if specified
         rebuild: card_refresh only — rebuild the card without the prior card
+        auto_workspace_id: The auto workspace whose dry run the caller ended
+            (`end_dry_run`); the dream isn't queued if the workspace has been
+            deleted and created again since
     """
     # region ai
     # Per-tenant work, like message_enqueue: reject_scope_observed matches peers by
@@ -603,6 +623,13 @@ async def enqueue_dream(
     # has no RLS, so the insert is fine here too.
     # endregion
     async with tracked_db("dream_enqueue") as db_session:
+        if auto_workspace_id is not None and not await still_the_workspace(
+            db_session, workspace_name, auto_workspace_id
+        ):
+            logger.info(
+                "Not queuing a dream for %s: the workspace was replaced", workspace_name
+            )
+            return
         # Authoritative scope check, in the same transaction as the queue insert.
         # A route-level precheck cannot be relied on: it runs in its own session,
         # and a *missing* reserved name passes it (nothing has flagged that peer

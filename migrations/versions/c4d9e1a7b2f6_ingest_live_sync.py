@@ -5,7 +5,8 @@ Three changes for following a source live:
 - `workspaces.ingest_derived_at`: when an auto workspace started deriving, which
   ends its dry run (edits and deletes are refused after it, and `derive: "auto"`
   queues). Backfilled for auto workspaces that already hold derived or queued
-  work: a non-deferred ingest record, a queue item or a collection.
+  work: a non-deferred ingest record, a queue item (single-tenant ones have no
+  tenant), a collection, a session summary, or a message ingest didn't write.
 - `ingest_records` keeps a tombstone for a deleted record: `derivation` may be
   `deleted`, and a tombstone for a record never seen has no session or content
   hash. A CHECK keeps both on every other record. The CHECKs are added NOT VALID
@@ -67,11 +68,23 @@ def upgrade() -> None:
                           AND r.workspace_name = w.name
                           AND r.derivation IN ('pending', 'queued'))
                 OR EXISTS (SELECT 1 FROM {schema}.queue q
-                           WHERE q.tenant_id IS NOT DISTINCT FROM w.tenant_id
+                           WHERE (q.tenant_id = w.tenant_id OR q.tenant_id IS NULL)
                              AND q.workspace_name = w.name)
                 OR EXISTS (SELECT 1 FROM {schema}.collections c
                            WHERE c.tenant_id = w.tenant_id
                              AND c.workspace_name = w.name)
+                OR EXISTS (SELECT 1 FROM {schema}.sessions s
+                           WHERE s.tenant_id = w.tenant_id
+                             AND s.workspace_name = w.name
+                             AND s.internal_metadata ? 'summaries')
+                OR EXISTS (SELECT 1 FROM {schema}.messages m
+                           WHERE m.tenant_id = w.tenant_id
+                             AND m.workspace_name = w.name
+                             AND NOT EXISTS (
+                               SELECT 1 FROM {schema}.ingest_records r
+                               WHERE r.tenant_id = m.tenant_id
+                                 AND r.workspace_name = m.workspace_name
+                                 AND r.message_public_id = m.public_id))
               )
             """
         )
