@@ -340,6 +340,9 @@ class Follower:
         self._incomplete: dict[str, str] = {}
         self._rediscover_at: float | None = None
         self._listed: bool = False
+        self._stopping: str | None = None
+        # Threads seen whose channel isn't followed, by ID.
+        self._unparented: dict[str, Json] = {}
         self._handed: int = 0
         self._failures: int = 0
         self._next_flush: float = clock() + FLUSH_SECONDS
@@ -377,7 +380,7 @@ class Follower:
 
     def _follow(self) -> str | None:
         while not self.sink.stop.is_set():
-            failure = self.events.failure()
+            failure = self.events.failure() or self._stopping
             if failure is not None:
                 return failure
             self._check_overflow()
@@ -465,7 +468,12 @@ class Follower:
         try:
             selection = self._list()
         except SelectionError as error:
-            raise SystemExit(str(error)) from None
+            if first:
+                raise SystemExit(str(error)) from None
+            # Every selected channel is gone: stop the usual way, sending and
+            # saving what's pending first.
+            self._stopping = str(error)
+            return None
         except DiscordError as error:
             if first:
                 raise SystemExit(
@@ -487,7 +495,7 @@ class Follower:
         if self._incomplete:
             self._rediscover_at = self.clock() + RETRY_SECONDS
         for channel in selection.channels:
-            self._parents.add(channel.id)
+            self._follow_parent(channel.id)
             if channel.type in MESSAGE_CHANNEL_TYPES:
                 self._add(channel)
         for threads in selection.threads.values():
@@ -577,11 +585,16 @@ class Follower:
             self._gaps[cid] = self._epoch
         self._catch_up_wanted = True
         # Empty the queue, so what arrives during the catch-up has room. New
-        # messages in it come back with the history; deletes and new threads
-        # are taken now; edits (each needs a request) are let go: best effort.
+        # messages in it come back with the history (a message in a channel or
+        # thread not followed yet still makes it followed, history and all);
+        # deletes and new threads are taken now; edits (each needs a request)
+        # are let go: best effort.
         for event in self.events.drain():
-            if event.get("t") not in ("MESSAGE_CREATE", "MESSAGE_UPDATE"):
+            kind, data = event.get("t"), obj(event.get("d"))
+            if kind not in ("MESSAGE_CREATE", "MESSAGE_UPDATE"):
                 self._handle(event)
+            elif str(data.get("guild_id")) == self.guild:
+                self._container(str(data.get("channel_id")))
 
     # Live events -------------------------------------------------------------------
 
@@ -676,16 +689,34 @@ class Follower:
         known = self.containers.get(channel_id)
         if known is not None or channel_id in self._ignored:
             return known
+        if channel_id in self._unparented:
+            return None
         try:
             channel = self.client.channel(channel_id)
         except DiscordError as error:
             logger.warning("Couldn't look up channel %s: %s", channel_id, error)
             return None
-        if channel is None or not self._wanted(channel):
+        if channel is None:
             self._ignored.add(channel_id)
+            return None
+        if not self._wanted(channel):
+            if channel.get("type") in THREAD_TYPES:
+                # Its channel may only not be followed yet (a new channel, or
+                # the first listing still to come): kept for when it is.
+                self._unparented[channel_id] = channel
+            else:
+                self._ignored.add(channel_id)
             return None
         self._adopt(channel)
         return self.containers.get(channel_id)
+
+    def _follow_parent(self, channel_id: str) -> None:
+        """A channel's threads are followed: so are the ones seen before it was."""
+        self._parents.add(channel_id)
+        for thread_id, thread in list(self._unparented.items()):
+            if str(thread.get("parent_id")) == channel_id:
+                del self._unparented[thread_id]
+                self._adopt(thread)
 
     def _wanted(self, channel: Json) -> bool:
         if str(channel.get("guild_id", self.guild)) != self.guild:
@@ -701,7 +732,7 @@ class Follower:
         """Follow a channel or thread found live, reading its history first."""
         container = Container.from_channel(channel)
         if container.type in EXPORTABLE_TYPES and container.type not in THREAD_TYPES:
-            self._parents.add(container.id)
+            self._follow_parent(container.id)
             if container.type not in MESSAGE_CHANNEL_TYPES:
                 return
         self._add(container)
