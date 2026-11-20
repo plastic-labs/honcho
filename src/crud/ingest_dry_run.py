@@ -31,25 +31,32 @@ from src import models
 from src.crud.ingest_fence import take_workspace_fence
 
 
-async def end_dry_run(db: AsyncSession, workspace_name: str) -> None:
+async def end_dry_run(db: AsyncSession, workspace_name: str) -> str | None:
     """End the workspace's dry run if it's an auto workspace still in one.
 
     Call at the start of a transaction, holding no locks. A workspace that isn't
     auto, is gone, or has already ended its dry run is only read: the caller's
     transaction carries on. Otherwise this commits that transaction, ends the dry
     run in one of its own holding the exclusive workspace fence, and commits.
+
+    Returns the workspace's ID when it's an auto workspace, else None. A caller
+    that queues memory work later passes it to `still_the_workspace` under the
+    shared fence, so work for a workspace deleted and created again since (in a
+    new dry run) isn't queued.
     """
     tenant_id = models.scoped_tenant_id()
     workspace = models.Workspace
     row = (
         await db.execute(
-            select(workspace.auto_enabled_at, workspace.ingest_derived_at).where(
-                workspace.tenant_id == tenant_id, workspace.name == workspace_name
-            )
+            select(
+                workspace.id, workspace.auto_enabled_at, workspace.ingest_derived_at
+            ).where(workspace.tenant_id == tenant_id, workspace.name == workspace_name)
         )
     ).one_or_none()
-    if row is None or row.auto_enabled_at is None or row.ingest_derived_at is not None:
-        return
+    if row is None or row.auto_enabled_at is None:
+        return None
+    if row.ingest_derived_at is not None:
+        return row.id
     await db.commit()
     await take_workspace_fence(db, workspace_name, mode="exclusive")
     await db.execute(
@@ -64,6 +71,26 @@ async def end_dry_run(db: AsyncSession, workspace_name: str) -> None:
         .execution_options(synchronize_session=False)
     )
     await db.commit()
+    return row.id
 
 
-__all__ = ["end_dry_run"]
+async def still_the_workspace(
+    db: AsyncSession, workspace_name: str, workspace_id: str
+) -> bool:
+    """Whether the workspace is still the one `end_dry_run` ended; takes the shared fence.
+
+    Call in the transaction that queues the memory work, before any row lock:
+    the fence held to its commit keeps the workspace from being deleted and
+    created again until then.
+    """
+    await take_workspace_fence(db, workspace_name, mode="shared")
+    current = await db.scalar(
+        select(models.Workspace.id).where(
+            models.Workspace.tenant_id == models.scoped_tenant_id(),
+            models.Workspace.name == workspace_name,
+        )
+    )
+    return current == workspace_id
+
+
+__all__ = ["end_dry_run", "still_the_workspace"]

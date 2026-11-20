@@ -622,6 +622,7 @@ def _print_status(
     r = st.records
     stdout_console.print(
         f"Records: {r.deferred:,} deferred · {r.pending:,} pending · {r.queued:,} queued"
+        + (f" · {r.deleted:,} deleted" if r.deleted else "")
     )
     if r.deferred:
         stdout_console.print(f"{st.deferred_tokens:,} tokens waiting to be derived")

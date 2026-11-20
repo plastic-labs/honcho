@@ -803,6 +803,11 @@ class IngestRecordCounts(BaseModel):
     )
     pending: int = Field(..., description="Released, about to be queued")
     queued: int = Field(..., description="Queued for derivation, or derived")
+    deleted: int = Field(
+        default=0,
+        description="Tombstones: records the source deleted, kept so they don't"
+        + " come back",
+    )
 
 
 class IngestSuggestionStageCounts(BaseModel):

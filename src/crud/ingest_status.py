@@ -206,7 +206,11 @@ def _sessions(workspace_name: str) -> Any:
                 record.id,
             ).label("first_record"),
         )
-        .where(record.tenant_id == tenant_id, record.workspace_name == workspace_name)
+        .where(
+            record.tenant_id == tenant_id,
+            record.workspace_name == workspace_name,
+            record.derivation != "deleted",
+        )
         .group_by(record.session_name)
         .subquery("held")
     )
@@ -354,6 +358,17 @@ async def get_ingest_status(
             deferred=by_state.get("deferred", 0),
             pending=by_state.get("pending", 0),
             queued=by_state.get("queued", 0),
+            # Every tombstone, with or without a session: a reset keeps them.
+            deleted=int(
+                await db.scalar(
+                    select(func.count()).where(
+                        record.tenant_id == tenant_id,
+                        record.workspace_name == workspace_name,
+                        record.derivation == "deleted",
+                    )
+                )
+                or 0
+            ),
         ),
         deferred_tokens=int(deferred_tokens or 0),
         people=people_total,

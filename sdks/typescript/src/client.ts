@@ -1559,7 +1559,7 @@ export class Honcho {
       `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/status`
     )
     return {
-      records: s.records,
+      records: { ...s.records, deleted: s.records.deleted ?? 0 },
       deferredTokens: s.deferred_tokens,
       people: s.people,
       peopleNotModeled: s.people_not_modeled,

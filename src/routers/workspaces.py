@@ -287,10 +287,20 @@ async def schedule_dream(
     # no early duplicate is needed.
 
     # A dream scheduled by hand ends an auto workspace's dry run before it's
-    # queued. A dream the scope check then refuses has ended it too: that check
-    # has to share the queue insert's transaction, which can't hold the fence.
+    # queued. The scope check runs first here, so a refused dream doesn't end
+    # it; enqueue_dream checks again with the insert (a peer flagged as a scope
+    # in between has ended the dry run for nothing, which is harmless).
     async with tracked_db("dream_dry_run") as dry_run_db:
-        await end_dry_run(dry_run_db, workspace_id)
+        await crud.reject_scope_observed(
+            dry_run_db,
+            workspace_id,
+            [observed],
+            action=(
+                "No representation is formed of a scope, so a scope cannot be the"
+                " observed peer of a dream."
+            ),
+        )
+        auto_workspace_id = await end_dry_run(dry_run_db, workspace_id)
 
     await enqueue_dream(
         workspace_id,
@@ -306,6 +316,7 @@ async def schedule_dream(
         # analytics joins on `trigger_reason`.
         trigger_reason="manual",
         delay_reason="immediate",
+        auto_workspace_id=auto_workspace_id,
     )
 
     logger.info(

@@ -473,3 +473,78 @@ async def test_deletes_alone_dont_end_the_dry_run(
     [deleted] = _ingest(client, workspace, _delete(), derive="now")
     assert deleted["outcome"] == "deleted"
     assert await _derived_at(db_session, workspace) is None
+
+
+def test_status_counts_tombstones_apart_from_messages(client: TestClient) -> None:
+    workspace = _workspace(client)
+    _ingest(client, workspace, _record(), _record("m2"))
+    _ingest(client, workspace, _delete(), _delete("never-seen"))
+
+    status = client.get(f"/v3/workspaces/{workspace}/ingest/status").json()
+    assert status["records"]["deleted"] == 2
+    assert status["records"]["deferred"] == 1
+    [session] = client.get(f"/v3/workspaces/{workspace}/ingest/sessions").json()[
+        "items"
+    ]
+    assert session["messages"] == 1
+
+
+def test_the_newest_record_time_only_moves_forward(client: TestClient) -> None:
+    workspace = _workspace(client)
+    url = f"/v3/workspaces/{workspace}/ingest/sync/discord/guild1"
+    client.put(url, json={"position": {}, "last_record_at": "2026-11-20T12:00:00Z"})
+    client.put(url, json={"position": {}, "last_record_at": "2026-11-20T11:00:00Z"})
+    assert client.get(url).json()["last_record_at"].startswith("2026-11-20T12:00:00")
+
+
+@pytest.mark.asyncio
+async def test_a_dream_refused_for_a_scope_doesnt_end_the_dry_run(
+    client: TestClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings.DREAM, "ENABLED", True)
+    workspace = _workspace(client)
+    [created] = _ingest(client, workspace, _record())
+    response = client.post(
+        f"/v3/workspaces/{workspace}/schedule_dream",
+        json={
+            "observer": created["peer_id"],
+            "observed": "scope.missing",
+            "dream_type": "omni",
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert await _derived_at(db_session, workspace) is None
+
+
+@pytest.mark.asyncio
+async def test_memory_work_isnt_queued_for_a_workspace_created_again(
+    client: TestClient, db_session: AsyncSession
+) -> None:
+    from src.crud.ingest_dry_run import end_dry_run
+    from src.deriver.enqueue import enqueue_dream
+
+    workspace = _workspace(client)
+    [created] = _ingest(client, workspace, _record())
+    old_id = await end_dry_run(db_session, workspace)
+    assert old_id is not None
+    # Deleted and created again, in a new dry run, before the dream is queued.
+    await crud.delete_workspace(db_session, workspace)
+    await db_session.commit()
+    client.post("/v3/workspaces", json={"id": workspace, "auto": True})
+    _ingest(client, workspace, _record())
+
+    await enqueue_dream(
+        workspace,
+        observer=created["peer_id"],
+        observed=created["peer_id"],
+        dream_type=schemas.DreamType.OMNI,
+        auto_workspace_id=old_id,
+    )
+
+    queued = await db_session.scalar(
+        select(func.count())
+        .select_from(models.QueueItem)
+        .where(models.QueueItem.workspace_name == workspace)
+    )
+    assert queued == 0
+    assert await _derived_at(db_session, workspace) is None
