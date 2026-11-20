@@ -208,13 +208,14 @@ async def handle_session(
     Returns:
         List of queue records to insert
     """
-    session = (
-        await crud.get_or_create_session(
-            db_session,
-            session=schemas.SessionCreate(name=session_name),
-            workspace_name=workspace_name,
-        )
-    ).resource
+    session_result = await crud.get_or_create_session(
+        db_session,
+        session=schemas.SessionCreate(name=session_name),
+        workspace_name=workspace_name,
+    )
+    await db_session.commit()
+    await session_result.post_commit()
+    session = session_result.resource
 
     # Fetch workspace for configuration resolution
     workspace = await crud.get_workspace(db_session, workspace_name=workspace_name)

@@ -1,4 +1,5 @@
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime
 from logging import getLogger
 from typing import Any
@@ -455,6 +456,19 @@ def _ingest_lock(
     )
 
 
+@dataclass
+class CreateMessagesResult:
+    """Messages staged by ``create_messages``, and the work to run once committed."""
+
+    messages: list[models.Message]
+    on_commit: Callable[[], Awaitable[None]] | None = field(default=None, repr=False)
+
+    async def post_commit(self) -> None:
+        """Run the deferred work. Call only after the transaction committed."""
+        if self.on_commit is not None:
+            await self.on_commit()
+
+
 async def create_messages(
     db: AsyncSession,
     messages: list[schemas.MessageCreate],
@@ -462,9 +476,12 @@ async def create_messages(
     session_name: str,
     *,
     internal_metadata: Sequence[dict[str, Any]] | None = None,
-) -> list[models.Message]:
+) -> CreateMessagesResult:
     """
     Bulk create messages for a session while maintaining order.
+
+    The session, its peers and the messages are staged in the caller's
+    transaction. The caller commits, then calls ``post_commit()`` on the result.
 
     Args:
         db: Database session
@@ -475,7 +492,8 @@ async def create_messages(
             order as ``messages``, written with the insert
 
     Returns:
-        List of created message objects
+        The created messages, flushed so their ids are assigned, and the
+        session's deferred cache and event work
 
     Raises:
         ValidationException: If a message is authored by a scope peer
@@ -496,7 +514,7 @@ async def create_messages(
     peers = {
         message.peer_name: schemas.SessionPeerConfigInput() for message in messages
     }
-    await get_or_create_session(
+    session_result = await get_or_create_session(
         db,
         session=schema_from_path(
             schemas.SessionCreate, "session_id", session_name, peers=peers
@@ -512,9 +530,11 @@ async def create_messages(
         internal_metadata=internal_metadata,
     )
 
-    await db.commit()
+    # Flushed here so ids are assigned and an insert error surfaces from this
+    # function, not from the caller's commit.
+    await db.flush()
 
-    return message_objects
+    return CreateMessagesResult(message_objects, on_commit=session_result.post_commit)
 
 
 async def insert_messages_locked(

@@ -131,12 +131,15 @@ async def create_messages_for_session(
 ):
     """Add new message(s) to a session."""
     try:
-        created_messages = await crud.create_messages(
+        create_result = await crud.create_messages(
             db,
             messages=messages.messages,
             workspace_name=workspace_id,
             session_name=session_id,
         )
+        await db.commit()
+        await create_result.post_commit()
+        created_messages = create_result.messages
 
         # Prometheus metrics
         if settings.METRICS.ENABLED:
@@ -229,13 +232,16 @@ async def create_messages_with_file(
     )
 
     # Create messages, each carrying its file metadata in the same insert
-    created_messages = await crud.create_messages(
+    create_result = await crud.create_messages(
         db,
         messages=[item["message_create"] for item in all_message_data],
         workspace_name=workspace_id,
         session_name=session_id,
         internal_metadata=[item["file_metadata"] for item in all_message_data],
     )
+    await db.commit()
+    await create_result.post_commit()
+    created_messages = create_result.messages
 
     # Enqueue for processing (same as regular messages)
     payloads = [
