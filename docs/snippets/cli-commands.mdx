@@ -222,6 +222,11 @@ Each record becomes a message; its container picks the session and its
 author and participants the peers. Records already imported come back as
 duplicates, so running the same import again is safe.
 
+Bot records no person interacted with are held back by default: nothing is
+derived about a bot, but its text is read as context around the people, so
+unanswered bot posts cost tokens. The file is read whole first, since a
+reply can come after what it answers. `--bots all` imports them too.
+
 ```bash
 honcho ingest import <file>
 ```
@@ -229,6 +234,9 @@ honcho ingest import <file>
 <ParamField path="file" type="string" required />
 <ParamField path="--derive" type="string" default="later">
   later (default): store without deriving until `honcho ingest derive`; now: derive as records arrive.
+</ParamField>
+<ParamField path="--bots" type="string" default="interacted">
+  Bot records to import. interacted (default): only those a person replied to or mentioned the bot about; all; none.
 </ParamField>
 </Accordion>
 <Accordion title="link">

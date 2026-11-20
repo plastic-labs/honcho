@@ -31,7 +31,7 @@ from collections.abc import Iterable, Iterator
 from typing import Any, NoReturn, Optional, TypeVar
 
 import typer
-from honcho import ConflictError, Honcho, NotFoundError, Peer
+from honcho import ConflictError, Honcho, NotFoundError, Peer, filter_bot_records
 from honcho.api_types import (
     IngestRecord,
     IngestStatusResponse,
@@ -146,6 +146,12 @@ def import_records(
         help="later (default): store without deriving until `honcho ingest derive`;"
         + " now: derive as records arrive",
     ),
+    bots: str = typer.Option(
+        "interacted",
+        "--bots",
+        help="Bot records to import. interacted (default): only those a person"
+        + " replied to or mentioned the bot about; all; none",
+    ),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
@@ -154,13 +160,28 @@ def import_records(
     Each record becomes a message; its container picks the session and its
     author and participants the peers. Records already imported come back as
     duplicates, so running the same import again is safe.
+
+    Bot records no person interacted with are held back by default: nothing is
+    derived about a bot, but its text is read as context around the people, so
+    unanswered bot posts cost tokens. The file is read whole first, since a
+    reply can come after what it answers. `--bots all` imports them too.
     """
     handle_cmd_flags(json_output=json_output, workspace=workspace)
     if derive not in ("now", "later"):
         print_error("INVALID_ARGUMENT", "--derive must be 'now' or 'later'")
         raise typer.Exit(1)
+    if bots not in ("interacted", "all", "none"):
+        print_error("INVALID_ARGUMENT", "--bots must be 'interacted', 'all' or 'none'")
+        raise typer.Exit(1)
     client, config = get_client()
     wid = config.workspace_id
+
+    records: Iterable[IngestRecord] = _records(file)
+    held_back = 0
+    if bots != "all":
+        records, held_back = filter_bot_records(
+            records, keep="interacted" if bots == "interacted" else "none"
+        )
 
     outcomes: Counter[str] = Counter()
     reasons: Counter[str] = Counter()
@@ -168,7 +189,7 @@ def import_records(
     authors: set[str] = set()
     sent = 0
     try:
-        for chunk in _chunks(_records(file), CHUNK):
+        for chunk in _chunks(records, CHUNK):
             result = client.ingest(chunk, derive="now" if derive == "now" else "later")
             for record in result.records:
                 outcomes[record.outcome] += 1
@@ -197,6 +218,7 @@ def import_records(
         "duplicate": outcomes["duplicate"],
         "rejected": outcomes["rejected"],
         "rejected_reasons": dict(reasons),
+        "bot_records_held_back": held_back,
         "sessions": len(sessions),
         "authors": len(authors),
         "derive": derive,
@@ -211,6 +233,12 @@ def import_records(
     for reason, count in reasons.most_common():
         stdout_console.print(f"  rejected, {reason}: {count:,}")
     stdout_console.print(f"{len(sessions):,} sessions, {len(authors):,} authors")
+    if held_back:
+        stdout_console.print(
+            f"{held_back:,} bot records held back"
+            + (" (no one interacted with them)" if bots == "interacted" else "")
+            + "; `--bots all` imports them"
+        )
     if derive == "later":
         status(
             "Nothing is derived yet. Review with `honcho ingest status`, exclude what"
