@@ -35,7 +35,7 @@ import queue
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -145,6 +145,10 @@ class Events(Protocol):
         """Whether dispatches were dropped since last asked."""
         ...
 
+    def drain(self) -> Sequence[Json]:
+        """Every dispatch waiting now, without waiting for more."""
+        ...
+
     def failure(self) -> str | None:
         """Why the connection stopped for good (a bad token, say), or None."""
         ...
@@ -186,6 +190,14 @@ class GatewayEvents:
             return False
         self._overflow.clear()
         return True
+
+    def drain(self) -> list[Json]:
+        drained: list[Json] = []
+        while True:
+            try:
+                drained.append(self._queue.get_nowait())
+            except queue.Empty:
+                return drained
 
     def failure(self) -> str | None:
         return self._failure
@@ -327,6 +339,7 @@ class Follower:
         self._problems: dict[str, str] = {}
         self._incomplete: dict[str, str] = {}
         self._rediscover_at: float | None = None
+        self._listed: bool = False
         self._handed: int = 0
         self._failures: int = 0
         self._next_flush: float = clock() + FLUSH_SECONDS
@@ -424,18 +437,35 @@ class Follower:
         finally:
             self._catching_up = False
 
-    def _select(self) -> Selection | None:
-        first = self.stats.catch_ups == 0 and not self.containers
+    def _list(self) -> Selection:
+        """The selection now, leaving out selected channels deleted since the start.
+
+        Raises SelectionError when none of them is left, or at the start.
+        """
         try:
-            selection = select(self.client, self.guild, self.channel_ids)
+            return select(self.client, self.guild, self.channel_ids)
+        except SelectionError:
+            if self.channel_ids is None or not self._listed:
+                raise
+            exportable = {
+                str(c["id"])
+                for c in self.client.channels(self.guild)
+                if c.get("type") in EXPORTABLE_TYPES
+            }
+            gone = sorted(set(self.channel_ids) - exportable)
+            left = set(self.channel_ids) & exportable
+            if not gone or not left:
+                raise
+            logger.warning("Channels %s are gone; following the rest", ", ".join(gone))
+            self.channel_ids = left
+            return select(self.client, self.guild, self.channel_ids)
+
+    def _select(self) -> Selection | None:
+        first = not self._listed
+        try:
+            selection = self._list()
         except SelectionError as error:
-            if first:
-                raise SystemExit(str(error)) from None
-            # A selected channel was deleted: carry on with the rest.
-            logger.warning("%s; following the channels still there", error)
-            return Selection(
-                channels=[], threads={}, categories={}, incomplete=self._incomplete
-            )
+            raise SystemExit(str(error)) from None
         except DiscordError as error:
             if first:
                 raise SystemExit(
@@ -447,6 +477,7 @@ class Follower:
             self._catch_up_wanted = True
             self.sink.stop.wait(RETRY_SECONDS)
             return None
+        self._listed = True
         self._take_selection(selection)
         return selection
 
@@ -470,7 +501,7 @@ class Follower:
         """
         self._rediscover_at = None
         try:
-            selection = select(self.client, self.guild, self.channel_ids)
+            selection = self._list()
         except (SelectionError, DiscordError) as error:
             logger.warning("Couldn't list the server's threads again (%s)", error)
             self._rediscover_at = self.clock() + RETRY_SECONDS
@@ -545,6 +576,12 @@ class Follower:
         for cid in self.containers:
             self._gaps[cid] = self._epoch
         self._catch_up_wanted = True
+        # Empty the queue, so what arrives during the catch-up has room. New
+        # messages in it come back with the history; deletes and new threads
+        # are taken now; edits (each needs a request) are let go: best effort.
+        for event in self.events.drain():
+            if event.get("t") not in ("MESSAGE_CREATE", "MESSAGE_UPDATE"):
+                self._handle(event)
 
     # Live events -------------------------------------------------------------------
 
@@ -677,10 +714,9 @@ class Follower:
         if known:
             return
         self._new.append(container.id)
-        # Until its first catch-up, a container without a cursor can't move one:
-        # a live message in it would otherwise skip its history.
-        if not self._cursor(container.id).at:
-            self._gaps.setdefault(container.id, self._epoch)
+        # Until its first catch-up its cursor can't move: a live message in it
+        # would otherwise skip the history before it.
+        self._gaps.setdefault(container.id, self._epoch)
 
     # Records and cursors -------------------------------------------------------------
 
