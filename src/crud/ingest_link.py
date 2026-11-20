@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
 from src.crud.ingest_fence import take_workspace_fence
+from src.crud.ingest_sync import forget_all_sync_states
 from src.crud.peer import reject_scope_peers
 from src.crud.peer_card import construct_peer_card_label
 from src.deriver.enqueue import enqueue_deletion
@@ -356,6 +357,9 @@ async def unlink_account(
             exists().where(
                 record.tenant_id == tenant_id,
                 record.workspace_name == workspace_name,
+                # A tombstone keeps its bindings but no message: it doesn't
+                # stand in the way.
+                record.derivation != "deleted",
                 or_(
                     record.author_binding_id == binding.id,
                     record.participant_binding_ids.contains([binding.id]),
@@ -391,7 +395,10 @@ async def reset_import(db: AsyncSession, workspace_name: str) -> list[str]:
     Marks each inactive and enqueues its deletion, as `DELETE /sessions/{id}`
     does; the deletion removes its messages, memberships, ingest records and
     session bindings. People, their configuration and their account bindings
-    stay. Returns the sessions it enqueued.
+    stay. Tombstones stay too, detached from their sessions, so a record the
+    source deleted doesn't come back on the next import. Every sync state is
+    forgotten: the history it pointed past is gone, so connectors read their
+    sources again from the start. Returns the sessions it enqueued.
     """
     await take_workspace_fence(db, workspace_name, mode="exclusive")
     tenant_id = models.scoped_tenant_id()
@@ -415,6 +422,19 @@ async def reset_import(db: AsyncSession, workspace_name: str) -> list[str]:
             .with_for_update()
         )
     ).all()
+    if sessions:
+        await db.execute(
+            update(record)
+            .where(
+                record.tenant_id == tenant_id,
+                record.workspace_name == workspace_name,
+                record.derivation == "deleted",
+                record.session_name.in_([s.name for s in sessions]),
+            )
+            .values(session_name=None)
+            .execution_options(synchronize_session=False)
+        )
+    await forget_all_sync_states(db, workspace_name)
     for s in sessions:
         s.is_active = False
         await enqueue_deletion(

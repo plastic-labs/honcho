@@ -308,6 +308,13 @@ class Workspace(Base, TenantPartitioned):
     auto_enabled_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # When an auto workspace started deriving, which ends its dry run: edits and
+    # deletes of imported records are refused after it, and `derive: "auto"`
+    # queues. Set once, under the exclusive ingest fence, and never cleared: a
+    # reset doesn't undo memory already built.
+    ingest_derived_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     sessions = relationship(
         "Session", back_populates="workspace", cascade="all, delete, delete-orphan"
@@ -1595,7 +1602,10 @@ class IngestRecord(Base, TenantPartitioned):
 
     The unique identity is what makes ingest safe to retry. `derivation` is the
     durable outbox state: `pending` rows are turned into queue work by the
-    ingest enqueuer, `deferred` rows wait for an explicit derive call.
+    ingest enqueuer, `deferred` rows wait for an explicit derive call, and
+    `deleted` rows are tombstones: the source deleted the record, so it never
+    comes back. A tombstone for a record never seen has no session or content
+    hash.
     """
 
     __tablename__: str = "ingest_records"
@@ -1614,8 +1624,9 @@ class IngestRecord(Base, TenantPartitioned):
     identity: Mapped[str] = mapped_column(TEXT, nullable=False)
     # Set in the same transaction as the claim, once the message row exists.
     message_public_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
-    session_name: Mapped[str] = mapped_column(TEXT, nullable=False)
-    content_sha256: Mapped[str] = mapped_column(TEXT, nullable=False)
+    # Null only on a tombstone for a record never seen (or detached by a reset).
+    session_name: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    content_sha256: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     revised_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -1694,8 +1705,13 @@ class IngestRecord(Base, TenantPartitioned):
             name="identity_kind_valid",
         ),
         CheckConstraint(
-            "derivation IN ('pending', 'queued', 'deferred')",
+            "derivation IN ('pending', 'queued', 'deferred', 'deleted')",
             name="derivation_valid",
+        ),
+        CheckConstraint(
+            "derivation = 'deleted'"
+            + " OR (session_name IS NOT NULL AND content_sha256 IS NOT NULL)",
+            name="tombstone_or_complete",
         ),
         {"postgresql_partition_by": "HASH (tenant_id)"},
     )
@@ -1940,4 +1956,52 @@ def _add_tenant_predicate(state: ORMExecuteState) -> None:  # pyright: ignore[re
             include_aliases=True,
             propagate_to_loaders=False,
         )
+    )
+
+
+class IngestSyncState(Base, TenantPartitioned):
+    """Where a connector following one source instance has got to, and its health.
+
+    `position` is the connector's own cursor, stored as sent: Honcho never reads
+    it. `revision` is a fresh opaque token on every write; a save that names the
+    revision it read is refused if another write came between, so two runners on
+    one source notice each other. A reset of the import forgets every state.
+    """
+
+    __tablename__: str = "ingest_sync_states"
+
+    tenant_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey("tenants.tenant_id"),
+        nullable=False,
+        default=_default_tenant_id,
+    )
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid)
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    source: Mapped[str] = mapped_column(TEXT, nullable=False)
+    source_instance: Mapped[str] = mapped_column(TEXT, nullable=False)
+    position: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    revision: Mapped[str] = mapped_column(TEXT, nullable=False)
+    last_synced_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    # The source time of the newest record the connector has sent.
+    last_record_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__: tuple[Any, ...] = (
+        PrimaryKeyConstraint("tenant_id", "id"),
+        UniqueConstraint(
+            "tenant_id",
+            "workspace_name",
+            "source",
+            "source_instance",
+            name="uq_ingest_sync_states_source",
+        ),
+        {"postgresql_partition_by": "HASH (tenant_id)"},
     )

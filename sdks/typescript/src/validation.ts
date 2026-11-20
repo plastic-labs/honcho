@@ -414,12 +414,14 @@ export const IngestContainerSchema = z
   .strict()
 
 /**
- * Schema for one source record to ingest.
+ * Schema for one source record to ingest, or a newer version of one (a later
+ * `revisedAt`), which replaces it during the workspace's dry run.
  *
  * @experimental Ingest may change or stop working without notice.
  */
 export const IngestRecordSchema = z
   .object({
+    op: z.literal('upsert').optional(),
     source: z.string().min(1),
     sourceInstance: z.string().min(1),
     sourceId: IngestExternalIdSchema.nullish(),
@@ -436,6 +438,23 @@ export const IngestRecordSchema = z
   })
   .strict()
 
+/**
+ * Schema for a record the source deleted. During the workspace's dry run its
+ * message is removed and a tombstone kept, so it never comes back; after the
+ * dry run it's refused. A delete is final.
+ *
+ * @experimental Ingest may change or stop working without notice.
+ */
+export const IngestRecordDeleteSchema = z
+  .object({
+    op: z.literal('delete'),
+    source: z.string().min(1),
+    sourceInstance: z.string().min(1),
+    sourceId: IngestExternalIdSchema,
+    revisedAt: IngestTimestampSchema.nullish(),
+  })
+  .strict()
+
 function timestampToApi(value: string | Date): string {
   return value instanceof Date ? value.toISOString() : value
 }
@@ -445,8 +464,18 @@ function timestampToApi(value: string | Date): string {
  * Absent and null fields are left out.
  */
 export function ingestRecordToApi(
-  record: IngestRecord
+  record: IngestRecord | IngestRecordDelete
 ): Record<string, unknown> {
+  if (record.op === 'delete') {
+    const d = IngestRecordDeleteSchema.parse(record)
+    return {
+      op: 'delete',
+      source: d.source,
+      source_instance: d.sourceInstance,
+      source_id: d.sourceId,
+      revised_at: d.revisedAt == null ? undefined : timestampToApi(d.revisedAt),
+    }
+  }
   const r = IngestRecordSchema.parse(record)
   const participant = (p: z.infer<typeof IngestParticipantSchema>) => ({
     id: p.id ?? undefined,
@@ -1370,6 +1399,7 @@ export type SessionConfig = z.infer<typeof SessionConfigSchema>
 export type SessionPeerConfig = z.infer<typeof SessionPeerConfigSchema>
 export type MessageInput = z.infer<typeof MessageInputSchema>
 export type IngestRecord = z.input<typeof IngestRecordSchema>
+export type IngestRecordDelete = z.input<typeof IngestRecordDeleteSchema>
 export type IngestParticipant = z.input<typeof IngestParticipantSchema>
 export type IngestContainer = z.input<typeof IngestContainerSchema>
 export type Filters = z.infer<typeof FilterSchema>

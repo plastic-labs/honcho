@@ -256,6 +256,7 @@ def test_an_empty_auto_workspace_has_an_empty_status(client: TestClient) -> None
         "sessions_not_modeled": 0,
         "sessions_being_deleted": 0,
         "suggestions": {"rules": {"high": 0, "low": 0}, "refreshing": False},
+        "sources": [],
     }
     assert _people(client, workspace)["items"] == []
 

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
+from src.crud.ingest_dry_run import end_dry_run
 from src.crud.message import get_peer_session_names
 from src.dependencies import db, read_db, tracked_db
 from src.deriver.enqueue import enqueue_deletion, enqueue_dream
@@ -284,6 +285,12 @@ async def schedule_dream(
     # The authoritative observed-position check lives in enqueue_dream, in the same
     # transaction as the queue insert. Nothing expensive happens before it here, so
     # no early duplicate is needed.
+
+    # A dream scheduled by hand ends an auto workspace's dry run before it's
+    # queued. A dream the scope check then refuses has ended it too: that check
+    # has to share the queue insert's transaction, which can't hold the fence.
+    async with tracked_db("dream_dry_run") as dry_run_db:
+        await end_dry_run(dry_run_db, workspace_id)
 
     await enqueue_dream(
         workspace_id,

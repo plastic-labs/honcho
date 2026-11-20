@@ -59,8 +59,9 @@ identity needs a second source.
 `replay.py` sends a dataset through the real ingest API, oldest first in
 batches of 100, with `derive: "later"`, then checks what ingest built: every
 account of a stored record (authors and participants) has exactly one peer, an
-explicit `peer_id` is that peer, no two accounts share one, and edits are
-rejected `edit_not_supported` until edits ship. Anything else fails the run.
+explicit `peer_id` is that peer, no two accounts share one, and, since nothing
+is derived yet, each edit replaces its record (`updated`) and each delete removes
+it (`deleted`). Anything else fails the run.
 The report gives the token count of what was deferred, to approve before
 deriving.
 

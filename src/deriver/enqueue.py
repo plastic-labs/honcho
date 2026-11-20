@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
+from src.crud.ingest_dry_run import end_dry_run
 from src.dependencies import service_db, tracked_db
 from src.dreamer.dream_scheduler import get_dream_scheduler
 from src.exceptions import ValidationException
@@ -90,6 +91,10 @@ async def enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> No
 
             if session_name is None or workspace_name is None:
                 raise ValidationException("Session and workspace are required")
+
+            # A message written through the regular routes ends an auto
+            # workspace's dry run, before its memory work is queued.
+            await end_dry_run(db_session, workspace_name)
 
             queue_records = await handle_session(
                 db_session, payload, workspace_name, session_name

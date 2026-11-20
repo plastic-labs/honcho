@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
 from src.crud.ingest_suggestions import refreshing_clause, suggestion_counts
+from src.crud.ingest_sync import list_sync_states
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.config_helpers import get_configuration
 from src.utils.queue_payload import create_organize_payload
@@ -361,6 +362,16 @@ async def get_ingest_status(
         sessions_not_modeled=sum(1 for s in sessions if not s.modeled),
         sessions_being_deleted=int(being_deleted or 0),
         suggestions=await _suggestions(db, workspace_name),
+        sources=[
+            schemas.IngestSyncSource(
+                source=state.source,
+                source_instance=state.source_instance,
+                last_synced_at=state.last_synced_at,
+                last_record_at=state.last_record_at,
+                error=state.error,
+            )
+            for state in await list_sync_states(db, workspace_name)
+        ],
     )
 
 

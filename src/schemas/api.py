@@ -17,8 +17,10 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    Discriminator,
     Field,
     PrivateAttr,
+    Tag,
     field_validator,
     model_validator,
 )
@@ -621,8 +623,13 @@ class IngestContainer(BaseModel):
 
 
 class IngestRecordCreate(BaseModel):
-    """One source record to ingest."""
+    """One source record to ingest, or a newer version of one already ingested."""
 
+    op: Literal["upsert"] = Field(
+        default="upsert",
+        description="`upsert`, the default: ingest the record, or replace it with"
+        + " a newer version (a later `revised_at`) during the dry run",
+    )
     source: str = Field(
         ...,
         max_length=64,
@@ -689,22 +696,74 @@ class IngestRecordCreate(BaseModel):
         return self
 
 
+class IngestRecordDelete(BaseModel):
+    """A record the source deleted.
+
+    During the workspace's dry run its message is removed and a tombstone kept,
+    so the record never comes back; a delete for a record not seen yet leaves a
+    tombstone too. After the dry run it's refused. A delete is final: a later
+    version of the record is refused.
+    """
+
+    op: Literal["delete"]
+    source: str = Field(
+        ...,
+        max_length=64,
+        pattern=RESOURCE_NAME_PATTERN,
+        description="The source type, e.g. `discord`",
+    )
+    source_instance: str = Field(
+        ...,
+        max_length=128,
+        pattern=RESOURCE_NAME_PATTERN,
+        description="The server, team or account inside the source",
+    )
+    source_id: _ExternalId = Field(
+        ..., description="The deleted record's ID in that instance"
+    )
+    revised_at: datetime.datetime | None = Field(
+        default=None,
+        description="When the source deleted it. A delete older than the stored"
+        + " version changes nothing",
+    )
+
+
+def _record_op(value: Any) -> str:
+    """Which form a record takes: `op`, which an upsert may leave out."""
+    if isinstance(value, dict):
+        return cast(dict[str, Any], value).get("op", "upsert")
+    return getattr(value, "op", "upsert")
+
+
+IngestRecordItem = Annotated[
+    Annotated[IngestRecordCreate, Tag("upsert")]
+    | Annotated[IngestRecordDelete, Tag("delete")],
+    Discriminator(_record_op),
+]
+
+
 class IngestBatch(BaseModel):
     """A batch of source records for one workspace."""
 
-    derive: Literal["now", "later"] = Field(
+    derive: Literal["now", "later", "auto"] = Field(
         default="now",
-        description="`later` stores the records without queuing derivation;"
-        + " POST /ingest/derive queues them",
+        description="`now` queues derivation, which ends the workspace's dry run."
+        + " `later` stores the records without queuing derivation; POST"
+        + " /ingest/derive queues them. `auto` is `later` during the dry run and"
+        + " `now` after it, for a connector following a source live",
     )
-    records: list[IngestRecordCreate] = Field(..., min_length=1, max_length=100)
+    records: list[IngestRecordItem] = Field(..., min_length=1, max_length=100)
 
 
-IngestOutcome = Literal["created", "duplicate", "rejected"]
-IngestDerivation = Literal["pending", "queued", "deferred"]
+IngestOutcome = Literal["created", "updated", "deleted", "duplicate", "rejected"]
+IngestDerivation = Literal["pending", "queued", "deferred", "deleted"]
 IngestRejectionReason = Literal[
     "stale_revision",
+    # Kept for clients that still read it; ingest no longer sends it.
     "edit_not_supported",
+    "edited_after_derivation",
+    "deleted",
+    "superseded",
     "content_conflict",
     "session_inactive",
     "observers_limit",
@@ -763,6 +822,23 @@ class IngestSuggestionCounts(BaseModel):
     refreshing: bool = False
 
 
+class IngestSyncSource(BaseModel):
+    """How a connector following one source is doing."""
+
+    source: str
+    source_instance: str
+    last_synced_at: datetime.datetime = Field(
+        ..., description="When the connector last saved its position"
+    )
+    last_record_at: datetime.datetime | None = Field(
+        default=None,
+        description="The source time of the newest record the connector has sent",
+    )
+    error: str | None = Field(
+        default=None, description="The connector's last error; null once it's fine"
+    )
+
+
 class IngestStatus(BaseModel):
     """What the workspace's imports produced, for review before deriving."""
 
@@ -790,6 +866,10 @@ class IngestStatus(BaseModel):
     suggestions: IngestSuggestionCounts = Field(
         default_factory=IngestSuggestionCounts,
         description="Open suggested links between accounts, by stage and confidence",
+    )
+    sources: list[IngestSyncSource] = Field(
+        default_factory=list,
+        description="The sources connectors follow, with each one's last sync",
     )
 
 
@@ -960,6 +1040,46 @@ class IngestSuggestionAccepted(BaseModel):
 
     suggestion: IngestSuggestion
     link: IngestLinkResult | None
+
+
+class IngestSyncState(IngestSyncSource):
+    """Where a connector following one source has got to: its position and health."""
+
+    position: dict[str, Any] = Field(
+        ..., description="The connector's own cursor, as it saved it"
+    )
+    revision: str = Field(
+        ...,
+        description="Changes on every save: pass it back to save only if nothing"
+        + " else has saved since",
+    )
+
+
+class IngestSyncStateSave(BaseModel):
+    """A connector's position and health, to save."""
+
+    position: dict[str, Any] = Field(
+        ..., description="The connector's own cursor; Honcho stores it as is"
+    )
+    revision: str | None = Field(
+        default=None,
+        max_length=64,
+        description="The revision the connector read. When given, the save is"
+        + " refused (409) if the state has changed or been forgotten since",
+    )
+    last_record_at: datetime.datetime | None = Field(
+        default=None,
+        description="The source time of the newest record sent; kept when omitted",
+    )
+    error: str | None = Field(
+        default=None, max_length=2000, description="The connector's last error"
+    )
+
+
+class IngestSyncForgotten(BaseModel):
+    """Whether there was a state to forget."""
+
+    forgotten: bool
 
 
 class IngestSuggestionsRefresh(BaseModel):

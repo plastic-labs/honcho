@@ -111,6 +111,45 @@ console.log(released.pending, released.remaining);
 
 `ingest_derive()` releases deferred records in batches until none remain, then returns how many it released. Track reasoning progress with [queue status](/v3/documentation/features/advanced/queue-status).
 
+### The dry run: edits and deletes
+
+Until the workspace first derives, it's in its **dry run**: nothing has read the records to build memory, so changes to them are free.
+
+- **An edit** is the record sent again with a later `revised_at`. During the dry run it replaces the text and metadata (`updated`); who wrote it, who took part and where keep their first values. The same text with a later `revised_at` only moves the revision forward.
+- **A delete** names the record: `{"op": "delete", "source", "source_instance", "source_id"}`, with `revised_at` when the source says when. During the dry run the message is removed and a tombstone kept (`deleted`), so the record never comes back, even in a later import or after a reset. A delete for a record not seen yet leaves a tombstone too. A delete is final.
+- **One record, once per batch.** When a batch holds the same record more than once, only its newest version is processed; older ones are `superseded`.
+
+The dry run ends the first time the workspace starts deriving: `ingest_derive()`, records sent with `derive="now"` (deletes alone don't count: there's nothing to derive), a message written through the regular message routes, or a dream scheduled by hand. It ends for good: after it, edits and deletes are refused (`edited_after_derivation`) and the stored version stays. Changing memory that's already built is planned work.
+
+While in the dry run, deferred records have no embeddings yet: they're found by text search, and embedded when they're released.
+
+### Following a source live
+
+A connector that follows a source sends records as they arrive with `derive="auto"`: `later` during the dry run, `now` after it, so it never needs to know which phase the workspace is in. It saves where it has got to in Honcho, so a restart on any machine carries on from there:
+
+<CodeGroup>
+```python Python
+state = honcho.ingest_sync_state("discord", "guild-123")   # None: start from the beginning
+position = state.position if state else {}
+# ... read the source from `position`, send records with derive="auto" ...
+state = honcho.ingest_save_sync_state(
+    "discord", "guild-123", {"channel-1": "1180000000000000000"},
+    revision=state.revision if state else None,   # refused if another runner saved since
+)
+```
+
+```typescript TypeScript
+const state = await honcho.ingestSyncState('discord', 'guild-123');
+// ... read the source from state?.position, send records with { derive: 'auto' } ...
+await honcho.ingestSaveSyncState(
+  'discord', 'guild-123', { 'channel-1': '1180000000000000000' },
+  { revision: state?.revision },
+);
+```
+</CodeGroup>
+
+The position is the connector's own cursor; Honcho stores it as sent. A save that names the revision it read is refused if another runner saved since, so two runners on one source notice each other. `ingest_status()` lists each synced source with its last sync, its newest record and its last error. A reset forgets every sync state, so connectors read their sources again from the start.
+
 ## Review an import before deriving it
 
 Between loading and deriving, check what the records became: how many are waiting, which people and sessions they map to, and which of those are modeled. People and sessions are listed most records first.
@@ -203,7 +242,8 @@ The [Honcho CLI](/v3/documentation/reference/cli) runs the same flow on a connec
 export HONCHO_EXPERIMENTAL=1
 honcho workspace create acme --auto
 honcho ingest import records.jsonl -w acme
-honcho ingest status -w acme
+honcho ingest import edits.jsonl -w acme         # edits and deletes, during the dry run
+honcho ingest status -w acme                     # also lists synced sources
 honcho ingest suggestions -w acme                # accounts that look like one person
 honcho ingest suggestions accept 1 --reset -w acme   # links them: resets the import
 honcho ingest suggestions accept rules:high --reset -w acme   # every rules:high one

@@ -60,6 +60,15 @@ def workspace_ingest_sessions(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/sessions"
 
 
+def workspace_ingest_sync(
+    workspace_id: str, source: str | None = None, source_instance: str | None = None
+) -> str:
+    base = f"/{API_VERSION}/workspaces/{workspace_id}/ingest/sync"
+    if source is None or source_instance is None:
+        return base
+    return f"{base}/{source}/{source_instance}"
+
+
 def workspace_ingest_suggestions(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/suggestions"
 

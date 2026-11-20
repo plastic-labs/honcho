@@ -40,11 +40,14 @@ from .api_types import (
     IngestSuggestionAccepted,
     IngestPerson,
     IngestRecord,
+    IngestRecordDelete,
     IngestRecordResult,
     IngestResetResponse,
     IngestResponse,
     IngestSession,
     IngestStatusResponse,
+    IngestSyncSource,
+    IngestSyncState,
     IngestUnlinkResponse,
     MessageCreateParams,
     MessageResponse,
@@ -72,6 +75,7 @@ from .conclusions import (
     _require_view,
 )
 from .http import routes
+from .http.exceptions import NotFoundError
 from .ingest import ingest_batches, offset_results
 from .message import Message
 from .mixins import AsyncMetadataConfigMixin
@@ -743,9 +747,9 @@ class HonchoAio(AsyncMetadataConfigMixin):
 
     async def ingest(
         self,
-        records: Iterable[IngestRecord | Mapping[str, Any]],
+        records: Iterable[IngestRecord | IngestRecordDelete | Mapping[str, Any]],
         *,
-        derive: Literal["now", "later"] = "now",
+        derive: Literal["now", "later", "auto"] = "now",
     ) -> IngestResponse:
         """Ingest source records into this auto workspace asynchronously.
 
@@ -843,6 +847,83 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 routes.workspace_ingest_status(self._honcho.workspace_id)
             )
         )
+
+    async def ingest_sync_states(self) -> list[IngestSyncSource]:
+        """
+        The sources connectors follow, asynchronously. See `Honcho.ingest_sync_states`.
+
+        Experimental: ingest may change or stop working without notice.
+        """
+        data = await self._honcho._async_http_client.get(
+            routes.workspace_ingest_sync(self._honcho.workspace_id)
+        )
+        return [IngestSyncSource.model_validate(item) for item in data]
+
+    async def ingest_sync_state(
+        self, source: str, source_instance: str
+    ) -> IngestSyncState | None:
+        """
+        Where the connector following a source has got to; None to start afresh.
+
+        Experimental: ingest may change or stop working without notice.
+        """
+        try:
+            data = await self._honcho._async_http_client.get(
+                routes.workspace_ingest_sync(
+                    self._honcho.workspace_id, source, source_instance
+                )
+            )
+        except NotFoundError:
+            return None
+        return IngestSyncState.model_validate(data)
+
+    async def ingest_save_sync_state(
+        self,
+        source: str,
+        source_instance: str,
+        position: dict[str, Any],
+        *,
+        revision: str | None = None,
+        last_record_at: datetime | None = None,
+        error: str | None = None,
+    ) -> IngestSyncState:
+        """
+        Save where the connector following a source has got to.
+
+        Experimental: ingest may change or stop working without notice.
+
+        With ``revision`` (the one read), the save is refused with
+        ``ConflictError`` if another runner saved since or a reset forgot the
+        state. The result has the new revision.
+        """
+        body: dict[str, Any] = {"position": position, "error": error}
+        if revision is not None:
+            body["revision"] = revision
+        if last_record_at is not None:
+            body["last_record_at"] = last_record_at.isoformat()
+        return IngestSyncState.model_validate(
+            await self._honcho._async_http_client.put(
+                routes.workspace_ingest_sync(
+                    self._honcho.workspace_id, source, source_instance
+                ),
+                body=body,
+            )
+        )
+
+    async def ingest_forget_sync_state(self, source: str, source_instance: str) -> bool:
+        """
+        Forget a source's sync state, so its connector reads it from the start.
+
+        Experimental: ingest may change or stop working without notice.
+
+        Returns whether there was one.
+        """
+        data = await self._honcho._async_http_client.delete(
+            routes.workspace_ingest_sync(
+                self._honcho.workspace_id, source, source_instance
+            )
+        )
+        return bool(data.get("forgotten"))
 
     async def ingest_people(
         self, *, page: int = 1, size: int = 50
