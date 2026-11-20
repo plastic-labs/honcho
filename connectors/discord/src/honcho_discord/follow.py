@@ -246,6 +246,9 @@ class GatewayEvents:
             async def on_socket_raw_receive(self, msg: Any) -> None:
                 receive(msg)
 
+        # Text only: discord.py's warnings that voice won't work don't apply.
+        discord.VoiceClient.warn_nacl = False
+        discord.VoiceClient.warn_dave = False
         intents = discord.Intents.none()
         intents.guilds = True
         intents.guild_messages = True
