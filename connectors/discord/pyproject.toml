@@ -9,6 +9,7 @@ authors = [
     { name = "Plastic Labs", email = "hello@plasticlabs.ai" },
 ]
 dependencies = [
+    "discord-py>=2.6,<3",
     "httpx>=0.27.0",
 ]
 

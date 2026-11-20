@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import signal
 import sys
 import time
 from collections import Counter
@@ -46,12 +47,13 @@ from pydantic import ValidationError
 from rich.table import Table
 from rich.text import Text
 
+from honcho_cli import ingest_sources
 from honcho_cli._help import HonchoTyperGroup
 from honcho_cli.commands.workspace import _handle_error
 from honcho_cli.common import add_common_options, get_client, handle_cmd_flags
-from honcho_cli import ingest_sources
 from honcho_cli.experimental import experimental
 from honcho_cli.experimental import require as require_experimental
+from honcho_cli.follow import FollowConflict, FollowRecordError, FollowSink
 from honcho_cli.ingest_refs import (
     resolve,
     save_listing,
@@ -467,8 +469,21 @@ def import_from(
     source: Optional[str] = typer.Argument(
         None, help="An installed source; leave it out to list them"
     ),
-    derive: str = typer.Option("later", "--derive", help=_DERIVE_HELP),
+    derive: Optional[str] = typer.Option(
+        None, "--derive", help=_DERIVE_HELP + " (default: later; auto with --follow)"
+    ),
     bots: str = typer.Option("interacted", "--bots", help=_BOTS_HELP),
+    follow: bool = typer.Option(
+        False,
+        "--follow",
+        help="Catch up from the saved position, then follow the source live until"
+        + " stopped (Ctrl-C); for sources that can",
+    ),
+    bot_window: int = typer.Option(
+        60,
+        "--bot-window",
+        help="With --follow: minutes a bot record waits for a person to interact",
+    ),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
@@ -477,8 +492,12 @@ def import_from(
     The source's own options follow its name: `honcho ingest from github --help`
     shows them. Records are sent the way `ingest import` sends a file: deriving
     later, and holding back bot records no person interacted with, judged one
-    container at a time. `--derive`, `--bots`, `-w` and `--json` are this
-    command's own; everything else goes to the source.
+    container at a time. With `--follow`, a source that can follows its source
+    live: it catches up from the position it saved, then sends new records,
+    edits and deletes as they happen, deriving `auto` (later during the dry run,
+    as they arrive after it), until stopped. `--derive`, `--bots`, `--follow`,
+    `--bot-window`, `-w` and `--json` are this command's own; everything else
+    goes to the source.
     """
     handle_cmd_flags(json_output=json_output, workspace=workspace)
     argv = list(ctx.args)
@@ -508,8 +527,20 @@ def import_from(
             + " `honcho ingest from` lists the installed sources.",
         )
         raise typer.Exit(1)
+    derive = derive or ("auto" if follow else "later")
     _check_choices(derive, bots)
     loaded = _load_source(source)
+    if follow:
+        if not getattr(loaded, "follows", False):
+            print_error(
+                "CANT_FOLLOW",
+                f"'{source}' can only import its history, not follow it: drop --follow.",
+                {"source": source},
+            )
+            raise typer.Exit(1)
+        if bot_window < 1:
+            print_error("INVALID_ARGUMENT", "--bot-window must be at least 1 minute")
+            raise typer.Exit(1)
 
     client, config = get_client()
     wid = config.workspace_id
@@ -518,6 +549,11 @@ def import_from(
         client.ingest_status()
     except Exception as e:
         _ingest_error(e, wid)
+
+    if follow:
+        raise typer.Exit(
+            _follow(loaded, source, argv, client, wid, derive, bots, bot_window)
+        )
 
     sender = _Sender(client, derive)
     sink = _SourceSink(sender, bots)
@@ -545,6 +581,80 @@ def import_from(
     _print_import_summary(summary, bots)
     if code:
         raise typer.Exit(code)
+
+
+def _follow(
+    loaded: ingest_sources.IngestSource,
+    source: str,
+    argv: list[str],
+    client: Honcho,
+    wid: str,
+    derive: str,
+    bots: str,
+    bot_window: int,
+) -> int:
+    """Run a source in follow mode until it stops; return its exit code.
+
+    The first Ctrl-C (or SIGTERM) asks the source to stop: it flushes and saves
+    its position. A second one stops at once.
+    """
+    sink = FollowSink(
+        client,
+        source,
+        derive=derive,
+        bots=bots,
+        window=datetime.timedelta(minutes=bot_window),
+    )
+
+    def ask_to_stop(signum: int, _frame: Any) -> None:
+        if sink.stop.is_set():
+            raise KeyboardInterrupt
+        sink.stop.set()
+        status("Stopping: sending what's pending and saving the position…")
+
+    previous = {
+        sig: signal.signal(sig, ask_to_stop) for sig in (signal.SIGINT, signal.SIGTERM)
+    }
+    try:
+        code = _run_source(loaded, [*argv, "--follow"], sink)  # pyright: ignore[reportArgumentType]
+    except FollowConflict as e:
+        print_error("SYNC_CONFLICT", str(e), {"source": source})
+        return 1
+    except FollowRecordError as e:
+        print_error(
+            "INVALID_RECORD",
+            f"'{source}' produced a record that isn't a valid ingest record, in {e}",
+            {"source": source, "container": e.container},
+        )
+        return 1
+    except KeyboardInterrupt:
+        status("Stopped without saving the latest position; it carries on from the last one.")
+        return 130
+    except Exception as e:
+        _ingest_error(e, wid)
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+    summary = {
+        "workspace": wid,
+        "source": source,
+        "records": sink.sent,
+        **{key: sink.outcomes[key] for key in ("created", "updated", "deleted", "duplicate", "rejected")},
+        "rejected_reasons": dict(sink.reasons),
+        "bot_records_held_back": sink.held_back,
+        "derive": derive,
+    }
+    if use_json():
+        print_json(summary)
+    else:
+        stdout_console.print(
+            f"{sink.sent:,} records sent: "
+            + " · ".join(
+                f"{summary[key]:,} {key}"
+                for key in ("created", "updated", "deleted", "duplicate", "rejected")
+            )
+        )
+    return code
 
 
 def _load_source(source: str) -> ingest_sources.IngestSource:

@@ -119,6 +119,21 @@ honcho ingest from mychat --help                     # its own options
 honcho ingest from mychat --token-file ~/.mychat.token --room general -w acme
 ```
 
+### Follow the source live
+
+A source that can follow its source as it changes sets `follows = True`. `honcho ingest from mychat --follow` then adds `--follow` to `argv` and hands `main` a sink with more methods:
+
+| Method | What it does |
+|---|---|
+| `sink.position(instance)` | The position saved for this source instance, or `None` the first time |
+| `sink.flush()` | Sends what's pending (records are sent with `derive="auto"`) and returns which `source_id`s are `settled` (answered, or a bot record dropped) and which are `held` (a bot record waiting for a person). A failure that may pass is in `error`; what wasn't sent stays pending |
+| `sink.save_position(instance, position, last_record_at=..., error=...)` | Saves the position, refused if another runner saved since (the CLI stops with a clear error) |
+| `sink.context(record)` | A record read again only as context for the bot filter; it's never sent |
+| `sink.stop` | A `threading.Event` set on Ctrl-C or SIGTERM: send, save and return |
+| `sink.window` | How long a bot record waits for a person (`--bot-window`) |
+
+Save a position only past records that are settled: a held bot record, or a batch Honcho didn't answer, must be read again after a restart. A delete is a record of its own, `{"op": "delete", "source": ..., "source_instance": ..., "source_id": ...}`.
+
 The CLI does the rest: the workspace and API key from its configuration, validating each record, holding back bot records no person interacted with (judged one container at a time), sending in batches without deriving, and the summary `ingest import` prints. `-w`, `--derive`, `--bots` and `--json` are the CLI's own options; everything else goes to the source. A source doesn't import anything from Honcho.
 
 The Honcho repository's [GitHub](https://github.com/plastic-labs/honcho/tree/main/connectors/github) and [Discord](https://github.com/plastic-labs/honcho/tree/main/connectors/discord) connectors are complete examples, registered as `github` and `discord`.
