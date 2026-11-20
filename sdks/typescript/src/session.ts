@@ -8,6 +8,7 @@ import { Peer } from './peer'
 import type { Scope } from './scope'
 import { SessionContext, SessionSummaries } from './session_context'
 import type {
+  CursorPageResponse,
   MessageResponse,
   PageResponse,
   PeerResponse,
@@ -361,6 +362,7 @@ export class Session {
     filters?: Record<string, unknown>
     page?: number
     size?: number
+    cursor?: string
     reverse?: boolean
   }): Promise<PageResponse<MessageResponse>> {
     await this._ensureWorkspace()
@@ -371,6 +373,7 @@ export class Session {
         query: {
           page: params?.page,
           size: params?.size,
+          cursor: params?.cursor,
           reverse: params?.reverse ? 'true' : undefined,
         },
       }
@@ -654,7 +657,24 @@ export class Session {
       })
     }
 
-    return new Page(messagesPage, Message.fromApiResponse, fetchNextPage)
+    const fetchByCursor = async (
+      cursor: string,
+      size: number
+    ): Promise<CursorPageResponse<MessageResponse>> => {
+      return this._listMessages({
+        filters: validatedFilter,
+        cursor,
+        size,
+        reverse,
+      })
+    }
+
+    return new Page(
+      messagesPage,
+      Message.fromApiResponse,
+      fetchNextPage,
+      fetchByCursor
+    )
   }
 
   /**

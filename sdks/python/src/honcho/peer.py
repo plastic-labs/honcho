@@ -28,7 +28,7 @@ from .conclusions import ConclusionsView
 from .http import routes
 from .message import Message
 from .mixins import MetadataConfigMixin
-from .pagination import SyncPage
+from .pagination import SyncPage, cursor_query
 from .types import ChatResponse, DialecticStreamResponse
 from .utils import (
     SSEStreamParser,
@@ -602,9 +602,18 @@ class Peer(PeerBase, MetadataConfigMixin):
                 body={"filters": filters} if filters else None,
                 query=next_query,
             )
-            return SyncPage(next_data, SessionResponse, transform, fetch_next)
+            return SyncPage(
+                next_data, SessionResponse, transform, fetch_next, fetch_cursor
+            )
 
-        return SyncPage(data, SessionResponse, transform, fetch_next)
+        def fetch_cursor(cursor: str) -> dict[str, Any]:
+            return self._honcho._http.post(
+                routes.peer_sessions_list(self.workspace_id, self.id),
+                body={"filters": filters} if filters else None,
+                query=cursor_query(query, cursor),
+            )
+
+        return SyncPage(data, SessionResponse, transform, fetch_next, fetch_cursor)
 
     @validate_call
     def message(

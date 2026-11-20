@@ -43,7 +43,7 @@ from .http import AsyncHonchoHTTPClient, HonchoHTTPClient, routes
 from .ingest import ingest_batches, offset_results
 from .message import Message
 from .mixins import MetadataConfigMixin
-from .pagination import SyncPage
+from .pagination import SyncPage, cursor_query
 from .peer import Peer, parse_chat_response, serialize_response_format
 from .scope import Scope
 from .session import Session
@@ -498,9 +498,19 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 body={"filters": filters} if filters else None,
                 query=next_query,
             )
-            return SyncPage(next_data, PeerResponse, transform, fetch_next)
+            return SyncPage(
+                next_data, PeerResponse, transform, fetch_next, fetch_cursor
+            )
 
-        return SyncPage(data, PeerResponse, transform, fetch_next)
+        def fetch_cursor(cursor: str) -> dict[str, Any]:
+            """Read on from `cursor` in cursor mode with the same filters and ordering."""
+            return self._http.post(
+                routes.peers_list(self.workspace_id),
+                body={"filters": filters} if filters else None,
+                query=cursor_query(query, cursor),
+            )
+
+        return SyncPage(data, PeerResponse, transform, fetch_next, fetch_cursor)
 
     @validate_call
     def session(
@@ -649,9 +659,19 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 body=body or None,
                 query=next_query,
             )
-            return SyncPage(next_data, SessionResponse, transform, fetch_next)
+            return SyncPage(
+                next_data, SessionResponse, transform, fetch_next, fetch_cursor
+            )
 
-        return SyncPage(data, SessionResponse, transform, fetch_next)
+        def fetch_cursor(cursor: str) -> dict[str, Any]:
+            """Read on from `cursor` in cursor mode with the same filters and ordering."""
+            return self._http.post(
+                routes.sessions_list(self.workspace_id),
+                body=body or None,
+                query=cursor_query(query, cursor),
+            )
+
+        return SyncPage(data, SessionResponse, transform, fetch_next, fetch_cursor)
 
     @validate_call
     def scope(
@@ -764,9 +784,13 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         """
         self._ensure_workspace()
 
-        def fetch(next_page: int) -> dict[str, Any]:
+        def fetch(next_page: int | None, cursor: str | None = None) -> dict[str, Any]:
             """Fetch one page of scopes with the caller's filters and options."""
-            query: dict[str, Any] = {"page": next_page, "size": size}
+            query: dict[str, Any] = {"size": size}
+            if cursor is None:
+                query["page"] = next_page
+            else:
+                query["cursor"] = cursor
             if reverse:
                 query["reverse"] = "true"
             if include_session_count:
@@ -776,6 +800,9 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 body={"filters": filters} if filters else None,
                 query=query,
             )
+
+        def fetch_cursor(cursor: str) -> dict[str, Any]:
+            return fetch(None, cursor)
 
         def transform(scope: ScopeResponse) -> Scope:
             """Convert a scope API response into a Scope SDK object."""
@@ -788,9 +815,11 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             )
 
         def fetch_next(next_page: int) -> SyncPage[ScopeResponse, Scope]:
-            return SyncPage(fetch(next_page), ScopeResponse, transform, fetch_next)
+            return SyncPage(
+                fetch(next_page), ScopeResponse, transform, fetch_next, fetch_cursor
+            )
 
-        return SyncPage(fetch(page), ScopeResponse, transform, fetch_next)
+        return SyncPage(fetch(page), ScopeResponse, transform, fetch_next, fetch_cursor)
 
     def workspaces(
         self,
@@ -839,9 +868,19 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 body={"filters": filters} if filters else None,
                 query=next_query,
             )
-            return SyncPage(next_data, WorkspaceResponse, transform, fetch_next)
+            return SyncPage(
+                next_data, WorkspaceResponse, transform, fetch_next, fetch_cursor
+            )
 
-        return SyncPage(data, WorkspaceResponse, transform, fetch_next)
+        def fetch_cursor(cursor: str) -> dict[str, Any]:
+            """Read on from `cursor` in cursor mode with the same filters and ordering."""
+            return self._http.post(
+                routes.workspaces_list(),
+                body={"filters": filters} if filters else None,
+                query=cursor_query(query, cursor),
+            )
+
+        return SyncPage(data, WorkspaceResponse, transform, fetch_next, fetch_cursor)
 
     @validate_call
     def delete_workspace(
@@ -1210,10 +1249,18 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 query={"page": next_page, "size": size},
             )
 
-        def fetch_next(next_page: int) -> SyncPage[IngestPerson, IngestPerson]:
-            return SyncPage(fetch(next_page), IngestPerson, None, fetch_next)
+        def fetch_cursor(cursor: str) -> dict[str, Any]:
+            return self._http.get(
+                routes.workspace_ingest_people(self.workspace_id),
+                query={"cursor": cursor, "size": size},
+            )
 
-        return SyncPage(fetch(page), IngestPerson, None, fetch_next)
+        def fetch_next(next_page: int) -> SyncPage[IngestPerson, IngestPerson]:
+            return SyncPage(
+                fetch(next_page), IngestPerson, None, fetch_next, fetch_cursor
+            )
+
+        return SyncPage(fetch(page), IngestPerson, None, fetch_next, fetch_cursor)
 
     def ingest_sessions(
         self, *, page: int = 1, size: int = 50
@@ -1233,10 +1280,18 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 query={"page": next_page, "size": size},
             )
 
-        def fetch_next(next_page: int) -> SyncPage[IngestSession, IngestSession]:
-            return SyncPage(fetch(next_page), IngestSession, None, fetch_next)
+        def fetch_cursor(cursor: str) -> dict[str, Any]:
+            return self._http.get(
+                routes.workspace_ingest_sessions(self.workspace_id),
+                query={"cursor": cursor, "size": size},
+            )
 
-        return SyncPage(fetch(page), IngestSession, None, fetch_next)
+        def fetch_next(next_page: int) -> SyncPage[IngestSession, IngestSession]:
+            return SyncPage(
+                fetch(next_page), IngestSession, None, fetch_next, fetch_cursor
+            )
+
+        return SyncPage(fetch(page), IngestSession, None, fetch_next, fetch_cursor)
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def schedule_dream(
@@ -1323,12 +1378,21 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
                 query={"page": next_page, "size": size},
             )
 
+        def fetch_cursor(cursor: str) -> dict[str, Any]:
+            return self._http.post(
+                routes.dreams_list(self.workspace_id),
+                body=body or None,
+                query={"cursor": cursor, "size": size},
+            )
+
         def fetch_next(
             next_page: int,
         ) -> SyncPage[DreamRunResponse, DreamRunResponse]:
-            return SyncPage(fetch(next_page), DreamRunResponse, None, fetch_next)
+            return SyncPage(
+                fetch(next_page), DreamRunResponse, None, fetch_next, fetch_cursor
+            )
 
-        return SyncPage(fetch(page), DreamRunResponse, None, fetch_next)
+        return SyncPage(fetch(page), DreamRunResponse, None, fetch_next, fetch_cursor)
 
     def get_dream(self, run_id: str) -> DreamRunDetailResponse:
         """

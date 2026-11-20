@@ -3,6 +3,7 @@ import type { HonchoHTTPClient } from './http/client'
 import { Page } from './pagination'
 import { Session } from './session'
 import type {
+  CursorPageResponse,
   PageResponse,
   ScopeStatusResponse,
   SessionResponse,
@@ -158,6 +159,7 @@ export class Scope {
   private async _listSessions(params?: {
     page?: number
     size?: number
+    cursor?: string
     reverse?: boolean
   }): Promise<PageResponse<SessionResponse>> {
     await this._ensureWorkspace()
@@ -167,6 +169,7 @@ export class Scope {
         query: {
           page: params?.page,
           size: params?.size,
+          cursor: params?.cursor,
           reverse: params?.reverse ? 'true' : undefined,
         },
       }
@@ -264,6 +267,13 @@ export class Scope {
       return this._listSessions({ page, size, reverse })
     }
 
+    const fetchByCursor = async (
+      cursor: string,
+      size: number
+    ): Promise<CursorPageResponse<SessionResponse>> => {
+      return this._listSessions({ cursor, size, reverse })
+    }
+
     return new Page(
       sessionsPage,
       (session) =>
@@ -278,7 +288,8 @@ export class Scope {
           session.is_active,
           session.uid
         ),
-      fetchNextPage
+      fetchNextPage,
+      fetchByCursor
     )
   }
 
