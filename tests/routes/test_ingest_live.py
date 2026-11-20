@@ -538,7 +538,7 @@ async def test_memory_work_isnt_queued_for_a_workspace_created_again(
         observer=created["peer_id"],
         observed=created["peer_id"],
         dream_type=schemas.DreamType.OMNI,
-        auto_workspace_id=old_id,
+        expected_workspace_id=old_id,
     )
 
     queued = await db_session.scalar(

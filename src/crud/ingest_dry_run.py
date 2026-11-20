@@ -39,10 +39,10 @@ async def end_dry_run(db: AsyncSession, workspace_name: str) -> str | None:
     transaction carries on. Otherwise this commits that transaction, ends the dry
     run in one of its own holding the exclusive workspace fence, and commits.
 
-    Returns the workspace's ID when it's an auto workspace, else None. A caller
-    that queues memory work later passes it to `still_the_workspace` under the
-    shared fence, so work for a workspace deleted and created again since (in a
-    new dry run) isn't queued.
+    Returns the workspace's ID, or None when it's gone. A caller that queues
+    memory work later passes it to `still_the_workspace` under the shared
+    fence, so work for a workspace deleted and created again since (perhaps as
+    an auto workspace, in a new dry run) isn't queued.
     """
     tenant_id = models.scoped_tenant_id()
     workspace = models.Workspace
@@ -53,9 +53,9 @@ async def end_dry_run(db: AsyncSession, workspace_name: str) -> str | None:
             ).where(workspace.tenant_id == tenant_id, workspace.name == workspace_name)
         )
     ).one_or_none()
-    if row is None or row.auto_enabled_at is None:
+    if row is None:
         return None
-    if row.ingest_derived_at is not None:
+    if row.auto_enabled_at is None or row.ingest_derived_at is not None:
         return row.id
     await db.commit()
     await take_workspace_fence(db, workspace_name, mode="exclusive")
@@ -63,8 +63,8 @@ async def end_dry_run(db: AsyncSession, workspace_name: str) -> str | None:
         update(workspace)
         .where(
             workspace.tenant_id == tenant_id,
-            workspace.name == workspace_name,
-            workspace.auto_enabled_at.is_not(None),
+            # The workspace read above, not one created again under its name.
+            workspace.id == row.id,
             workspace.ingest_derived_at.is_(None),
         )
         .values(ingest_derived_at=func.statement_timestamp())
