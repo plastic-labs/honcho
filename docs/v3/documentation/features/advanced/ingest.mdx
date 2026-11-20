@@ -148,6 +148,8 @@ await honcho.ingestSaveSyncState(
 ```
 </CodeGroup>
 
+The Discord and GitHub connectors do this from the CLI. `honcho ingest from discord --follow` catches up from the saved position, then takes new messages, edits and deletes from Discord's live connection until stopped; `honcho ingest from github --follow` polls the repositories every five minutes for issues, pull requests and commits that changed. Both send with `derive="auto"` unless `--derive` says otherwise, and hold a bot's record for up to `--bot-window` minutes (60 by default) for a person to answer it.
+
 The position is the connector's own cursor; Honcho stores it as sent. A save that names the revision it read is refused if another runner saved since, so two runners on one source notice each other. `ingest_status()` lists each synced source with its last sync, its newest record and its last error. A reset forgets every sync state, so connectors read their sources again from the start.
 
 ## Review an import before deriving it

@@ -2,7 +2,9 @@
 
 Registered under the ``honcho.ingest_sources`` entry point. The CLI owns the
 workspace, credentials, bot filtering and sending; this reads the selected
-repositories and hands their records over, one repository at a time.
+repositories and hands their records over, one repository at a time. With
+``--follow`` (``honcho ingest from github --follow``) it then polls them for
+what changed: see `honcho_github.follow`.
 """
 
 import argparse
@@ -13,6 +15,7 @@ from typing import Any, Protocol
 
 from honcho_github.client import GitHubClient, GitHubError
 from honcho_github.export import SelectionError, export
+from honcho_github.follow import FOLLOW_METHODS, FollowSink, GitHubFollower
 from honcho_github.mapping import Repo
 from honcho_github.options import (
     add_read_options,
@@ -50,6 +53,7 @@ class _ToCli:
 
 class GitHubSource:
     help: str = "GitHub repositories: issues, pull requests, reviews and commits"
+    follows: bool = True
 
     def main(self, argv: list[str], sink: RecordSink) -> int:
         parser = argparse.ArgumentParser(
@@ -61,12 +65,30 @@ class GitHubSource:
         )
         add_read_options(parser)
         add_since_option(parser)
+        parser.add_argument(
+            "--follow",
+            action="store_true",
+            help="Carry on from the saved position, then poll for what changed until"
+            + " stopped (passed by `honcho ingest from github --follow`)",
+        )
+        parser.add_argument(
+            "--interval",
+            type=int,
+            default=300,
+            help="With --follow: seconds between polls (default 300, at least 30)",
+        )
         args = parser.parse_args(argv)
         logging.basicConfig(level=logging.INFO, format="%(message)s")
         logging.getLogger("httpx").setLevel(logging.WARNING)
 
-        token = read_token(args.token_file)
         since = parse_since(args.since)
+        if args.follow:
+            if args.interval < 30:
+                raise SystemExit("--interval must be at least 30 seconds")
+            if not all(hasattr(sink, name) for name in FOLLOW_METHODS):
+                raise SystemExit("--follow needs `honcho ingest from github --follow`")
+            return _follow(args, read_token(args.token_file), since, sink)  # pyright: ignore[reportArgumentType]
+        token = read_token(args.token_file)
         try:
             with GitHubClient(token, host=args.host) as client:
                 stats, _ = export(
@@ -91,6 +113,25 @@ class GitHubSource:
             )
             return 1
         return 0
+
+
+def _follow(
+    args: argparse.Namespace, token: str, since: str | None, sink: FollowSink
+) -> int:
+    with GitHubClient(token, host=args.host) as client:
+        stats = GitHubFollower(
+            client,
+            args.repo or [],
+            args.org or [],
+            sink,
+            interval=float(args.interval),
+            since=since,
+        ).run()
+    print(
+        f"followed: {stats.records} new or changed records in {stats.polls} polls",
+        file=sys.stderr,
+    )
+    return 0
 
 
 SOURCE = GitHubSource()

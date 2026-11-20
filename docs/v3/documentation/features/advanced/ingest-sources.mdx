@@ -73,6 +73,15 @@ This page walks through Discord and GitHub. Any two sources work the same way.
    honcho ingest derive -w acme-team --watch
    ```
 
+6. **Keep it current.** Follow each source: it reads the history again (what's already imported comes back as duplicates), then sends what's new as it happens, deriving it as it arrives. Stop with Ctrl-C; run it again, on any machine, and it carries on from where it got to.
+
+   ```bash
+   honcho ingest from discord --follow --token-file ~/.discord.token --guild GUILD_ID -w acme-team
+   honcho ingest from github --follow --token-file ~/.github.token --repo acme/web -w acme-team
+   ```
+
+   After the first derive, edits and deletes are refused (`edited_after_derivation`): the stored version stays.
+
 ## What the suggestions look at
 
 Each suggestion pairs two accounts and lists its evidence:

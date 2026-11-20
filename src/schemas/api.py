@@ -759,7 +759,7 @@ IngestOutcome = Literal["created", "updated", "deleted", "duplicate", "rejected"
 IngestDerivation = Literal["pending", "queued", "deferred", "deleted"]
 IngestRejectionReason = Literal[
     "stale_revision",
-    # Kept for clients that still read it; ingest no longer sends it.
+    # Never sent; in the type so clients that match on it still validate.
     "edit_not_supported",
     "edited_after_derivation",
     "deleted",
