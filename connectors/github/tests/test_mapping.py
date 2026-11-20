@@ -241,7 +241,7 @@ def test_a_commit_is_what_shipped_with_what_it_touched() -> None:
 
     assert record is not None
     assert record["content"] == (
-        "Commit to acme/web (PR #12):\nfeat: add login (#12)\n\nBody."
+        "Commit (PR #12):\nfeat: add login (#12)\n\nBody."
         + "\n\ntouched: src/auth/, tests/"
     )
     assert record["author"] == {"name": "alex", "id": "11"}
@@ -261,9 +261,7 @@ def test_a_merge_commit_is_named_by_its_pull_request() -> None:
     )
 
     assert record is not None
-    assert (
-        record["content"] == "Commit to acme/web (PR #12):\nAdd login (#12)\n\nDetails."
-    )
+    assert record["content"] == "Commit (PR #12):\nAdd login (#12)\n\nDetails."
 
 
 def test_commits_without_a_person_or_meaning_are_skipped() -> None:

@@ -568,8 +568,9 @@ def commit_record(
         created_at=str(node["committedDate"]),
         revised_at=None,
         author=author,
-        header=f"Commit to {repo.name_with_owner}"
-        + (f" (PR #{pr}):" if pr is not None else ":"),
+        # The repository is in `metadata.repo`, not the text: a commit has no
+        # revision, so a renamed repository would change its text for good.
+        header="Commit" + (f" (PR #{pr}):" if pr is not None else ":"),
         body=text,
         resolve=resolve,
         metadata=metadata,

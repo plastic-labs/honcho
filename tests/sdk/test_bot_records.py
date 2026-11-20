@@ -125,6 +125,31 @@ def test_a_conversation_is_the_container_without_a_thread() -> None:
     assert _ids(kept) == ["ping", "pong"]
 
 
+def test_a_conversation_is_the_session_ingest_maps_a_record_to() -> None:
+    mention = "@ci run it again"
+    records = [
+        # An explicit session_id is its own conversation, whatever the container.
+        {**_record("stats", 0, CI), "session_id": "ops"},
+        {
+            **_record("ping", 1, ALEX, participants=[CI], content=mention),
+            "session_id": "ops",
+        },
+        _record("pong", 2, CI),
+        # Without a container, each record is a session of its own.
+        {**_record("alone", 3, CI), "container": None},
+        {
+            **_record("asks", 4, ALEX, participants=[CI], content=mention),
+            "container": None,
+        },
+        {**_record("after", 5, CI), "container": None},
+    ]
+
+    kept, held_back = filter_bot_records(records)
+
+    assert _ids(kept) == ["stats", "ping", "asks"]
+    assert held_back == 3
+
+
 def test_another_source_instance_never_interacts() -> None:
     records = [
         _record("alert", 0, RABBIT, instance="acme"),

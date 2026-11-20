@@ -1,6 +1,7 @@
 """Walking a server through a fake Discord API, into JSONL and the ingest API."""
 
 import json
+import os
 from pathlib import Path
 from typing import Any, final
 
@@ -378,9 +379,30 @@ def test_output_files_are_never_written_through_a_symlink(tmp_path: Path) -> Non
     out, elsewhere = tmp_path / "out", tmp_path / "elsewhere.jsonl"
     out.mkdir()
     (out / "records.jsonl").symlink_to(elsewhere)
-    with pytest.raises(OSError):
-        JsonlSink(out)
+    sink = JsonlSink(out)
+    sink.close([], {})
     assert not elsewhere.exists()
+    assert not (out / "records.jsonl").is_symlink()
+
+
+def test_a_hard_linked_output_file_is_replaced_not_overwritten(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "elsewhere.txt"
+    outside.write_text("keep me")
+    outside.chmod(0o644)
+    out = tmp_path / "export"
+    out.mkdir()
+    os.link(outside, out / "records.jsonl")
+
+    sink = JsonlSink(out)
+    sink.record({"source_id": "a"})
+    sink.close([], {})
+
+    assert outside.read_text() == "keep me"
+    assert outside.stat().st_mode & 0o777 == 0o644
+    assert _read(out / "records.jsonl") == [{"source_id": "a"}]
+    assert (out / "records.jsonl").stat().st_mode & 0o777 == 0o600
 
 
 def test_rate_limits_dont_use_up_the_failure_retries() -> None:

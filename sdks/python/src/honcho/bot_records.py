@@ -17,9 +17,10 @@ A person interacted with a bot record when:
   bot's last record at or before the mention (what the person is answering) and
   its first record after it (the bot's answer) are kept.
 
-A conversation is the record's container, narrowed by `metadata.thread` when it
-has one (a pull request inside a repository). Records from different sources or
-source instances never interact. Order is kept.
+A conversation is the session ingest puts the record in (its `session_id`, else
+its container, else the record on its own), narrowed by `metadata.thread` when
+it has one (a pull request inside a repository). Records from different sources
+or source instances never interact. Order is kept.
 """
 
 from __future__ import annotations
@@ -47,7 +48,7 @@ class _Seen:
     instance: tuple[str, str]
     source_id: str | None
     reply_to: str | None
-    conversation: tuple[str, str, str | None, str | None]
+    conversation: tuple[str | None, ...]
     at: datetime.datetime
     author: IngestParticipant | None
     participants: list[IngestParticipant]
@@ -70,14 +71,24 @@ def _hint(metadata: Mapping[str, Any] | None, name: str) -> str | None:
     return str(value)
 
 
-def _seen(record: IngestRecord | Mapping[str, Any]) -> _Seen:
+def _seen(record: IngestRecord | Mapping[str, Any], index: int) -> _Seen:
     model = (
         record
         if isinstance(record, IngestRecord)
         else IngestRecord.model_validate(record)
     )
     instance = (model.source, model.source_instance)
-    container = model.container.id if model.container is not None else None
+    # The session ingest maps the record to: an explicit one, else its
+    # container's, else one of its own.
+    session: tuple[str, ...]
+    if model.session_id is not None:
+        session = ("session", model.session_id)
+    elif model.container is not None:
+        session = ("container", model.container.id)
+    elif model.source_id is not None:
+        session = ("record", "id", model.source_id)
+    else:
+        session = ("record", "index", str(index))
     at = model.created_at
     at = (at if at.tzinfo is not None else at.replace(tzinfo=datetime.UTC)).astimezone(
         datetime.UTC
@@ -86,7 +97,7 @@ def _seen(record: IngestRecord | Mapping[str, Any]) -> _Seen:
         instance=instance,
         source_id=model.source_id,
         reply_to=_hint(model.metadata, "reply_to"),
-        conversation=(*instance, container, _hint(model.metadata, "thread")),
+        conversation=(*instance, *session, _hint(model.metadata, "thread")),
         at=at,
         author=model.author,
         participants=model.participants,
@@ -125,7 +136,7 @@ def filter_bot_records(
     items = list(records)
     if keep == "all":
         return items, 0
-    seen = [_seen(r) for r in items]
+    seen = [_seen(r, i) for i, r in enumerate(items)]
     if keep == "none":
         kept = [r for r, s in zip(items, seen, strict=True) if not s.bot]
         return kept, len(items) - len(kept)

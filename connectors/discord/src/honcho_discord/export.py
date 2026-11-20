@@ -5,6 +5,7 @@ each container's messages oldest first: the ingest API keeps arrival order
 within a session, so a container's history has to arrive in order.
 """
 
+import contextlib
 import datetime
 import json
 import logging
@@ -286,14 +287,18 @@ class JsonlSink:
         self._containers: Any = self._create("containers.jsonl")
 
     def _create(self, name: str) -> Any:
+        # A file left by an earlier export is unlinked, not truncated: it could
+        # be a hard link to a file elsewhere, which truncating would overwrite.
+        # The new file is created exclusively, so nothing can be swapped in
+        # between.
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(name, dir_fd=self._dir)
         fd = os.open(
             name,
-            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
             0o600,
             dir_fd=self._dir,
         )
-        # A file left by an earlier export keeps its old mode otherwise.
-        os.fchmod(fd, 0o600)
         return os.fdopen(fd, "w", encoding="utf-8")
 
     def container(self, container: Container) -> None:
