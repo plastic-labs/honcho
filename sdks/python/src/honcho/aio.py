@@ -36,6 +36,8 @@ from .api_types import (
     DreamRunResponse,
     IngestDeriveResponse,
     IngestLinkResponse,
+    IngestSuggestion,
+    IngestSuggestionAccepted,
     IngestPerson,
     IngestRecord,
     IngestRecordResult,
@@ -862,6 +864,88 @@ class HonchoAio(AsyncMetadataConfigMixin):
             return AsyncPage(await fetch(next_page), IngestPerson, None, fetch_next)
 
         return AsyncPage(await fetch(page), IngestPerson, None, fetch_next)
+
+    async def ingest_refresh_suggestions(self) -> bool:
+        """Queue a refresh of the suggested links, asynchronously.
+
+        Experimental: ingest may change or stop working without notice.
+
+        See `Honcho.ingest_refresh_suggestions`.
+        """
+        response = await self._honcho._async_http_client.post(
+            routes.workspace_ingest_suggestions_refresh(self._honcho.workspace_id)
+        )
+        return bool(response.get("queued"))
+
+    async def ingest_suggestions(
+        self,
+        *,
+        status: Literal["open", "accepted", "dismissed"] | None = "open",
+        confidence: Literal["high", "low"] | None = None,
+        stage: Literal["rules"] | None = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> AsyncPage[IngestSuggestion, IngestSuggestion]:
+        """Accounts that look like one person, asynchronously.
+
+        Experimental: ingest may change or stop working without notice.
+
+        See `Honcho.ingest_suggestions`.
+        """
+        query: dict[str, Any] = {"page": page, "size": size, "status": status or "all"}
+        if confidence is not None:
+            query["confidence"] = confidence
+        if stage is not None:
+            query["stage"] = stage
+
+        async def fetch(next_page: int) -> dict[str, Any]:
+            return await self._honcho._async_http_client.get(
+                routes.workspace_ingest_suggestions(self._honcho.workspace_id),
+                query={**query, "page": next_page},
+            )
+
+        async def fetch_next(
+            next_page: int,
+        ) -> AsyncPage[IngestSuggestion, IngestSuggestion]:
+            return AsyncPage(await fetch(next_page), IngestSuggestion, None, fetch_next)
+
+        return AsyncPage(await fetch(page), IngestSuggestion, None, fetch_next)
+
+    async def ingest_accept_suggestion(
+        self, suggestion_id: str, *, keep: str | PeerBase | None = None
+    ) -> IngestSuggestionAccepted:
+        """Accept a suggestion, asynchronously.
+
+        Experimental: ingest may change or stop working without notice.
+
+        See `Honcho.ingest_accept_suggestion`.
+        """
+        body: dict[str, Any] = {}
+        if keep is not None:
+            body["keep"] = resolve_id(keep)
+        return IngestSuggestionAccepted.model_validate(
+            await self._honcho._async_http_client.post(
+                routes.workspace_ingest_suggestion(
+                    self._honcho.workspace_id, suggestion_id, "accept"
+                ),
+                body=body,
+            )
+        )
+
+    async def ingest_dismiss_suggestion(self, suggestion_id: str) -> IngestSuggestion:
+        """Dismiss a suggestion, asynchronously.
+
+        Experimental: ingest may change or stop working without notice.
+
+        See `Honcho.ingest_dismiss_suggestion`.
+        """
+        return IngestSuggestion.model_validate(
+            await self._honcho._async_http_client.post(
+                routes.workspace_ingest_suggestion(
+                    self._honcho.workspace_id, suggestion_id, "dismiss"
+                )
+            )
+        )
 
     async def ingest_sessions(
         self, *, page: int = 1, size: int = 50

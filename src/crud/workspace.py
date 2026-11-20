@@ -535,6 +535,7 @@ async def delete_workspace(
             models.IngestRecord,
             models.IngestSessionBinding,
             models.IngestPeerBinding,
+            models.IngestSuggestion,
         ):
             await db.execute(
                 delete(ingest_model).where(

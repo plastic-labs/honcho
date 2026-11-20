@@ -328,6 +328,7 @@
                   "v3/documentation/features/advanced/file-uploads",
                   "v3/documentation/features/advanced/ingest",
                   "v3/documentation/features/advanced/ingest-exporters",
+                  "v3/documentation/features/advanced/ingest-sources",
                   "v3/documentation/features/advanced/deleting-data"
                 ]
               }
@@ -460,7 +461,11 @@
               "v3/api-reference/endpoint/ingest/sessions",
               "v3/api-reference/endpoint/ingest/link",
               "v3/api-reference/endpoint/ingest/unlink",
-              "v3/api-reference/endpoint/ingest/reset"
+              "v3/api-reference/endpoint/ingest/reset",
+              "v3/api-reference/endpoint/ingest/suggestions-refresh",
+              "v3/api-reference/endpoint/ingest/suggestions",
+              "v3/api-reference/endpoint/ingest/suggestions-accept",
+              "v3/api-reference/endpoint/ingest/suggestions-dismiss"
             ]
           },
           {

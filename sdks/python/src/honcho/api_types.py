@@ -625,6 +625,26 @@ _DisplayName = Annotated[
 ]
 
 
+_EMAIL = re.compile(r"[^@\s]+@[^@\s]+")
+
+
+def _email_or_none(value: Any) -> str | None:
+    """An email address, trimmed; anything else (a placeholder, blank) is None.
+
+    Mirrors the server, which ignores such a value rather than refusing it.
+    """
+    if not isinstance(value, str):
+        return None
+    address = value.strip()
+    if (
+        len(address) > 320
+        or not _EMAIL.fullmatch(address)
+        or _UNSTORABLE.search(address)
+    ):
+        return None
+    return address
+
+
 class IngestParticipant(BaseModel):
     """A person on a source record. ``id`` is what connects them across records."""
 
@@ -634,6 +654,16 @@ class IngestParticipant(BaseModel):
     """The person's ID in the source, if it has one."""
     name: _DisplayName
     """The person's display name."""
+    handle: _DisplayName | None = None
+    """The account's username in the source, unique there (a GitHub login, a
+    Discord username). Used only to suggest which accounts are one person."""
+    aliases: list[_DisplayName] = Field(default_factory=list, max_length=10)
+    """Other names the account goes by, such as a profile name or a server
+    nickname. Used only to suggest which accounts are one person."""
+    email: Annotated[str | None, BeforeValidator(_email_or_none)] = None
+    """The account's email address. The server keeps only a digest of it,
+    scoped to the workspace, to suggest which accounts are one person. A value
+    that isn't an address is ignored, as the server ignores it."""
     bot: bool = False
     """The source marks this account as a bot. Its peer is created with
     ``observe_me`` off, so nothing is derived about it."""
@@ -724,6 +754,23 @@ class IngestRecordCounts(BaseModel):
     """Queued for derivation, or derived."""
 
 
+class IngestSuggestionStageCounts(BaseModel):
+    """Open suggestions one stage made, by confidence."""
+
+    high: int = 0
+    low: int = 0
+
+
+class IngestSuggestionCounts(BaseModel):
+    """Open suggested links by stage, and whether a refresh is under way."""
+
+    rules: IngestSuggestionStageCounts = Field(
+        default_factory=IngestSuggestionStageCounts
+    )
+    """Made by the identity rules."""
+    refreshing: bool = False
+
+
 class IngestStatusResponse(BaseModel):
     """What the workspace's imports produced, for review before deriving."""
 
@@ -740,6 +787,8 @@ class IngestStatusResponse(BaseModel):
     """Of those, sessions whose reasoning is off."""
     sessions_being_deleted: int = 0
     """Sessions a reset is still deleting; 0 once it has finished."""
+    suggestions: IngestSuggestionCounts = Field(default_factory=IngestSuggestionCounts)
+    """Open suggested links between accounts."""
 
 
 class IngestAccount(BaseModel):
@@ -786,6 +835,57 @@ class IngestLinkResponse(BaseModel):
     merged: list[str]
     """The people linked into it."""
     accounts: list[IngestAccount]
+
+
+class IngestSuggestionAccount(BaseModel):
+    """One account of a suggestion, as it was when the suggestion was made."""
+
+    source: str
+    source_instance: str
+    id: str | None = None
+    display_name: str | None = None
+    handle: str | None = None
+    peer_id: str | None = None
+    """The person it maps to now; None if it's gone."""
+    records: int
+    """Records it had written when the suggestion was made."""
+
+
+class IngestSuggestionEvidence(BaseModel):
+    """One reason for a suggestion."""
+
+    signal: str
+    level: str
+    detail: str
+
+
+class IngestSuggestion(BaseModel):
+    """Two accounts that look like one person, and why. Nothing is linked until accepted.
+
+    Experimental: ingest may change or stop working without notice.
+    """
+
+    id: str
+    kind: str
+    stage: Literal["rules"]
+    """What made it: ``rules``, the identity rules. With ``confidence``, it names a
+    group of suggestions, such as ``rules:high``."""
+    confidence: Literal["high", "low"]
+    """``high``: evidence to accept at a glance. ``low``: needs a closer look."""
+    score: float
+    status: Literal["open", "accepted", "dismissed"]
+    linked: bool
+    """The two accounts map to one person now, however it happened."""
+    accounts: list[IngestSuggestionAccount]
+    evidence: list[IngestSuggestionEvidence]
+    refreshed_at: datetime.datetime
+
+
+class IngestSuggestionAccepted(BaseModel):
+    """The accepted suggestion, and the link it made (None when already one person)."""
+
+    suggestion: IngestSuggestion
+    link: IngestLinkResponse | None = None
 
 
 class IngestUnlinkResponse(BaseModel):

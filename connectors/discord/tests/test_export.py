@@ -172,7 +172,9 @@ def test_export_walks_channels_then_threads_oldest_first(tmp_path: Path) -> None
     accounts = {a["id"]: a for a in _read(tmp_path / "accounts.jsonl")}
     assert accounts["1"]["display_name"] == "JessD"
     assert accounts["9"]["bot"] is True
-    assert records[-4]["participants"] == [{"id": "1", "name": "JessD"}]
+    assert records[-4]["participants"] == [
+        {"id": "1", "name": "JessD", "handle": "jess"}
+    ]
     summary = json.loads((tmp_path / "export.json").read_text())
     assert summary["categories"] == {"100": "Engineering"}
     assert "test-token" not in (tmp_path / "records.jsonl").read_text()

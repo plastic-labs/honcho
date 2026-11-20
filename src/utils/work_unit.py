@@ -164,6 +164,10 @@ def _construct_base_work_unit_key(
             )
         return f"{task_type}:{workspace_name}:{scope_peer}:{session_name}"
 
+    if task_type == "organize":
+        # One unit per workspace: the organizer reads the whole import.
+        return f"organize:{workspace_name}"
+
     raise ValueError(f"Invalid task type: {task_type}")
 
 
@@ -317,6 +321,20 @@ def _parse_base_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
             session_name=parts[3],
             # The scope peer is the observer of every collection the task touches.
             observer=parts[2],
+            observed=None,
+        )
+
+    if task_type == "organize":
+        # organize:{workspace}
+        if len(parts) != 2:
+            raise ValueError(
+                f"Invalid work_unit_key format for task_type {task_type}: {work_unit_key}"
+            )
+        return ParsedWorkUnit(
+            task_type=task_type,
+            workspace_name=parts[1],
+            session_name=None,
+            observer=None,
             observed=None,
         )
 

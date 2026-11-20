@@ -1,6 +1,7 @@
 """POST /v3/workspaces/{workspace_id}/ingest: mapping, dedup, outcomes, atomicity."""
 
 import asyncio
+import json
 from typing import Any
 
 import pytest
@@ -15,6 +16,7 @@ from src.crud import ingest as ingest_crud
 from src.crud.ingest_fence import take_session_fences, take_workspace_fence
 from src.crud.session import upsert_session_peers
 from src.exceptions import ConflictException, ObserverException
+from src.organizer.identity import email_digest
 
 
 def _workspace(client: TestClient) -> str:
@@ -773,6 +775,51 @@ async def test_records_keep_their_source_context_as_sent(
         )
     )
     assert kept == stored["a"]
+
+
+@pytest.mark.asyncio
+async def test_a_person_keeps_handle_and_aliases_and_only_an_email_digest(
+    db_session: AsyncSession, auto_data: tuple[models.Workspace, models.Peer]
+) -> None:
+    """The identity hints are kept for suggestions; the email address is not."""
+    workspace = auto_data[0].name
+    record = _record(
+        source_id="hints",
+        author={
+            "id": "user-1",
+            "name": "Jess",
+            "handle": "jessdecker",
+            "aliases": ["Jessica D"],
+            "email": " Jess@Example.com ",
+        },
+        participants=[{"id": "user-2", "name": "Aakash", "email": "a@example.com"}],
+    )
+    batch = schemas.IngestBatch.model_validate({"records": [record]})
+    await ingest_crud.ingest_batch(db_session, workspace, batch)
+
+    context = await db_session.scalar(
+        select(models.IngestRecord.source_context).where(
+            models.IngestRecord.workspace_name == workspace,
+            models.IngestRecord.identity == "hints",
+        )
+    )
+    assert context is not None
+    tenant = models.scoped_tenant_id()
+    assert context["author"] == {
+        "id": "user-1",
+        "name": "Jess",
+        "handle": "jessdecker",
+        "aliases": ["Jessica D"],
+        "email_digest": email_digest(tenant, workspace, "jess@example.com"),
+    }
+    assert context["participants"][0]["email_digest"] == email_digest(
+        tenant, workspace, "a@example.com"
+    )
+    assert "example.com" not in json.dumps(context).casefold()
+    # Scoped to the workspace: the same address digests differently elsewhere.
+    assert email_digest(tenant, workspace, "a@example.com") != email_digest(
+        tenant, workspace + "-2", "a@example.com"
+    )
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,10 @@ from honcho.api_types import (
     IngestResponse,
     IngestSession,
     IngestStatusResponse,
+    IngestSuggestion,
+    IngestSuggestionAccepted,
+    IngestSuggestionCounts,
+    IngestSuggestionStageCounts,
     PeerConfig,
     QueueStatusResponse,
     SessionConfiguration,
@@ -748,6 +752,9 @@ _EXPERIMENTAL = [
     ["ingest", "link", "1", "2", "-w", "ws1"],
     ["ingest", "unlink", "1", "alex", "-w", "ws1"],
     ["ingest", "from", "github", "-w", "ws1"],
+    ["ingest", "suggestions", "-w", "ws1"],
+    ["ingest", "suggestions", "accept", "1", "-w", "ws1"],
+    ["ingest", "suggestions", "dismiss", "1", "-w", "ws1"],
     ["peer", "exclude", "1", "-w", "ws1"],
     ["peer", "include", "1", "-w", "ws1"],
     ["session", "exclude", "1", "-w", "ws1"],
@@ -1076,3 +1083,220 @@ def test_a_sources_help_needs_no_opt_in(cfg, runner, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert "usage: honcho ingest from fake" in result.stdout
+
+
+# --- suggestions --------------------------------------------------------------
+
+
+def _suggestion(n: int, confidence: str = "high", **changes) -> IngestSuggestion:
+    data = {
+        "id": f"sg{n}",
+        "kind": "same_person",
+        "confidence": confidence,
+        "score": 3.0 - n,
+        "status": "open",
+        "linked": False,
+        "accounts": [
+            {"source": "discord", "source_instance": "g1", "id": f"d{n}",
+             "display_name": "Alex", "handle": "alex_d", "peer_id": f"alex-{n}",
+             "records": 3},
+            {"source": "github", "source_instance": "github-com", "id": f"g{n}",
+             "display_name": "alexdev", "handle": "alexdev", "peer_id": f"alexdev-{n}",
+             "records": 1},
+        ],
+        "evidence": [
+            {"signal": "self_reference", "level": "strong",
+             "detail": "discord account alex_d gives alexdev on github as its own"},
+        ],
+        "stage": "rules",
+        "refreshed_at": "2026-11-19T20:00:00Z",
+    }  # fmt: skip
+    data.update(changes)
+    return IngestSuggestion.model_validate(data)
+
+
+SUGGESTIONS = [_suggestion(1), _suggestion(2, "low")]
+
+
+class _Page(list):
+    total = len(SUGGESTIONS)
+
+
+def _suggestions_client(**extra) -> MagicMock:
+    return _client(
+        ingest_refresh_suggestions=MagicMock(return_value=True),
+        ingest_status=MagicMock(return_value=STATUS),
+        ingest_suggestions=MagicMock(return_value=_Page(SUGGESTIONS)),
+        **extra,
+    )
+
+
+def _invoke(runner, client, *args: str):
+    with patch("honcho_cli.commands.ingest.get_client", return_value=(client, _config())):
+        return runner.invoke(app, ["ingest", "suggestions", *args, "-w", "ws1"])
+
+
+def test_suggestions_refresh_wait_and_list_numbered(cfg, runner):
+    refreshing = STATUS.model_copy(
+        update={
+            "suggestions": IngestSuggestionCounts(
+                rules=IngestSuggestionStageCounts(high=1, low=1), refreshing=True
+            )
+        }
+    )
+    client = _suggestions_client()
+    client.ingest_status = MagicMock(side_effect=[refreshing, STATUS])
+    with patch("honcho_cli.commands.ingest.REFRESH_POLL_SECONDS", 0):
+        result = _invoke(runner, client, "--json")
+
+    assert result.exit_code == 0, result.stderr
+    client.ingest_refresh_suggestions.assert_called_once()
+    assert client.ingest_status.call_count == 2
+    assert [s["id"] for s in json.loads(result.stdout)] == ["sg1", "sg2"]
+
+    # The numbers name the listed suggestions.
+    accept = MagicMock(
+        return_value=IngestSuggestionAccepted(suggestion=SUGGESTIONS[1], link=None)
+    )
+    result = _invoke(runner, _suggestions_client(ingest_accept_suggestion=accept),
+                     "accept", "2")  # fmt: skip
+    assert result.exit_code == 0, result.stderr
+    accept.assert_called_once_with("sg2", keep=None)
+
+
+def test_suggestions_without_refresh_show_the_label_and_evidence(cfg, runner):
+    client = _suggestions_client()
+    result = _invoke(runner, client, "--no-refresh", "--only", "rules:high")
+
+    assert result.exit_code == 0, result.stderr
+    client.ingest_refresh_suggestions.assert_not_called()
+    kwargs = client.ingest_suggestions.call_args.kwargs
+    assert (kwargs["stage"], kwargs["confidence"]) == ("rules", "high")
+    # Each suggestion carries its label, as `accept` takes it.
+    assert [s["label"] for s in json.loads(result.stdout)] == ["rules:high", "rules:low"]
+    assert "alexdev on github as its own" in result.stdout
+
+
+def test_an_unknown_label_is_refused(cfg, runner):
+    result = _invoke(runner, _suggestions_client(), "--no-refresh", "--only", "high")
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["error"]["code"] == "INVALID_ARGUMENT"
+
+    result = _invoke(runner, _suggestions_client(), "accept", "rules:medium")
+    assert result.exit_code == 1
+    assert "rules:high, rules:low" in json.loads(result.stderr)["error"]["message"]
+
+
+def test_accept_by_label_resets_once_then_links_each(cfg, runner):
+    from honcho.api_types import IngestLinkResponse, IngestResetResponse
+
+    calls: list[str] = []
+    done = STATUS.model_copy(update={"sessions_being_deleted": 0})
+
+    def accept(suggestion_id: str, keep=None):
+        calls.append(f"accept {suggestion_id}")
+        return IngestSuggestionAccepted(
+            suggestion=SUGGESTIONS[0],
+            link=IngestLinkResponse(peer_id="alex-1", merged=["alexdev-1"], accounts=[]),
+        )
+
+    client = _suggestions_client(
+        ingest_reset=MagicMock(
+            side_effect=lambda: calls.append("reset") or IngestResetResponse(sessions=["s"])
+        ),
+        ingest_accept_suggestion=MagicMock(side_effect=accept),
+    )
+    client.ingest_status = MagicMock(return_value=done)
+    client.ingest_suggestions = MagicMock(
+        return_value=_Page([SUGGESTIONS[0], _suggestion(3, linked=True)])
+    )
+    result = _invoke(runner, client, "accept", "rules:high", "--reset", "--yes")
+
+    assert result.exit_code == 0, result.stderr
+    kwargs = client.ingest_suggestions.call_args.kwargs
+    assert (kwargs["status"], kwargs["stage"], kwargs["confidence"]) == (
+        "open",
+        "rules",
+        "high",
+    )
+    # Already one person: nothing to accept for it.
+    assert calls == ["reset", "accept sg1"]
+
+
+def test_accept_mixes_numbers_and_labels_once_each(cfg, runner):
+    accept = MagicMock(
+        return_value=IngestSuggestionAccepted(suggestion=SUGGESTIONS[0], link=None)
+    )
+    client = _suggestions_client(ingest_accept_suggestion=accept)
+    client.ingest_suggestions = MagicMock(return_value=_Page([SUGGESTIONS[0]]))
+    result = _invoke(runner, client, "accept", "sg2", "rules:high", "sg1", "--json")
+
+    assert result.exit_code == 0, result.stderr
+    assert [c.args[0] for c in accept.call_args_list] == ["sg2", "sg1"]
+
+
+def test_nothing_to_accept_names_the_label(cfg, runner):
+    client = _suggestions_client()
+    client.ingest_suggestions = MagicMock(return_value=_Page([]))
+    result = _invoke(runner, client, "accept", "rules:low")
+
+    assert result.exit_code == 1
+    error = json.loads(result.stderr)["error"]
+    assert error["code"] == "NOTHING_TO_ACCEPT"
+    assert "rules:low" in error["message"]
+
+
+def test_a_refused_accept_is_reported_and_fails(cfg, runner):
+    refused = MagicMock(side_effect=ConflictError("Reset the import first."))
+    result = _invoke(
+        runner, _suggestions_client(ingest_accept_suggestion=refused),
+        "accept", "sg1", "--json",
+    )  # fmt: skip
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["failed"][0]["suggestion"] == "sg1"
+
+
+def test_accept_needs_a_suggestion_and_keep_needs_exactly_one(cfg, runner):
+    assert _invoke(runner, _suggestions_client(), "accept").exit_code == 1
+    result = _invoke(runner, _suggestions_client(), "accept", "sg1", "sg2", "--keep", "x")
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["error"]["code"] == "INVALID_ARGUMENT"
+    result = _invoke(runner, _suggestions_client(), "accept", "rules:high", "--keep", "x")
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def test_dismiss_by_id(cfg, runner):
+    dismiss = MagicMock(return_value=SUGGESTIONS[0].model_copy(update={"status": "dismissed"}))
+    result = _invoke(runner, _suggestions_client(ingest_dismiss_suggestion=dismiss),
+                     "dismiss", "sg1")  # fmt: skip
+
+    assert result.exit_code == 0, result.stderr
+    dismiss.assert_called_once_with("sg1")
+
+
+def test_a_batch_reports_what_was_done_before_a_failure(cfg, runner):
+    def accept(suggestion_id: str, keep=None):
+        if suggestion_id == "sg2":
+            raise RuntimeError("server error")
+        return IngestSuggestionAccepted(suggestion=SUGGESTIONS[0], link=None)
+
+    client = _suggestions_client(ingest_accept_suggestion=MagicMock(side_effect=accept))
+    result = _invoke(runner, client, "accept", "sg1", "sg2", "--json")
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)
+    assert [a["suggestion"]["id"] for a in body["accepted"]] == ["sg1"]
+    assert body["failed"][0]["suggestion"] == "sg2"
+
+    def dismiss(suggestion_id: str):
+        if suggestion_id == "sg2":
+            raise ConflictError("was accepted")
+        return SUGGESTIONS[0].model_copy(update={"status": "dismissed"})
+
+    client = _suggestions_client(ingest_dismiss_suggestion=MagicMock(side_effect=dismiss))
+    result = _invoke(runner, client, "dismiss", "sg1", "sg2", "--json")
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)
+    assert [d["id"] for d in body["dismissed"]] == ["sg1"]
+    assert body["failed"][0]["suggestion"] == "sg2"
