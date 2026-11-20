@@ -76,6 +76,7 @@ from .peer import (
 from .scope import (
     SCOPE_MEMBERSHIP_CONFIG,
     get_or_create_scopes,
+    session_in_no_scope_clause,
     session_in_scope_clause,
 )
 from .workspace import get_or_create_workspace
@@ -217,7 +218,7 @@ async def get_sessions(
     if scope_name is not None:
         stmt = stmt.where(session_in_scope_clause(scope_name))
     elif in_no_scope:
-        stmt = stmt.where(~session_in_scope_clause(None))
+        stmt = stmt.where(session_in_no_scope_clause(workspace_name))
 
     stmt = apply_filter(stmt, models.Session, filters)
 
