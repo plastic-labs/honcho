@@ -1,0 +1,36 @@
+[project]
+name = "honcho-github-connector"
+version = "0.1.0"
+description = "Read GitHub repositories' history as Honcho ingest records."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    { name = "Plastic Labs", email = "hello@plasticlabs.ai" },
+]
+dependencies = [
+    "httpx>=0.27.0",
+    "honcho-ai>=2.10.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/plastic-labs/honcho"
+Repository = "https://github.com/plastic-labs/honcho"
+
+[project.scripts]
+honcho-github = "honcho_github.__main__:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/honcho_github"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

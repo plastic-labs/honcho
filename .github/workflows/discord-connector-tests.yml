@@ -1,0 +1,59 @@
+name: Discord Connector Tests
+
+# The connector is a uv workspace member outside the root `tests/` and
+# basedpyright `include`, so neither the unit-test nor the static-analysis
+# workflow covers it. Its tests fake Discord's and Honcho's HTTP APIs: no
+# server, database or token.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'connectors/discord/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.python-version'
+      - '.github/workflows/discord-connector-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'connectors/discord/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.python-version'
+      - '.github/workflows/discord-connector-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      # The root dev dependencies bring ruff and basedpyright; the connector's
+      # own extra brings pytest.
+      - name: Install
+        run: uv sync --locked --all-packages --extra dev
+
+      - name: Lint
+        run: uv run ruff check connectors/discord && uv run ruff format --check connectors/discord
+
+      # Uses the root basedpyright configuration; CI fails on any warning.
+      - name: Type check
+        run: uv run basedpyright connectors/discord
+
+      - name: Run tests
+        working-directory: connectors/discord
+        run: uv run pytest

@@ -121,10 +121,60 @@ def test_import_sends_the_file_deferred_and_summarizes(cfg, runner, tmp_path):
         "duplicate": 0,
         "rejected": 0,
         "rejected_reasons": {},
+        "bot_records_held_back": 0,
         "sessions": 1,
         "authors": 2,
         "derive": "later",
     }
+
+
+def _bot_thread() -> list[dict]:
+    bot = {"id": "b1", "name": "ci", "bot": True}
+    return [
+        _record(0),
+        {**_record(1), "author": bot},  # nobody answers this one
+        {**_record(2), "author": bot},
+        {**_record(3), "metadata": {"reply_to": "m2"}},  # a person replies to m2
+    ]
+
+
+def test_import_holds_back_bot_records_no_one_interacted_with(cfg, runner, tmp_path):
+    ingest = MagicMock(side_effect=lambda chunk, derive: _ingest_response(len(chunk)))
+    path = _jsonl(tmp_path, _bot_thread())
+    with patch(
+        "honcho_cli.commands.ingest.get_client",
+        return_value=(_client(ingest=ingest), _config()),
+    ):
+        result = runner.invoke(app, ["ingest", "import", str(path)])
+
+    assert result.exit_code == 0, result.stderr
+    [(chunk,), _] = ingest.call_args
+    assert [r.source_id for r in chunk] == ["m0", "m2", "m3"]
+    summary = json.loads(result.stdout)
+    assert summary["records"] == 3
+    assert summary["bot_records_held_back"] == 1
+
+
+@pytest.mark.parametrize(("bots", "sent"), [("all", 4), ("none", 2)])
+def test_import_bots_all_or_none(cfg, runner, tmp_path, bots, sent):
+    ingest = MagicMock(side_effect=lambda chunk, derive: _ingest_response(len(chunk)))
+    path = _jsonl(tmp_path, _bot_thread())
+    with patch(
+        "honcho_cli.commands.ingest.get_client",
+        return_value=(_client(ingest=ingest), _config()),
+    ):
+        result = runner.invoke(app, ["ingest", "import", str(path), "--bots", bots])
+
+    assert result.exit_code == 0, result.stderr
+    assert len(ingest.call_args.args[0]) == sent
+
+
+def test_import_refuses_an_unknown_bots_choice(cfg, runner, tmp_path):
+    path = _jsonl(tmp_path, [_record(0)])
+    result = runner.invoke(app, ["ingest", "import", str(path), "--bots", "some"])
+
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["error"]["code"] == "INVALID_ARGUMENT"
 
 
 def test_import_reads_a_large_file_in_chunks(cfg, runner, tmp_path):
