@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cdn.jsdelivr.net/npm/@honcho-ai/harness-plugin-core@0/config.schema.json",
+  "title": "~/.honcho/config.json",
+  "description": "Schema version 2. Every plugin setting lives in its host block. The top level belongs to the honcho CLI, and plugins do not read it.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional; points editors at this schema."
+    },
+    "schemaVersion": {
+      "const": 2
+    },
+    "hosts": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/host"
+      }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "host": {
+      "type": "object",
+      "description": "One plugin's settings. A plugin may keep keys of its own beside these.",
+      "properties": {
+        "apiKey": {
+          "type": "string"
+        },
+        "oauth": {
+          "type": "object",
+          "description": "This plugin's own OAuth grant.",
+          "properties": {
+            "accessToken": {
+              "type": "string"
+            },
+            "refreshToken": {
+              "type": "string"
+            },
+            "accessExpiresAt": {
+              "type": "number",
+              "description": "Epoch seconds."
+            },
+            "clientId": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "accessToken",
+            "refreshToken",
+            "accessExpiresAt",
+            "clientId",
+            "scope"
+          ]
+        },
+        "peerName": {
+          "type": "string",
+          "description": "The user."
+        },
+        "workspace": {
+          "type": "string"
+        },
+        "aiPeer": {
+          "type": "string"
+        },
+        "baseUrl": {
+          "type": "string",
+          "description": "Honcho API origin; omit for Honcho cloud."
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "description": "Set by the plugin once it reads only this block; honcho doctor waits for it before deleting top-level keys."
+        }
+      }
+    }
+  }
+}

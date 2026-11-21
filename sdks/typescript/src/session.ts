@@ -17,6 +17,7 @@ import type {
   RepresentationOptions,
   RepresentationResponse,
   SessionContextResponse,
+  SessionPeerConfigParams,
   SessionResponse,
   SessionSummariesResponse,
 } from './types/api'
@@ -283,10 +284,7 @@ export class Session {
   }
 
   private async _addPeers(
-    peers: Record<
-      string,
-      { observe_me?: boolean | null; observe_others?: boolean | null }
-    >
+    peers: Record<string, SessionPeerConfigParams>
   ): Promise<void> {
     await this._ensureWorkspace()
     await this._http.post(
@@ -296,10 +294,7 @@ export class Session {
   }
 
   private async _setPeers(
-    peers: Record<
-      string,
-      { observe_me?: boolean | null; observe_others?: boolean | null }
-    >
+    peers: Record<string, SessionPeerConfigParams>
   ): Promise<void> {
     await this._ensureWorkspace()
     await this._http.put(
@@ -337,7 +332,7 @@ export class Session {
 
   private async _setPeerConfiguration(
     peerId: string,
-    config: { observe_me?: boolean | null; observe_others?: boolean | null }
+    config: SessionPeerConfigParams
   ): Promise<void> {
     await this._ensureWorkspace()
     await this._http.put(
@@ -570,6 +565,7 @@ export class Session {
     await this._setPeerConfiguration(peerId, {
       observe_others: validatedConfig.observeOthers,
       observe_me: validatedConfig.observeMe,
+      joined_at: validatedConfig.joinedAt,
     })
   }
 

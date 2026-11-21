@@ -1,0 +1,40 @@
+name: harness-plugin-core
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'harness-plugin-core/**'
+      - '.github/workflows/harness-plugin-core.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'harness-plugin-core/**'
+      - '.github/workflows/harness-plugin-core.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: harness-plugin-core
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      # Includes the dist test, which builds, packs and loads the tarball under plain Node.
+      - name: Test
+        run: bun test

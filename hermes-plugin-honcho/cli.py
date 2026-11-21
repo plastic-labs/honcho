@@ -9,8 +9,10 @@ import sys
 from pathlib import Path
 
 from hermes_constants import get_hermes_home
+from hermes_cli.profiles import _get_default_hermes_home
 from .attribution import HONCHO_APP_URL, attribution_url
 from .client import _first_parsed, _host_block, profile_host_key, resolve_active_host, resolve_config_path, HOST
+from .client import resolve_global_config_path, spawn_context_thread
 from .session_peers import sanitize_peer_id
 from hermes_cli.config import cfg_get
 from utils import read_json_or_empty
@@ -82,8 +84,9 @@ def _read_config() -> dict:
     return _ReadConfig(read_json_or_empty(path), path)
 
 
-class ConfigWriteRefused(Exception):
-    """honcho.json exists on disk but does not parse, so no command may overwrite it."""
+class ConfigWriteRefused(ValueError):
+    """honcho.json exists on disk but does not parse, so no command may overwrite it. A ValueError so
+    Hermes' dashboard reports a refused save as a 400, also across ``plugins.isolation: host``."""
 
 
 def _refuse_unparseable(path: Path) -> dict:
@@ -278,9 +281,22 @@ def _inherit_defaults(block: dict, default_block: dict, cfg: dict, keys: tuple[s
         block["peerName"] = peer_name
 
 
-def clone_honcho_for_profile(profile_name: str) -> bool:
+def _profile_hook_write_path(cfg: dict) -> Path:
+    """Where a profile hook writes: the file the profile reads (``$HERMES_HOME/honcho.json``, or the
+    default profile's, where host blocks accumulate). A read that fell through to ~/.honcho seeds the
+    default profile's file, as a clone run from the default profile always did, so the new profile
+    never gets its own copy of every other host's credentials."""
+    path = getattr(cfg, "path", None) or _config_path()
+    return _get_default_hermes_home() / "honcho.json" if path == resolve_global_config_path() else path
+
+
+def clone_honcho_for_profile(profile_name: str, *, in_hook: bool = False) -> bool:
     """Create a host block for a new profile, cloned from the default host block
-    (called during profile creation). False if Honcho isn't configured or the block exists."""
+    (called during profile creation). False if Honcho isn't configured or the block exists.
+
+    ``in_hook``: called from ``on_profile_created`` with the new profile's home bound. The block goes
+    to the file that profile reads, and the peer is created off-thread (the hook runs inside the
+    dashboard's create request)."""
     cfg = _read_config()
     if not cfg:
         return False
@@ -301,9 +317,52 @@ def clone_honcho_for_profile(profile_name: str) -> bool:
     if _resolve_api_key(cfg, new_block, env=False):
         new_block["enabled"] = default_block.get("enabled", True)
     cfg.setdefault("hosts", {})[new_host] = new_block
-    _write_config(cfg)
-    _ensure_peer_exists(new_host)  # eager so the peer exists before first message
+    if not in_hook:
+        _write_config(cfg)
+        _ensure_peer_exists(new_host)  # eager so the peer exists before first message
+        return True
+    _write_config(cfg, _profile_hook_write_path(cfg))
+    # Off the request thread, but not a daemon: `hermes profile create` exits right after the hook, and a
+    # daemon thread would die before its request. The thread carries the bound profile home with it.
+    spawn_context_thread(_ensure_peer_exists, name="honcho-profile-peer", args=(new_host,), daemon=False).start()
     return True
+
+
+def migrate_profile_host(old_name: str, new_name: str) -> list[str]:
+    """Re-key a renamed profile's host block (``hermes_<old>`` or legacy ``hermes.<old>``) to
+    ``hermes_<new>`` in every honcho.json the profile could read, keeping its peer: a block without
+    ``aiPeer`` pins the old name, which its peer was created under. Returns one line per file touched.
+    Runs from ``on_profile_renamed`` with the renamed profile's home bound."""
+    old_host, legacy_old_host = profile_host_key(old_name), f"{HOST}.{old_name}"
+    new_host = profile_host_key(new_name)
+    lines: list[str] = []
+    seen: set[Path] = set()
+    for path in (_local_config_path(), _get_default_hermes_home() / "honcho.json", resolve_global_config_path()):
+        resolved = path.resolve() if path.exists() else path
+        if resolved in seen or not path.is_file():
+            continue
+        seen.add(resolved)
+        try:
+            cfg = _ReadConfig(_refuse_unparseable(path), path)
+        except ConfigWriteRefused as e:
+            lines.append(f"Honcho host block not migrated: {e}")
+            continue
+        hosts = cfg.get("hosts")
+        if not isinstance(hosts, dict):
+            continue
+        source = old_host if old_host in hosts else legacy_old_host
+        if source not in hosts:
+            continue
+        if new_host in hosts:
+            lines.append(f"⚠ Honcho host block not migrated: {new_host} already exists in {path}")
+            continue
+        block = hosts.pop(source)
+        if isinstance(block, dict) and "aiPeer" not in block:
+            block = {**block, "aiPeer": old_name}
+        hosts[new_host] = block
+        _write_config(cfg, path)
+        lines.append(f"✓ Honcho host updated: {source} → {new_host}")
+    return lines
 
 
 def _sync_profiles(verbose: bool) -> int:

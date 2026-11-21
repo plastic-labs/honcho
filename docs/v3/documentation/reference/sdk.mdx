@@ -1057,6 +1057,26 @@ This is useful for:
 
 If `created_at` is not provided, messages will use the server's current timestamp.
 
+#### Backdating a peer's join time
+
+A search with `peer_perspective` only returns messages created at or after the time that peer joined the session, and a peer joins "now" by default. When you import messages with their original dates, set `joined_at` on the peer's session configuration so the imported messages fall inside its membership:
+
+<CodeGroup>
+```python Python
+import datetime
+from honcho.api_types import SessionPeerConfig
+
+joined = datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc)
+session.add_peers([(alice, SessionPeerConfig(joined_at=joined))])
+```
+
+```typescript TypeScript
+await session.addPeers([[alice, { joinedAt: '2024-01-01T00:00:00Z' }]])
+```
+</CodeGroup>
+
+`joined_at` is accepted wherever a session-peer configuration is sent (creating a session with peers, adding or setting peers, setting a peer's configuration). It also applies to a peer that is already in the session, so an existing import can be corrected the same way. It is write-only, a timestamp without a timezone is read as UTC, and a time more than five minutes in the future is rejected. Changing the join time of a peer that is already in a session needs a session-level (or broader) key; a peer-scoped key can set it only on a session it is creating.
+
 ### Metadata and Filtering
 
 See [Using Filters](/v3/documentation/features/advanced/using-filters) for more examples on how to use filters.

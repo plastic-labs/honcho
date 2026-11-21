@@ -18,14 +18,16 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 ## Command groups
 
 - `honcho config` — CLI configuration
+- `honcho install` — find the AI agents on this machine and add Honcho to them; `honcho install --list` only reports which agents have Honcho
 - `honcho start` / `stop` / `status` — local Docker stack (does not change `environmentUrl`). First start pins the Honcho image digest and writes `config.toml` into the profile. Pass `--setup basic` or `--setup advanced` for an interactive config wizard (TTY only; writes `.env` overrides). `honcho status` lists every profile; pass `--profile` for one.
-- `honcho workspace` — inspect, delete, search, chat
+- `honcho workspace` — inspect, delete, search, chat, replay (copy to another workspace or instance)
 - `honcho peer` — inspect, card, chat, search
 - `honcho session` — inspect, view (transcript), context, summaries
 - `honcho scope` — list, create, inspect, sessions, add-sessions, remove-session, status
 - `honcho message` — list and get
 - `honcho conclusion` — list, search, create, delete
 - `honcho dream` — list, inspect (what each dream changed; workspace or admin key)
+- `honcho ingest` (experimental: needs `HONCHO_EXPERIMENTAL=1`) — import, status, derive, reset, link, unlink: load source records into an auto workspace, review them, derive (workspace or admin key). `honcho peer exclude` / `honcho session exclude` stop derivation about an imported person or session before `ingest derive`
 
 ## Rules
 
@@ -33,6 +35,9 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 - Run `honcho peer inspect` before `honcho peer chat` to understand context.
 - Use `honcho session context` to see exactly what an agent receives.
 - Never run `honcho workspace delete` without `honcho workspace inspect` first.
+- `honcho ingest import` holds back bot records no person interacted with (`--bots interacted`, the default); `--bots all` imports every record.
+- After `honcho ingest import`, run `honcho ingest status` and exclude what shouldn't be modeled before `honcho ingest derive`: exclusions apply only to records not yet released.
+- To make two imported accounts one person: `honcho ingest link <kept> <other> --reset --yes`, then `honcho ingest import` again. A link never moves imported messages, so it's refused without the reset. Resolve the people before any separate `ingest reset`: a reset re-sorts the numbered list.
 - Compare peer card with conclusions to understand memory state.
 - After `honcho scope add-sessions`, check `honcho scope status <name>` before a scoped `chat`: a `pending` backfill means the scope has not caught up yet, not that there is nothing to recall.
 - `honcho start` does not rewrite `environmentUrl`. Use `HONCHO_BASE_URL=http://127.0.0.1:8000` to talk to local stack.
@@ -98,6 +103,28 @@ honcho scope create <name> --sessions <id1>,<id2> --json
 honcho scope status <name> --json                        # wait until nothing is pending
 honcho workspace chat "what happened here?" --scope <name> --json
 ```
+
+### 7. Copy a workspace
+
+`honcho workspace replay` re-sends a workspace's messages into another workspace, which derives its own memory from them. Conclusions and peer cards are not copied.
+
+```bash
+# Always dry-run first: it reads both sides and writes nothing
+honcho workspace replay --from <src> --to <dst> --dry-run --json | jq '.actions, .messages_to_send'
+
+# Another instance, e.g. managed Honcho (configured) to a self-hosted one.
+# The configured key is never sent to it; set HONCHO_TO_API_KEY if its auth is on
+honcho workspace replay --from <src> --to-url http://localhost:8000 --json
+
+# Only the N sessions with the most recent message
+honcho workspace replay --from <src> --to <dst> --num-sessions 20 --json
+```
+
+- Each session's `action` in the dry run is `create`, `resume`, `up_to_date` or `conflict`. A conflict means the destination has different messages under that session ID; a replay skips it and exits `1`. Pass a different `--to`.
+- A rerun resumes: messages already in the destination are skipped.
+- Conclusions and peer cards written through the API are not recreated, because they have no source message. `not_copied.conclusions_in_source` in both reports counts every conclusion in the source; Honcho does not mark which ones were written through the API.
+- The destination session has the source's current members from its first message. A peer that joined late and observes others gets conclusions from messages sent before it joined.
+- Derivation on the destination continues after the command exits. The result's `check_derivation` field is the `queue-status` command to poll.
 
 ## Debugging playbook
 

@@ -36,6 +36,7 @@ from src.crud.lifecycle import (
 )
 from src.dependencies import service_db, tracked_db
 from src.exceptions import ResourceNotFoundException
+from src.utils.filter import apply_filter
 from src.utils.types import DocumentLevel
 
 logger = logging.getLogger(__name__)
@@ -227,8 +228,13 @@ def list_runs_stmt(
     *,
     observed: str | None = None,
     observer: str | None = None,
+    filters: dict[str, Any] | None = None,
 ) -> Select[tuple[models.DreamRun]]:
-    """Runs in a workspace, newest first, optionally for one observed/observer peer."""
+    """Runs in a workspace, newest first.
+
+    ``observed`` and ``observer`` narrow to one peer's runs; ``filters`` is the
+    shared filter object (see ``apply_filter``), ANDed with them.
+    """
     stmt = select(models.DreamRun).where(
         models.DreamRun.tenant_id == models.scoped_tenant_id(),
         models.DreamRun.workspace_name == workspace_name,
@@ -238,6 +244,7 @@ def list_runs_stmt(
         stmt = stmt.where(models.DreamRun.observed == observed)
     if observer is not None:
         stmt = stmt.where(models.DreamRun.observer == observer)
+    stmt = apply_filter(stmt, models.DreamRun, filters)
     return stmt.order_by(models.DreamRun.started_at.desc(), models.DreamRun.id.desc())
 
 
@@ -464,6 +471,56 @@ async def erase_conclusion_history(
     return result.rowcount
 
 
+async def erase_peer_card_history(
+    db: AsyncSession, workspace_name: str, *, observer: str, observed: str
+) -> int:
+    """Delete the cards history recorded for one representation. The caller commits.
+
+    For a card set through the API: the user's card replaces what dreams wrote,
+    so no earlier text stays readable in history. The runs keep
+    `peer_card_updated`. Call it after the card write, so the peer row is locked
+    before the runs, the order a dream takes them in. Returns the rows deleted.
+    """
+    tenant_id = models.scoped_tenant_id()
+    runs = select(models.DreamRun.id).where(
+        models.DreamRun.tenant_id == tenant_id,
+        models.DreamRun.workspace_name == workspace_name,
+        models.DreamRun.observer == observer,
+        models.DreamRun.observed == observed,
+    )
+    cards = (
+        models.DreamRunChange.tenant_id == tenant_id,
+        models.DreamRunChange.kind == "peer_card",
+        models.DreamRunChange.run_id.in_(runs),
+    )
+    # The cards' runs first, in id order, as the other history deletes take them.
+    await db.execute(
+        select(models.DreamRun.id)
+        .where(
+            models.DreamRun.tenant_id == tenant_id,
+            models.DreamRun.id.in_(select(models.DreamRunChange.run_id).where(*cards)),
+        )
+        .order_by(models.DreamRun.id)
+        .with_for_update()
+    )
+    # Then the cards in id order, as session deletion and the prune take changes.
+    result = cast(
+        CursorResult[Any],
+        await db.execute(
+            delete(models.DreamRunChange).where(
+                models.DreamRunChange.tenant_id == tenant_id,
+                models.DreamRunChange.id.in_(
+                    select(models.DreamRunChange.id)
+                    .where(*cards)
+                    .order_by(models.DreamRunChange.id)
+                    .with_for_update()
+                ),
+            )
+        ),
+    )
+    return result.rowcount
+
+
 async def delete_workspace_history(db: AsyncSession, workspace_name: str) -> None:
     """Delete every run in a workspace; their changes cascade. The caller commits.
 
@@ -487,15 +544,16 @@ async def delete_workspace_history(db: AsyncSession, workspace_name: str) -> Non
 
 
 async def prune_dream_history() -> int:
-    """Mark stale running runs interrupted and apply the retention window.
+    """Mark stale running runs interrupted and apply the retention window, if set.
 
-    Past the window, a run keeps only its `created` changes whose conclusion
-    still exists, so which dream made a live conclusion stays readable. Its
-    other changes are deleted and the run gets `pruned_at`. A run with nothing
-    left is deleted. Returns the number of runs deleted.
+    With `DREAM_HISTORY_RETENTION_DAYS` unset (the default) runs are kept
+    forever. Past a set window, a run keeps only its `created` changes whose
+    conclusion still exists, so which dream made a live conclusion stays
+    readable. Its other changes are deleted and the run gets `pruned_at`. A run
+    with nothing left is deleted. Returns the number of runs deleted.
     """
     now = datetime.datetime.now(datetime.UTC)
-    cutoff = now - datetime.timedelta(days=settings.DREAM.HISTORY_RETENTION_DAYS)
+    retention_days = settings.DREAM.HISTORY_RETENTION_DAYS
     deleted = 0
     run_key = tuple_(models.DreamRun.tenant_id, models.DreamRun.id)
     change_run_key = tuple_(
@@ -537,7 +595,10 @@ async def prune_dream_history() -> int:
             .values(status="interrupted")
         )
         await db.commit()
+        if retention_days is None:
+            return 0
 
+        cutoff = now - datetime.timedelta(days=retention_days)
         after: tuple[str, str] | None = None
         while True:
             # Runs are locked before their changes, the order workspace

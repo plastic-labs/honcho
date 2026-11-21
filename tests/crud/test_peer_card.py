@@ -23,13 +23,15 @@ async def test_peer_card_get_set_roundtrip(
 
     # Set and read back
     value_1 = ["Initial peer card text"]
-    await set_peer_card(
+    write = await set_peer_card(
         db_session,
         workspace.name,
         value_1,
         observer=peer.name,
         observed=peer.name,
     )
+    await db_session.commit()
+    await write.post_commit()
     assert (
         await get_peer_card(
             db_session, workspace.name, observer=peer.name, observed=peer.name
@@ -39,9 +41,11 @@ async def test_peer_card_get_set_roundtrip(
 
     # Update and read back
     value_2 = ["Updated peer card text", "Another line"]
-    await set_peer_card(
+    write = await set_peer_card(
         db_session, workspace.name, value_2, observer=peer.name, observed=peer.name
     )
+    await db_session.commit()
+    await write.post_commit()
     assert (
         await get_peer_card(
             db_session, workspace.name, observer=peer.name, observed=peer.name
@@ -88,13 +92,15 @@ async def test_peer_card_empty_list(
     workspace, peer = sample_data
 
     empty_card: list[str] = []
-    await set_peer_card(
+    write = await set_peer_card(
         db_session,
         workspace.name,
         empty_card,
         observer=peer.name,
         observed=peer.name,
     )
+    await db_session.commit()
+    await write.post_commit()
     assert (
         await get_peer_card(
             db_session, workspace.name, observer=peer.name, observed=peer.name
@@ -110,13 +116,15 @@ async def test_peer_card_strips_nul(
     """NUL is stripped before the jsonb write; free-form lines are kept as-is."""
     workspace, peer = sample_data
 
-    await set_peer_card(
+    write = await set_peer_card(
         db_session,
         workspace.name,
         ["Free-form\x00 line", "\x00", "Literal \\u0000 text"],
         observer=peer.name,
         observed=peer.name,
     )
+    await db_session.commit()
+    await write.post_commit()
     assert await get_peer_card(
         db_session, workspace.name, observer=peer.name, observed=peer.name
     ) == ["Free-form line", "", "Literal \\u0000 text"]
@@ -135,13 +143,15 @@ async def test_peer_card_multiple_lines(
         "Third observation about the peer",
         "Fourth observation about the peer",
     ]
-    await set_peer_card(
+    write = await set_peer_card(
         db_session,
         workspace.name,
         multi_line_card,
         observer=peer.name,
         observed=peer.name,
     )
+    await db_session.commit()
+    await write.post_commit()
     result = await get_peer_card(
         db_session, workspace.name, observer=peer.name, observed=peer.name
     )
@@ -164,23 +174,27 @@ async def test_peer_card_different_observer_observed(
 
     # Peer1 observes peer2
     card_1_to_2 = ["Peer 1's observation of peer 2"]
-    await set_peer_card(
+    write = await set_peer_card(
         db_session,
         workspace.name,
         card_1_to_2,
         observer=peer1.name,
         observed=peer2.name,
     )
+    await db_session.commit()
+    await write.post_commit()
 
     # Peer2 observes peer1
     card_2_to_1 = ["Peer 2's observation of peer 1"]
-    await set_peer_card(
+    write = await set_peer_card(
         db_session,
         workspace.name,
         card_2_to_1,
         observer=peer2.name,
         observed=peer1.name,
     )
+    await db_session.commit()
+    await write.post_commit()
 
     # Verify each card is independent
     assert (
@@ -211,23 +225,27 @@ async def test_peer_card_self_and_other_observations(
 
     # Peer1's self-observation
     self_card = ["Self observation"]
-    await set_peer_card(
+    write = await set_peer_card(
         db_session,
         workspace.name,
         self_card,
         observer=peer1.name,
         observed=peer1.name,
     )
+    await db_session.commit()
+    await write.post_commit()
 
     # Peer1's observation of peer2
     other_card = ["Observation of other peer"]
-    await set_peer_card(
+    write = await set_peer_card(
         db_session,
         workspace.name,
         other_card,
         observer=peer1.name,
         observed=peer2.name,
     )
+    await db_session.commit()
+    await write.post_commit()
 
     # Both should be retrievable independently
     assert (
@@ -261,20 +279,24 @@ async def test_peer_card_multiple_observers_same_observed(
     card_2_to_1 = ["Peer 2's view of peer 1"]
     card_3_to_1 = ["Peer 3's view of peer 1"]
 
-    await set_peer_card(
+    write = await set_peer_card(
         db_session,
         workspace.name,
         card_2_to_1,
         observer=peer2.name,
         observed=peer1.name,
     )
-    await set_peer_card(
+    await db_session.commit()
+    await write.post_commit()
+    write = await set_peer_card(
         db_session,
         workspace.name,
         card_3_to_1,
         observer=peer3.name,
         observed=peer1.name,
     )
+    await db_session.commit()
+    await write.post_commit()
 
     # Each observer should have their own independent card
     assert (
@@ -307,30 +329,36 @@ async def test_peer_card_update_does_not_affect_others(
     card_1 = ["Peer 1 self observation"]
     card_2 = ["Peer 1's observation of peer 2"]
 
-    await set_peer_card(
+    write = await set_peer_card(
         db_session,
         workspace.name,
         card_1,
         observer=peer1.name,
         observed=peer1.name,
     )
-    await set_peer_card(
+    await db_session.commit()
+    await write.post_commit()
+    write = await set_peer_card(
         db_session,
         workspace.name,
         card_2,
         observer=peer1.name,
         observed=peer2.name,
     )
+    await db_session.commit()
+    await write.post_commit()
 
     # Update one card
     new_card_1 = ["Updated self observation"]
-    await set_peer_card(
+    write = await set_peer_card(
         db_session,
         workspace.name,
         new_card_1,
         observer=peer1.name,
         observed=peer1.name,
     )
+    await db_session.commit()
+    await write.post_commit()
 
     # Verify only the updated card changed
     assert (
@@ -360,13 +388,15 @@ async def test_peer_card_special_characters(
         "Line with quotes: \"double\" and 'single'",
         "Line with newlines embedded\\n",
     ]
-    await set_peer_card(
+    write = await set_peer_card(
         db_session,
         workspace.name,
         special_card,
         observer=peer.name,
         observed=peer.name,
     )
+    await db_session.commit()
+    await write.post_commit()
     result = await get_peer_card(
         db_session, workspace.name, observer=peer.name, observed=peer.name
     )
@@ -382,13 +412,15 @@ async def test_peer_card_large_content(
 
     # Create a large peer card with many observations
     large_card = [f"Observation number {i}" for i in range(100)]
-    await set_peer_card(
+    write = await set_peer_card(
         db_session,
         workspace.name,
         large_card,
         observer=peer.name,
         observed=peer.name,
     )
+    await db_session.commit()
+    await write.post_commit()
     result = await get_peer_card(
         db_session, workspace.name, observer=peer.name, observed=peer.name
     )

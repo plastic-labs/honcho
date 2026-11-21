@@ -1,12 +1,15 @@
 """SDK methods for Representation History: `dreams()` and `get_dream()`."""
 
+import datetime
+
 from nanoid import generate as generate_nanoid
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sdks.python.src.honcho.api_types import DreamRunDetailResponse, DreamRunResponse
 from sdks.python.src.honcho.client import Honcho
 from sdks.python.src.honcho.http import NotFoundError
-from src import crud
+from src import crud, models
 
 
 async def test_list_and_get_dreams(
@@ -27,7 +30,7 @@ async def test_list_and_get_dreams(
         trigger_reason="manual",
     )
     assert run is not None
-    await crud.set_peer_card(
+    write = await crud.set_peer_card(
         db_session,
         workspace_name,
         ["IDENTITY: Name: Maya"],
@@ -35,6 +38,8 @@ async def test_list_and_get_dreams(
         observed=maya.id,
         history=crud.DreamHistoryTarget(run_id=run.run_id, specialist="deduction"),
     )
+    await db_session.commit()
+    await write.post_commit()
     await crud.close_run(run.run_id, succeeded=True)
 
     if client_type == "async":
@@ -58,6 +63,49 @@ async def test_list_and_get_dreams(
     assert detail.peer_card is not None
     assert detail.peer_card.after == ["IDENTITY: Name: Maya"]
     assert other == []
+
+
+async def test_dreams_filters_by_start_window(
+    client_fixture: tuple[Honcho, str], db_session: AsyncSession
+):
+    honcho_client, client_type = client_fixture
+    if client_type == "async":
+        maya = await honcho_client.aio.peer(id="dreams-window-maya")
+    else:
+        maya = honcho_client.peer(id="dreams-window-maya")
+    workspace_name = honcho_client.workspace_id
+    now = datetime.datetime.now(datetime.UTC)
+    run_ids: list[str] = []
+    for days_ago in (1, 10):
+        run = await crud.open_run(
+            run_id=generate_nanoid(),
+            workspace_name=workspace_name,
+            observer=maya.id,
+            observed=maya.id,
+            dream_type="omni",
+            trigger_reason="manual",
+        )
+        assert run is not None
+        await db_session.execute(
+            update(models.DreamRun)
+            .where(models.DreamRun.id == run.run_id)
+            .values(started_at=now - datetime.timedelta(days=days_ago))
+        )
+        run_ids.append(run.run_id)
+    await db_session.commit()
+    last_week: dict[str, object] = {
+        "started_at": {"gte": (now - datetime.timedelta(days=7)).isoformat()}
+    }
+
+    if client_type == "async":
+        page = await honcho_client.aio.dreams(observed=maya, filters=last_week)
+        runs = page.items
+    else:
+        page = honcho_client.dreams(observed=maya, filters=last_week)
+        runs = list(page)
+
+    assert [r.id for r in runs] == run_ids[:1]
+    assert page.total == 1
 
 
 def test_get_unknown_dream_raises(honcho_sync_test_client: Honcho):

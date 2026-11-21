@@ -98,6 +98,132 @@ async def test_list_filters_by_peer_newest_first(
     ]
 
 
+async def test_list_filters_by_start_window(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    workspace, peer = sample_data
+    workspace_name, maya = workspace.name, peer.name
+    day = 24 * 60
+    in_window = [
+        await _run(
+            db_session,
+            workspace_name,
+            observer=maya,
+            observed=maya,
+            started_minutes_ago=minutes,
+        )
+        for minutes in (1 * day, 2 * day, 3 * day)
+    ]
+    for minutes in (10, 9 * day):
+        await _run(
+            db_session,
+            workspace_name,
+            observer=maya,
+            observed=maya,
+            started_minutes_ago=minutes,
+        )
+    now = datetime.datetime.now(datetime.UTC)
+    window = {
+        "started_at": {
+            "gte": (now - datetime.timedelta(days=4)).isoformat(),
+            "lte": (now - datetime.timedelta(hours=12)).isoformat(),
+        }
+    }
+    root = f"/v3/workspaces/{workspace_name}/dreams"
+
+    response = client.post(f"{root}/list?size=2", json={"filters": window})
+    assert response.status_code == 200
+    page = response.json()
+    assert [run["id"] for run in page["items"]] == in_window[:2]
+    assert (page["total"], page["pages"]) == (3, 2)
+    response = client.post(f"{root}/list?size=2&page=2", json={"filters": window})
+    assert [run["id"] for run in response.json()["items"]] == in_window[2:]
+
+    response = client.post(f"{root}/list?cursor=&size=2", json={"filters": window})
+    assert response.status_code == 200
+    page = response.json()
+    assert [run["id"] for run in page["items"]] == in_window[:2]
+    response = client.post(
+        f"{root}/list?cursor={page['next_page']}&size=2", json={"filters": window}
+    )
+    assert response.status_code == 200
+    page = response.json()
+    assert [run["id"] for run in page["items"]] == in_window[2:]
+    assert page["next_page"] is None
+
+
+async def test_list_filters_combine_with_the_peer_filters(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    workspace, peer = sample_data
+    workspace_name, maya = workspace.name, peer.name
+    db_session.add(models.Peer(name="assistant", workspace_name=workspace_name))
+    await db_session.commit()
+    maya_recent = await _run(
+        db_session, workspace_name, observer=maya, observed=maya, started_minutes_ago=1
+    )
+    await _run(
+        db_session,
+        workspace_name,
+        observer=maya,
+        observed=maya,
+        started_minutes_ago=120,
+    )
+    assistant_recent = await _run(
+        db_session,
+        workspace_name,
+        observer="assistant",
+        observed="assistant",
+        started_minutes_ago=2,
+    )
+    recent = {
+        "started_at": {
+            "gt": (
+                datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=1)
+            ).isoformat()
+        }
+    }
+    root = f"/v3/workspaces/{workspace_name}/dreams"
+
+    response = client.post(
+        f"{root}/list", json={"observed_id": maya, "filters": recent}
+    )
+    assert [run["id"] for run in response.json()["items"]] == [maya_recent]
+
+    response = client.post(
+        f"{root}/list",
+        json={"filters": {"AND": [recent, {"observed_id": "assistant"}]}},
+    )
+    assert [run["id"] for run in response.json()["items"]] == [assistant_recent]
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {"status": "completed"},
+        {"workspace_id": "other"},
+        {"started_at": {"gte": "not a date"}},
+        {"started_at": {"contains": "2026"}},
+    ],
+)
+async def test_list_rejects_an_unsupported_filter(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    filters: dict[str, object],
+):
+    workspace, _peer = sample_data
+
+    response = client.post(
+        f"/v3/workspaces/{workspace.name}/dreams/list", json={"filters": filters}
+    )
+
+    assert response.status_code == 422
+
+
 async def test_get_returns_the_run_and_its_changes(
     client: TestClient,
     db_session: AsyncSession,
@@ -108,7 +234,7 @@ async def test_get_returns_the_run_and_its_changes(
     run_id = await _run(
         db_session, workspace_name, observer=maya, observed=maya, started_minutes_ago=1
     )
-    await crud.set_peer_card(
+    write = await crud.set_peer_card(
         db_session,
         workspace_name,
         ["IDENTITY: Name: Maya"],
@@ -116,6 +242,8 @@ async def test_get_returns_the_run_and_its_changes(
         observed=maya,
         history=crud.DreamHistoryTarget(run_id=run_id, specialist="induction"),
     )
+    await db_session.commit()
+    await write.post_commit()
     await crud.close_run(run_id, succeeded=True)
     root = f"/v3/workspaces/{workspace_name}/dreams"
 
@@ -229,3 +357,63 @@ async def test_list_rejects_nul_in_a_filter(
     )
 
     assert response.status_code == 422
+
+
+async def test_setting_a_card_through_the_api_erases_recorded_cards(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace, peer = sample_data
+    workspace_name, maya = workspace.name, peer.name
+    db_session.add(models.Peer(name="assistant", workspace_name=workspace_name))
+    await db_session.commit()
+    # Old enough that a 30-day window would have pruned it; none is set.
+    own = await _run(
+        db_session, workspace_name, observer=maya, observed=maya, started_minutes_ago=0
+    )
+    other_pair = await _run(
+        db_session,
+        workspace_name,
+        observer="assistant",
+        observed=maya,
+        started_minutes_ago=1,
+    )
+    for run_id, observer in [(own, maya), (other_pair, "assistant")]:
+        write = await crud.set_peer_card(
+            db_session,
+            workspace_name,
+            ["SSN: 123-45-6789"],
+            observer=observer,
+            observed=maya,
+            history=crud.DreamHistoryTarget(run_id=run_id, specialist="induction"),
+        )
+        await db_session.commit()
+        await write.post_commit()
+    await db_session.execute(
+        update(models.DreamRun)
+        .where(models.DreamRun.id == own)
+        .values(
+            started_at=datetime.datetime.now(datetime.UTC)
+            - datetime.timedelta(days=400)
+        )
+    )
+    await db_session.commit()
+    root = f"/v3/workspaces/{workspace_name}"
+
+    # The user rewrites the card rather than clearing it.
+    response = client.put(
+        f"{root}/peers/{maya}/card", json={"peer_card": ["IDENTITY: Name: Maya"]}
+    )
+    assert response.status_code == 200
+
+    monkeypatch.setattr(settings.DREAM, "HISTORY_RETENTION_DAYS", None)
+    await crud.prune_dream_history()
+    detail = client.get(f"{root}/dreams/{own}").json()
+    assert detail["peer_card"] is None
+    # The run still says the dream changed the card.
+    assert detail["peer_card_updated"] is True
+    # Another observer's card for the same peer is a different representation.
+    other = client.get(f"{root}/dreams/{other_pair}").json()
+    assert other["peer_card"]["after"] == ["SSN: 123-45-6789"]

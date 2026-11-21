@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from hashlib import sha256
 from typing import cast
 
@@ -8,6 +9,8 @@ from pydantic import BaseModel, ValidationError
 
 from src.utils.json_parser import validate_and_repair_json
 from src.utils.representation import PromptRepresentation
+
+logger = logging.getLogger(__name__)
 
 
 class StructuredOutputError(ValueError):
@@ -51,6 +54,16 @@ def repair_response_model_json(
     try:
         final = validate_and_repair_json(raw_content)
         repaired_data = cast(object, json.loads(final))
+        if response_model is PromptRepresentation:
+            unwrapped = _unwrap_tool_call_envelope(repaired_data)
+            if unwrapped is not None:
+                logger.info(
+                    "Unwrapped a tool-call envelope around PromptRepresentation "
+                    + "structured output from model %s",
+                    model,
+                )
+                repaired_data = unwrapped
+                final = json.dumps(unwrapped)
         repaired_mapping = (
             cast(dict[str, object], repaired_data)
             if isinstance(repaired_data, dict)
@@ -130,6 +143,52 @@ def _is_schema_relevant(content: object, response_model: type[BaseModel]) -> boo
     return isinstance(content, dict) and (
         not content or any(field in content for field in response_model.model_fields)
     )
+
+
+# Keys under which a model nests its real answer when it writes the answer out
+# as a tool call. An OpenAI-compatible proxy in front of Anthropic implements a
+# json_schema response_format as a forced tool named "json_tool_call", and the
+# model sometimes returns {"name": "json_tool_call", "arguments": {...}} (or
+# "parameters", or a bare {"content": {...}}) instead of the object itself.
+_ENVELOPE_PAYLOAD_KEYS = frozenset({"arguments", "parameters", "input", "content"})
+_ENVELOPE_META_KEYS = frozenset({"name", "type", "id"})
+_MAX_ENVELOPE_DEPTH = 2
+
+
+def _unwrap_tool_call_envelope(data: object) -> dict[str, object] | None:
+    """Return the PromptRepresentation payload nested in a tool-call envelope.
+
+    Only unwraps an object whose keys are exactly one payload key plus
+    optional tool-call metadata (``name``/``type``/``id``), and only when the
+    nested object carries a PromptRepresentation field. A payload given as a
+    JSON-encoded string (the OpenAI ``arguments`` convention) is decoded.
+    Anything else returns ``None`` and keeps the normal failure path.
+    """
+    fields = PromptRepresentation.model_fields
+    current: object = data
+    for _ in range(_MAX_ENVELOPE_DEPTH):
+        if not isinstance(current, dict):
+            return None
+        mapping = cast(dict[str, object], current)
+        if any(field in mapping for field in fields):
+            return None
+        payload_keys = [key for key in mapping if key in _ENVELOPE_PAYLOAD_KEYS]
+        if len(payload_keys) != 1:
+            return None
+        if not set(mapping) - {payload_keys[0]} <= _ENVELOPE_META_KEYS:
+            return None
+        inner = mapping[payload_keys[0]]
+        if isinstance(inner, str):
+            try:
+                inner = cast(object, json.loads(inner))
+            except json.JSONDecodeError:
+                return None
+        if isinstance(inner, dict) and any(
+            field in cast(dict[str, object], inner) for field in fields
+        ):
+            return cast(dict[str, object], inner)
+        current = cast(object, inner)
+    return None
 
 
 def _starts_with_empty_json_object(raw_content: str) -> bool:

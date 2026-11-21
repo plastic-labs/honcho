@@ -25,7 +25,8 @@ LATENCY = 0.3
 
 
 def _provider(context_queries: list[str], *, save_messages: bool = False, prewarm_latency: float = LATENCY,
-              prewarm_answer: str = "Generic prewarm summary.", **cfg_overrides) -> HonchoMemoryProvider:
+              prewarm_answer: str = "Generic prewarm summary.", init_kwargs: dict | None = None,
+              **cfg_overrides) -> HonchoMemoryProvider:
     """A provider over a Honcho that answers slowly and holds the earlier turn only if it saved it."""
     manager = MagicMock()
     manager.get_or_create.return_value.messages = (
@@ -38,7 +39,10 @@ def _provider(context_queries: list[str], *, save_messages: bool = False, prewar
         time.sleep(LATENCY)
         return {"representation": f"conclusions recalled for: {query}"}
 
+    manager.dialectic_threads = []
+
     def _dialectic(*_args, **_kwargs):
+        manager.dialectic_threads.append(threading.current_thread().name)
         if threading.current_thread().name == "honcho-prewarm-dialectic":
             time.sleep(prewarm_latency)
             return prewarm_answer
@@ -55,7 +59,7 @@ def _provider(context_queries: list[str], *, save_messages: bool = False, prewar
          patch("hermes_plugin_honcho.client.get_honcho_client", return_value=MagicMock()), \
          patch("hermes_plugin_honcho.session.HonchoSessionManager", return_value=manager), \
          patch("hermes_constants.get_hermes_home", return_value=MagicMock()):
-        provider.initialize(session_id="resumed-session")
+        provider.initialize(session_id="resumed-session", **(init_kwargs or {}))
     if provider._init_thread is not None:
         provider._init_thread.join(timeout=5.0)
     return provider
@@ -165,3 +169,33 @@ def test_resume_after_a_trivial_turn_recalls_on_the_current_message():
     memory.on_turn_start(3, CURRENT, previous_message="thanks")
 
     assert context_queries == [CURRENT]
+
+
+def test_a_session_hermes_says_it_is_continuing_skips_the_paid_prewarm_and_first_turn_join():
+    """The API server builds a fresh agent per request, so its turn counter restarts at 1 mid-conversation."""
+    provider = _provider([], init_kwargs={"resumed": True, "message_count": 4})
+    memory = _memory(provider)
+
+    memory.on_turn_start(1, CURRENT)
+    injected = memory.prefetch_all(CURRENT)
+
+    assert "honcho-prewarm-dialectic" not in provider._manager.dialectic_threads
+    assert "honcho-prefetch-first" not in provider._manager.dialectic_threads
+    assert f"conclusions recalled for: {CURRENT}" in injected
+
+
+def test_agent_model_header_follows_the_model_hermes_reports():
+    from hermes_plugin_honcho.client import AGENT_MODEL_HEADER
+
+    provider = _provider([])
+    client = MagicMock(_async_http=None, _http_config={"default_headers": {}})
+    client._http.default_headers = {}
+    provider._manager.honcho = client
+
+    provider.on_turn_start(1, CURRENT, model="openai/gpt-6-astra")
+    assert client._http.default_headers[AGENT_MODEL_HEADER] == "openai/gpt-6-astra"
+
+    # A turn Hermes reports no model for removes the header instead of keeping the last one.
+    provider.on_turn_start(2, CURRENT, model="")
+    assert AGENT_MODEL_HEADER not in client._http.default_headers
+    assert AGENT_MODEL_HEADER not in client._http_config["default_headers"]

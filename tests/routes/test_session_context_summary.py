@@ -126,8 +126,11 @@ async def test_a_stored_summary_is_served(
         f"/v3/workspaces/{workspace.name}/sessions",
         json={"id": session_id, "peers": {peer.name: {}}},
     )
-    await _save_summary(db_session, _stored_summary(99), workspace.name, session_id)
+    write = await _save_summary(
+        db_session, _stored_summary(99), workspace.name, session_id
+    )
     await db_session.commit()
+    await write.post_commit()
 
     url = (
         f"/v3/workspaces/{workspace.name}/sessions/{session_id}/context"
@@ -157,8 +160,11 @@ async def test_fixture_path_ignores_representation_budget(
         f"/v3/workspaces/{workspace.name}/sessions",
         json={"id": session_id, "peers": {peer.name: {}}},
     )
-    await _save_summary(db_session, _stored_summary(99), workspace.name, session_id)
+    write = await _save_summary(
+        db_session, _stored_summary(99), workspace.name, session_id
+    )
     await db_session.commit()
+    await write.post_commit()
 
     url = f"/v3/workspaces/{workspace.name}/sessions/{session_id}/context"
     data = client.get(f"{url}?summary=true&tokens=2500").json()

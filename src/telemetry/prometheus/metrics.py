@@ -6,7 +6,7 @@ import datetime
 import logging
 from collections.abc import Iterable, Iterator, Mapping
 from enum import Enum
-from typing import cast, final
+from typing import cast, final, get_args
 
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -145,6 +145,12 @@ embed_now_tasks_shed_counter = NamespacedCounter(
     ["namespace"],
 )
 
+ingest_records_counter = NamespacedCounter(
+    "ingest_records",
+    "Records received through the ingest API, by outcome (created, duplicate, rejected) and, for rejected records, reason",
+    ["namespace", "outcome", "reason"],
+)
+
 pagination_offset_shim_counter = NamespacedCounter(
     "pagination_offset_shim",
     "Offset-paginated list requests served by the offset shim, by outcome: first (page 1, always a fresh query), hit (sought from a stored position) or miss (no stored position, so an OFFSET query)",
@@ -245,6 +251,14 @@ telemetry_buffer_size_gauge = NamespacedGauge(
 message_embeddings_pending_gauge = NamespacedGauge(
     "message_embeddings_pending",
     "MessageEmbedding rows awaiting embedding (sync_state='pending'). "
+    + "Service-wide DB count, reported independently by every API replica — "
+    + "aggregate with max(), never sum()",
+    ["namespace"],
+)
+
+ingest_records_pending_gauge = NamespacedGauge(
+    "ingest_records_pending",
+    "Ingest records committed but not yet turned into queue work. "
     + "Service-wide DB count, reported independently by every API replica — "
     + "aggregate with max(), never sum()",
     ["namespace"],
@@ -469,6 +483,13 @@ class PrometheusMetrics:
             embed_now_tasks_shed_counter.labels().inc()
         except Exception as e:
             self._handle_metric_error("record_embed_now_task_shed", e)
+
+    def record_ingest_records(self, *, outcome: str, reason: str, count: int) -> None:
+        """Count ingest records by outcome; `reason` is "" unless rejected."""
+        try:
+            ingest_records_counter.labels(outcome=outcome, reason=reason).inc(count)
+        except Exception as e:
+            self._handle_metric_error("record_ingest_records", e)
 
     def record_pagination_offset_shim(self, outcome: PaginationShimOutcomes) -> None:
         try:
@@ -746,6 +767,14 @@ class PrometheusMetrics:
                     )
             # ai: embed_now fast path runs as an API-process background task
             self._touch(embed_now_tasks_shed_counter)
+            # The ingest route runs in the API process: every outcome, and every
+            # rejection reason for the rejected outcome.
+            from src.schemas.api import IngestRejectionReason
+
+            self._touch(ingest_records_counter, outcome="created", reason="")
+            self._touch(ingest_records_counter, outcome="duplicate", reason="")
+            for reason in get_args(IngestRejectionReason):
+                self._touch(ingest_records_counter, outcome="rejected", reason=reason)
             self.set_embed_now_tasks_in_flight(0)
             # ai: only processes that can take the shim path emit it (see src/utils/pagination.py)
             if settings.CACHE.ENABLED and settings.CACHE.PAGINATION_OFFSET_SHIM:
@@ -832,6 +861,7 @@ class PrometheusMetrics:
         oldest_pending_age_seconds: float = 0.0,
         embeddings_pending: int = 0,
         embeddings_pending_due: int = 0,
+        ingest_pending: int = 0,
     ) -> None:
         try:
             deriver_queue_work_units_eligible_gauge.labels().set(eligible_work_units)
@@ -862,6 +892,7 @@ class PrometheusMetrics:
             )
             message_embeddings_pending_gauge.labels().set(embeddings_pending)
             message_embeddings_pending_due_gauge.labels().set(embeddings_pending_due)
+            ingest_records_pending_gauge.labels().set(ingest_pending)
         except Exception as e:
             self._handle_metric_error("set_deriver_metrics", e)
 

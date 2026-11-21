@@ -273,7 +273,7 @@ async def process_file_uploads_for_messages(
             created_at=created_at,
         )
 
-        # Store file metadata separately to add to internal_metadata later
+        # Written to the message's internal_metadata with its insert
         file_metadata = {
             "file_id": file_id,
             "filename": file.filename,

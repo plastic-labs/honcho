@@ -1,6 +1,6 @@
 [project]
 name = "honcho"
-version = "3.6.0"
+version = "3.6.2"
 description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
@@ -86,6 +86,8 @@ exclude-newer-package = { certifi = "2026-10-21T00:00:00Z" }
 members = [
     "sdks/python",
     "honcho-cli",
+    "connectors/discord",
+    "connectors/github",
 ]
 
 [tool.uv.sources]

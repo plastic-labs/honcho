@@ -1,0 +1,67 @@
+name: Honcho CLI Tests
+
+# The CLI is a uv workspace member, so its tests run against the workspace's
+# own Python SDK (sdks/python) and the root lock. A change to either must run
+# them too: the CLI reaches into SDK internals (replay's read-only mode sets
+# the SDK's private `_workspace_ensured`). The tests also read two files under
+# docs/snippets: the generated CLI reference and the integrations catalog,
+# whose agents test_install.py checks against the CLI's registry.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'honcho-cli/**'
+      - 'sdks/python/**'
+      - 'docs/snippets/cli-commands.mdx'
+      - 'docs/snippets/integrations-catalog.jsx'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.python-version'
+      - '.github/workflows/honcho-cli-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'honcho-cli/**'
+      - 'sdks/python/**'
+      - 'docs/snippets/cli-commands.mdx'
+      - 'docs/snippets/integrations-catalog.jsx'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.python-version'
+      - '.github/workflows/honcho-cli-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # No Honcho server or database: the CLI tests fake the SDK client or its
+    # HTTP transport.
+    defaults:
+      run:
+        working-directory: honcho-cli
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Install the CLI and its test dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Run tests
+        run: uv run pytest
+
+      # docs/snippets/cli-commands.mdx is generated from the Typer app; fail
+      # when a command or flag changed without regenerating it.
+      - name: Check the generated CLI reference
+        run: uv run python scripts/generate_cli_docs.py --check

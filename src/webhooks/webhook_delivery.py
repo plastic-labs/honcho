@@ -14,6 +14,7 @@ from src.dependencies import tracked_db
 from src.exceptions import WebhookTenantUnresolved
 from src.utils.formatting import utc_now_iso
 from src.utils.queue_payload import WebhookPayload
+from src.webhooks.events import WebhookEventType
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,9 @@ async def deliver_webhook(
         )
     try:
         async with tracked_db("webhook.deliver", tenant_id=tenant_id) as db:
-            webhook_urls = await _get_webhook_urls(db, workspace_name)
+            webhook_urls = await _get_webhook_urls(
+                db, workspace_name, payload.event_type
+            )
 
         if not webhook_urls:
             logger.debug(
@@ -116,14 +119,25 @@ async def deliver_webhook(
         logger.exception("Unexpected error delivering webhook.")
 
 
-async def _get_webhook_urls(db: AsyncSession, workspace_name: str) -> list[str]:
+async def _get_webhook_urls(
+    db: AsyncSession, workspace_name: str, event_type: str
+) -> list[str]:
     """
-    Get all webhook endpoint URLs for a workspace.
+    Get the URLs of a workspace's endpoints that receive ``event_type``.
+
+    An endpoint with no event types receives every type, and ``test.event``
+    reaches every endpoint so the test route can check any of them.
     """
     try:
         endpoints = await list_webhook_endpoints(workspace_name)
         result = await db.execute(endpoints)
-        return [endpoint.url for endpoint in result.scalars().all()]
+        return [
+            endpoint.url
+            for endpoint in result.scalars().all()
+            if endpoint.event_types is None
+            or event_type == WebhookEventType.TEST.value
+            or event_type in endpoint.event_types
+        ]
     except Exception:
         logger.exception(f"Error fetching endpoints for {workspace_name}")
         return []

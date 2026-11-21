@@ -645,7 +645,9 @@ async def set_peer_card(
     """Set a peer card for a specific peer relationship.
 
     Sets the peer card that the observer peer has for the target peer.
-    If no target is specified, sets the observer's own peer card.
+    If no target is specified, sets the observer's own peer card. The cards
+    dreams recorded for this pair in Representation History are deleted, so
+    text the new card replaces is no longer readable there.
     """
     # If no target specified, set the observer's own card
     observed = target if target is not None else peer_id
@@ -654,13 +656,16 @@ async def set_peer_card(
     # JSONB write, so the Dreamer and agent-tool paths are covered too. Nothing
     # expensive happens between here and there, so a duplicate early check would
     # only cost an extra query.
-    await crud.set_peer_card(
+    card_write = await crud.set_peer_card(
         db,
         workspace_id,
         peer_card=peer_card_data.peer_card,
         observer=peer_id,
         observed=observed,
+        erase_history=True,
     )
+    await db.commit()
+    await card_write.post_commit()
 
     return schemas.PeerCardResponse(peer_card=peer_card_data.peer_card)
 

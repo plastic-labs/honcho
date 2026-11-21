@@ -132,6 +132,10 @@ class SessionPeerConfig(BaseModel):
         None,
         description="Whether other peers in this session should try to form a session-level theory-of-mind representation of this peer",
     )
+    joined_at: datetime.datetime | None = Field(
+        default=None,
+        description="When this peer joined the session; defaults to now for a new membership. Write-only: it is sent when adding or setting session peers and when setting a peer's configuration, and is never returned. Set it when importing historical messages, since peer-perspective search only returns messages created at or after the peer's join time. A datetime without a timezone is read as UTC. A time more than five minutes in the future is rejected. Requires a Honcho release after v3.6.1",
+    )
 
 
 # ==============================================================================
@@ -152,6 +156,8 @@ class WorkspaceResponse(BaseModel):
         default_factory=WorkspaceConfigurationResponse
     )
     created_at: datetime.datetime
+    auto: bool = False
+    """Whether this is an auto workspace, which the ingest API writes to."""
 
 
 class WorkspaceCreateParams(BaseModel):
@@ -548,6 +554,189 @@ class QueueStatusResponse(BaseModel):
     in_progress_work_units: int
     pending_work_units: int
     sessions: dict[str, SessionQueueStatus] | None = None
+
+
+# ==============================================================================
+# Ingest Types
+# ==============================================================================
+
+
+class IngestParticipant(BaseModel):
+    """A person on a source record. ``id`` is what connects them across records."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+    id: str | None = Field(None, min_length=1, max_length=512)
+    """The person's ID in the source, if it has one."""
+    name: str = Field(min_length=1, max_length=512)
+    """The person's display name."""
+    bot: bool = False
+    """The source marks this account as a bot. Its peer is created with
+    ``observe_me`` off, so nothing is derived about it."""
+
+
+class IngestContainer(BaseModel):
+    """Where a record lives in its source: a channel, a thread, a repository."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+    id: str = Field(min_length=1, max_length=512)
+    name: str | None = Field(None, min_length=1, max_length=512)
+    parent_id: str | None = Field(None, min_length=1, max_length=512)
+    """The parent container's ID, e.g. a thread's channel."""
+
+
+class IngestRecord(BaseModel):
+    """One source record to ingest: a chat message, a meeting note, an event.
+
+    Experimental: ingest may change or stop working without notice.
+    """
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+    source: str = Field(min_length=1, max_length=64)
+    """The source type, e.g. ``discord``."""
+    source_instance: str = Field(min_length=1, max_length=128)
+    """The server, team or account inside the source."""
+    created_at: datetime.datetime
+    """The source's timestamp."""
+    content: str
+    source_id: str | None = Field(None, min_length=1, max_length=512)
+    """The record's ID in that instance. Without it, the record is identified by
+    a hash of its content, so only identical content is deduplicated."""
+    revised_at: datetime.datetime | None = None
+    """When the source last changed this record."""
+    container: IngestContainer | None = None
+    """Where the record lives; omit for a standalone record."""
+    author: IngestParticipant | None = None
+    """Who wrote it; omit when there is no single author."""
+    participants: list[IngestParticipant] = Field(default_factory=list)
+    metadata: dict[str, Any] | None = None
+    configuration: MessageConfiguration | None = None
+    session_id: str | None = Field(None, min_length=1, max_length=512)
+    """An explicit session, used instead of mapping the container."""
+    peer_id: str | None = Field(None, min_length=1, max_length=512)
+    """An explicit author peer, used instead of mapping the author."""
+
+
+class IngestRecordResult(BaseModel):
+    """What happened to one ingested record."""
+
+    index: int
+    """The record's position among the records passed to ``ingest``."""
+    outcome: str
+    """``created``, ``duplicate`` or ``rejected``."""
+    reason: str | None = None
+    """Why a record was rejected, e.g. ``content_conflict``."""
+    record_id: str | None = None
+    message_id: str | None = None
+    session_id: str | None = None
+    peer_id: str | None = None
+    derivation: str | None = None
+    """``pending``, ``queued`` or ``deferred``."""
+
+
+class IngestResponse(BaseModel):
+    """One result per ingested record, in the order the records were passed."""
+
+    records: list[IngestRecordResult]
+
+
+class IngestRecordCounts(BaseModel):
+    """The workspace's ingested records by derivation state."""
+
+    deferred: int
+    """Stored, waiting for ``ingest_derive()`` to release them."""
+    pending: int
+    """Released, about to be queued."""
+    queued: int
+    """Queued for derivation, or derived."""
+
+
+class IngestStatusResponse(BaseModel):
+    """What the workspace's imports produced, for review before deriving."""
+
+    records: IngestRecordCounts
+    deferred_tokens: int
+    """Tokens in the messages of deferred records."""
+    people: int
+    """Peers created for imported accounts."""
+    people_not_modeled: int
+    """Of those, peers with ``observe_me`` off: nothing is derived about them."""
+    sessions: int
+    """Sessions created for imported containers."""
+    sessions_not_modeled: int
+    """Of those, sessions whose reasoning is off."""
+    sessions_being_deleted: int = 0
+    """Sessions a reset is still deleting; 0 once it has finished."""
+
+
+class IngestAccount(BaseModel):
+    """One source account mapped to a peer."""
+
+    source: str
+    source_instance: str
+    id: str | None = None
+    """The account's ID in the source, when it has one."""
+    display_name: str | None = None
+
+
+class IngestPerson(BaseModel):
+    """A peer created for imported accounts."""
+
+    peer_id: str
+    display_name: str | None = None
+    """The first account's display name."""
+    accounts: list[IngestAccount]
+    messages: int
+    """Records its accounts wrote."""
+    modeled: bool
+    """False when ``observe_me`` is off: nothing is derived about it."""
+
+
+class IngestSession(BaseModel):
+    """A session created for an imported container."""
+
+    session_id: str
+    display_name: str | None = None
+    """The container's display name in the source."""
+    source: str
+    source_instance: str
+    messages: int
+    """Records in the session."""
+    modeled: bool
+    """False when reasoning is off for the session: only summaries are made."""
+
+
+class IngestLinkResponse(BaseModel):
+    """The kept person and every account that now maps to it."""
+
+    peer_id: str
+    merged: list[str]
+    """The people linked into it."""
+    accounts: list[IngestAccount]
+
+
+class IngestUnlinkResponse(BaseModel):
+    """The person a linked account maps to again, from the next import on."""
+
+    peer_id: str
+    account: IngestAccount
+
+
+class IngestResetResponse(BaseModel):
+    """The imported sessions whose deletion was started."""
+
+    sessions: list[str]
+
+
+class IngestDeriveResponse(BaseModel):
+    """How many deferred records were released for derivation."""
+
+    pending: int
+    """Records released for derivation."""
+    remaining: int
+    """Records in the workspace still deferred."""
 
 
 # ==============================================================================

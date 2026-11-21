@@ -143,7 +143,9 @@ class TestEnqueueFunction:
                 db_session,
                 schemas.SessionCreate(
                     name=str(generate_nanoid()),
-                    peers={test_peer.name: schemas.SessionPeerConfig(observe_me=True)},
+                    peers={
+                        test_peer.name: schemas.SessionPeerConfigInput(observe_me=True)
+                    },
                 ),
                 test_workspace.name,
             )
@@ -194,8 +196,8 @@ class TestEnqueueFunction:
                 schemas.SessionCreate(
                     name=str(generate_nanoid()),
                     peers={
-                        test_peer1.name: schemas.SessionPeerConfig(),
-                        test_peer2.name: schemas.SessionPeerConfig(),
+                        test_peer1.name: schemas.SessionPeerConfigInput(),
+                        test_peer2.name: schemas.SessionPeerConfigInput(),
                     },
                 ),
                 test_workspace.name,
@@ -254,8 +256,10 @@ class TestEnqueueFunction:
                 schemas.SessionCreate(
                     name=str(generate_nanoid()),
                     peers={
-                        test_peer1.name: schemas.SessionPeerConfig(),
-                        test_peer2.name: schemas.SessionPeerConfig(observe_others=True),
+                        test_peer1.name: schemas.SessionPeerConfigInput(),
+                        test_peer2.name: schemas.SessionPeerConfigInput(
+                            observe_others=True
+                        ),
                     },
                 ),
                 test_workspace.name,
@@ -321,11 +325,13 @@ class TestEnqueueFunction:
                 schemas.SessionCreate(
                     name=str(generate_nanoid()),
                     peers={
-                        test_peer1.name: schemas.SessionPeerConfig(observe_me=True),
-                        observing_peer.name: schemas.SessionPeerConfig(
+                        test_peer1.name: schemas.SessionPeerConfigInput(
+                            observe_me=True
+                        ),
+                        observing_peer.name: schemas.SessionPeerConfigInput(
                             observe_others=True
                         ),
-                        unobserving_peer.name: schemas.SessionPeerConfig(),
+                        unobserving_peer.name: schemas.SessionPeerConfigInput(),
                     },
                 ),
                 test_workspace.name,
@@ -384,7 +390,9 @@ class TestEnqueueFunction:
                 db_session,
                 schemas.SessionCreate(
                     name=str(generate_nanoid()),
-                    peers={test_peer.name: schemas.SessionPeerConfig(observe_me=False)},
+                    peers={
+                        test_peer.name: schemas.SessionPeerConfigInput(observe_me=False)
+                    },
                 ),
                 test_workspace.name,
             )
@@ -432,9 +440,9 @@ class TestEnqueueFunction:
                 schemas.SessionCreate(
                     name=str(generate_nanoid()),
                     peers={
-                        test_peer1.name: schemas.SessionPeerConfig(),
-                        additional_sender_peer.name: schemas.SessionPeerConfig(),
-                        observer_peer.name: schemas.SessionPeerConfig(
+                        test_peer1.name: schemas.SessionPeerConfigInput(),
+                        additional_sender_peer.name: schemas.SessionPeerConfigInput(),
+                        observer_peer.name: schemas.SessionPeerConfigInput(
                             observe_others=True
                         ),
                     },
@@ -513,8 +521,10 @@ class TestEnqueueFunction:
                 schemas.SessionCreate(
                     name=str(generate_nanoid()),
                     peers={
-                        sender_peer.name: schemas.SessionPeerConfig(observe_me=True),
-                        observer_peer.name: schemas.SessionPeerConfig(
+                        sender_peer.name: schemas.SessionPeerConfigInput(
+                            observe_me=True
+                        ),
+                        observer_peer.name: schemas.SessionPeerConfigInput(
                             observe_others=True
                         ),
                     },
@@ -591,11 +601,13 @@ class TestEnqueueFunction:
                 schemas.SessionCreate(
                     name=str(generate_nanoid()),
                     peers={
-                        sender_peer.name: schemas.SessionPeerConfig(observe_me=True),
-                        observer_who_left.name: schemas.SessionPeerConfig(
+                        sender_peer.name: schemas.SessionPeerConfigInput(
+                            observe_me=True
+                        ),
+                        observer_who_left.name: schemas.SessionPeerConfigInput(
                             observe_others=True
                         ),
-                        observer_who_stayed.name: schemas.SessionPeerConfig(
+                        observer_who_stayed.name: schemas.SessionPeerConfigInput(
                             observe_others=True
                         ),
                     },
@@ -686,17 +698,19 @@ class TestEnqueueFunction:
                 schemas.SessionCreate(
                     name=str(generate_nanoid()),
                     peers={
-                        sender_peer.name: schemas.SessionPeerConfig(observe_me=True),
-                        active_observer.name: schemas.SessionPeerConfig(
+                        sender_peer.name: schemas.SessionPeerConfigInput(
+                            observe_me=True
+                        ),
+                        active_observer.name: schemas.SessionPeerConfigInput(
                             observe_others=True
                         ),
-                        inactive_observer.name: schemas.SessionPeerConfig(
+                        inactive_observer.name: schemas.SessionPeerConfigInput(
                             observe_others=True
                         ),
-                        active_non_observer.name: schemas.SessionPeerConfig(
+                        active_non_observer.name: schemas.SessionPeerConfigInput(
                             observe_others=False
                         ),
-                        inactive_non_observer.name: schemas.SessionPeerConfig(
+                        inactive_non_observer.name: schemas.SessionPeerConfigInput(
                             observe_others=False
                         ),
                     },
@@ -948,9 +962,15 @@ class TestAdvancedEnqueueEdgeCases:
                 schemas.SessionCreate(
                     name=str(generate_nanoid()),
                     peers={
-                        sender_peer.name: schemas.SessionPeerConfig(observe_me=True),
-                        observer1.name: schemas.SessionPeerConfig(observe_others=True),
-                        observer2.name: schemas.SessionPeerConfig(observe_others=True),
+                        sender_peer.name: schemas.SessionPeerConfigInput(
+                            observe_me=True
+                        ),
+                        observer1.name: schemas.SessionPeerConfigInput(
+                            observe_others=True
+                        ),
+                        observer2.name: schemas.SessionPeerConfigInput(
+                            observe_others=True
+                        ),
                     },
                 ),
                 test_workspace.name,
@@ -1018,8 +1038,10 @@ class TestAdvancedEnqueueEdgeCases:
                 schemas.SessionCreate(
                     name=str(generate_nanoid()),
                     peers={
-                        sender_peer.name: schemas.SessionPeerConfig(observe_me=True),
-                        observer_peer.name: schemas.SessionPeerConfig(
+                        sender_peer.name: schemas.SessionPeerConfigInput(
+                            observe_me=True
+                        ),
+                        observer_peer.name: schemas.SessionPeerConfigInput(
                             observe_others=True
                         ),
                     },
@@ -1104,7 +1126,7 @@ class TestAdvancedEnqueueEdgeCases:
                 schemas.SessionCreate(
                     name=str(generate_nanoid()),
                     peers={
-                        observer_peer.name: schemas.SessionPeerConfig(
+                        observer_peer.name: schemas.SessionPeerConfigInput(
                             observe_others=True
                         ),
                     },
@@ -1332,7 +1354,9 @@ class TestEnqueueTenant:
                 db_session,
                 schemas.SessionCreate(
                     name=str(generate_nanoid()),
-                    peers={test_peer.name: schemas.SessionPeerConfig(observe_me=True)},
+                    peers={
+                        test_peer.name: schemas.SessionPeerConfigInput(observe_me=True)
+                    },
                 ),
                 test_workspace.name,
             )

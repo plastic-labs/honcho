@@ -327,11 +327,14 @@ def create_index_online(
     using: str | None = None,
     include: str | None = None,
     where: str | None = None,
+    unique: bool = False,
+    with_: str | None = None,
 ) -> None:
     """Create an index on a plain or a partitioned table, with no long write block.
 
-    `columns`, `include` and `where` are SQL, e.g. columns="tenant_id, created_at DESC";
-    `using` is the access method, e.g. "gin", with operator classes in `columns`.
+    `columns`, `include`, `where` and `with_` (storage parameters) are SQL, e.g.
+    columns="tenant_id, created_at DESC"; `using` is the access method, e.g.
+    "gin", with operator classes in `columns`. `unique` makes it a UNIQUE index.
 
     A plain table gets CREATE INDEX CONCURRENTLY. Postgres refuses CONCURRENTLY on
     a partitioned table, so there the steps are: CREATE INDEX ... ON ONLY the
@@ -357,15 +360,18 @@ def create_index_online(
     transactional CREATE INDEX. Nothing in this repo takes it.
     """
     schema = get_schema()
+    kind = "UNIQUE INDEX" if unique else "INDEX"
     method = f" USING {using}" if using else ""
-    tail = (f" INCLUDE ({include})" if include else "") + (
-        f" WHERE {where}" if where else ""
+    tail = (
+        (f" INCLUDE ({include})" if include else "")
+        + (f" WITH ({with_})" if with_ else "")
+        + (f" WHERE {where}" if where else "")
     )
 
     def create(index: str, target: str, concurrently: bool) -> None:
         how = "CONCURRENTLY " if concurrently else ""
         op.execute(
-            f'CREATE INDEX {how}IF NOT EXISTS "{index}" ON {target}{method}'
+            f'CREATE {kind} {how}IF NOT EXISTS "{index}" ON {target}{method}'
             + f" ({columns}){tail}"
         )
 
@@ -395,7 +401,7 @@ def create_index_online(
     with op.get_context().autocommit_block():
         if parent_valid is None:
             _execute_short_lock(
-                f'CREATE INDEX IF NOT EXISTS "{name}" ON ONLY {parent}{method}'
+                f'CREATE {kind} IF NOT EXISTS "{name}" ON ONLY {parent}{method}'
                 + f" ({columns}){tail}"
             )
         attached = _attached_partitions(name)

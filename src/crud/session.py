@@ -1,5 +1,8 @@
 """CRUD helpers for sessions and session-related relationship data."""
 
+import hashlib
+import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
@@ -16,6 +19,7 @@ from sqlalchemy import (
     exists,
     func,
     insert,
+    or_,
     select,
     tuple_,
     update,
@@ -37,8 +41,12 @@ from src.cache.client import (
     safe_cache_set,
 )
 from src.config import settings
-from src.crud.deriver import active_queue_session_match, queue_item_tenant_match
+from src.crud.deriver import (
+    active_queue_session_match,
+    delete_queue_items_and_claims,
+)
 from src.crud.dream_history import delete_session_history
+from src.crud.ingest_fence import take_session_fences, take_workspace_fence
 from src.crud.lifecycle import (
     live_message_row,
     live_session_peer_row,
@@ -163,7 +171,7 @@ def _reject_resolved_scope_peers(peers: list[models.Peer]) -> None:
 
 
 def count_observers_in_config(
-    peer_configs: dict[str, schemas.SessionPeerConfig],
+    peer_configs: Mapping[str, schemas.SessionPeerConfig],
 ) -> int:
     """
     Count the number of peers that will be observing others based on their configurations.
@@ -361,6 +369,16 @@ async def get_or_create_session(
             if session.metadata is not None or session.configuration is not None:
                 raise AuthenticationException(
                     "Peer-scoped keys cannot modify an existing session"
+                )
+            # The membership upsert is skipped below, so a join time sent here
+            # would be dropped while the request still succeeded. Refuse it:
+            # changing a join time goes through the session peers routes.
+            if any(
+                config.joined_at is not None
+                for config in (session.peer_names or {}).values()
+            ):
+                raise AuthenticationException(
+                    "Peer-scoped keys cannot change join time on an existing session"
                 )
             # The caller is already a member, so the only effect of naming
             # itself would be the upsert's rejoin (it clears ``left_at``), which
@@ -681,31 +699,52 @@ async def delete_session(
         db, session_name, workspace_name, include_inactive=True
     )
 
+    # External-store vectors to delete once the rows are committed: deleting
+    # them inside the transaction would hold its locks across network calls,
+    # and lose live vectors if the transaction then rolled back.
+    external_vector_store = get_external_vector_store()
+    message_vectors: tuple[str, list[str]] | None = None
+    document_vectors: dict[str, list[str]] = {}
+
     # Perform cascading deletes in order
     # Order is important to avoid foreign key constraint violations
     try:
-        # Delete ActiveQueueSession entries, matching on the work_unit_key
-        # (flag-aware position + tenant pinning; rationale lives on the helper).
+        # The ingest fence first, before any row lock: an ingest transaction
+        # writing to this session finishes first, and none starts until this
+        # deletion commits, so the ingest rows deleted below are all of them.
+        await take_workspace_fence(db, workspace_name, mode="shared")
+        await take_session_fences(db, workspace_name, [session_name])
+
+        # Queue items, then the claim rows on their work units (the helper
+        # carries the lock order). session_id is globally unique in practice;
+        # the helper also pins the queue rows to the ambient tenant, and the
+        # claim match is flag-aware and tenant-pinned (rationale on each helper).
+        await delete_queue_items_and_claims(
+            db,
+            [[models.QueueItem.session_id == honcho_session.id]],
+            active_queue_session_match(workspace_name, session_name),
+        )
+
+        # The session's ingest records and the bindings that point at it. These
+        # tables have no foreign keys (src/models.py), so nothing else removes
+        # them; they go after the queue sweep, matching the ingest enqueuer's
+        # queue-then-ingest-rows order.
+        tenant_id = models.scoped_tenant_id()
         await db.execute(
-            delete(models.ActiveQueueSession).where(
-                active_queue_session_match(workspace_name, session_name)
+            delete(models.IngestRecord).where(
+                models.IngestRecord.tenant_id == tenant_id,
+                models.IngestRecord.workspace_name == workspace_name,
+                models.IngestRecord.session_name == session_name,
+            )
+        )
+        await db.execute(
+            delete(models.IngestSessionBinding).where(
+                models.IngestSessionBinding.tenant_id == tenant_id,
+                models.IngestSessionBinding.workspace_name == workspace_name,
+                models.IngestSessionBinding.session_name == session_name,
             )
         )
 
-        # Delete QueueItem entries. session_id is globally unique in practice,
-        # but pin to the ambient tenant, flag-aware, for defense in depth
-        # (rationale lives on the helper).
-        queue_item_match = queue_item_tenant_match()
-        session_queue_item_delete = delete(models.QueueItem).where(
-            models.QueueItem.session_id == honcho_session.id
-        )
-        if queue_item_match is not None:
-            session_queue_item_delete = session_queue_item_delete.where(
-                queue_item_match
-            )
-        await db.execute(session_queue_item_delete)
-
-        # Delete message vectors from vector store before deleting DB records
         # Vector IDs are {message_id}_{chunk_index}, where chunk_index is the 0-based
         # position of the chunk within its message. Only the message id and the chunk
         # count are needed to rebuild the IDs we delete from the external store
@@ -721,7 +760,6 @@ async def delete_session(
             .group_by(models.MessageEmbedding.message_id)
         )
         message_chunk_counts = embedding_result.all()
-        external_vector_store = get_external_vector_store()
 
         # Only delete from external vector store if one exists
         if external_vector_store is not None and message_chunk_counts:
@@ -730,16 +768,12 @@ async def delete_session(
                 for message_id, chunk_count in message_chunk_counts
                 for chunk_idx in range(chunk_count)
             ]
-
-            # Try to delete from external vector store (best effort)
+            # Best effort, like the delete itself after the commit
             try:
                 namespace = await external_vector_store.get_vector_namespace(
                     "message", workspace_name
                 )
-                await external_vector_store.delete_many(namespace, vector_ids)
-                logger.debug(
-                    f"Deleted {len(vector_ids)} message vectors for session {session_name}"
-                )
+                message_vectors = (namespace, vector_ids)
             except Exception as e:
                 # Log warning but continue - workspace deletion will clean up eventually
                 logger.warning(
@@ -757,7 +791,6 @@ async def delete_session(
             batch_size=5000,
         )
 
-        # Delete document vectors from vector store before deleting DB records
         # Fetch all Document records to get IDs and namespaces
         doc_result = await db.execute(
             select(
@@ -775,7 +808,6 @@ async def delete_session(
         # Only delete from external vector store if one exists
         if external_vector_store is not None and documents:
             # Group document IDs by namespace (observer/observed)
-            docs_by_namespace: dict[str, list[str]] = {}
             for doc in documents:
                 namespace = await external_vector_store.get_vector_namespace(
                     "document",
@@ -783,20 +815,7 @@ async def delete_session(
                     doc.observer,
                     doc.observed,
                 )
-                docs_by_namespace.setdefault(namespace, []).append(doc.id)
-
-            # Try to delete from external vector store (best effort, per namespace)
-            for namespace, doc_ids in docs_by_namespace.items():
-                try:
-                    await external_vector_store.delete_many(namespace, doc_ids)
-                    logger.debug(
-                        f"Deleted {len(doc_ids)} document vectors from {namespace}"
-                    )
-                except Exception as e:
-                    # Log warning but continue - workspace deletion will clean up eventually
-                    logger.warning(
-                        f"Failed to delete document vectors from {namespace}: {e}"
-                    )
+                document_vectors.setdefault(namespace, []).append(doc.id)
 
         # Delete SessionPeer associations before the documents. A scope_removal
         # task locks the scope's membership row and then updates this session's
@@ -854,6 +873,31 @@ async def delete_session(
         logger.error("Failed to delete session %s: %s", session_name, e)
         await db.rollback()
         raise e
+
+    if external_vector_store is not None:
+        if message_vectors is not None:
+            namespace, vector_ids = message_vectors
+            try:
+                await external_vector_store.delete_many(namespace, vector_ids)
+                logger.debug(
+                    f"Deleted {len(vector_ids)} message vectors for session {session_name}"
+                )
+            except Exception as e:
+                # Log warning but continue - workspace deletion will clean up eventually
+                logger.warning(
+                    f"Failed to delete message vectors for session {session_name}: {e}"
+                )
+        for namespace, doc_ids in document_vectors.items():
+            try:
+                await external_vector_store.delete_many(namespace, doc_ids)
+                logger.debug(
+                    f"Deleted {len(doc_ids)} document vectors from {namespace}"
+                )
+            except Exception as e:
+                # Log warning but continue - workspace deletion will clean up eventually
+                logger.warning(
+                    f"Failed to delete document vectors from {namespace}: {e}"
+                )
 
     return SessionDeletionResult(
         messages_deleted=messages_deleted,
@@ -987,6 +1031,74 @@ async def clone_session(
     return new_session
 
 
+async def _lock_session_membership(
+    db: AsyncSession, workspace_name: str, session_name: str
+) -> None:
+    """Serialize membership replaces and removes of one session until commit.
+
+    A replace takes row locks on ``session_peers`` in two phases over different
+    rows: it ends the memberships it does not name, then upserts the ones it
+    does. Two replaces with disjoint peer sets, or a replace and a remove of rows
+    it both ends and upserts, therefore lock in opposite orders and deadlock;
+    ordering either phase cannot help. Both callers take this lock before any
+    row lock in their transaction, so it never waits while holding one, and no
+    other path takes it.
+
+    Adding members doesn't take it. An add that writes only members who aren't
+    active has no cycle with a replace. An add that rewrites an active member
+    can cycle with one: an explicit ``joined_at`` for a member who is already
+    active rewrites that row, and so does an add whose read of the current
+    members is stale (a third writer rejoined one of them in between).
+
+    A transaction-scoped advisory lock rather than a lock on the ``sessions``
+    row: session and workspace deletion delete ``session_peers`` before the
+    ``sessions`` row, and workspace deletion runs over active sessions, so a
+    replace that locked the session row first would invert that order. That
+    reason rests on deletion locking the ``sessions`` row last.
+
+    Keyed on the tenant as well, since advisory locks are database-wide; the
+    key is a stable hash, and a collision only serializes two unrelated
+    sessions. Raises under ``MULTI_TENANT`` with no tenant bound, like every
+    tenant-scoped read.
+    """
+    key = _session_membership_lock_key(workspace_name, session_name)
+    await db.execute(select(func.pg_advisory_xact_lock(cast(key, BigInteger))))
+
+
+def _session_membership_lock_key(workspace_name: str, session_name: str) -> int:
+    """The signed 64-bit advisory key for one session's membership lock."""
+    name = json.dumps(
+        ["session-membership", models.scoped_tenant_id(), workspace_name, session_name]
+    )
+    return int.from_bytes(hashlib.sha256(name.encode()).digest()[:8], signed=True)
+
+
+async def _require_active_session(
+    db: AsyncSession, workspace_name: str, session_name: str
+) -> None:
+    """Raise unless the session exists, isn't marked for deletion, and neither it
+    nor its workspace is tombstoned (what ``get_session`` checks, uncached).
+
+    Called by a replace or remove right after it takes the membership lock. It
+    reads the database rather than the cache, so a write that waited on the lock
+    sees a deletion committed meanwhile and writes nothing. Waiting is also why
+    these writes end memberships at ``statement_timestamp()`` rather than
+    ``now()``: ``now()`` is when the transaction began, which can be before a
+    rejoin it waited on, so the membership would end before it started.
+    """
+    session = await db.scalar(
+        select(models.Session)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.name == session_name)
+        .where(models.Session.is_active == True)  # noqa: E712
+        .where(live_session_row())
+    )
+    if session is None:
+        raise ResourceNotFoundException(
+            f"Session {session_name} not found in workspace {workspace_name}"
+        )
+
+
 async def remove_peers_from_session(
     db: AsyncSession,
     workspace_name: str,
@@ -1014,8 +1126,8 @@ async def remove_peers_from_session(
         ResourceNotFoundException: If the session does not exist
         ValidationException: If any named peer is a scope
     """
-    # Verify session exists
-    await get_session(db, session_name, workspace_name)
+    await _lock_session_membership(db, workspace_name, session_name)
+    await _require_active_session(db, workspace_name, session_name)
 
     # Scope membership is ended through the scopes routes, which also reconcile
     # the scope's copies. Rejected up front for a clear 422 rather than a silent
@@ -1039,7 +1151,8 @@ async def remove_peers_from_session(
             models.SessionPeer.peer_name.in_(peer_names),
             models.SessionPeer.left_at.is_(None),  # Only update active peers
         )
-        .values(left_at=func.now())
+        # The statement's time, not the transaction's: see _require_active_session.
+        .values(left_at=func.statement_timestamp())
     )
     if not _allow_scope_peers:
         # Closes the window the advisory check above cannot: the exclusion is
@@ -1186,7 +1299,7 @@ async def set_peers_for_session(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
-    peer_names: dict[str, schemas.SessionPeerConfig],
+    peer_names: Mapping[str, schemas.SessionPeerConfig],
 ) -> list[models.SessionPeer]:
     """
     Replace a session's ordinary peer set with ``peer_names``.
@@ -1215,19 +1328,11 @@ async def set_peers_for_session(
     # reject a request that lowers the observer count as often as one that raises
     # it. _get_or_add_peers_to_session enforces the limit on the resulting rows.
 
-    # Verify session exists
-    stmt = (
-        select(models.Session)
-        .where(models.Session.workspace_name == workspace_name)
-        .where(models.Session.name == session_name)
-    )
-    result = await db.execute(stmt)
-    session = result.scalar_one_or_none()
+    # Before the soft delete below: the replace's two write phases cannot be
+    # ordered against another replace or remove of this session, only serialized.
+    await _lock_session_membership(db, workspace_name, session_name)
 
-    if session is None:
-        raise ResourceNotFoundException(
-            f"Session {session_name} not found in workspace {workspace_name}"
-        )
+    await _require_active_session(db, workspace_name, session_name)
 
     # Soft delete every *ordinary* active membership not in the incoming map.
     # Scope memberships are deliberately preserved: this route replaces the peers
@@ -1253,9 +1358,10 @@ async def set_peers_for_session(
                 .correlate(models.SessionPeer)
             ),
         )
-        .values(left_at=func.now())
+        # The statement's time, not the transaction's: see _require_active_session.
+        .values(left_at=func.statement_timestamp())
     )
-    result = await db.execute(update_stmt)
+    await db.execute(update_stmt)
 
     # Get or create peers
     peers_result = await get_or_create_peers(
@@ -1284,7 +1390,7 @@ async def upsert_session_peers(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
-    peer_names: dict[str, schemas.SessionPeerConfig],
+    peer_names: Mapping[str, schemas.SessionPeerConfig],
     *,
     fetch_after_upsert: bool = True,
 ) -> list[models.SessionPeer]:
@@ -1308,7 +1414,7 @@ async def _get_or_add_peers_to_session(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
-    peer_names: dict[str, schemas.SessionPeerConfig],
+    peer_names: Mapping[str, schemas.SessionPeerConfig],
     *,
     fetch_after_upsert: bool = True,
     replace_config: bool = False,
@@ -1318,7 +1424,8 @@ async def _get_or_add_peers_to_session(
     active memberships afterward.
 
     New peers are inserted, peers that previously left the session are rejoined,
-    and already-active peers keep their existing joined_at.
+    and already-active peers keep their existing joined_at unless the incoming
+    configuration carries one, which always lands.
 
     An already-active peer also keeps its stored configuration unless
     ``replace_config`` is set: an add must not overwrite configuration it was
@@ -1355,6 +1462,14 @@ async def _get_or_add_peers_to_session(
     # removal; anything the read missed is still handled by the upsert below.
     # A replace writes every row: two replaces that each skipped the rows they
     # left unchanged could interleave into a state neither asked for.
+    # A caller-supplied joined_at always lands, even on an active membership:
+    # it is how an import backdates the peer_perspective window.
+    explicit_joined_at = {
+        peer_name: configuration.joined_at
+        for peer_name, configuration in peer_names.items()
+        if isinstance(configuration, schemas.SessionPeerConfigInput)
+        and configuration.joined_at is not None
+    }
     existing = (
         {
             row.peer_name: row
@@ -1379,6 +1494,7 @@ async def _get_or_add_peers_to_session(
         peer_name: configuration
         for peer_name, configuration in sorted(peer_names.items())
         if replace_config
+        or peer_name in explicit_joined_at
         or (row := existing.get(peer_name)) is None
         or row.left_at is not None
     }
@@ -1412,7 +1528,7 @@ async def _get_or_add_peers_to_session(
                 "session_name": session_name,
                 "peer_name": peer_name,
                 "workspace_name": workspace_name,
-                "joined_at": func.now(),
+                "joined_at": explicit_joined_at.get(peer_name, func.now()),
                 "left_at": None,
                 "configuration": configuration.model_dump(),
             }
@@ -1420,9 +1536,10 @@ async def _get_or_add_peers_to_session(
         ]
     )
 
-    # On conflict, rejoin departed peers. joined_at always survives on an active
-    # membership -- advancing it would move the peer_perspective search window
-    # past messages the peer was present for (issue #940).
+    # On conflict, rejoin departed peers. Unless the caller supplied one,
+    # joined_at survives on an active membership -- advancing it would move the
+    # peer_perspective search window past messages the peer was present for
+    # (issue #940).
     #
     # Configuration depends on the caller's semantics. An add ("ensure this peer
     # is here") must not silently overwrite a config it never asked about, so an
@@ -1438,7 +1555,13 @@ async def _get_or_add_peers_to_session(
         index_elements=["tenant_id", "session_name", "peer_name", "workspace_name"],
         set_={
             "joined_at": case(
-                (models.SessionPeer.left_at.is_not(None), func.now()),
+                (
+                    or_(
+                        models.SessionPeer.left_at.is_not(None),
+                        models.SessionPeer.peer_name.in_(list(explicit_joined_at)),
+                    ),
+                    stmt.excluded.joined_at,
+                ),
                 else_=models.SessionPeer.joined_at,
             ),
             "left_at": None,
@@ -1654,5 +1777,11 @@ async def set_peer_config(
             configuration=update_data,
         )
         db.add(session_peer)
+
+    if (
+        isinstance(config, schemas.SessionPeerConfigInput)
+        and config.joined_at is not None
+    ):
+        session_peer.joined_at = config.joined_at
 
     await db.commit()

@@ -677,7 +677,7 @@ def telemetry_headers() -> dict[str, str]:
     """Client-identity headers for telemetry attribution, e.g.::
 
         X-Honcho-Host: hermes/0.18.2 (darwin)
-        X-Honcho-Plugin: hermes-plugin-honcho/1.1.0
+        X-Honcho-Plugin: hermes-plugin-honcho/1.2.0
 
     The version is omitted from the host when it can't be resolved. Values are recorded verbatim
     by the API's telemetry middleware; nothing else reads them, so they must never raise.
@@ -687,6 +687,27 @@ def telemetry_headers() -> dict[str, str]:
         "X-Honcho-Host": f"{HOST}/{version} ({sys.platform})" if version else f"{HOST} ({sys.platform})",
         "X-Honcho-Plugin": f"{PLUGIN}/{_plugin_version()}",
     }
+
+
+AGENT_MODEL_HEADER = "X-Honcho-Agent-Model"
+
+
+def set_agent_model_header(client: Any, model: str) -> None:
+    """Write ``model`` into a built client's headers, or delete the header when it is empty, so a
+    request never carries a model the agent is no longer running. Covers the sync client and the
+    config the SDK builds its async client from. Best-effort: SDK internals may move."""
+    with contextlib.suppress(Exception):
+        http = getattr(client, "_http", None)
+        config = getattr(client, "_http_config", None) or {}
+        async_http = getattr(client, "_async_http", None)
+        for headers in (getattr(http, "default_headers", None), config.get("default_headers"),
+                        getattr(async_http, "default_headers", None)):
+            if not isinstance(headers, dict):
+                continue
+            if model:
+                headers[AGENT_MODEL_HEADER] = model
+            else:
+                headers.pop(AGENT_MODEL_HEADER, None)
 
 
 def _build_client(config: HonchoClientConfig) -> "Honcho":

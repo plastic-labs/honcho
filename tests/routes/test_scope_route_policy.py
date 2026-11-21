@@ -44,6 +44,7 @@ system through the deriver, dreamer, and queue, which have no route table to
 enumerate; a gap there would not be caught here.
 """
 
+import datetime
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
@@ -207,6 +208,24 @@ def _b_message(c: TestClient, ws: str, s: str, p: str):
     return c.post(
         f"/v3/workspaces/{ws}/sessions/{s}/messages",
         json={"messages": [{"peer_id": p, "content": "hello"}]},
+    )
+
+
+def _b_ingest(c: TestClient, ws: str, s: str, p: str):
+    return c.post(
+        f"/v3/workspaces/{ws}/ingest",
+        json={
+            "records": [
+                {
+                    "source": "test",
+                    "source_instance": "policy",
+                    "created_at": "2026-11-04T20:47:00Z",
+                    "content": "hello",
+                    "session_id": s,
+                    "peer_id": p,
+                }
+            ]
+        },
     )
 
 
@@ -505,6 +524,14 @@ POLICY: tuple[Case, ...] = (
         True,
         refuse_missing=True,
         build=_b_message,
+    ),
+    Case(
+        "POST",
+        f"{_W}/ingest",
+        "peer_id",
+        True,
+        refuse_missing=True,
+        build=_b_ingest,
     ),
     Case(
         "POST",
@@ -926,6 +953,8 @@ async def test_refusing_position_allows_unflagged_squatter(
     session_name, _ = _setup(client, test_workspace.name)
     squatter = scope_peer_name(str(generate_nanoid()))
     db_session.add(models.Peer(workspace_name=test_workspace.name, name=squatter))
+    # Ingest writes only to auto workspaces; the flag changes nothing else here.
+    test_workspace.auto_enabled_at = datetime.datetime.now(datetime.UTC)
     await db_session.commit()
 
     # Give it a membership so config and removal have a row to act on.

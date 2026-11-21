@@ -23,6 +23,7 @@ from src.utils.representation import (
     ExplicitObservation,
     Representation,
 )
+from src.utils.types import GetOrCreateResult
 
 
 def _resolved_config(*, dream_enabled: bool = False) -> ResolvedConfiguration:
@@ -529,7 +530,9 @@ class TestRepresentationManagerSave:
         with (
             patch(
                 "src.crud.representation.crud.get_or_create_collection",
-                new=AsyncMock(return_value=MagicMock()),
+                new=AsyncMock(
+                    return_value=GetOrCreateResult(MagicMock(), created=False)
+                ),
             ),
             patch(
                 "src.crud.representation.crud.create_documents",
@@ -537,7 +540,7 @@ class TestRepresentationManagerSave:
             ) as mock_create_documents,
         ):
             await manager._save_representation_internal(  # pyright: ignore[reportPrivateUsage]
-                MagicMock(spec=AsyncSession),
+                AsyncMock(spec=AsyncSession),
                 [observation],
                 [[0.1]],
                 message_ids=[20],

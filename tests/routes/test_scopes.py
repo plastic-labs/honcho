@@ -821,7 +821,7 @@ async def test_resolved_scope_peer_rejected_at_membership_upsert(
         await crud.get_or_create_session(
             db_session,
             session=schemas.SessionCreate(
-                name=session_name, peers={backing: schemas.SessionPeerConfig()}
+                name=session_name, peers={backing: schemas.SessionPeerConfigInput()}
             ),
             workspace_name=test_workspace.name,
         )

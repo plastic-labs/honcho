@@ -28,7 +28,7 @@ from src.schemas.configuration import (
     DreamType,
     MessageConfiguration,
     SessionConfiguration,
-    SessionPeerConfig,
+    SessionPeerConfigInput,
     WorkspaceConfiguration,
 )
 from src.utils.sanitization import NulStripped, StorableOnly, strip_nul
@@ -245,6 +245,13 @@ class WorkspaceCreate(WorkspaceBase):
     configuration: WorkspaceConfiguration = Field(
         default_factory=WorkspaceConfiguration
     )
+    auto: bool = Field(
+        default=False,
+        description="Experimental. Create the workspace as an auto workspace, which"
+        + " the ingest API writes to. Only a new workspace can be made auto: asking for it on"
+        + " an existing workspace that isn't auto is a 409. It can't be turned"
+        + " off.",
+    )
 
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
 
@@ -278,10 +285,21 @@ class Workspace(WorkspaceBase):
     )
     configuration: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime.datetime
+    auto: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("auto", "auto_enabled_at"),
+        description="Whether the workspace is an auto workspace",
+    )
 
     model_config = ConfigDict(  # pyright: ignore
         from_attributes=True, populate_by_name=True
     )
+
+    @field_validator("auto", mode="before")
+    @classmethod
+    def _enabled(cls, value: object) -> bool:
+        """`auto` is a bool, or read from the row's `auto_enabled_at`."""
+        return value if isinstance(value, bool) else value is not None
 
 
 # ---------------------------------------------------------------------------
@@ -523,6 +541,311 @@ class MessageUploadCreate(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Ingest schemas
+# ---------------------------------------------------------------------------
+
+# An external identifier is a lookup key, so a value that can't be stored is
+# refused (422) rather than stripped into a different key.
+_ExternalId = Annotated[str, StorableOnly, Field(min_length=1, max_length=512)]
+_DisplayName = Annotated[str, NulStripped, Field(min_length=1, max_length=512)]
+
+
+class IngestParticipant(BaseModel):
+    """A person on a record. The `id` is what connects them across records."""
+
+    id: _ExternalId | None = Field(
+        default=None, description="The person's ID in the source, if it has one"
+    )
+    name: _DisplayName = Field(..., description="The person's display name")
+    bot: bool = Field(
+        default=False,
+        description="The source marks this account as a bot or an integration. "
+        + "Ingest creates its peer with `observe_me` off, so nothing is derived "
+        + "about it; its messages are still stored and read as context.",
+    )
+
+
+class IngestContainer(BaseModel):
+    """Where a record lives in its source: a channel, a thread, a repository."""
+
+    id: _ExternalId = Field(..., description="The container's ID in the source")
+    name: _DisplayName | None = Field(
+        default=None, description="The container's display name"
+    )
+    parent_id: _ExternalId | None = Field(
+        default=None, description="The parent container's ID, e.g. a thread's channel"
+    )
+
+
+class IngestRecordCreate(BaseModel):
+    """One source record to ingest."""
+
+    source: str = Field(
+        ...,
+        max_length=64,
+        pattern=RESOURCE_NAME_PATTERN,
+        description="The source type, e.g. `discord`",
+    )
+    source_instance: str = Field(
+        ...,
+        max_length=128,
+        pattern=RESOURCE_NAME_PATTERN,
+        description="The server, team or account inside the source",
+    )
+    source_id: _ExternalId | None = Field(
+        default=None,
+        description="The record's ID in that instance. Without it, the record is"
+        + " identified by a hash of its content, so only identical content dedups;"
+        + " sources whose records can change must send it.",
+    )
+    revised_at: datetime.datetime | None = Field(
+        default=None, description="When the source last changed this record"
+    )
+    created_at: datetime.datetime = Field(..., description="The source's timestamp")
+    container: IngestContainer | None = Field(
+        default=None, description="Where the record lives; omit for a standalone record"
+    )
+    author: IngestParticipant | None = Field(
+        default=None, description="Who wrote it; omit when there is no single author"
+    )
+    participants: list[IngestParticipant] = Field(default_factory=list, max_length=100)
+    content: Annotated[str, Field(max_length=settings.MAX_MESSAGE_SIZE)]
+    metadata: _SanitizedMetadata | None = None
+    configuration: MessageConfiguration | None = None
+    session_id: (
+        Annotated[
+            str,
+            StorableOnly,
+            Field(min_length=1, max_length=512, pattern=RESOURCE_NAME_PATTERN),
+        ]
+        | None
+    ) = Field(
+        default=None,
+        description="An explicit session, used instead of mapping the container",
+    )
+    peer_id: _ExternalId | None = Field(
+        default=None,
+        description="An explicit author peer, used instead of mapping the author",
+    )
+
+    _encoded_content: list[int] = PrivateAttr(default=[])
+
+    @field_validator("content", mode="after")
+    @classmethod
+    def sanitize_content(cls, v: str) -> str:
+        return strip_nul(v)
+
+    @property
+    def encoded_content(self) -> list[int]:
+        return self._encoded_content
+
+    @model_validator(mode="after")
+    def encode_content(self) -> Self:
+        encoding = tiktoken.get_encoding("o200k_base")
+        self._encoded_content = encoding.encode(self.content, disallowed_special=())
+        return self
+
+
+class IngestBatch(BaseModel):
+    """A batch of source records for one workspace."""
+
+    derive: Literal["now", "later"] = Field(
+        default="now",
+        description="`later` stores the records without queuing derivation;"
+        + " POST /ingest/derive queues them",
+    )
+    records: list[IngestRecordCreate] = Field(..., min_length=1, max_length=100)
+
+
+IngestOutcome = Literal["created", "duplicate", "rejected"]
+IngestDerivation = Literal["pending", "queued", "deferred"]
+IngestRejectionReason = Literal[
+    "stale_revision",
+    "edit_not_supported",
+    "content_conflict",
+    "session_inactive",
+    "observers_limit",
+    "name_conflict",
+]
+
+
+class IngestRecordResult(BaseModel):
+    """What happened to one record of the batch."""
+
+    index: int = Field(..., description="The record's position in the request")
+    outcome: IngestOutcome
+    reason: IngestRejectionReason | None = Field(
+        default=None, description="Why a record was rejected"
+    )
+    record_id: str | None = None
+    message_id: str | None = None
+    session_id: str | None = None
+    peer_id: str | None = None
+    derivation: IngestDerivation | None = None
+
+
+class IngestResponse(BaseModel):
+    """One outcome per record, in request order."""
+
+    records: list[IngestRecordResult]
+    receipt: str | None = Field(
+        default=None, description="Reserved for a consistency token"
+    )
+
+
+class IngestRecordCounts(BaseModel):
+    """The workspace's ingested records by derivation state."""
+
+    deferred: int = Field(
+        ..., description="Stored, waiting for POST /ingest/derive to release them"
+    )
+    pending: int = Field(..., description="Released, about to be queued")
+    queued: int = Field(..., description="Queued for derivation, or derived")
+
+
+class IngestStatus(BaseModel):
+    """What the workspace's imports produced, for review before deriving."""
+
+    records: IngestRecordCounts
+    deferred_tokens: int = Field(
+        ..., description="Tokens in the messages of deferred records"
+    )
+    people: int = Field(..., description="Peers created for imported accounts")
+    people_not_modeled: int = Field(
+        ...,
+        description="Of those, peers with `observe_me` off: nothing is derived"
+        + " about them",
+    )
+    sessions: int = Field(..., description="Sessions created for imported containers")
+    sessions_not_modeled: int = Field(
+        ...,
+        description="Of those, sessions whose reasoning is off (their own"
+        + " setting, else the workspace's)",
+    )
+    sessions_being_deleted: int = Field(
+        default=0,
+        description="Sessions a reset marked for deletion that still hold imported"
+        + " records; 0 once the deletion has finished",
+    )
+
+
+class IngestAccount(BaseModel):
+    """One source account mapped to a peer."""
+
+    source: str
+    source_instance: str
+    id: str | None = Field(
+        default=None, description="The account's ID in the source, when it has one"
+    )
+    display_name: str | None = Field(
+        default=None, description="The newest name the source gave for the account"
+    )
+
+
+class IngestPerson(BaseModel):
+    """A peer created for imported accounts."""
+
+    peer_id: str
+    display_name: str | None = Field(
+        default=None, description="The first account's display name"
+    )
+    accounts: list[IngestAccount]
+    messages: int = Field(..., description="Records its accounts wrote")
+    modeled: bool = Field(
+        ..., description="False when `observe_me` is off: nothing is derived about it"
+    )
+
+    model_config = ConfigDict(from_attributes=True)  # pyright: ignore
+
+
+class IngestSessionSummary(BaseModel):
+    """A session created for an imported container."""
+
+    session_id: str
+    display_name: str | None = Field(
+        default=None, description="The container's display name in the source"
+    )
+    source: str
+    source_instance: str
+    messages: int = Field(..., description="Records in the session")
+    modeled: bool = Field(
+        ...,
+        description="False when reasoning is off for the session (its own setting,"
+        + " else the workspace's): only summaries are made",
+    )
+
+    model_config = ConfigDict(from_attributes=True)  # pyright: ignore
+
+
+class IngestLink(BaseModel):
+    """People to link into one: the first is kept."""
+
+    peers: list[
+        Annotated[
+            str, Field(min_length=1, max_length=512, pattern=RESOURCE_NAME_PATTERN)
+        ]
+    ] = Field(
+        ...,
+        min_length=2,
+        max_length=20,
+        description="Peer IDs. Every account of the others maps to the first from the"
+        + " next import on",
+    )
+
+
+class IngestLinkResult(BaseModel):
+    """The kept person and every account that now maps to it."""
+
+    peer_id: str
+    merged: list[str] = Field(..., description="The people linked into it")
+    accounts: list[IngestAccount]
+
+
+class IngestAccountRef(BaseModel):
+    """One source account, by its ID in the source."""
+
+    source: str = Field(..., min_length=1, max_length=64)
+    source_instance: str = Field(..., min_length=1, max_length=128)
+    id: _ExternalId
+
+
+class IngestUnlink(BaseModel):
+    """An account to take back out of the person it was linked into."""
+
+    peer: str = Field(
+        ..., min_length=1, max_length=512, description="The person it was linked into"
+    )
+    account: IngestAccountRef
+
+
+class IngestUnlinkResult(BaseModel):
+    """The person the account maps to again, from the next import on."""
+
+    peer_id: str
+    account: IngestAccount
+
+
+class IngestResetResponse(BaseModel):
+    """The imported sessions whose deletion was started."""
+
+    sessions: list[str]
+
+
+class IngestDeriveResponse(BaseModel):
+    """What one derive call released. Call again until `remaining` is 0."""
+
+    pending: int = Field(
+        ...,
+        description="Deferred records this call released for derivation. They are"
+        + " queued before the response, or shortly after by a background sweep"
+        + " when their session was busy.",
+    )
+    remaining: int = Field(
+        ..., description="Records in the workspace still deferred after this call"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Session schemas
 # ---------------------------------------------------------------------------
 
@@ -537,7 +860,9 @@ class SessionCreate(SessionBase):
         Field(alias="id", min_length=1, max_length=512, pattern=RESOURCE_NAME_PATTERN),
     ]
     metadata: _SanitizedMetadata | None = None
-    peer_names: dict[str, SessionPeerConfig] | None = Field(default=None, alias="peers")
+    peer_names: dict[str, SessionPeerConfigInput] | None = Field(
+        default=None, alias="peers"
+    )
     configuration: SessionConfiguration | None = None
     scopes: list[str] | None = Field(
         default=None,
@@ -1336,8 +1661,34 @@ class WebhookEndpointBase(BaseModel):
     pass
 
 
+# Event types an endpoint can subscribe to: every WebhookEventType except
+# test.event, which the test route sends to every endpoint so it can check any of
+# them. tests/webhooks/test_webhook_delivery.py::
+# test_subscribable_event_types_are_every_type_but_test keeps the two in step.
+WebhookSubscribableEventType = Literal["queue.empty"]
+
+
 class WebhookEndpointCreate(WebhookEndpointBase):
     url: str
+    event_types: list[WebhookSubscribableEventType] | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Event types this endpoint receives. Omit or send null to receive "
+            "every event type. Registering a URL that already exists with this "
+            "field set replaces its event types; null resets it to every type, "
+            "and omitting the field leaves it unchanged. `test.event` reaches "
+            "every endpoint."
+        ),
+    )
+
+    @field_validator("event_types")
+    @classmethod
+    def dedupe_event_types(
+        cls, v: list[WebhookSubscribableEventType] | None
+    ) -> list[WebhookSubscribableEventType] | None:
+        """Drop repeated event types, keeping the first occurrence's order."""
+        return None if v is None else list(dict.fromkeys(v))
 
     @field_validator("url")
     @classmethod
@@ -1374,6 +1725,10 @@ class WebhookEndpoint(WebhookEndpointBase):
     id: str
     workspace_name: str | None = Field(serialization_alias="workspace_id")
     url: str
+    event_types: list[str] | None = Field(
+        default=None,
+        description="Event types this endpoint receives; null receives every type.",
+    )
     created_at: datetime.datetime
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)  # pyright: ignore
@@ -1395,6 +1750,14 @@ class DreamRunList(BaseModel):
     observer_id: Annotated[str, StorableOnly] | None = Field(
         default=None,
         description="Only runs from this observer's perspective. Combine with `observed_id` for one representation.",
+    )
+    filters: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            'Filter object, e.g. `{"started_at": {"gte": "2026-01-01"}}`.'
+            " Filterable fields: `started_at`, `finished_at`, `observer_id`,"
+            " `observed_id`. Combined with the top-level peer filters by AND."
+        ),
     )
 
 
@@ -1434,8 +1797,10 @@ class DreamRun(BaseModel):
     pruned_at: datetime.datetime | None = Field(
         default=None,
         description=(
-            "When retention first deleted some of this run's changes. Past the"
-            " retention window a run keeps only the created conclusions that still"
+            "When retention first deleted some of this run's changes. Null unless"
+            " a retention window (`DREAM_HISTORY_RETENTION_DAYS`, unset by"
+            " default) pruned the run, which can predate the current setting."
+            " Past the window a run keeps only the created conclusions that still"
             " exist; `removed` and `peer_card` are gone. The counts stay as the"
             " dream recorded them."
         ),
@@ -1457,7 +1822,7 @@ class DreamConclusionRef(BaseModel):
             "`current`: still in the representation. `removed`: a later dream"
             " removed it; `removed_in_run` names that dream. `unavailable`: it was"
             " deleted (through the API, with its session, or by the deriver), or"
-            " the dream that removed it is past the retention window."
+            " the dream that removed it is past the server's retention window."
         )
     )
     removed_in_run: str | None = None

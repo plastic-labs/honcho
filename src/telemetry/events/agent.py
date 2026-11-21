@@ -197,7 +197,10 @@ class AgentToolSummaryCreatedEvent(BaseEvent, CustomInstructionsFields):
     # Run identification.
     run_id: str | None = Field(
         default=None,
-        description="Run id for agentic correlation; None when not in a run",
+        description=(
+            "Id of the summary's run. Its llm.call.completed events carry the "
+            "same run_id, and its llm.call.traced events carry it as trace_id."
+        ),
     )
     iteration: int | None = Field(
         default=None,

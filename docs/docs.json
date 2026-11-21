@@ -326,6 +326,7 @@
                   "v3/documentation/features/advanced/evidence",
                   "v3/documentation/features/advanced/streaming-response",
                   "v3/documentation/features/advanced/file-uploads",
+                  "v3/documentation/features/advanced/ingest",
                   "v3/documentation/features/advanced/deleting-data"
                 ]
               }
@@ -374,6 +375,7 @@
             "group": "Frameworks & SDKs",
             "pages": [
               "v3/guides/integrations/vercel-ai-sdk",
+              "v3/guides/integrations/cursor-agent-sdk",
               "v3/guides/integrations/langgraph",
               "v3/guides/integrations/crewai",
               "v3/guides/community/agent0",
@@ -445,6 +447,19 @@
               "v3/api-reference/endpoint/workspaces/chat-workspace",
               "v3/api-reference/endpoint/workspaces/get-queue-status",
               "v3/api-reference/endpoint/workspaces/schedule-dream"
+            ]
+          },
+          {
+            "group": "ingest",
+            "pages": [
+              "v3/api-reference/endpoint/ingest/ingest-records",
+              "v3/api-reference/endpoint/ingest/derive",
+              "v3/api-reference/endpoint/ingest/status",
+              "v3/api-reference/endpoint/ingest/people",
+              "v3/api-reference/endpoint/ingest/sessions",
+              "v3/api-reference/endpoint/ingest/link",
+              "v3/api-reference/endpoint/ingest/unlink",
+              "v3/api-reference/endpoint/ingest/reset"
             ]
           },
           {

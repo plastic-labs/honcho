@@ -28,6 +28,7 @@ from src.crud.deriver import (
     claim_heartbeat_interval_seconds,
     claim_rows_query,
     not_paused_clause,
+    queue_ids_locked_in_order,
 )
 from src.crud.deriver import (
     cleanup_stale_work_units as crud_cleanup_stale_work_units,
@@ -1399,19 +1400,24 @@ class QueueManager:
     async def _clear_work_unit_retry_attempts(self, work_unit_key: str) -> None:
         """Drop the shared attempt count from remaining unprocessed items.
 
-        One statement on purpose: a multi-row ``SELECT ... FOR UPDATE`` here
-        would take locks on ``queue`` in scan order, which is a deadlock partner
-        for any other multi-row writer on the same table. The JSONB ``-``
-        operator does the strip server-side, so no rows are locked ahead of the
-        write and there is no lock order to get wrong.
+        The rows are locked in id order, like every multi-row queue write
+        (``queue_ids_locked_in_order``): session and workspace deletion lock the
+        same rows in id order, and a plain predicate UPDATE would take them in
+        scan order. The JSONB ``-`` operator still does the strip server-side.
         """
         async with service_db("clear_work_unit_retry_attempts") as db:
             await db.execute(
                 update(models.QueueItem)
                 .where(
-                    models.QueueItem.work_unit_key == work_unit_key,
-                    models.QueueItem.processed.is_(False),
-                    models.QueueItem.payload.has_key(RETRY_ATTEMPTS_PAYLOAD_KEY),
+                    models.QueueItem.id.in_(
+                        queue_ids_locked_in_order(
+                            models.QueueItem.work_unit_key == work_unit_key,
+                            models.QueueItem.processed.is_(False),
+                            models.QueueItem.payload.has_key(
+                                RETRY_ATTEMPTS_PAYLOAD_KEY
+                            ),
+                        )
+                    )
                 )
                 .values(
                     # literal(..., Text) is required: an untyped bind leaves
@@ -1437,8 +1443,12 @@ class QueueManager:
             await db.execute(
                 update(models.QueueItem)
                 .where(
-                    models.QueueItem.work_unit_key == work_unit_key,
-                    models.QueueItem.processed.is_(False),
+                    models.QueueItem.id.in_(
+                        queue_ids_locked_in_order(
+                            models.QueueItem.work_unit_key == work_unit_key,
+                            models.QueueItem.processed.is_(False),
+                        )
+                    )
                 )
                 .values(processed=True, error=error_msg)
             )
@@ -1452,10 +1462,18 @@ class QueueManager:
         async with service_db("process_queue_item_batch") as db:
             work_unit = parse_work_unit_key(work_unit_key)
             item_ids = [item.id for item in items]
+            # Queue rows in id order, then the claim row: the order session and
+            # workspace deletion take them in (crud.delete_queue_items_and_claims).
             await db.execute(
                 update(models.QueueItem)
-                .where(models.QueueItem.id.in_(item_ids))
-                .where(models.QueueItem.work_unit_key == work_unit_key)
+                .where(
+                    models.QueueItem.id.in_(
+                        queue_ids_locked_in_order(
+                            models.QueueItem.id.in_(item_ids),
+                            models.QueueItem.work_unit_key == work_unit_key,
+                        )
+                    )
+                )
                 .values(processed=True)
             )
             await db.execute(
@@ -1510,8 +1528,14 @@ class QueueManager:
                 CursorResult[Any],
                 await db.execute(
                     update(models.QueueItem)
-                    .where(models.QueueItem.work_unit_key == work_unit_key)
-                    .where(models.QueueItem.processed.is_(False))
+                    .where(
+                        models.QueueItem.id.in_(
+                            queue_ids_locked_in_order(
+                                models.QueueItem.work_unit_key == work_unit_key,
+                                models.QueueItem.processed.is_(False),
+                            )
+                        )
+                    )
                     .values(processed=True, error=error)
                 ),
             )

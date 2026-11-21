@@ -1,6 +1,6 @@
 {
   "name": "honcho-mcp",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "Honcho MCP Server",
   "main": "src/index.ts",
   "packageManager": "bun@1.4.4",
@@ -19,7 +19,7 @@
     "deploy:staging": "bun run check:deploy && wrangler deploy --env staging"
   },
   "dependencies": {
-    "@honcho-ai/sdk": "^2.8.0",
+    "@honcho-ai/sdk": "^2.9.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@sentry/bun": "^11.1.0",
     "@sentry/cloudflare": "^11.1.0",

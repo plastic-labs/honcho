@@ -44,7 +44,7 @@ Set `X-Honcho-Plugin` on the connection to name whatever configured it: `<name>/
 
 **Conclusions:** `list_conclusions`, `query_conclusions`, `create_conclusions`, `delete_conclusion`
 
-**System:** `schedule_dream`, `get_queue_status`
+**System:** `schedule_dream`, `list_dreams` and `get_dream` (what each dream changed: created and removed conclusions and the peer card before and after; workspace or admin key), `get_queue_status`
 
 ## Architecture
 
@@ -62,7 +62,7 @@ src/
     scopes.ts           # list/create scopes, scope membership, backfill status
     sessions.ts         # CRUD, peers, messages, inspect, context, clone
     conclusions.ts      # list, query, create, delete
-    system.ts           # dream, queue status
+    system.ts           # dreams (schedule, list, inspect), queue status
 ```
 
 Built on:

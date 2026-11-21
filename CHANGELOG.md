@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- A peer's session join time can be set by the caller. `joined_at` is accepted next to `observe_me` and `observe_others` wherever a session-peer configuration is sent: `peers` on `POST /sessions`, `POST` and `PUT /sessions/{session_id}/peers`, and `PUT /sessions/{session_id}/peers/{peer_id}/config`. A search with `peer_perspective` only returns messages created at or after the peer's join time, and that time was always the moment the peer was added, so messages imported with their original dates were hidden from it. A supplied `joined_at` always applies, including to a peer that is already in the session, which is how an existing import is repaired; without one nothing changes. It is write-only (not stored in the configuration, not returned), a timestamp without a timezone is read as UTC, and a time more than five minutes in the future is a 422. Changing the join time of a peer that is already in a session needs a key that can edit the session (session-level or broader): a peer-scoped key that sends `joined_at` to `POST /sessions` for an existing session gets a 401.
+
+## [3.6.2] - 2026-11-19
+
+### Fixed
+
+- The check for due dreams no longer fails when many collections are due. It loaded every candidate's workspace and session in one row-value `IN` list, which Postgres rejects with `stack depth limit exceeded` once the list is long enough, and its other lookups bound one parameter per candidate. The deriver metrics poller runs the same check, so a failure also froze the deriver queue metrics and, with `DERIVER_SCHEDULER=api`, stopped due dreams from being enqueued. The lookups now run in batches, and the work-unit and tenant lists are each sent as one array parameter. (#1623)
+
+## [3.6.1] - 2026-11-10
+
+### Changed
+
+- Migration `e5fe7f8bcf62`, the 3.6.0 revision that adds `tenant_id` to every tenant-scoped table, no longer blocks reads and writes while it runs. It did all of its work in one transaction, so every table whose keys it rebuilt stayed locked until the end, which took longer the bigger the database was. It now commits after each statement: the new unique and primary-key indexes build concurrently, the new foreign keys are added `NOT VALID` and then validated, and each primary key is swapped onto its new index in one short statement, so the previous release can keep serving during the upgrade. The index builds and the foreign-key validation run under a 60-minute `statement_timeout` instead of the migrations' 5 minutes. A run that stops part-way can be run again, and each step skips what is already done. The revision id and the resulting schema are unchanged. An instance already on 3.6.0 ran the earlier version and is not affected; an upgrade from 3.5.x or earlier runs this one (#1574)
+- The `representation.completed` and `agent.tool.summary.created` CloudEvents carry a `run_id`, and the `llm.call.completed` events of that deriver batch or summary carry the same `run_id` (their `llm.call.traced` events carry it as `trace_id`), so a batch or a summary can be joined to its LLM calls by id instead of by message ids or token counts. Before, `run_id` was null on these LLM-call events. A short and a long summary of the same message get separate ids. With `TELEMETRY_HIGH_VOLUME_SAMPLE_RATE` below 1.0, these LLM-call events are now sampled per run, so a call and its retries are kept or dropped together. Langfuse traces are unchanged (#1576)
+
+### Fixed
+
+- Deleting a session or a workspace no longer deadlocks with a deriver worker that is finishing a batch for it. Deletion removed the work unit's claim row before its queue rows, and a worker marking its batch done writes them in the other order, so Postgres aborted one of the two (`40P01`). Deletion now deletes the queue rows first, then the claim, and both sides lock their queue rows in id order (#1577)
+- Session deletion deletes the session's vectors from an external vector store (turbopuffer, LanceDB) after its transaction commits, as workspace deletion already did. Before, it deleted them inside the transaction, so its row locks were held across those network calls, and a transaction that rolled back left live messages and conclusions without vectors (#1577)
+- The deriver's other multi-row queue writes can no longer deadlock with a session or workspace deletion over the same rows. Clearing a work unit's retry count and marking a malformed or tenant-less work unit errored now lock their rows in id order, and the reconciler's cleanup of processed queue items skips rows another transaction holds and removes them on its next pass (#1580)
+
 ## [3.6.0] - 2026-11-05
 
 ### Added

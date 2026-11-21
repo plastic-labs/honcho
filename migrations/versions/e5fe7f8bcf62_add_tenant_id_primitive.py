@@ -8,16 +8,38 @@ Adds ``tenant_id`` as a first-class primitive to the data model: a new
 ``tenants`` table and a ``tenant_id`` column (plus tenant-scoped composite
 PKs / uniques / FKs / indexes) on every tenant-scoped table, matching the
 declarative models MINUS physical partitioning.
+
+No statement holds a write-blocking lock for longer than a catalog change,
+and every step commits on its own, so the order is what keeps integrity.
+Each new key is built and enforced before the old one it
+replaces is dropped:
+
+1. ``tenants`` and its one row; ``tenant_id`` on every table (catalog-only).
+2. Every new index except the two on ``session_peers``, built concurrently. The
+   primary-key indexes get a temporary name, ``pk_<table>_tenant``.
+3. The new uniques attached to their indexes; the new FKs added ``NOT VALID``
+   (they check new writes and cascade at once), then validated.
+4. The old FKs, then the old uniques, dropped.
+5. The two ``session_peers`` indexes built, then each primary key swapped onto
+   its new index in one statement.
+
+The swaps are last, and ``_finished`` reads them: a run that stopped part-way runs
+again from the top, and each step skips what is already done.
 """
 
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager, nullcontext
 
 import sqlalchemy as sa
 from alembic import op
 
 from migrations.utils import (
+    _execute_short_lock,  # pyright: ignore[reportPrivateUsage]
+    build_timeouts,
+    caller_owns_transaction,
     column_exists,
+    create_index_online,
+    drop_index_online,
     get_schema,
     index_exists,
     table_exists,
@@ -36,11 +58,8 @@ DEFAULT_TENANT_ID = instance_tenant_id()
 
 LEGACY_SESSION_PEERS_INDEX = "uq_session_peers_legacy_ws_session_peer"
 
-LOCK_LINT_EXEMPT = (
-    "the body runs only on a database without the tenants table (dedicated and"
-    " self-hosted), which is never partitioned; its index builds are on"
-    " session_peers and the new tenant indexes, inside the one upgrade transaction"
-)
+# The new primary-key index of a table, until the swap renames it to pk_<table>.
+PK_CANDIDATE = "pk_{}_tenant"
 
 # Tables that gain tenant_id + a composite PK + composite FKs (session_peers has
 # an all-natural composite PK and is handled with the rest).
@@ -592,18 +611,6 @@ def _inspector() -> sa.Inspector:
     return sa.inspect(op.get_bind())
 
 
-def _drop_all_fks(tables: Sequence[str]) -> None:
-    """Drop every FK on the given tables (dynamic — old names are unknown)."""
-    insp = _inspector()
-    for tname in tables:
-        if not table_exists(tname):
-            continue
-        for fk in insp.get_foreign_keys(tname, schema=schema):
-            name = fk.get("name")
-            if name:
-                op.drop_constraint(name, tname, type_="foreignkey", schema=schema)
-
-
 def _drop_pk(table: str) -> None:
     insp = _inspector()
     pk = insp.get_pk_constraint(table, schema=schema)
@@ -612,55 +619,223 @@ def _drop_pk(table: str) -> None:
         op.drop_constraint(name, table, type_="primary", schema=schema)
 
 
-def _drop_all_uniques(table: str) -> None:
-    """Drop unique constraints and pure unique indexes (all become tenant-scoped)."""
-    insp = _inspector()
-    for uq in insp.get_unique_constraints(table, schema=schema):
-        name = uq.get("name")
-        if name:
-            op.drop_constraint(name, table, type_="unique", schema=schema)
-    for idx in insp.get_indexes(table, schema=schema):
-        idx_name = idx.get("name")
-        if idx.get("unique") and idx_name:
-            op.drop_index(idx_name, table_name=table, schema=schema)
+# Secondary indexes: (name, table, columns, using, include, with_). One that
+# already exists under its name is kept as it is.
+NEW_INDEXES: list[tuple[str, str, str, str | None, str | None, str | None]] = [
+    (
+        "ix_peers_tenant_workspace",
+        "peers",
+        "tenant_id, workspace_name",
+        None,
+        None,
+        None,
+    ),
+    (
+        "ix_sessions_tenant_workspace",
+        "sessions",
+        "tenant_id, workspace_name",
+        None,
+        None,
+        None,
+    ),
+    (
+        "ix_messages_session_lookup",
+        "messages",
+        "tenant_id, session_name, id",
+        None,
+        "created_at",
+        None,
+    ),
+    (
+        "ix_messages_peer_lookup",
+        "messages",
+        "tenant_id, workspace_name, peer_name, created_at",
+        None,
+        None,
+        None,
+    ),
+    (
+        "ix_messages_content_gin",
+        "messages",
+        "to_tsvector('english', content)",
+        "gin",
+        None,
+        None,
+    ),
+    (
+        "ix_message_embeddings_message_tenant",
+        "message_embeddings",
+        "message_id, tenant_id",
+        None,
+        None,
+        None,
+    ),
+    (
+        "ix_message_embeddings_embedding_hnsw",
+        "message_embeddings",
+        "embedding vector_cosine_ops",
+        "hnsw",
+        None,
+        "m = 16, ef_construction = 64",
+    ),
+    (
+        "ix_message_embeddings_sync_state_last_sync_at",
+        "message_embeddings",
+        "sync_state, last_sync_at",
+        None,
+        None,
+        None,
+    ),
+    (
+        "ix_documents_tenant_collection",
+        "documents",
+        "tenant_id, observer, observed, workspace_name",
+        None,
+        None,
+        None,
+    ),
+    (
+        "ix_documents_embedding_hnsw",
+        "documents",
+        "embedding vector_cosine_ops",
+        "hnsw",
+        None,
+        "m = 16, ef_construction = 64",
+    ),
+    ("ix_documents_source_ids_gin", "documents", "source_ids", "gin", None, None),
+    (
+        "ix_documents_sync_state_last_sync_at",
+        "documents",
+        "sync_state, last_sync_at",
+        None,
+        None,
+        None,
+    ),
+    (
+        "ix_webhook_endpoints_tenant_workspace",
+        "webhook_endpoints",
+        "tenant_id, workspace_name",
+        None,
+        None,
+        None,
+    ),
+]
+
+# Every FK of the new shape: tenant_id -> tenants on each table, then NEW_FKS.
+ALL_NEW_FKS: list[tuple[str, str, list[str], str, list[str], str | None]] = [
+    *(
+        (f"fk_{t}_tenant_id_tenants", t, ["tenant_id"], "tenants", ["tenant_id"], None)
+        for t in TENANT_SCOPED
+    ),
+    *NEW_FKS,
+]
 
 
-def upgrade() -> None:
-    # region ai
-    # Disable-on-prod + idempotency guard. Prod's shared schema is built by the
-    # bootstrap (which creates `tenants`) and prod is `alembic stamp`-ed past this
-    # revision, so it never runs the body; this also makes the migration a no-op on
-    # any DB that already has the tenant schema (re-runs). Self-host / prosumer DBs
-    # have no `tenants` table at this point, so they run the full transform.
-    # endregion
-    if table_exists("tenants"):
+def _q(name: str) -> str:
+    return f'"{schema}"."{name}"'
+
+
+def _cols(cols: Sequence[str]) -> str:
+    return ", ".join(f'"{c}"' for c in cols)
+
+
+def _pk(table: str) -> tuple[str | None, list[str]]:
+    """The table's primary key: (constraint name, columns in key order)."""
+    pk = _inspector().get_pk_constraint(table, schema=schema)
+    return pk.get("name"), list(pk.get("constrained_columns") or [])
+
+
+def _fk_names(table: str) -> set[str]:
+    return {
+        str(fk["name"])
+        for fk in _inspector().get_foreign_keys(table, schema=schema)
+        if fk.get("name")
+    }
+
+
+@contextmanager
+def _autocommit() -> Generator[None]:
+    """Each statement in the block commits on its own, so it holds its lock only
+    for its own run. A caller-owned transaction stays one plain transaction."""
+    if caller_owns_transaction():
+        yield
         return
+    with op.get_context().autocommit_block():
+        yield
 
-    # 1. tenants table + its index + the single self-host tenant.
-    op.create_table(
-        "tenants",
-        sa.Column("tenant_id", sa.TEXT(), nullable=False),
-        sa.Column("vector_correlation_id", sa.TEXT(), nullable=True),
-        sa.Column("tier", sa.TEXT(), server_default="dedicated", nullable=False),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=False,
-        ),
-        sa.PrimaryKeyConstraint("tenant_id", name="pk_tenants"),
-        schema=schema,
+
+def _short_lock_ms() -> int:
+    """Half the server's deadlock_timeout: at least 1 ms, at most one second."""
+    return int(
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT greatest(least(setting::int / 2, 1000), 1) FROM pg_settings"
+                + " WHERE name = 'deadlock_timeout'"
+            )
+        )
+        .scalar_one()
     )
+
+
+def _alter(table: str, action: str) -> None:
+    """One catalog-only ALTER TABLE under a short lock_timeout, retried in place."""
+    sql = f"ALTER TABLE {_q(table)} {action}"
+    if caller_owns_transaction():
+        # ai: a timeout aborts the caller's transaction; a retry would hide it.
+        op.execute(sql)
+        return
+    # region ai
+    # An ALTER that touches two tables (a foreign key locks the child, then the
+    # parent) can cross a write that takes them in the other order. Postgres
+    # breaks that tie after deadlock_timeout by cancelling one side, which can be
+    # the application's write. Waiting for less than that makes this statement
+    # give up first in the common case, so fewer writes are cancelled; it does
+    # not rule a deadlock out. The statement is then retried. SET LOCAL lasts for
+    # this one statement's transaction only (the two are sent together), so
+    # nothing is left on the connection.
+    # endregion
+    _execute_short_lock(f"SET LOCAL lock_timeout = '{_short_lock_ms()}ms'; {sql}")
+
+
+def _finished() -> bool:
+    """True when the last step, the primary-key swap, is done on every table.
+
+    Also true on a database that was created with the tenant shape (the shared
+    pool's bootstrap) or that ran this revision's earlier, one-transaction body.
+    """
+    return table_exists("tenants") and all(
+        _pk(table)[1] == cols for table, cols in NEW_PKS.items()
+    )
+
+
+def _create_tenants() -> None:
+    if not table_exists("tenants"):
+        op.create_table(
+            "tenants",
+            sa.Column("tenant_id", sa.TEXT(), nullable=False),
+            sa.Column("vector_correlation_id", sa.TEXT(), nullable=True),
+            sa.Column("tier", sa.TEXT(), server_default="dedicated", nullable=False),
+            sa.Column(
+                "created_at",
+                sa.DateTime(timezone=True),
+                server_default=sa.text("now()"),
+                nullable=False,
+            ),
+            sa.PrimaryKeyConstraint("tenant_id", name="pk_tenants"),
+            schema=schema,
+        )
     # ai: the key names the tenant's vector-store namespaces, so two tenants
     # holding one would share them; NULL (not yet set) is exempt.
-    op.create_index(
-        "uq_tenants_vector_correlation_id",
-        "tenants",
-        ["vector_correlation_id"],
-        unique=True,
-        schema=schema,
-        postgresql_where=sa.text("vector_correlation_id IS NOT NULL"),
-    )
+    if not index_exists("tenants", "uq_tenants_vector_correlation_id"):
+        op.create_index(
+            "uq_tenants_vector_correlation_id",
+            "tenants",
+            ["vector_correlation_id"],
+            unique=True,
+            schema=schema,
+            postgresql_where=sa.text("vector_correlation_id IS NOT NULL"),
+        )
     op.execute(
         sa.text(
             f'INSERT INTO "{schema}"."tenants" (tenant_id, tier) '
@@ -668,163 +843,205 @@ def upgrade() -> None:
         ).bindparams(tid=DEFAULT_TENANT_ID)
     )
 
-    # 2. Add tenant_id NOT NULL on the tenant-scoped set, defaulting to this
-    #    instance's tenant. A constant default fills existing rows without
-    #    rewriting the table, and lets the previous release, which never sets
-    #    tenant_id, keep inserting during a rolling deploy.
-    for tname in TENANT_SCOPED:
-        if not column_exists(tname, "tenant_id"):
-            op.add_column(
-                tname,
-                sa.Column(
-                    "tenant_id",
-                    sa.TEXT(),
-                    nullable=False,
-                    server_default=DEFAULT_TENANT_ID,
-                ),
-                schema=schema,
+
+def _build_pk_candidate(table: str) -> None:
+    # ai: after the swap the index is named pk_<table>; don't build a second.
+    if _pk(table)[1] != NEW_PKS[table]:
+        create_index_online(
+            PK_CANDIDATE.format(table), table, _cols(NEW_PKS[table]), unique=True
+        )
+
+
+def _build_indexes() -> None:
+    """Build the new indexes concurrently, except the two on session_peers.
+
+    A valid one is kept on a rerun.
+    """
+    for table in NEW_PKS:
+        if table != "session_peers":
+            _build_pk_candidate(table)
+    for table, uniques in NEW_UNIQUES.items():
+        for name, cols in uniques:
+            create_index_online(name, table, _cols(cols), unique=True)
+    create_index_online("ix_queue_tenant_id", "queue", "tenant_id")
+    for name, table, columns, using, include, with_ in NEW_INDEXES:
+        create_index_online(
+            name, table, columns, using=using, include=include, with_=with_
+        )
+
+
+def _add_new_constraints() -> None:
+    """Attach the new uniques to their indexes and add the new FKs NOT VALID."""
+    for table, uniques in NEW_UNIQUES.items():
+        existing = {
+            uq["name"]
+            for uq in _inspector().get_unique_constraints(table, schema=schema)
+        }
+        for name, _ in uniques:
+            if name not in existing:
+                _alter(table, f'ADD CONSTRAINT "{name}" UNIQUE USING INDEX "{name}"')
+    # region ai
+    # NOT VALID skips the scan of existing rows but checks every new write and
+    # installs the ON DELETE action, so from here each new FK enforces next to
+    # the old one it replaces. An FK needs only a unique index on the referenced
+    # columns, not a constraint: the two that reference documents (id, tenant_id)
+    # bind to pk_documents_tenant, which the swap later turns into the primary key.
+    # endregion
+    for name, src, local_cols, ref, ref_cols, ondelete in ALL_NEW_FKS:
+        if name not in _fk_names(src):
+            _alter(
+                src,
+                f'ADD CONSTRAINT "{name}" FOREIGN KEY ({_cols(local_cols)})'
+                + f" REFERENCES {_q(ref)} ({_cols(ref_cols)})"
+                + (f" ON DELETE {ondelete}" if ondelete else "")
+                + " NOT VALID",
             )
 
-    # 3. Drop ALL old FKs first (they block the PK/unique changes below), incl.
-    #    queue.session_id -> sessions.id from an earlier revision.
-    _drop_all_fks((*TENANT_SCOPED, "queue"))
 
-    # 4. Rebuild primary keys -> tenant-leading composite.
-    for tname, cols in NEW_PKS.items():
-        _drop_pk(tname)
-        op.create_primary_key(f"pk_{tname}", tname, cols, schema=schema)
+def _validate_new_fks() -> None:
+    # region ai
+    # The scan runs under SHARE UPDATE EXCLUSIVE, which reads and writes pass.
+    # build_timeouts: a wait for that lock (behind a vacuum) stalls nobody, and a
+    # large table's scan must not hit the runner's statement_timeout. Validating
+    # a validated constraint is a catalog no-op, so a rerun costs nothing.
+    # endregion
+    with nullcontext() if caller_owns_transaction() else build_timeouts():
+        for name, src, *_ in ALL_NEW_FKS:
+            op.execute(f'ALTER TABLE {_q(src)} VALIDATE CONSTRAINT "{name}"')
 
-    # 5. Drop old uniques, add the new tenant-scoped ones.
-    for tname in TENANT_SCOPED:
-        _drop_all_uniques(tname)
-    for tname, uniques in NEW_UNIQUES.items():
-        for uname, cols in uniques:
-            op.create_unique_constraint(uname, tname, cols, schema=schema)
+
+def _drop_old_constraints() -> None:
+    """Drop every FK and unique constraint that is not part of the new shape.
+
+    Old names vary between databases, so this drops by exclusion. queue keeps no
+    FK: its old ones point at the keys that are about to change.
+    """
+    new_fks = {name for name, *_ in ALL_NEW_FKS}
+    for table in (*TENANT_SCOPED, "queue"):
+        for name in sorted(_fk_names(table) - new_fks):
+            _alter(table, f'DROP CONSTRAINT IF EXISTS "{name}"')
+    for table in TENANT_SCOPED:
+        keep = {name for name, _ in NEW_UNIQUES.get(table, [])}
+        for uq in _inspector().get_unique_constraints(table, schema=schema):
+            if uq["name"] not in keep:
+                _alter(table, f'DROP CONSTRAINT IF EXISTS "{uq["name"]}"')
+
+
+def _stale_unique_indexes(table: str) -> list[str]:
+    """Unique indexes with no constraint that are not part of the new shape."""
+    keep = {
+        LEGACY_SESSION_PEERS_INDEX,
+        PK_CANDIDATE.format(table),
+        *(name for name, _ in NEW_UNIQUES.get(table, [])),
+    }
+    return [
+        str(idx["name"])
+        for idx in _inspector().get_indexes(table, schema=schema)
+        if idx.get("unique")
+        and "duplicates_constraint" not in idx
+        and idx["name"] not in keep
+    ]
+
+
+def _build_session_peers_indexes() -> None:
     # region ai
     # The previous release upserts session_peers with ON CONFLICT on the old
-    # (workspace, session, peer) key, which step 4 replaced. Keep a unique index on
-    # it so that image can still add peers to sessions during a rolling deploy and
-    # stays a rollback target. Only a DB that runs this body gets it, and those
-    # hold a single tenant, so it rejects nothing the new key allows. Not declared
-    # in models (see migrations/env.py); a later revision drops it once the
-    # compatibility floor passes this release.
+    # (workspace, session, peer) key, which is the primary key the swap drops.
+    # Keep a unique index on it so that image can still add peers to sessions
+    # during a rolling deploy and stays a rollback target. Only a DB that runs
+    # this body gets it, and those hold a single tenant, so it rejects nothing the
+    # new key allows. Not declared in models (see migrations/env.py); a later
+    # revision drops it once the compatibility floor passes this release.
+    #
+    # Both indexes are built as late as possible. Postgres handles that upsert's
+    # conflict only on a valid index with exactly its three columns. The legacy
+    # index while it builds, and the new four-column key index always, reject the
+    # same rows as a plain unique check: two requests that add the same new
+    # membership at once can then get a unique violation instead of an update.
+    # That holds in the final schema until the old pods are gone; building here
+    # keeps it out of every other build and the validation.
     # endregion
-    op.create_index(
+    create_index_online(
         LEGACY_SESSION_PEERS_INDEX,
         "session_peers",
-        ["workspace_name", "session_name", "peer_name"],
+        "workspace_name, session_name, peer_name",
         unique=True,
-        schema=schema,
     )
+    _build_pk_candidate("session_peers")
 
-    # 6. tenant_id -> tenants.tenant_id on every tenant-scoped table, then the
-    #    composite natural-key FKs (their targets — the new uniques — now exist).
-    for tname in TENANT_SCOPED:
-        op.create_foreign_key(
-            f"fk_{tname}_tenant_id_tenants",
-            tname,
-            "tenants",
-            ["tenant_id"],
-            ["tenant_id"],
-            source_schema=schema,
-            referent_schema=schema,
-        )
-    for name, src, local_cols, ref, ref_cols, ondelete in NEW_FKS:
-        op.create_foreign_key(
-            name,
-            src,
-            ref,
-            local_cols,
-            ref_cols,
-            ondelete=ondelete,
-            source_schema=schema,
-            referent_schema=schema,
+
+def _swap_primary_keys() -> None:
+    # region ai
+    # One statement per table: the old key is dropped and the new one attached
+    # under one short ACCESS EXCLUSIVE lock, so the table always has a primary
+    # key. USING INDEX renames pk_<table>_tenant to pk_<table>. Every key column
+    # is already NOT NULL, so there is no scan.
+    # endregion
+    for table in NEW_PKS:
+        name, current = _pk(table)
+        if current == NEW_PKS[table]:
+            continue
+        drop = f'DROP CONSTRAINT "{name}", ' if name else ""
+        _alter(
+            table,
+            f'{drop}ADD CONSTRAINT "pk_{table}" PRIMARY KEY'
+            + f' USING INDEX "{PK_CANDIDATE.format(table)}"',
         )
 
-    # 7. Service tables: tenant_id is plain attribution — nullable, no FK, no RLS.
-    for tname in ("queue", "active_queue_sessions"):
-        if not column_exists(tname, "tenant_id"):
-            op.add_column(
-                tname, sa.Column("tenant_id", sa.TEXT(), nullable=True), schema=schema
+
+def upgrade() -> None:
+    # region ai
+    # Skip a database that already has the whole tenant shape: the shared pool's
+    # schema is built by the bootstrap and stamped past this revision, and a
+    # dedicated database may run this again after a later revision failed before
+    # the version row was committed. A run that stopped part-way is not skipped.
+    # endregion
+    if _finished():
+        return
+
+    # 1. tenants + the single self-host tenant, then tenant_id on every table. A
+    #    constant default fills existing rows without rewriting the table, and
+    #    lets the previous release, which never sets tenant_id, keep inserting.
+    #    Service tables: tenant_id is plain attribution, nullable, no FK, no RLS.
+    _create_tenants()
+    with _autocommit():
+        for table in TENANT_SCOPED:
+            _alter(
+                table,
+                "ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL"
+                + f" DEFAULT '{DEFAULT_TENANT_ID}'",
             )
-    if not index_exists("queue", "ix_queue_tenant_id"):
-        op.create_index("ix_queue_tenant_id", "queue", ["tenant_id"], schema=schema)
+        for table in ("queue", "active_queue_sessions"):
+            _alter(table, "ADD COLUMN IF NOT EXISTS tenant_id TEXT")
 
-    # 8. New tenant-scoped / vector / fts indexes (idempotent).
-    _create_new_indexes()
+    # 2. Every new index but the two on session_peers (step 5), concurrently.
+    _build_indexes()
 
+    # 3. New uniques and FKs: enforced first, validated second.
+    with _autocommit():
+        _add_new_constraints()
+        _validate_new_fks()
 
-def _create_new_indexes() -> None:
-    def _mk(name: str, table: str, cols: list[Any], **kw: Any) -> None:
-        if not index_exists(table, name):
-            op.create_index(name, table, cols, schema=schema, **kw)
+    # 4. Only now the old FKs and uniques: everything they enforced, a validated
+    #    new constraint enforces too.
+    with _autocommit():
+        _drop_old_constraints()
+    for table in TENANT_SCOPED:
+        for name in _stale_unique_indexes(table):
+            drop_index_online(name, table)
 
-    _mk("ix_peers_tenant_workspace", "peers", ["tenant_id", "workspace_name"])
-    _mk("ix_sessions_tenant_workspace", "sessions", ["tenant_id", "workspace_name"])
-    _mk(
-        "ix_messages_session_lookup",
-        "messages",
-        ["tenant_id", "session_name", "id"],
-        postgresql_include=["created_at"],
-    )
-    _mk(
-        "ix_messages_peer_lookup",
-        "messages",
-        ["tenant_id", "workspace_name", "peer_name", "created_at"],
-    )
-    _mk(
-        "ix_messages_content_gin",
-        "messages",
-        [sa.text("to_tsvector('english', content)")],
-        postgresql_using="gin",
-    )
-    _mk(
-        "ix_message_embeddings_message_tenant",
-        "message_embeddings",
-        ["message_id", "tenant_id"],
-    )
-    _mk(
-        "ix_message_embeddings_embedding_hnsw",
-        "message_embeddings",
-        ["embedding"],
-        postgresql_using="hnsw",
-        postgresql_with={"m": 16, "ef_construction": 64},
-        postgresql_ops={"embedding": "vector_cosine_ops"},
-    )
-    _mk(
-        "ix_message_embeddings_sync_state_last_sync_at",
-        "message_embeddings",
-        ["sync_state", "last_sync_at"],
-    )
-    _mk(
-        "ix_documents_tenant_collection",
-        "documents",
-        ["tenant_id", "observer", "observed", "workspace_name"],
-    )
-    _mk(
-        "ix_documents_embedding_hnsw",
-        "documents",
-        ["embedding"],
-        postgresql_using="hnsw",
-        postgresql_with={"m": 16, "ef_construction": 64},
-        postgresql_ops={"embedding": "vector_cosine_ops"},
-    )
-    _mk(
-        "ix_documents_source_ids_gin",
-        "documents",
-        ["source_ids"],
-        postgresql_using="gin",
-    )
-    _mk(
-        "ix_documents_sync_state_last_sync_at",
-        "documents",
-        ["sync_state", "last_sync_at"],
-    )
-    _mk(
-        "ix_webhook_endpoints_tenant_workspace",
-        "webhook_endpoints",
-        ["tenant_id", "workspace_name"],
-    )
+    # 5. The two session_peers indexes, then the primary keys. The swaps are the
+    #    last step, and _finished reads them.
+    # region ai
+    # The session_peers builds come before every swap, not after. A concurrent
+    # build can wait for transactions that hold older snapshots. Once messages has
+    # its new key, the previous release's queue claim reads messages by id alone,
+    # with no index that leads with id: with a backlog that query runs for
+    # minutes, and a build that starts behind it waits as long.
+    # endregion
+    _build_session_peers_indexes()
+    with _autocommit():
+        _swap_primary_keys()
 
 
 def downgrade() -> None:

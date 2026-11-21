@@ -68,6 +68,30 @@ describe('dreams', () => {
     expect(result.items).toEqual([RUN])
   })
 
+  test('sends filters with the peer filters', async () => {
+    const page: PageResponse<DreamRun> = {
+      items: [RUN],
+      total: 1,
+      page: 1,
+      size: 50,
+      pages: 1,
+    }
+    const { honcho, calls } = honchoWith(page)
+    const filters = {
+      started_at: { gte: '2026-11-01T00:00:00Z', lte: '2026-11-08T00:00:00Z' },
+    }
+
+    await honcho.dreams({ observed: 'maya', filters })
+
+    expect(calls).toEqual([
+      {
+        method: 'POST',
+        path: '/v3/workspaces/ws/dreams/list',
+        body: { observed_id: 'maya', filters },
+      },
+    ])
+  })
+
   test('getDream reads one run by id', async () => {
     const detail: DreamRunDetail = {
       ...RUN,

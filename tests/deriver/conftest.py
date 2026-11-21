@@ -60,9 +60,9 @@ async def sample_session_with_peers(
             schemas.SessionCreate(
                 name=str(generate_nanoid()),
                 peers={
-                    peer1.name: schemas.SessionPeerConfig(observe_me=True),
-                    peer2.name: schemas.SessionPeerConfig(observe_others=True),
-                    peer3.name: schemas.SessionPeerConfig(),  # No special observation settings
+                    peer1.name: schemas.SessionPeerConfigInput(observe_me=True),
+                    peer2.name: schemas.SessionPeerConfigInput(observe_others=True),
+                    peer3.name: schemas.SessionPeerConfigInput(),  # No special observation settings
                 },
             ),
             workspace.name,

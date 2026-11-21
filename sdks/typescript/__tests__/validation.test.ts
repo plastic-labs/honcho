@@ -11,6 +11,7 @@ import {
   ContextParamsSchema,
   HonchoConfigSchema,
   MessageInputSchema,
+  PeerAdditionToApiSchema,
   FileUploadSchema,
   RepresentationOptionsSchema,
 } from '../src/validation'
@@ -420,5 +421,26 @@ describe('FileUploadSchema', () => {
         peer: 'peer-1',
       })
     ).toThrow(ZodError)
+  })
+})
+
+describe('PeerAdditionToApiSchema joinedAt', () => {
+  test('sends joinedAt as joined_at, alone or with other settings', () => {
+    const joinedAt = '2020-01-01T00:00:00Z'
+    expect(
+      PeerAdditionToApiSchema.parse([
+        ['alice', { joinedAt }],
+        [{ id: 'bob' }, { observeMe: false, joinedAt }],
+        'carol',
+      ])
+    ).toEqual({
+      alice: { joined_at: joinedAt },
+      bob: { observe_me: false, joined_at: joinedAt },
+      carol: {},
+    })
+    // A lone [peer, config] tuple is one entry, not a list of two peers.
+    expect(PeerAdditionToApiSchema.parse(['alice', { joinedAt }])).toEqual({
+      alice: { joined_at: joinedAt },
+    })
   })
 })

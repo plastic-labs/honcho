@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from src import models
 from src.config import settings
 from src.deriver.enqueue import (
+    _commit_with_retry,  # pyright: ignore[reportPrivateUsage]
     _insert_queue_records,  # pyright: ignore[reportPrivateUsage]
 )
 from src.models import DEFAULT_TENANT_ID
@@ -284,16 +285,18 @@ class _RecordingEnqueueSession:
     promises — one more attempt, then a commit — without a flaky reproduction.
     """
 
-    def __init__(self, *, failures: Sequence[BaseException] = ()) -> None:
+    def __init__(self, *, failures: Sequence[BaseException | None] = ()) -> None:
         self.executed_batches: list[list[dict[str, Any]]] = []
         self.commit_count: int = 0
         self.rollback_count: int = 0
-        self._failures: list[BaseException] = list(failures)
+        self._failures: list[BaseException | None] = list(failures)
 
     async def execute(self, _statement: Any, parameters: Any = None) -> None:
         self.executed_batches.append(list(parameters or []))
         if self._failures:
-            raise self._failures.pop(0)
+            failure = self._failures.pop(0)
+            if failure is not None:
+                raise failure
 
     async def commit(self) -> None:
         self.commit_count += 1
@@ -305,12 +308,22 @@ class _RecordingEnqueueSession:
 def _as_session(recording_session: _RecordingEnqueueSession) -> AsyncSession:
     """Hand the double to the code under test.
 
-    ``_insert_queue_records`` only ever calls execute / commit / rollback, so the
+    ``_commit_with_retry`` around ``_insert_queue_records`` only ever calls
+    execute / commit / rollback, so the
     double covers the whole of the surface it uses; the cast goes through
     ``object`` because a partial stand-in deliberately does not structurally
     overlap the real session.
     """
     return cast(AsyncSession, cast(object, recording_session))
+
+
+async def _insert_and_commit(
+    db_session: AsyncSession, records: list[dict[str, Any]]
+) -> None:
+    """What ``enqueue`` does with its batch: insert, commit, retry on a transient error."""
+    await _commit_with_retry(
+        db_session, lambda: _insert_queue_records(db_session, records)
+    )
 
 
 @pytest.mark.asyncio
@@ -324,7 +337,7 @@ class TestTheEnqueueRetriesADeadlockedBatch:
         """The whole point: the batch reaches the queue instead of vanishing."""
         recording_session = _RecordingEnqueueSession(failures=[_deadlock_error()])
 
-        await _insert_queue_records(
+        await _insert_and_commit(
             _as_session(recording_session),
             _queue_records(
                 "representation:workspace:beta", "representation:workspace:alpha"
@@ -339,6 +352,28 @@ class TestTheEnqueueRetriesADeadlockedBatch:
             "the aborted transaction is rolled back before the retry reuses the session"
         )
 
+    async def test_a_retry_reruns_every_write_in_the_transaction(self) -> None:
+        """The rollback discards all of the stage's writes, so all of them rerun."""
+        recording_session = _RecordingEnqueueSession(
+            failures=[None, _deadlock_error()]  # the second write deadlocks
+        )
+        session = _as_session(recording_session)
+
+        async def two_writes() -> None:
+            await session.execute(insert(models.QueueItem), [{"first": True}])
+            await session.execute(insert(models.QueueItem), [{"second": True}])
+
+        await _commit_with_retry(session, two_writes)
+
+        assert recording_session.executed_batches == [
+            [{"first": True}],
+            [{"second": True}],
+            [{"first": True}],
+            [{"second": True}],
+        ]
+        assert recording_session.commit_count == 1
+        assert recording_session.rollback_count == 1
+
     async def test_a_terminal_error_propagates_without_a_retry(
         self,
         single_tenant_enqueue: None,  # noqa: ARG002  # pyright: ignore[reportUnusedParameter]
@@ -349,7 +384,7 @@ class TestTheEnqueueRetriesADeadlockedBatch:
         )
 
         with pytest.raises(ValueError, match="bad record"):
-            await _insert_queue_records(
+            await _insert_and_commit(
                 _as_session(recording_session),
                 _queue_records("representation:workspace:alpha"),
             )
@@ -370,7 +405,7 @@ class TestTheEnqueueRetriesADeadlockedBatch:
         )
         recording_session = _RecordingEnqueueSession()
 
-        await _insert_queue_records(
+        await _insert_and_commit(
             _as_session(recording_session), _queue_records(*unsorted_keys)
         )
 
@@ -415,7 +450,7 @@ async def test_an_enqueue_blocked_by_a_long_lock_still_commits(
             .where(models.QueueItemBatch.work_unit_key == work_unit_key)
             .with_for_update()
         )
-        insert_task = asyncio.create_task(_insert_queue_records(enqueuing, [record]))
+        insert_task = asyncio.create_task(_insert_and_commit(enqueuing, [record]))
         await asyncio.sleep(LONG_LOCK_HOLD_SECONDS)
         still_waiting = not insert_task.done()
 

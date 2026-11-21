@@ -9,7 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import exceptions, models, schemas
 from src.cache.client import safe_cache_delete
-from src.crud.dream_history import DreamHistoryTarget, record_peer_card
+from src.crud.dream_history import (
+    DreamHistoryTarget,
+    erase_peer_card_history,
+    record_peer_card,
+)
 from src.crud.peer import (
     get_or_create_peers,
     get_peer,
@@ -17,6 +21,7 @@ from src.crud.peer import (
     reject_scope_observed,
 )
 from src.utils.sanitization import strip_nul
+from src.utils.types import PostCommit
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +67,14 @@ async def set_peer_card(
     observer: str,
     observed: str,
     history: DreamHistoryTarget | None = None,
-) -> None:
+    erase_history: bool = False,
+) -> PostCommit:
     """
-    Set peer card for a peer.
+    Set peer card for a peer, in the caller's transaction.
 
     If observer_name is provided, the peer card is set for the observer/observed relationship.
+    Does not commit: the caller commits, then runs ``post_commit()`` on the
+    result to invalidate the peer cache.
 
     Args:
         db: Database session
@@ -76,7 +84,12 @@ async def set_peer_card(
         observer: Peer name of the observer
         history: When set, record the card before and after to this dream run
             in the same transaction
+        erase_history: Delete the cards dreams recorded for this
+            representation, in the same transaction. Set for a card the user
+            writes, so text they replaced does not stay readable in history.
 
+    Returns:
+        The cache work to run after the caller commits.
     """
     # A scope may be the card's *observer* — the Dreamer writes (scope, observed)
     # cards — but never its subject. Authoritative here rather than only in the
@@ -133,12 +146,17 @@ async def set_peer_card(
         raise exceptions.ResourceNotFoundException(
             f"Peer {observer} not found in workspace {workspace_name}"
         )
-    await db.commit()
-    await peers_result.post_commit()
+    if erase_history:
+        await erase_peer_card_history(
+            db, workspace_name, observer=observer, observed=observed
+        )
 
-    # Invalidate cache - read-through pattern
-    cache_key = peer_cache_key(workspace_name, observer)
-    await safe_cache_delete(cache_key)
+    async def on_commit() -> None:
+        await peers_result.post_commit()
+        # Invalidate cache - read-through pattern
+        await safe_cache_delete(peer_cache_key(workspace_name, observer))
+
+    return PostCommit(on_commit)
 
 
 def construct_peer_card_label(*, observer: str, observed: str) -> str:

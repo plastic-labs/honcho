@@ -528,7 +528,7 @@ async def clone_session(
 async def add_peers_to_session(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
-    peers: dict[str, schemas.SessionPeerConfig] = Body(
+    peers: dict[str, schemas.SessionPeerConfigInput] = Body(
         ...,
         description="List of peer IDs (with session-level configuration) to add to the session",
     ),
@@ -566,7 +566,7 @@ async def add_peers_to_session(
 async def set_session_peers(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
-    peers: dict[str, schemas.SessionPeerConfig] = Body(
+    peers: dict[str, schemas.SessionPeerConfigInput] = Body(
         ...,
         description="List of peer IDs (with session-level configuration) to set for the session",
     ),
@@ -689,7 +689,9 @@ async def set_peer_config(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
     peer_id: str = Path(...),
-    config: schemas.SessionPeerConfig = Body(..., description="New peer configuration"),
+    config: schemas.SessionPeerConfigInput = Body(
+        ..., description="New peer configuration"
+    ),
     db: AsyncSession = db,
 ):
     """Set the configuration for a Peer in a Session."""

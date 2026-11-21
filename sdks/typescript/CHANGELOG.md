@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `joinedAt` on a session-peer configuration (an ISO 8601 string) sets when a peer joined a session, in `honcho.session(id, { peers })`, `session.addPeers()`, `session.setPeers()` and `session.setPeerConfiguration()`. Set it when importing messages with their original dates: a search with `peer_perspective` only returns messages created at or after the peer's join time. Write-only, so `getPeerConfiguration()` does not return it. Requires a Honcho release after v3.6.1
+
 ## [2.9.0] - 2026-11-05
 
 ### Added

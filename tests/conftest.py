@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import datetime
 import logging
 import os
 import re
@@ -753,6 +754,16 @@ async def sample_data(
     yield test_workspace, test_peer
 
 
+@pytest_asyncio.fixture
+async def auto_data(
+    db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+) -> tuple[Workspace, Peer]:
+    """`sample_data` with its workspace made an auto workspace, which ingest needs."""
+    sample_data[0].auto_enabled_at = datetime.datetime.now(datetime.UTC)
+    await db_session.commit()
+    return sample_data
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def _reset_fleet_cache():  # pyright: ignore[reportUnusedFunction]
     """Drop the fleet coordination keys around each test.
@@ -1283,6 +1294,7 @@ def mock_crud_collection_operations(request: pytest.FixtureRequest):
     from nanoid import generate as generate_nanoid
 
     from src import models
+    from src.utils.types import GetOrCreateResult
 
     async def mock_get_or_create_collection(
         _: AsyncSession,
@@ -1297,7 +1309,7 @@ def mock_crud_collection_operations(request: pytest.FixtureRequest):
             workspace_name=workspace_name,
         )
         mock_collection.id = generate_nanoid()
-        return mock_collection
+        return GetOrCreateResult(mock_collection, created=False)
 
     with patch(
         "src.crud.get_or_create_collection",

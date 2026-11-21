@@ -14,6 +14,7 @@ the hook, the count is small and the same for the two databases.
 
 from __future__ import annotations
 
+import datetime
 import pickle
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from typing import Any
@@ -32,6 +33,8 @@ from sqlalchemy_utils import (
 from src import crud, models, schemas
 from src.cache.client import cache
 from src.config import settings
+from src.crud import ingest as ingest_crud
+from src.crud import ingest_link, ingest_status
 from src.crud.message import (
     _grep_messages_internal,  # pyright: ignore[reportPrivateUsage]
 )
@@ -43,6 +46,7 @@ from src.db import (
     tenant_context,
 )
 from src.db import connect_args as app_connect_args
+from src.exceptions import ConflictException
 from src.utils.search import (
     _fulltext_search,  # pyright: ignore[reportPrivateUsage]
     _semantic_search_pgvector,  # pyright: ignore[reportPrivateUsage]
@@ -82,7 +86,13 @@ def _seed(url: str) -> dict[str, str]:
                 with OrmSession(engine) as db:
                     db.add(models.Tenant(tenant_id=tenant))
                     db.flush()
-                    db.add(models.Workspace(name="w"))
+                    # Auto, so the ingest cases can write to it.
+                    db.add(
+                        models.Workspace(
+                            name="w",
+                            auto_enabled_at=datetime.datetime.now(datetime.UTC),
+                        )
+                    )
                     db.flush()
                     db.add(models.Peer(name="p", workspace_name="w"))
                     db.flush()
@@ -308,6 +318,63 @@ async def _message_ingest(db: AsyncSession, _source_id: str) -> list[Any]:
     return [(m.content, m.seq_in_session) for m in created]
 
 
+def _ingest_batch(derive: str = "now") -> schemas.IngestBatch:
+    return schemas.IngestBatch.model_validate(
+        {
+            "derive": derive,
+            "records": [
+                {
+                    "source": "discord",
+                    "source_instance": "g",
+                    "source_id": "m1",
+                    "created_at": "2026-11-04T20:47:00Z",
+                    "container": {"id": "c1", "name": "dev"},
+                    "author": {"id": "u1", "name": "Jess"},
+                    "content": "new",
+                }
+            ],
+        }
+    )
+
+
+async def _ingest_write(db: AsyncSession, _source_id: str) -> list[Any]:
+    # The whole ingest transaction: identity lookup, fence, bindings, peer and
+    # session creation, membership, claim, message insert and record update.
+    result = await ingest_crud.ingest_batch(db, "w", _ingest_batch())
+    return [r.outcome for r in result.results]
+
+
+async def _ingest_derive(db: AsyncSession, _source_id: str) -> list[Any]:
+    # A deferred record released by the derive call's transaction, and the count
+    # of what's left.
+    await ingest_crud.ingest_batch(db, "w", _ingest_batch(derive="later"))
+    released = await ingest_crud.release_deferred(db, "w")
+    return [released.pending, await ingest_crud.count_deferred(db, "w")]
+
+
+async def _ingest_review(db: AsyncSession, _source_id: str) -> list[Any]:
+    # The review reads: status counts, then the people and sessions lists.
+    await ingest_crud.ingest_batch(db, "w", _ingest_batch(derive="later"))
+    workspace = await ingest_status.require_auto_workspace(db, "w")
+    status = await ingest_status.get_ingest_status(db, workspace)
+    people = (await db.execute(ingest_status.people_query("w"))).all()
+    sessions = (await db.execute(ingest_status.sessions_query("w"))).all()
+    return [status.records.deferred, status.people, len(people), len(sessions)]
+
+
+async def _ingest_link_and_reset(db: AsyncSession, _source_id: str) -> list[Any]:
+    # A link refused because the person has messages (its eligibility reads),
+    # then a reset (its session sweep).
+    result = await ingest_crud.ingest_batch(db, "w", _ingest_batch(derive="later"))
+    peers = sorted({r.peer_id for r in result.results if r.peer_id})
+    refused = ""
+    try:
+        await ingest_link.link_peers(db, "w", [*peers, "p"][:2])
+    except ConflictException as error:
+        refused = type(error).__name__
+    return [refused, len(await ingest_link.reset_import(db, "w"))]
+
+
 async def _conclusion_delete(db: AsyncSession, source_id: str) -> list[Any]:
     await crud.delete_document(db, "w", source_id, observer="p", observed="p")
     deleted = await db.scalars(
@@ -329,6 +396,10 @@ _CASES: dict[str, _Case] = {
     "message grep": _message_grep,
     "message full-text search": _message_fulltext_search,
     "message ingest write": _message_ingest,
+    "ingest API write": _ingest_write,
+    "ingest derive": _ingest_derive,
+    "ingest review": _ingest_review,
+    "ingest link and reset": _ingest_link_and_reset,
     "conclusion soft delete": _conclusion_delete,
     "session delete": _session_delete,
 }

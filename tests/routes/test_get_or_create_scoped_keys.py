@@ -15,7 +15,7 @@ from src import crud, models, schemas
 from src.config import settings
 from src.crud import session as crud_session
 from src.models import Peer, Workspace
-from src.schemas.configuration import SessionPeerConfig
+from src.schemas.configuration import SessionPeerConfigInput
 from src.security import JWTParams, create_jwt
 
 
@@ -166,7 +166,7 @@ async def test_member_peer_key_does_not_rejoin_after_concurrent_removal(
         db_session,
         workspace_name=workspace.name,
         session=schemas.SessionCreate(
-            name=session_id, peers={me.name: SessionPeerConfig()}
+            name=session_id, peers={me.name: SessionPeerConfigInput()}
         ),
     )
     await db_session.commit()
@@ -185,7 +185,7 @@ async def test_member_peer_key_does_not_rejoin_after_concurrent_removal(
         db_session,
         workspace_name=workspace.name,
         session=schemas.SessionCreate(
-            name=session_id, peers={me.name: SessionPeerConfig()}
+            name=session_id, peers={me.name: SessionPeerConfigInput()}
         ),
         acting_peer=me.name,
     )

@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Experimental, off unless `HONCHO_EXPERIMENTAL=1` is set: the `honcho ingest` commands, `peer`/`session` `exclude` and `include`, and `workspace create --auto` below. They're labeled "Experimental" in help, may change or stop working without notice, and without the variable exit 1 with an `EXPERIMENTAL` error
+- `honcho ingest import FILE`, `honcho ingest status` and `honcho ingest derive`: import a connector's export (`records.jsonl`, one ingest record per line, or `-` for stdin) into an auto workspace, review what it became, and derive it. `import` stores records without deriving them unless `--derive now` is passed, reports created, duplicate and rejected records, and can be run again safely. `status` shows records by derivation state and the tokens waiting to be derived, and numbers the people and sessions the import created, most records first, with each person's source accounts and whether each is modeled. `derive` releases every deferred record; `--watch` follows the queue until derivation finishes. Needs a workspace or admin key and an auto workspace
+- `honcho ingest import` holds back bot records no person interacted with: kept only when a person replied in their reply chain or @-mentioned the bot in the same conversation (`--bots interacted`, the default). `--bots all` imports every record, `--bots none` no bot records; the summary reports how many were held back
+- `honcho peer exclude/include` and `honcho session exclude/include`: before `ingest derive`, stop deriving about an imported person (`observe_me` off) or from an imported session (reasoning off; it is still summarized). They take a number from the last `ingest status`, an ID, or a display name that matches one imported person or session; a name that matches none is an error, never a new peer or session
+- `honcho ingest link`, `honcho ingest unlink` and `honcho ingest reset`: when one person shows up as several accounts in a dry run, `honcho ingest link 1 24 --reset` resets the import (deleting the imported sessions and waiting; people, exclusions and links stay), maps every account of the others to the first, and asks you to import again. A link never moves what was already imported. People are found before the reset, so the numbers from `ingest status` stay right. `--keep <peer-id>` keeps any peer, `unlink` takes one account back out the same way, and `reset` runs on its own
+- `honcho workspace create NAME --auto` creates an auto workspace. An existing workspace that isn't auto can't be made auto, and the command says so
+
+### Changed
+
+- Requires `honcho-ai` 2.10.0 or later
+
+### Fixed
+
+- `uvx honcho-cli <command>` runs the CLI. The package now also installs a `honcho-cli` executable alongside `honcho`; before, uvx stopped with "An executable named `honcho-cli` is not provided", so the documented `uvx honcho-cli` and a one-line `uvx honcho-cli install` both failed
+
+## [0.6.0] - 2026-11-10
+
+### Added
+
+- `honcho workspace replay --from <id> --to <id>`: copy a workspace by replaying it. Workspace, peer and session metadata and configuration, session membership and scopes are copied, then every message is re-sent in order with its original `created_at`, so the destination derives its own conclusions, summaries and peer cards; nothing derived is copied. `--from-url` / `--to-url` (and `HONCHO_FROM_API_KEY` / `HONCHO_TO_API_KEY`) put either side on another Honcho instance, and the configured credentials are never sent to an instance they were not issued for. `--num-sessions N` replays only the N sessions with the most recent message, `--dry-run` reads both sides without writing and says, for each session, whether a replay will create it, resume it, find it up to date, or skip it as a conflict, and a rerun resumes by skipping messages the destination already has. A destination session whose messages differ from the source is left untouched and reported. In a terminal the command prints a short report and the `queue-status` command that shows derivation on the destination; `--json` prints the same facts as one object. Both reports count the conclusions in the source (`not_copied`), because conclusions and peer cards written through the API have no source message and are not recreated. The destination session has the source's current members from its first message, so a peer that joined late observes the whole session. With a workspace-scoped key, a source that has no sessions and no peers is reported as `NOTHING_TO_REPLAY` and is not created. Per-message configuration is not stored by Honcho and cannot be replayed (#1573)
+
+### Fixed
+
+- `honcho --version`, the update check and the `X-Honcho-Host` header report the installed version. `__version__` was a hardcoded string that the 0.5.0 release did not bump, so a 0.5.0 install reported itself as 0.4.0, and the update check told 0.5.0 users that 0.5.0 was available. The version is now read from the installed package metadata (#1571)
+
 ## [0.5.0] - 2026-11-05
 
 ### Added

@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import warnings
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
 
@@ -34,6 +34,16 @@ from .api_types import (
     ConclusionResponse,
     DreamRunDetailResponse,
     DreamRunResponse,
+    IngestDeriveResponse,
+    IngestLinkResponse,
+    IngestPerson,
+    IngestRecord,
+    IngestRecordResult,
+    IngestResetResponse,
+    IngestResponse,
+    IngestSession,
+    IngestStatusResponse,
+    IngestUnlinkResponse,
     MessageCreateParams,
     MessageResponse,
     PeerCardResponse,
@@ -60,6 +70,7 @@ from .conclusions import (
     _require_view,
 )
 from .http import routes
+from .ingest import ingest_batches, offset_results
 from .message import Message
 from .mixins import AsyncMetadataConfigMixin
 from .pagination import AsyncPage
@@ -135,7 +146,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
 
     def _get_fetch_body(self) -> dict[str, Any]:
         """Return the request body used to fetch this workspace."""
-        return {"id": self._honcho.workspace_id}
+        return self._honcho._workspace_body()
 
     def _parse_response(
         self, data: dict[str, Any]
@@ -728,12 +739,160 @@ class HonchoAio(AsyncMetadataConfigMixin):
         )
         return QueueStatusResponse.model_validate(data)
 
+    async def ingest(
+        self,
+        records: Iterable[IngestRecord | Mapping[str, Any]],
+        *,
+        derive: Literal["now", "later"] = "now",
+    ) -> IngestResponse:
+        """Ingest source records into this auto workspace asynchronously.
+
+        Experimental: ingest may change or stop working without notice.
+
+        See `Honcho.ingest`.
+        """
+        if self._honcho._auto:
+            await self._honcho._ensure_workspace_async()
+        results: list[IngestRecordResult] = []
+        for offset, batch in ingest_batches(records):
+            data = await self._honcho._async_http_client.post(
+                routes.workspace_ingest(self._honcho.workspace_id),
+                body={"derive": derive, "records": batch},
+            )
+            results.extend(offset_results(data, offset))
+        return IngestResponse(records=results)
+
+    async def ingest_derive(self) -> IngestDeriveResponse:
+        """Derive the records ingested with ``derive="later"`` asynchronously.
+
+        Experimental: ingest may change or stop working without notice.
+
+        See `Honcho.ingest_derive`.
+        """
+        released = 0
+        while True:
+            step = IngestDeriveResponse.model_validate(
+                await self._honcho._async_http_client.post(
+                    routes.workspace_ingest_derive(self._honcho.workspace_id)
+                )
+            )
+            released += step.pending
+            if step.remaining == 0 or step.pending == 0:
+                return IngestDeriveResponse(pending=released, remaining=step.remaining)
+
+    async def ingest_link(self, peers: Sequence[str | PeerBase]) -> IngestLinkResponse:
+        """Link imported people into one, asynchronously. See `Honcho.ingest_link`.
+
+        Experimental: ingest may change or stop working without notice.
+        """
+        return IngestLinkResponse.model_validate(
+            await self._honcho._async_http_client.post(
+                routes.workspace_ingest_link(self._honcho.workspace_id),
+                body={"peers": [resolve_id(p) for p in peers]},
+            )
+        )
+
+    async def ingest_unlink(
+        self,
+        peer: str | PeerBase,
+        *,
+        source: str,
+        source_instance: str,
+        account_id: str,
+    ) -> IngestUnlinkResponse:
+        """Take a linked account back out, asynchronously. See `Honcho.ingest_unlink`.
+
+        Experimental: ingest may change or stop working without notice.
+        """
+        return IngestUnlinkResponse.model_validate(
+            await self._honcho._async_http_client.post(
+                routes.workspace_ingest_unlink(self._honcho.workspace_id),
+                body={
+                    "peer": resolve_id(peer),
+                    "account": {
+                        "source": source,
+                        "source_instance": source_instance,
+                        "id": account_id,
+                    },
+                },
+            )
+        )
+
+    async def ingest_reset(self) -> IngestResetResponse:
+        """Delete the imported sessions, asynchronously. See `Honcho.ingest_reset`.
+
+        Experimental: ingest may change or stop working without notice.
+        """
+        return IngestResetResponse.model_validate(
+            await self._honcho._async_http_client.post(
+                routes.workspace_ingest_reset(self._honcho.workspace_id)
+            )
+        )
+
+    async def ingest_status(self) -> IngestStatusResponse:
+        """What this workspace's imports produced, asynchronously.
+
+        Experimental: ingest may change or stop working without notice.
+
+        See `Honcho.ingest_status`.
+        """
+        return IngestStatusResponse.model_validate(
+            await self._honcho._async_http_client.get(
+                routes.workspace_ingest_status(self._honcho.workspace_id)
+            )
+        )
+
+    async def ingest_people(
+        self, *, page: int = 1, size: int = 50
+    ) -> AsyncPage[IngestPerson, IngestPerson]:
+        """The peers created for imported accounts, asynchronously.
+
+        Experimental: ingest may change or stop working without notice.
+
+        See `Honcho.ingest_people`.
+        """
+
+        async def fetch(next_page: int) -> dict[str, Any]:
+            return await self._honcho._async_http_client.get(
+                routes.workspace_ingest_people(self._honcho.workspace_id),
+                query={"page": next_page, "size": size},
+            )
+
+        async def fetch_next(next_page: int) -> AsyncPage[IngestPerson, IngestPerson]:
+            return AsyncPage(await fetch(next_page), IngestPerson, None, fetch_next)
+
+        return AsyncPage(await fetch(page), IngestPerson, None, fetch_next)
+
+    async def ingest_sessions(
+        self, *, page: int = 1, size: int = 50
+    ) -> AsyncPage[IngestSession, IngestSession]:
+        """The sessions created for imported containers, asynchronously.
+
+        Experimental: ingest may change or stop working without notice.
+
+        See `Honcho.ingest_sessions`.
+        """
+
+        async def fetch(next_page: int) -> dict[str, Any]:
+            return await self._honcho._async_http_client.get(
+                routes.workspace_ingest_sessions(self._honcho.workspace_id),
+                query={"page": next_page, "size": size},
+            )
+
+        async def fetch_next(
+            next_page: int,
+        ) -> AsyncPage[IngestSession, IngestSession]:
+            return AsyncPage(await fetch(next_page), IngestSession, None, fetch_next)
+
+        return AsyncPage(await fetch(page), IngestSession, None, fetch_next)
+
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def dreams(
         self,
         observed: str | PeerBase | None = None,
         observer: str | PeerBase | None = None,
         *,
+        filters: dict[str, object] | None = None,
         page: int = 1,
         size: int = 50,
     ) -> AsyncPage[DreamRunResponse, DreamRunResponse]:
@@ -744,6 +903,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
             body["observed_id"] = resolve_id(observed)
         if observer is not None:
             body["observer_id"] = resolve_id(observer)
+        if filters:
+            body["filters"] = filters
 
         async def fetch(next_page: int) -> dict[str, Any]:
             return await self._honcho._async_http_client.post(
@@ -1531,6 +1692,8 @@ class SessionAio(AsyncMetadataConfigMixin):
             body["observe_others"] = configuration.observe_others
         if configuration.observe_me is not None:
             body["observe_me"] = configuration.observe_me
+        if configuration.joined_at is not None:
+            body["joined_at"] = configuration.joined_at.isoformat()
 
         await self._session._honcho._async_http_client.put(
             routes.session_peer_config(

@@ -69,7 +69,7 @@ async def dialectic_test_data(
             db_session,
             schemas.SessionCreate(
                 name=str(generate_nanoid()),
-                peers={observed.name: schemas.SessionPeerConfig(observe_me=True)},
+                peers={observed.name: schemas.SessionPeerConfigInput(observe_me=True)},
             ),
             workspace.name,
         )

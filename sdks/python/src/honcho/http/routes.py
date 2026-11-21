@@ -28,6 +28,38 @@ def workspace_queue_status(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/queue/status"
 
 
+def workspace_ingest(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/ingest"
+
+
+def workspace_ingest_derive(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/derive"
+
+
+def workspace_ingest_link(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/link"
+
+
+def workspace_ingest_unlink(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/unlink"
+
+
+def workspace_ingest_reset(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/reset"
+
+
+def workspace_ingest_status(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/status"
+
+
+def workspace_ingest_people(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/people"
+
+
+def workspace_ingest_sessions(workspace_id: str) -> str:
+    return f"/{API_VERSION}/workspaces/{workspace_id}/ingest/sessions"
+
+
 def workspace_schedule_dream(workspace_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/schedule_dream"
 

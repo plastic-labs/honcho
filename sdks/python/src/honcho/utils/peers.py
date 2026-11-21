@@ -41,7 +41,7 @@ def normalize_peers_to_dict(
         if isinstance(peer, tuple):
             peer_id = peer[0] if isinstance(peer[0], str) else peer[0].id
             peer_config = peer[1]
-            peer_dict[peer_id] = peer_config.model_dump(exclude_none=True)
+            peer_dict[peer_id] = peer_config.model_dump(mode="json", exclude_none=True)
         else:
             peer_id = peer if isinstance(peer, str) else peer.id
             peer_dict[peer_id] = {}

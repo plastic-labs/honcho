@@ -769,13 +769,15 @@ class TestGetPeerCardByName:
         workspace, peer1, peer2, *_ = workspace_test_data
 
         # Create a peer card
-        await crud.set_peer_card(
+        write = await crud.set_peer_card(
             db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
             observed=peer2.name,
             peer_card=["Name: Alice", "Location: NYC"],
         )
+        await db_session.commit()
+        await write.post_commit()
 
         ctx = make_workspace_ctx()
         result = await _handle_get_peer_card_by_name(
@@ -811,13 +813,15 @@ class TestGetPeerCardByName:
         get one — otherwise `scope` leaks facts derived outside its sessions."""
         workspace, peer1, peer2, _peer3, session, *_ = workspace_test_data
 
-        await crud.set_peer_card(
+        write = await crud.set_peer_card(
             db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
             observed=peer2.name,
             peer_card=["Secret: derived from an out-of-scope session"],
         )
+        await db_session.commit()
+        await write.post_commit()
 
         ctx = make_workspace_ctx(session_allowlist=[session.name])
         result = await _handle_get_peer_card_by_name(

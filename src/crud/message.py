@@ -460,6 +460,8 @@ async def create_messages(
     messages: list[schemas.MessageCreate],
     workspace_name: str,
     session_name: str,
+    *,
+    internal_metadata: Sequence[dict[str, Any]] | None = None,
 ) -> list[models.Message]:
     """
     Bulk create messages for a session while maintaining order.
@@ -469,6 +471,8 @@ async def create_messages(
         messages: List of messages to create
         workspace_name: Name of the workspace
         session_name: Name of the session to create messages in
+        internal_metadata: Internal metadata for each message, in the same
+            order as ``messages``, written with the insert
 
     Returns:
         List of created message objects
@@ -489,7 +493,9 @@ async def create_messages(
     )
 
     # Get or create session with peers in messages list
-    peers = {message.peer_name: schemas.SessionPeerConfig() for message in messages}
+    peers = {
+        message.peer_name: schemas.SessionPeerConfigInput() for message in messages
+    }
     await get_or_create_session(
         db,
         session=schema_from_path(
@@ -498,6 +504,48 @@ async def create_messages(
         workspace_name=workspace_name,
     )
 
+    message_objects = await insert_messages_locked(
+        db,
+        messages,
+        workspace_name,
+        session_name,
+        internal_metadata=internal_metadata,
+    )
+
+    await db.commit()
+
+    return message_objects
+
+
+async def insert_messages_locked(
+    db: AsyncSession,
+    messages: list[schemas.MessageCreate],
+    workspace_name: str,
+    session_name: str,
+    *,
+    internal_metadata: Sequence[dict[str, Any]] | None = None,
+) -> list[models.Message]:
+    """Insert messages at the end of a session under its sequence lock. Does not commit.
+
+    Takes the session's ``_ingest_lock`` for the rest of the transaction, assigns
+    ``seq_in_session`` in list order after the session's last message, and adds a
+    pending embedding row per chunk when embedding is on. The session and every
+    author must already exist and be members.
+
+    Args:
+        db: Database session, in the transaction that will commit the messages
+        messages: Messages to insert, in order
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+        internal_metadata: Internal metadata for each message, in the same
+            order as ``messages``, written with the insert
+
+    Returns:
+        The message objects, flushed or pending flush
+
+    Raises:
+        ValueError: If ``internal_metadata`` doesn't have one entry per message
+    """
     await db.execute(text("SET LOCAL lock_timeout = '5s'"))
     await db.execute(*_ingest_lock(workspace_name, session_name))
 
@@ -515,6 +563,9 @@ async def create_messages(
         or 0
     )
 
+    if internal_metadata is not None and len(internal_metadata) != len(messages):
+        raise ValueError("internal_metadata must have one entry per message")
+
     # Create list of message objects (this will trigger the before_insert event)
     message_objects: list[models.Message] = []
     for offset, message in enumerate(messages, start=1):
@@ -529,6 +580,11 @@ async def create_messages(
             token_count=len(message.encoded_message),
             created_at=message.created_at,  # Use provided created_at if available
             seq_in_session=message_seq_in_session,
+            internal_metadata=(
+                dict(internal_metadata[offset - 1])
+                if internal_metadata is not None
+                else {}
+            ),
         )
         message_objects.append(message_obj)
 
@@ -563,8 +619,6 @@ async def create_messages(
                     )
             if pending_rows:
                 db.add_all(pending_rows)
-
-    await db.commit()
 
     return message_objects
 
@@ -692,6 +746,8 @@ async def get_messages_by_seq_range(
     session_name: str,
     start_seq: int = 1,
     end_seq: int | None = None,
+    *,
+    limit: int | None = None,
 ) -> list[models.Message]:
     """
     Get messages from a session by seq_in_session range.
@@ -704,6 +760,7 @@ async def get_messages_by_seq_range(
         session_name: Name of the session
         start_seq: Sequence number of the first message to return (inclusive)
         end_seq: Sequence number of the last message to return (inclusive)
+        limit: At most this many messages, the first in sequence order
 
     Returns:
         List of messages ordered by seq_in_session
@@ -732,6 +789,8 @@ async def get_messages_by_seq_range(
         .where(*base_conditions)
         .order_by(models.Message.seq_in_session.asc())
     )
+    if limit is not None:
+        stmt = stmt.limit(limit)
 
     result = await db.execute(stmt)
     return list(result.scalars().all())

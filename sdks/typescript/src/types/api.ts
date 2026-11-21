@@ -24,6 +24,8 @@ export interface WorkspaceResponse {
   metadata: Record<string, unknown>
   configuration: WorkspaceConfigApi
   created_at: string
+  /** Whether this is an auto workspace, which the ingest API writes to. */
+  auto?: boolean
 }
 
 export interface WorkspaceCreateParams {
@@ -348,6 +350,7 @@ export interface SessionCloneParams {
 export interface SessionPeerConfigParams {
   observe_me?: boolean | null
   observe_others?: boolean | null
+  joined_at?: string | null
 }
 
 export interface SessionContextParams {
@@ -570,6 +573,171 @@ export interface QueueStatus {
   inProgressWorkUnits: number
   pendingWorkUnits: number
   sessions?: Record<string, SessionQueueStatus>
+}
+
+// =============================================================================
+// Ingest Types
+// =============================================================================
+
+export interface IngestRecordResultResponse {
+  index: number
+  outcome: string
+  reason?: string | null
+  record_id?: string | null
+  message_id?: string | null
+  session_id?: string | null
+  peer_id?: string | null
+  derivation?: string | null
+}
+
+export interface IngestResponse {
+  records: IngestRecordResultResponse[]
+  receipt?: string | null
+}
+
+export interface IngestDeriveResponse {
+  pending: number
+  remaining: number
+}
+
+/** What happened to one ingested record. */
+export interface IngestRecordResult {
+  /** The record's position among the records passed to `ingest`. */
+  index: number
+  /** `created`, `duplicate` or `rejected`. */
+  outcome: string
+  /** Why a record was rejected, e.g. `content_conflict`. */
+  reason?: string
+  recordId?: string
+  messageId?: string
+  sessionId?: string
+  peerId?: string
+  /** `pending`, `queued` or `deferred`. */
+  derivation?: string
+}
+
+/** One result per ingested record, in the order the records were passed. */
+export interface IngestResult {
+  records: IngestRecordResult[]
+}
+
+export interface IngestStatusResponse {
+  records: { deferred: number; pending: number; queued: number }
+  deferred_tokens: number
+  people: number
+  people_not_modeled: number
+  sessions: number
+  sessions_not_modeled: number
+  sessions_being_deleted?: number
+}
+
+export interface IngestAccountResponse {
+  source: string
+  source_instance: string
+  id?: string | null
+  display_name?: string | null
+}
+
+export interface IngestPersonResponse {
+  peer_id: string
+  display_name?: string | null
+  accounts: IngestAccountResponse[]
+  messages: number
+  modeled: boolean
+}
+
+export interface IngestSessionResponse {
+  session_id: string
+  display_name?: string | null
+  source: string
+  source_instance: string
+  messages: number
+  modeled: boolean
+}
+
+/** What the workspace's imports produced, for review before deriving. */
+export interface IngestStatus {
+  /** Records by derivation state: `deferred` waits for `ingestDerive()`. */
+  records: { deferred: number; pending: number; queued: number }
+  /** Tokens in the messages of deferred records. */
+  deferredTokens: number
+  /** Peers created for imported accounts. */
+  people: number
+  /** Of those, peers with `observeMe` off: nothing is derived about them. */
+  peopleNotModeled: number
+  /** Sessions created for imported containers. */
+  sessions: number
+  /** Of those, sessions whose reasoning is off. */
+  sessionsNotModeled: number
+  /** Sessions a reset is still deleting; 0 once it has finished. */
+  sessionsBeingDeleted: number
+}
+
+/** One source account mapped to a peer. */
+export interface IngestAccount {
+  source: string
+  sourceInstance: string
+  /** The account's ID in the source, when it has one. */
+  id?: string
+  displayName?: string
+}
+
+/** A peer created for imported accounts. */
+export interface IngestPerson {
+  peerId: string
+  /** The first account's display name. */
+  displayName?: string
+  accounts: IngestAccount[]
+  /** Records its accounts wrote. */
+  messages: number
+  /** False when `observeMe` is off: nothing is derived about it. */
+  modeled: boolean
+}
+
+/** A session created for an imported container. */
+export interface IngestSession {
+  sessionId: string
+  /** The container's display name in the source. */
+  displayName?: string
+  source: string
+  sourceInstance: string
+  /** Records in the session. */
+  messages: number
+  /** False when reasoning is off for the session: only summaries are made. */
+  modeled: boolean
+}
+
+export interface IngestLinkResponse {
+  peer_id: string
+  merged: string[]
+  accounts: IngestAccountResponse[]
+}
+
+export interface IngestUnlinkResponse {
+  peer_id: string
+  account: IngestAccountResponse
+}
+
+/** The kept person and every account that now maps to it. */
+export interface IngestLinkResult {
+  peerId: string
+  /** The people linked into it. */
+  merged: string[]
+  accounts: IngestAccount[]
+}
+
+/** The person a linked account maps to again, from the next import on. */
+export interface IngestUnlinkResult {
+  peerId: string
+  account: IngestAccount
+}
+
+/** How many deferred records were released for derivation. */
+export interface IngestDeriveResult {
+  /** Records released for derivation. */
+  pending: number
+  /** Records in the workspace still deferred. */
+  remaining: number
 }
 
 // =============================================================================

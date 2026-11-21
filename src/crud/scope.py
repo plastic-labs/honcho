@@ -176,7 +176,13 @@ async def get_or_create_scopes(
     ]
     try:
         async with db.begin_nested():
-            db.add_all(new_peers)
+            # Added in name order for the same reason as in
+            # `get_or_create_peers`: concurrent creates of overlapping new scopes
+            # take the unique-key locks in one order and cannot deadlock.
+            in_name_order: list[models.Peer] = sorted(
+                new_peers, key=lambda peer: peer.name
+            )
+            db.add_all(in_name_order)
     except IntegrityError:
         if _retry:
             raise ConflictException(
@@ -746,7 +752,9 @@ async def remove_sessions_from_scope(
             .where(models.SessionPeer.peer_name == scope_peer)
             .where(models.SessionPeer.session_name.in_(removed))
             .where(models.SessionPeer.left_at.is_(None))
-            .values(left_at=func.now())
+            # The statement's time, not the transaction's: this may have waited
+            # on a rejoin of these rows that began after this transaction did.
+            .values(left_at=func.statement_timestamp())
         )
     for session_name in removed:
         await insert_scope_task(
