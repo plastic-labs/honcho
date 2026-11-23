@@ -598,6 +598,10 @@ def message_text_matches_ddl(schema: str) -> tuple[str, ...]:
     user to bypass the RLS checks to use ILIKE specifically in certain cases.
     If we don't use this, postgres will convert ILIKE into simpler row scan
     instead of pre-filtering with an index.
+
+    ``search.message_text_page_inline`` is the same query as plain SQL for
+    ``MULTI_TENANT`` off, where there is no row-level security to work around;
+    change the two together.
     """
     name = f'"{schema}".{MESSAGE_TEXT_MATCHES}'
     create = f"""

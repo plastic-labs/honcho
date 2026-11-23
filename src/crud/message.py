@@ -18,7 +18,7 @@ from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
 from src.utils.path_params import schema_from_path
 from src.utils.scopes import is_scope_peer_name
-from src.utils.search import matching_messages, message_text_condition
+from src.utils.search import matching_messages, search_db
 from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
 
@@ -1173,17 +1173,9 @@ async def _grep_messages_internal(
         match_stmt = match_stmt.where(models.Message.session_name == session_name)
     match_stmt = match_stmt.where(*scope_clauses)
 
-    if settings.MULTI_TENANT:
-        matched_messages = await matching_messages(
-            db, match_stmt, workspace_name, text, use_fts=False, limit=limit
-        )
-    else:
-        match_stmt = (
-            match_stmt.where(message_text_condition(text, use_fts=False))
-            .order_by(models.Message.created_at.desc())
-            .limit(limit)
-        )
-        matched_messages = list((await db.execute(match_stmt)).scalars().all())
+    matched_messages = await matching_messages(
+        db, match_stmt, workspace_name, text, use_fts=False, limit=limit
+    )
 
     return await _build_merged_snippets(
         db, workspace_name, matched_messages, context_window
@@ -1235,7 +1227,7 @@ async def grep_messages(
     if deny:
         return []
 
-    async with tracked_db("message.grep_messages", read_only=True) as db:
+    async with search_db("message.grep_messages") as db:
         snippets = await _grep_messages_internal(
             db,
             workspace_name,

@@ -6,9 +6,12 @@ of each item's rank in each list, then summing these reciprocal ranks.
 """
 
 import re
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, TypeVar
 
+from psycopg.errors import QueryCanceled
 from sqlalchemy import (
     BigInteger,
     ColumnElement,
@@ -19,16 +22,19 @@ from sqlalchemy import (
     and_,
     cast,
     func,
+    literal,
     or_,
     select,
+    tuple_,
 )
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
-from src.exceptions import ValidationException
+from src.exceptions import SearchTimeoutError, ValidationException
 from src.models import session_peers_table
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
@@ -37,6 +43,35 @@ from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
 
 T = TypeVar("T")
+
+
+@asynccontextmanager
+async def search_db(operation_name: str) -> AsyncGenerator[AsyncSession]:
+    """A session for message search, bounded by ``DB.SEARCH_STATEMENT_TIMEOUT_MS``.
+
+    Raises:
+        SearchTimeoutError: A statement in the block hit the timeout.
+    """
+    # region ai
+    # A transaction, not the AUTOCOMMIT read engine, because SET LOCAL needs one
+    # to attach to: on the read engine it is a silent no-op. The setting then
+    # ends with the transaction however the block exits (tracked_db always rolls
+    # back), so it never reaches the next user of the pooled connection, which a
+    # session-level SET + RESET could on a cancelled task. The block is
+    # SELECT-only and holds no external call, so the transaction is short.
+    # endregion
+    async with tracked_db(operation_name) as db:
+        timeout_ms = settings.DB.SEARCH_STATEMENT_TIMEOUT_MS
+        if timeout_ms:
+            await db.execute(
+                select(func.set_config("statement_timeout", f"{timeout_ms}ms", True))
+            )
+        try:
+            yield db
+        except DBAPIError as e:
+            if isinstance(e.orig, QueryCanceled):
+                raise SearchTimeoutError() from e
+            raise
 
 
 def _uses_pgvector_message_search() -> bool:
@@ -331,6 +366,61 @@ def message_text_page(
     return select(page.c.id, page.c.created_at, page.c.rank)
 
 
+def message_text_page_inline(
+    workspace_name: str,
+    query: str,
+    *,
+    use_fts: bool,
+    after: tuple[float, datetime, int] | None,
+    limit: int,
+) -> Select[tuple[int, datetime, float]]:
+    """One page of ``(id, created_at, rank)``, as plain SQL for single-tenant mode.
+
+    Mirrors the body of ``models.message_text_matches_ddl`` clause for clause;
+    keep the two in step. With ``MULTI_TENANT`` off there are no row-level
+    security policies to keep the planner off the text indexes, so the same
+    query runs inline instead of through the SECURITY DEFINER function, which
+    returns nothing when ``app.tenant`` is unbound.
+    """
+    # region ai
+    # The bound tenant_id predicate is the point: the text indexes lead with
+    # (tenant_id, workspace_name), and the single-statement search that joins
+    # messages to workspaces/sessions/peers only supplies tenant_id through the
+    # join, so the planner cannot use them and falls back to a per-row filter.
+    # endregion
+    message = models.Message
+    rank: ColumnElement[float] = cast(0, Float)
+    if use_fts:
+        rank = cast(
+            func.coalesce(
+                func.ts_rank(
+                    func.to_tsvector("english", message.content),
+                    func.plainto_tsquery("english", query),
+                ),
+                0,
+            ),
+            Float,
+        )
+    page = select(message.id, message.created_at, rank.label("rank")).where(
+        message.tenant_id == models.scoped_tenant_id(),
+        message.workspace_name == workspace_name,
+        message_text_condition(query, use_fts=use_fts),
+    )
+    if after is not None:
+        after_rank, after_created_at, after_id = after
+        page = page.where(
+            tuple_(rank, message.created_at, message.id)
+            < tuple_(
+                literal(after_rank, Float),
+                literal(after_created_at, DateTime(timezone=True)),
+                literal(after_id, BigInteger),
+            )
+        )
+    return page.order_by(
+        rank.desc(), message.created_at.desc(), message.id.desc()
+    ).limit(limit)
+
+
 async def matching_messages(
     db: AsyncSession,
     stmt: Select[tuple[models.Message]],
@@ -340,14 +430,19 @@ async def matching_messages(
     use_fts: bool,
     limit: int,
 ) -> list[models.Message]:
-    """The first ``limit`` messages of ``stmt`` whose content matches ``query``,
-    under row-level security."""
+    """The first ``limit`` messages of ``stmt`` whose content matches ``query``.
+
+    Ids first: a page of matches is read from ``messages`` alone (tenant,
+    workspace and text predicate, which the text indexes serve), then the rows
+    are read through ``stmt``'s filters by id.
+    """
+    text_page = message_text_page if settings.MULTI_TENANT else message_text_page_inline
     found: list[models.Message] = []
     after: tuple[float, datetime, int] | None = None
     while len(found) < limit:
         page = (
             await db.execute(
-                message_text_page(
+                text_page(
                     workspace_name,
                     query,
                     use_fts=use_fts,
@@ -359,8 +454,20 @@ async def matching_messages(
         if not page:
             break
         position = {row.id: index for index, row in enumerate(page)}
+        # region ai
+        # Bound tenant_id so the ids are primary-key lookups: the key is
+        # (tenant_id, id). Under MULTI_TENANT the ORM hook already adds it; with
+        # it off nothing does, and without it the planner can drive this
+        # statement from stmt's joins instead (measured: ~10 s vs ms on a
+        # 200k-message workspace with lagging statistics).
+        # endregion
         rows = (
-            await db.execute(stmt.where(models.Message.id.in_(list(position))))
+            await db.execute(
+                stmt.where(
+                    models.Message.tenant_id == models.scoped_tenant_id(),
+                    models.Message.id.in_(list(position)),
+                )
+            )
         ).scalars()
         found.extend(sorted(rows, key=lambda m: position[m.id]))
         if len(page) < TEXT_MATCH_PAGE_SIZE:
@@ -395,7 +502,7 @@ async def _fulltext_search(
         re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)
     )
 
-    if settings.MULTI_TENANT and workspace_name is not None:
+    if workspace_name is not None:
         return await matching_messages(
             db, stmt, workspace_name, query, use_fts=not has_special_chars, limit=limit
         )
@@ -573,7 +680,7 @@ async def search(
             return search_results[0][:limit]
         return []
 
-    async with tracked_db("search.messages", read_only=True) as managed_db:
+    async with search_db("search.messages") as managed_db:
         combined_results = await _run_search(managed_db)
         for message in combined_results:
             managed_db.expunge(message)

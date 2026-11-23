@@ -327,6 +327,25 @@ class UpstreamLLMError(HonchoException):
 
 
 @final
+class SearchTimeoutError(HonchoException):
+    """Raised when a message search exceeds ``DB.SEARCH_STATEMENT_TIMEOUT_MS``.
+
+    The database cancelled the statement, so the work stopped with the request
+    instead of running on after the caller gave up.
+    """
+
+    status_code = 504
+    detail = "Search timed out"
+
+    # Kept by Sentry: a search slow enough to hit the timeout means a query
+    # plan has gone wrong, which is ours to notice rather than the caller's.
+    sentry_policy: ClassVar[SentryPolicy | None] = SentryPolicy(
+        level="warning",
+        fingerprint="honcho-search-timeout",
+    )
+
+
+@final
 class StructuredResponseError(HonchoException):
     """Raised when a chat answer still fails its ``response_format`` schema after
     the retry budget and the fallback chain are spent."""

@@ -70,7 +70,9 @@ def test_lifecycle_import_on_first_search_call(first_call: str) -> None:
     """Exercise each local lifecycle import after a cold search-first load."""
     code = f"""
 import asyncio
+import datetime
 import sys
+import types
 from contextlib import asynccontextmanager
 import pytest_socket
 
@@ -80,16 +82,25 @@ import src.utils.search as search
 assert 'src.crud' not in sys.modules
 
 class EmptyResult:
+    def __init__(self, rows=()):
+        self.rows = list(rows)
     def scalars(self):
-        return self
+        return EmptyResult()
     def all(self):
-        return []
+        return self.rows
+    def __iter__(self):
+        return iter(self.rows)
+
+PAGE_ROW = types.SimpleNamespace(id=1, created_at=datetime.datetime(2026, 1, 1), rank=0.0)
 
 class StatementCollector:
     def __init__(self):
         self.statements = []
     async def execute(self, statement):
         self.statements.append(statement)
+        columns = getattr(statement, 'selected_columns', None)
+        if columns is not None and 'rank' in columns:
+            return EmptyResult([PAGE_ROW])
         return EmptyResult()
 
 async def run():
@@ -106,8 +117,9 @@ async def run():
         search.settings.EMBED_MESSAGES = False
         rows = await search.search('needle', filters={{'workspace_id': 'workspace'}})
     assert rows == []
-    assert len(db.statements) == 1
-    sql = str(db.statements[0])
+    # search() also sets its statement timeout and reads a text-match page; the
+    # row fetch through the lifecycle-filtered statement is the last one.
+    sql = str(db.statements[-1])
     assert 'messages.deleted_at IS NULL' in sql, sql
     for table in ('workspaces', 'peers', 'sessions'):
         assert f'{{table}}_1.deleted_at IS NULL' in sql, sql

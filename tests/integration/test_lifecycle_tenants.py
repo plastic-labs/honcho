@@ -496,7 +496,14 @@ async def test_observation_context_neighbours_cannot_cross_service_tenants(
         yield db
 
     monkeypatch.setattr("src.crud.message.tracked_db", service_reader)
-    snippets = await crud.grep_messages("same-ws", None, "only A target")
+    monkeypatch.setattr("src.crud.message.search_db", service_reader)
+    # The text match reads messages with the tenant bound, as every tenant-scoped
+    # read does; the neighbours must stay in that tenant too.
+    token = tenant_context.set("lifecycle-a")
+    try:
+        snippets = await crud.grep_messages("same-ws", None, "only A target")
+    finally:
+        tenant_context.reset(token)
     assert len(snippets) == 1
     assert {row.tenant_id for _, context in snippets for row in context} == {
         "lifecycle-a"

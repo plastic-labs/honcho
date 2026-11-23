@@ -15,6 +15,7 @@ from src.utils.search import (
     matching_messages,
     message_text_condition,
     message_text_page,
+    message_text_page_inline,
 )
 
 
@@ -101,6 +102,79 @@ def test_page_without_a_bound_tenant_fails_closed(
     monkeypatch.setattr(settings, "MULTI_TENANT", True)
     with pytest.raises(ValueError, match="no tenant bound"):
         message_text_page("w", "hello", use_fts=True, after=None, limit=7)
+
+
+@pytest.mark.parametrize("use_fts", [True, False])
+def test_inline_page_reads_messages_alone_with_the_tenant_bound(
+    monkeypatch: pytest.MonkeyPatch, use_fts: bool
+) -> None:
+    monkeypatch.setattr(settings, "MULTI_TENANT", False)
+    sql, params = _compile(
+        message_text_page_inline("w", "hello", use_fts=use_fts, after=None, limit=7)
+    )
+    assert models.MESSAGE_TEXT_MATCHES not in sql
+    # messages alone: the text indexes lead with (tenant_id, workspace_name),
+    # which only a bound tenant predicate and no join can use
+    assert "EXISTS" not in sql and "JOIN" not in sql
+    assert "messages.tenant_id = " in sql
+    assert "messages.workspace_name = " in sql
+    assert "messages.content ILIKE" in sql
+    assert ("@@" in sql) is use_fts
+    assert ("ts_rank" in sql) is use_fts
+    assert "DESC, public.messages.created_at DESC, public.messages.id DESC" in sql
+    values = list(params.values())
+    assert models.instance_tenant_id() in values
+    assert "w" in values and "%hello%" in values and 7 in values
+
+
+def test_inline_page_seeks_past_the_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "MULTI_TENANT", False)
+    at = datetime(2026, 1, 1, tzinfo=UTC)
+    sql, params = _compile(
+        message_text_page_inline(
+            "w", "hello", use_fts=True, after=(0.5, at, 42), limit=7
+        )
+    )
+    assert "public.messages.created_at, public.messages.id) < (" in sql
+    values = list(params.values())
+    assert 0.5 in values and at in values and 42 in values
+
+
+class _FirstStatement:
+    """Records the first statement and returns no rows."""
+
+    def __init__(self) -> None:
+        self.statements: list[Any] = []
+
+    async def execute(self, stmt: Any) -> Any:
+        self.statements.append(stmt)
+        return _Result()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("multi_tenant", [True, False])
+async def test_matching_messages_picks_the_page_source_by_mode(
+    monkeypatch: pytest.MonkeyPatch, multi_tenant: bool
+) -> None:
+    monkeypatch.setattr(settings, "MULTI_TENANT", multi_tenant)
+    db = _FirstStatement()
+
+    found = await _bound(
+        lambda: matching_messages(
+            db,  # pyright: ignore[reportArgumentType]
+            select(models.Message),
+            "w",
+            "x",
+            use_fts=True,
+            limit=3,
+        )
+    )
+
+    assert found == []
+    (page,) = db.statements
+    sql, _ = _compile(page)
+    assert (models.MESSAGE_TEXT_MATCHES in sql) is multi_tenant
+    assert ("messages.content ILIKE" in sql) is not multi_tenant
 
 
 class _Row:
@@ -222,3 +296,42 @@ async def test_matching_messages_keeps_the_page_order_and_the_limit(
     )
 
     assert [m.id for m in found] == [9, 8]
+
+
+class _RecordingPages(_Pages):
+    """`_Pages`, keeping the compiled row-fetch statements."""
+
+    def __init__(self, pages: list[list[int]], kept: set[int]) -> None:
+        super().__init__(pages, kept)
+        self.fetches: list[tuple[str, dict[str, Any]]] = []
+
+    async def execute(self, stmt: Any) -> Any:
+        sql, params = _compile(stmt)
+        if models.MESSAGE_TEXT_MATCHES not in sql:
+            self.fetches.append((sql, params))
+        return await super().execute(stmt)
+
+
+@pytest.mark.asyncio
+async def test_matching_messages_fetches_rows_by_primary_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The row fetch binds tenant_id: the key is (tenant_id, id), and with
+    MULTI_TENANT off no ORM hook adds it, so ids alone are not key lookups."""
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    db = _RecordingPages(pages=[[5, 4]], kept={4})
+
+    await _bound(
+        lambda: matching_messages(
+            db,  # pyright: ignore[reportArgumentType]
+            select(models.Message),
+            "w",
+            "x",
+            use_fts=False,
+            limit=1,
+        )
+    )
+
+    ((sql, params),) = db.fetches
+    assert "messages.tenant_id = " in sql
+    assert "tenant-a" in params.values()

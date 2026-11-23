@@ -12,8 +12,10 @@ These tests assert on compiled SQL and never execute a statement.
 """
 
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
+from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -38,11 +40,22 @@ def _compile(stmt: Select[Any]) -> tuple[str, dict[str, Any]]:
 
 
 class _FakeResult:
+    def __init__(self, rows: list[Any] | None = None) -> None:
+        self._rows: list[Any] = rows or []
+
     def scalars(self) -> "_FakeResult":
-        return self
+        return _FakeResult()
 
     def all(self) -> list[Any]:
-        return []
+        return self._rows
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter(self._rows)
+
+
+# One text-match page row, so the id-first search goes on to run its filtered
+# statement (the one that carries the session scope) instead of stopping empty.
+_TEXT_PAGE_ROW = SimpleNamespace(id=1, created_at=datetime(2026, 1, 1), rank=0.0)
 
 
 class _CapturingDB:
@@ -53,6 +66,9 @@ class _CapturingDB:
 
     async def execute(self, stmt: Any) -> _FakeResult:
         self.statements.append(stmt)
+        columns = getattr(stmt, "selected_columns", None)
+        if columns is not None and "rank" in columns:
+            return _FakeResult([_TEXT_PAGE_ROW])
         return _FakeResult()
 
 
@@ -196,7 +212,8 @@ async def test_get_observation_context_denies_without_querying() -> None:
 
 @pytest.fixture
 def capturing_tracked_db(monkeypatch: pytest.MonkeyPatch) -> _CapturingDB:
-    """Routes the CRUD module's own `tracked_db` sessions to a capturing fake."""
+    """Routes the CRUD module's own sessions (`tracked_db`, and `search_db` for
+    grep) to a capturing fake."""
     db = _CapturingDB()
 
     @asynccontextmanager
@@ -204,11 +221,12 @@ def capturing_tracked_db(monkeypatch: pytest.MonkeyPatch) -> _CapturingDB:
         yield db
 
     monkeypatch.setattr(message_crud, "tracked_db", _tracked_db)
+    monkeypatch.setattr(message_crud, "search_db", _tracked_db)
     return db
 
 
 def _assert_scoped_in_sql(stmt: Any, table: str) -> None:
-    """The one statement run is the search itself, scoped by a correlated EXISTS.
+    """The search statement is scoped by a correlated EXISTS.
 
     A name-list implementation runs a membership lookup first, so asserting on
     the search statement (rather than any statement) is what catches it.
@@ -228,8 +246,11 @@ async def test_grep_messages_scopes_in_sql(capturing_tracked_db: _CapturingDB) -
         "workspace", None, "needle", observer="observer-peer"
     )
 
-    assert len(capturing_tracked_db.statements) == 1
-    _assert_scoped_in_sql(capturing_tracked_db.statements[0], "messages")
+    # The text-match page reads messages alone; the scope rides on the
+    # statement that fetches the page's rows through the caller's filters.
+    page, scoped = capturing_tracked_db.statements
+    assert "session_peers" not in str(page)
+    _assert_scoped_in_sql(scoped, "messages")
 
 
 @pytest.mark.asyncio
