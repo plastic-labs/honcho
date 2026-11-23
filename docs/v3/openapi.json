@@ -5015,6 +5015,202 @@
         }
       }
     },
+    "/v3/workspaces/{workspace_id}/graph/overview": {
+      "get": {
+        "tags": [
+          "graph"
+        ],
+        "summary": "Graph Overview",
+        "description": "Perspectives and conclusion counts for a workspace graph. Experimental.",
+        "operationId": "graph_overview_v3_workspaces__workspace_id__graph_overview_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/graph": {
+      "get": {
+        "tags": [
+          "graph"
+        ],
+        "summary": "Graph",
+        "description": "Structure-only conclusion graph as HONCHOGR v2 bytes. Experimental.",
+        "operationId": "graph_v3_workspaces__workspace_id__graph_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "observer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Observer"
+            }
+          },
+          {
+            "name": "observed",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Observed"
+            }
+          },
+          {
+            "name": "if-none-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-None-Match"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/graph/text": {
+      "post": {
+        "tags": [
+          "graph"
+        ],
+        "summary": "Graph Text",
+        "description": "Text and session for a batch of conclusion ids. Experimental.",
+        "operationId": "graph_text_v3_workspaces__workspace_id__graph_text_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_graph_text_v3_workspaces__workspace_id__graph_text_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v3/workspaces/{workspace_id}/dreams/list": {
       "post": {
         "tags": [
@@ -5656,6 +5852,23 @@
           "peer_id"
         ],
         "title": "Body_create_messages_with_file_v3_workspaces__workspace_id__sessions__session_id__messages_upload_post"
+      },
+      "Body_graph_text_v3_workspaces__workspace_id__graph_text_post": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20000,
+            "title": "Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ids"
+        ],
+        "title": "Body_graph_text_v3_workspaces__workspace_id__graph_text_post"
       },
       "Conclusion": {
         "properties": {
