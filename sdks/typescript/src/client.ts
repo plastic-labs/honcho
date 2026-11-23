@@ -14,6 +14,23 @@ import type {
   ChatResponse,
   DreamRun,
   DreamRunDetail,
+  IngestAccount,
+  IngestAccountResponse,
+  IngestDeriveResponse,
+  IngestDeriveResult,
+  IngestLinkResponse,
+  IngestLinkResult,
+  IngestPerson,
+  IngestPersonResponse,
+  IngestRecordResult,
+  IngestResponse,
+  IngestResult,
+  IngestSession,
+  IngestSessionResponse,
+  IngestStatus,
+  IngestStatusResponse,
+  IngestUnlinkResponse,
+  IngestUnlinkResult,
   MessageResponse,
   PageResponse,
   PeerResponse,
@@ -33,6 +50,8 @@ import {
   type Filters,
   type HonchoConfig,
   HonchoConfigSchema,
+  type IngestRecord,
+  ingestRecordToApi,
   LimitSchema,
   normalizeListOptions,
   type PeerAddition,
@@ -64,6 +83,17 @@ import {
 } from './validation'
 
 const DEFAULT_BASE_URL = 'https://api.honcho.dev'
+/** Records per ingest request: the most the ingest route takes at once. */
+const INGEST_BATCH_SIZE = 100
+
+function ingestAccountFromApi(a: IngestAccountResponse): IngestAccount {
+  return {
+    source: a.source,
+    sourceInstance: a.source_instance,
+    id: a.id ?? undefined,
+    displayName: a.display_name ?? undefined,
+  }
+}
 type ReasoningLevel = 'minimal' | 'low' | 'medium' | 'high' | 'max'
 
 /**
@@ -109,6 +139,10 @@ export class Honcho {
    * Memoized workspace get-or-create call.
    */
   private _workspaceReady?: Promise<void>
+  /**
+   * Whether this client creates its workspace as an auto workspace.
+   */
+  private readonly _auto: boolean
 
   /**
    * Cached metadata for this workspace. May be stale if the workspace
@@ -186,9 +220,17 @@ export class Honcho {
    * @param options.timeout - Optional custom timeout for the HTTP client
    * @param options.maxRetries - Optional custom maximum number of retries for the HTTP client
    * @param options.defaultHeaders - Optional custom default headers for the HTTP client
+   * @param options.auto - Create the workspace as an auto workspace, which `ingest`
+   *                       writes to. Experimental, like ingest: it may change or
+   *                       stop working without notice. Only a new workspace can be
+   *                       made auto: on an existing workspace that isn't auto, the
+   *                       first call that creates the workspace throws
+   *                       `ConflictError`. An existing auto workspace works with or
+   *                       without it.
    */
   constructor(options: HonchoConfig = {}) {
     const validatedOptions = HonchoConfigSchema.parse(options)
+    this._auto = validatedOptions.auto ?? false
     this.workspaceId =
       validatedOptions.workspaceId ||
       process.env.HONCHO_WORKSPACE_ID ||
@@ -230,6 +272,7 @@ export class Honcho {
           id,
           metadata: params?.metadata,
           configuration: workspaceConfigToApi(params?.configuration),
+          ...(this._auto ? { auto: true } : {}),
         },
       }
     )
@@ -1289,6 +1332,254 @@ export class Honcho {
 
     const status = await this._getQueueStatus(this.workspaceId, queryParams)
     return transformQueueStatus(status)
+  }
+
+  /**
+   * Ingest source records into this auto workspace.
+   *
+   * Honcho turns each record into a message, picking its session and peers
+   * from the record's source context, and deduplicates on the record's source
+   * identity, so sending the same records again is safe. Records are sent 100
+   * per request; an async iterable is read one batch at a time.
+   *
+   * The workspace must be an auto workspace. A client made with `auto: true`
+   * creates it on first use; otherwise it must already exist (`NotFoundError`)
+   * and be auto (`ConflictError`).
+   *
+   * @param records - The records to ingest
+   * @param options.derive - `'now'` (default) queues derivation as records
+   *                         arrive; `'later'` stores them without deriving
+   *                         until `ingestDerive()`
+   * @returns One result per record, with `index` counted across all batches.
+   *          If a request fails, the batches before it are already stored;
+   *          sending all the records again is safe.
+   *
+   * @experimental Ingest may change or stop working without notice.
+   */
+  async ingest(
+    records: Iterable<IngestRecord> | AsyncIterable<IngestRecord>,
+    options?: { derive?: 'now' | 'later' }
+  ): Promise<IngestResult> {
+    if (this._auto) {
+      await this._ensureWorkspace()
+    }
+    const derive = options?.derive ?? 'now'
+    const results: IngestRecordResult[] = []
+    let batch: Record<string, unknown>[] = []
+    let offset = 0
+    const send = async () => {
+      const response = await this._http.post<IngestResponse>(
+        `/${API_VERSION}/workspaces/${this.workspaceId}/ingest`,
+        { body: { derive, records: batch } }
+      )
+      for (const r of response.records) {
+        results.push({
+          index: r.index + offset,
+          outcome: r.outcome,
+          reason: r.reason ?? undefined,
+          recordId: r.record_id ?? undefined,
+          messageId: r.message_id ?? undefined,
+          sessionId: r.session_id ?? undefined,
+          peerId: r.peer_id ?? undefined,
+          derivation: r.derivation ?? undefined,
+        })
+      }
+      offset += batch.length
+      batch = []
+    }
+    for await (const record of records) {
+      batch.push(ingestRecordToApi(record))
+      if (batch.length === INGEST_BATCH_SIZE) {
+        await send()
+      }
+    }
+    if (batch.length > 0) {
+      await send()
+    }
+    return { records: results }
+  }
+
+  /**
+   * Derive the records ingested with `derive: 'later'`.
+   *
+   * Releases deferred records in batches until none remain, or until a call
+   * releases nothing (records still arriving with `derive: 'later'` are left
+   * for the next call).
+   *
+   * @returns `pending`: records released by this call, in total;
+   *          `remaining`: records still deferred afterwards
+   *
+   * @experimental Ingest may change or stop working without notice.
+   */
+  async ingestDerive(): Promise<IngestDeriveResult> {
+    let released = 0
+    while (true) {
+      const step = await this._http.post<IngestDeriveResponse>(
+        `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/derive`
+      )
+      released += step.pending
+      if (step.remaining === 0 || step.pending === 0) {
+        return { pending: released, remaining: step.remaining }
+      }
+    }
+  }
+
+  /**
+   * Link imported people into one, from the next import on.
+   *
+   * Every account of `peers.slice(1)` maps to `peers[0]` from now on, so the
+   * next import puts their records on one person. Nothing already imported
+   * moves: the people being merged must have no imported messages yet, so
+   * call `ingestReset()`, link, then import again (`ConflictError` otherwise).
+   *
+   * @experimental Ingest may change or stop working without notice.
+   */
+  async ingestLink(peers: Array<string | Peer>): Promise<IngestLinkResult> {
+    const r = await this._http.post<IngestLinkResponse>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/link`,
+      { body: { peers: peers.map((p) => resolveId(p)) } }
+    )
+    return {
+      peerId: r.peer_id,
+      merged: r.merged,
+      accounts: r.accounts.map(ingestAccountFromApi),
+    }
+  }
+
+  /**
+   * Take a linked account back out of `peer`, from the next import on.
+   *
+   * The account maps to the person it was linked from again. Its records must
+   * not be imported yet: call `ingestReset()` first.
+   *
+   * @experimental Ingest may change or stop working without notice.
+   */
+  async ingestUnlink(options: {
+    peer: string | Peer
+    account: { source: string; sourceInstance: string; id: string }
+  }): Promise<IngestUnlinkResult> {
+    const r = await this._http.post<IngestUnlinkResponse>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/unlink`,
+      {
+        body: {
+          peer: resolveId(options.peer),
+          account: {
+            source: options.account.source,
+            source_instance: options.account.sourceInstance,
+            id: options.account.id,
+          },
+        },
+      }
+    )
+    return { peerId: r.peer_id, account: ingestAccountFromApi(r.account) }
+  }
+
+  /**
+   * Delete every session holding imported records, to import again.
+   *
+   * The sessions are deleted in the background; `ingestStatus()` shows them
+   * gone at once. People, their configuration and links stay.
+   *
+   * @returns The sessions whose deletion was started
+   *
+   * @experimental Ingest may change or stop working without notice.
+   */
+  async ingestReset(): Promise<{ sessions: string[] }> {
+    return this._http.post<{ sessions: string[] }>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/reset`
+    )
+  }
+
+  /**
+   * What this workspace's imports produced, for review before deriving.
+   *
+   * Records by derivation state, the tokens still deferred, and how many
+   * people and sessions the records map to, with how many of each are not
+   * modeled.
+   *
+   * @experimental Ingest may change or stop working without notice.
+   */
+  async ingestStatus(): Promise<IngestStatus> {
+    const s = await this._http.get<IngestStatusResponse>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/status`
+    )
+    return {
+      records: s.records,
+      deferredTokens: s.deferred_tokens,
+      people: s.people,
+      peopleNotModeled: s.people_not_modeled,
+      sessions: s.sessions,
+      sessionsNotModeled: s.sessions_not_modeled,
+      sessionsBeingDeleted: s.sessions_being_deleted ?? 0,
+    }
+  }
+
+  /**
+   * The peers created for imported accounts, most records first.
+   *
+   * Each lists its source accounts, how many records they wrote, and whether
+   * the peer is modeled. Exclude one with
+   * `peer.setConfiguration({ observeMe: false })` before `ingestDerive()`.
+   *
+   * @experimental Ingest may change or stop working without notice.
+   */
+  async ingestPeople(options?: {
+    page?: number
+    size?: number
+  }): Promise<Page<IngestPerson, IngestPersonResponse>> {
+    const fetchPage = (
+      page?: number,
+      size?: number
+    ): Promise<PageResponse<IngestPersonResponse>> =>
+      this._http.get<PageResponse<IngestPersonResponse>>(
+        `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/people`,
+        { query: { page, size } }
+      )
+    return new Page(
+      await fetchPage(options?.page, options?.size),
+      (p) => ({
+        peerId: p.peer_id,
+        displayName: p.display_name ?? undefined,
+        accounts: p.accounts.map(ingestAccountFromApi),
+        messages: p.messages,
+        modeled: p.modeled,
+      }),
+      fetchPage
+    )
+  }
+
+  /**
+   * The sessions created for imported containers, most records first.
+   *
+   * Each gives its container's display name and source, how many records it
+   * holds, and whether reasoning is on for it.
+   *
+   * @experimental Ingest may change or stop working without notice.
+   */
+  async ingestSessions(options?: {
+    page?: number
+    size?: number
+  }): Promise<Page<IngestSession, IngestSessionResponse>> {
+    const fetchPage = (
+      page?: number,
+      size?: number
+    ): Promise<PageResponse<IngestSessionResponse>> =>
+      this._http.get<PageResponse<IngestSessionResponse>>(
+        `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/sessions`,
+        { query: { page, size } }
+      )
+    return new Page(
+      await fetchPage(options?.page, options?.size),
+      (s) => ({
+        sessionId: s.session_id,
+        displayName: s.display_name ?? undefined,
+        source: s.source,
+        sourceInstance: s.source_instance,
+        messages: s.messages,
+        modeled: s.modeled,
+      }),
+      fetchPage
+    )
   }
 
   /**

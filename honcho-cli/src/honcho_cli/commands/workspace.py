@@ -12,6 +12,7 @@ import typer
 from honcho import (
     APIError,
     AuthenticationError,
+    ConflictError,
     Honcho,
     NotFoundError,
     PermissionDeniedError,
@@ -21,6 +22,7 @@ from honcho import (
 from honcho_cli import replay as replay_lib
 from honcho_cli import replay_view
 from honcho_cli.config import identity_headers
+from honcho_cli.experimental import require as require_experimental
 from honcho_cli.output import print_error, print_json, print_result, status, use_json
 from honcho_cli.recall import parse_csv_repeatable, reject_incompatible_recall, scope_for_sdk
 from honcho_cli.validation import validate_resource_id
@@ -74,13 +76,21 @@ def list_workspaces(
 def create_workspace(
     workspace_id: str = typer.Argument(help="Workspace ID to create or get"),
     metadata: Optional[str] = typer.Option(None, "--metadata", help="JSON metadata to associate with the workspace"),
+    auto: bool = typer.Option(
+        False,
+        "--auto",
+        help="Experimental (needs HONCHO_EXPERIMENTAL=1): create it as an auto workspace,"
+        + " which `honcho ingest import` writes to. Only a new workspace can be made auto.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Create or get a workspace."""
     handle_cmd_flags(json_output=json_output)
+    if auto:
+        require_experimental("`--auto`")
     wid = validate_resource_id(workspace_id, "workspace")
     client, config = get_client(require_workspace=False)
-    ws_client = _with_workspace(client, wid)
+    ws_client = _with_workspace(client, wid, auto=auto)
 
     parsed_metadata = None
     if metadata:
@@ -94,10 +104,20 @@ def create_workspace(
         # Trigger get-or-create via the workspace ensure mechanism
         ws_client.get_configuration()
         result: dict[str, object] = {"workspace_id": wid}
+        if auto:
+            result["auto"] = True
         if parsed_metadata is not None:
             ws_client.set_metadata(parsed_metadata)
             result["metadata"] = parsed_metadata
         print_result(result)
+    except ConflictError:
+        print_error(
+            "NOT_AUTO_WORKSPACE",
+            f"Workspace '{wid}' already exists and isn't an auto workspace. Only a new"
+            + " workspace can be made auto: pick another name.",
+            {"workspace": wid},
+        )
+        raise typer.Exit(1)
     except Exception as e:
         _handle_error(e, "workspace", wid)
 
@@ -513,13 +533,14 @@ def _queue_status_command(dest_url: str, dest_id: str) -> str:
     return f'HONCHO_BASE_URL={dest_url} HONCHO_API_KEY="$HONCHO_TO_API_KEY" {command}'
 
 
-def _with_workspace(client, workspace_id: str):
+def _with_workspace(client, workspace_id: str, *, auto: bool = False):
     """Return a new client pointed at a different workspace."""
     return Honcho(
         base_url=str(client.base_url),
         api_key=client._http.api_key if hasattr(client._http, "api_key") else None,
         workspace_id=workspace_id,
         default_headers=identity_headers(),
+        auto=auto,
     )
 
 

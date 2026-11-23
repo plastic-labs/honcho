@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Peer card entries may cover durable work facts: ongoing roles and responsibilities, projects, things the peer owns or maintains, and the tools and environments it works in. The rule was that anything likely to change within six months stayed off the card, which kept rebuilt cards to a few lines. Entries carry no pronouns for the peer, and the dreamer never infers them
 
+## [3.6.2] - 2026-11-19
+
+### Fixed
+
+- The check for due dreams no longer fails when many collections are due. It loaded every candidate's workspace and session in one row-value `IN` list, which Postgres rejects with `stack depth limit exceeded` once the list is long enough, and its other lookups bound one parameter per candidate. The deriver metrics poller runs the same check, so a failure also froze the deriver queue metrics and, with `DERIVER_SCHEDULER=api`, stopped due dreams from being enqueued. The lookups now run in batches, and the work-unit and tenant lists are each sent as one array parameter. (#1623)
+
 ## [3.6.1] - 2026-11-10
 
 ### Changed

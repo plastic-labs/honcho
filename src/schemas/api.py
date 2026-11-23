@@ -247,8 +247,8 @@ class WorkspaceCreate(WorkspaceBase):
     )
     auto: bool = Field(
         default=False,
-        description="Create the workspace as an auto workspace, which the ingest"
-        + " API writes to. Only a new workspace can be made auto: asking for it on"
+        description="Experimental. Create the workspace as an auto workspace, which"
+        + " the ingest API writes to. Only a new workspace can be made auto: asking for it on"
         + " an existing workspace that isn't auto is a 409. It can't be turned"
         + " off.",
     )
@@ -691,6 +691,144 @@ class IngestResponse(BaseModel):
     receipt: str | None = Field(
         default=None, description="Reserved for a consistency token"
     )
+
+
+class IngestRecordCounts(BaseModel):
+    """The workspace's ingested records by derivation state."""
+
+    deferred: int = Field(
+        ..., description="Stored, waiting for POST /ingest/derive to release them"
+    )
+    pending: int = Field(..., description="Released, about to be queued")
+    queued: int = Field(..., description="Queued for derivation, or derived")
+
+
+class IngestStatus(BaseModel):
+    """What the workspace's imports produced, for review before deriving."""
+
+    records: IngestRecordCounts
+    deferred_tokens: int = Field(
+        ..., description="Tokens in the messages of deferred records"
+    )
+    people: int = Field(..., description="Peers created for imported accounts")
+    people_not_modeled: int = Field(
+        ...,
+        description="Of those, peers with `observe_me` off: nothing is derived"
+        + " about them",
+    )
+    sessions: int = Field(..., description="Sessions created for imported containers")
+    sessions_not_modeled: int = Field(
+        ...,
+        description="Of those, sessions whose reasoning is off (their own"
+        + " setting, else the workspace's)",
+    )
+    sessions_being_deleted: int = Field(
+        default=0,
+        description="Sessions a reset marked for deletion that still hold imported"
+        + " records; 0 once the deletion has finished",
+    )
+
+
+class IngestAccount(BaseModel):
+    """One source account mapped to a peer."""
+
+    source: str
+    source_instance: str
+    id: str | None = Field(
+        default=None, description="The account's ID in the source, when it has one"
+    )
+    display_name: str | None = Field(
+        default=None, description="The newest name the source gave for the account"
+    )
+
+
+class IngestPerson(BaseModel):
+    """A peer created for imported accounts."""
+
+    peer_id: str
+    display_name: str | None = Field(
+        default=None, description="The first account's display name"
+    )
+    accounts: list[IngestAccount]
+    messages: int = Field(..., description="Records its accounts wrote")
+    modeled: bool = Field(
+        ..., description="False when `observe_me` is off: nothing is derived about it"
+    )
+
+    model_config = ConfigDict(from_attributes=True)  # pyright: ignore
+
+
+class IngestSessionSummary(BaseModel):
+    """A session created for an imported container."""
+
+    session_id: str
+    display_name: str | None = Field(
+        default=None, description="The container's display name in the source"
+    )
+    source: str
+    source_instance: str
+    messages: int = Field(..., description="Records in the session")
+    modeled: bool = Field(
+        ...,
+        description="False when reasoning is off for the session (its own setting,"
+        + " else the workspace's): only summaries are made",
+    )
+
+    model_config = ConfigDict(from_attributes=True)  # pyright: ignore
+
+
+class IngestLink(BaseModel):
+    """People to link into one: the first is kept."""
+
+    peers: list[
+        Annotated[
+            str, Field(min_length=1, max_length=512, pattern=RESOURCE_NAME_PATTERN)
+        ]
+    ] = Field(
+        ...,
+        min_length=2,
+        max_length=20,
+        description="Peer IDs. Every account of the others maps to the first from the"
+        + " next import on",
+    )
+
+
+class IngestLinkResult(BaseModel):
+    """The kept person and every account that now maps to it."""
+
+    peer_id: str
+    merged: list[str] = Field(..., description="The people linked into it")
+    accounts: list[IngestAccount]
+
+
+class IngestAccountRef(BaseModel):
+    """One source account, by its ID in the source."""
+
+    source: str = Field(..., min_length=1, max_length=64)
+    source_instance: str = Field(..., min_length=1, max_length=128)
+    id: _ExternalId
+
+
+class IngestUnlink(BaseModel):
+    """An account to take back out of the person it was linked into."""
+
+    peer: str = Field(
+        ..., min_length=1, max_length=512, description="The person it was linked into"
+    )
+    account: IngestAccountRef
+
+
+class IngestUnlinkResult(BaseModel):
+    """The person the account maps to again, from the next import on."""
+
+    peer_id: str
+    account: IngestAccount
+
+
+class IngestResetResponse(BaseModel):
+    """The imported sessions whose deletion was started."""
+
+    sessions: list[str]
 
 
 class IngestDeriveResponse(BaseModel):
