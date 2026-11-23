@@ -6,9 +6,12 @@ of each item's rank in each list, then summing these reciprocal ranks.
 """
 
 import re
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, TypeVar
 
+from psycopg.errors import QueryCanceled
 from sqlalchemy import (
     BigInteger,
     ColumnElement,
@@ -22,13 +25,14 @@ from sqlalchemy import (
     or_,
     select,
 )
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import EmbeddingTokenLimitError, embedding_client
-from src.exceptions import ValidationException
+from src.exceptions import SearchTimeoutError, ValidationException
 from src.models import session_peers_table
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
@@ -37,6 +41,35 @@ from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
 
 T = TypeVar("T")
+
+
+@asynccontextmanager
+async def search_db(operation_name: str) -> AsyncGenerator[AsyncSession]:
+    """A session for message search, bounded by ``DB.SEARCH_STATEMENT_TIMEOUT_MS``.
+
+    Raises:
+        SearchTimeoutError: A statement in the block hit the timeout.
+    """
+    # region ai
+    # A transaction, not the AUTOCOMMIT read engine, because SET LOCAL needs one
+    # to attach to: on the read engine it is a silent no-op. The setting then
+    # ends with the transaction however the block exits (tracked_db always rolls
+    # back), so it never reaches the next user of the pooled connection, which a
+    # session-level SET + RESET could on a cancelled task. The block is
+    # SELECT-only and holds no external call, so the transaction is short.
+    # endregion
+    async with tracked_db(operation_name) as db:
+        timeout_ms = settings.DB.SEARCH_STATEMENT_TIMEOUT_MS
+        if timeout_ms:
+            await db.execute(
+                select(func.set_config("statement_timeout", f"{timeout_ms}ms", True))
+            )
+        try:
+            yield db
+        except DBAPIError as e:
+            if isinstance(e.orig, QueryCanceled):
+                raise SearchTimeoutError() from e
+            raise
 
 
 def _uses_pgvector_message_search() -> bool:
@@ -573,7 +606,7 @@ async def search(
             return search_results[0][:limit]
         return []
 
-    async with tracked_db("search.messages", read_only=True) as managed_db:
+    async with search_db("search.messages") as managed_db:
         combined_results = await _run_search(managed_db)
         for message in combined_results:
             managed_db.expunge(message)

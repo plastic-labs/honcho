@@ -196,7 +196,8 @@ async def test_get_observation_context_denies_without_querying() -> None:
 
 @pytest.fixture
 def capturing_tracked_db(monkeypatch: pytest.MonkeyPatch) -> _CapturingDB:
-    """Routes the CRUD module's own `tracked_db` sessions to a capturing fake."""
+    """Routes the CRUD module's own sessions (`tracked_db`, and `search_db` for
+    grep) to a capturing fake."""
     db = _CapturingDB()
 
     @asynccontextmanager
@@ -204,6 +205,7 @@ def capturing_tracked_db(monkeypatch: pytest.MonkeyPatch) -> _CapturingDB:
         yield db
 
     monkeypatch.setattr(message_crud, "tracked_db", _tracked_db)
+    monkeypatch.setattr(message_crud, "search_db", _tracked_db)
     return db
 
 

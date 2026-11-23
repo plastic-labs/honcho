@@ -18,7 +18,7 @@ from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
 from src.utils.path_params import schema_from_path
 from src.utils.scopes import is_scope_peer_name
-from src.utils.search import matching_messages, message_text_condition
+from src.utils.search import matching_messages, message_text_condition, search_db
 from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
 
@@ -1240,7 +1240,7 @@ async def grep_messages(
     if deny:
         return []
 
-    async with tracked_db("message.grep_messages", read_only=True) as db:
+    async with search_db("message.grep_messages") as db:
         snippets = await _grep_messages_internal(
             db,
             workspace_name,
