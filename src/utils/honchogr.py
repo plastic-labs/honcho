@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import array
 import operator
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from itertools import compress, islice
 from typing import Any, Literal, cast
 
 from src.utils import honchogr_reference as ref
 
 _U32_MAX = 0xFFFFFFFF
+# typed so map() keeps calling the C function while the checker sees ints
+_or_ints = cast("Callable[[int, int], int]", operator.or_)
 _INT_TYPECODES = frozenset("bBhHiIlLqQ")
 _PRINTABLE_ASCII = bytes(range(0x21, 0x7F))
 # index = 4*unresolved + 2*explicit + has_sources, matching the reference's lineage branches
@@ -174,8 +176,8 @@ def _encode(
 
     unresolved = _nonzero_bytes(
         map(
-            operator.or_,
-            map(operator.or_, unresolved_out, unresolved_del),
+            _or_ints,
+            map(_or_ints, unresolved_out, unresolved_del),
             unresolved_unk,
         )
     )

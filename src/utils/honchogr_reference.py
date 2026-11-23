@@ -182,7 +182,7 @@ def _validate_perspectives(values: object) -> tuple[tuple[str, str, str], ...]:
         if previous is not None and key <= previous:
             raise ValueError(
                 "perspective_dict must be unique and sorted by observer UTF-8, "
-                "observed UTF-8, then kind"
+                + "observed UTF-8, then kind"
             )
         previous = key
         result.append((observer, observed, kind))
