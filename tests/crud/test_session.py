@@ -768,7 +768,7 @@ class TestDeleteSessionQueueItemTenantScopedCleanup:
         for tenant_id in ("tenant-a", "tenant-b"):
             await db_session.execute(
                 pg_insert(models.Tenant)
-                .values(tenant_id=tenant_id, tier="shared")
+                .values(tenant_id=tenant_id)
                 .on_conflict_do_nothing()
             )
         db_session.add(models.Workspace(name=workspace_name, tenant_id="tenant-a"))
@@ -1110,7 +1110,7 @@ class TestDeleteSessionKeepsSiblingSessions:
         try:
             await db_session.execute(
                 pg_insert(models.Tenant)
-                .values(tenant_id=tenant_id, tier="shared")
+                .values(tenant_id=tenant_id)
                 .on_conflict_do_nothing()
             )
             ws_a, ws_b = str(generate_nanoid()), str(generate_nanoid())

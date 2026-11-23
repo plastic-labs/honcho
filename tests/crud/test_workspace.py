@@ -672,7 +672,7 @@ class TestDeleteWorkspaceTenantScopedQueueCleanup:
         for tenant_id in ("tenant-a", "tenant-b"):
             await db_session.execute(
                 pg_insert(models.Tenant)
-                .values(tenant_id=tenant_id, tier="shared")
+                .values(tenant_id=tenant_id)
                 .on_conflict_do_nothing()
             )
         db_session.add(models.Workspace(name=workspace_name, tenant_id="tenant-a"))
@@ -723,7 +723,7 @@ class TestDeleteWorkspaceTenantScopedQueueCleanup:
         workspace_name = str(generate_nanoid())
         await db_session.execute(
             pg_insert(models.Tenant)
-            .values(tenant_id="tenant-a", tier="shared")
+            .values(tenant_id="tenant-a")
             .on_conflict_do_nothing()
         )
         db_session.add(models.Workspace(name=workspace_name, tenant_id="tenant-a"))
@@ -757,7 +757,7 @@ class TestDeleteWorkspaceQueueItemTenantScopedCleanup:
         for tenant_id in ("tenant-a", "tenant-b"):
             await db_session.execute(
                 pg_insert(models.Tenant)
-                .values(tenant_id=tenant_id, tier="shared")
+                .values(tenant_id=tenant_id)
                 .on_conflict_do_nothing()
             )
         # Only tenant-a gets an actual Workspace row: workspaces are

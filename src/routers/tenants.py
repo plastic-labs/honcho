@@ -80,7 +80,6 @@ async def create_tenant(body: schemas.TenantCreate, response: Response):
             db,
             tenant_id=body.tenant_id,
             vector_correlation_id=body.vector_correlation_id,
-            tier=body.tier,
         )
         response.status_code = 201 if result.created else 200
         return schemas.Tenant.model_validate(result.resource)
