@@ -17,6 +17,7 @@ from src import schemas
 from src.cache.client import cache as cache_client
 from src.config import ConfiguredModelSettings, settings
 from src.crud.lifecycle import live_session_row
+from src.crud.message import observer_scope_clause
 from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
 from src.exceptions import EmptySummaryError, ResourceNotFoundException
@@ -1335,10 +1336,12 @@ async def get_recent_peer_summaries(
     Get the latest summary of the sessions a set of peers most recently shared.
 
     A session qualifies when every named peer has a membership row in it, current
-    or ended. Each session contributes its long summary when it has one, since that
-    covers the whole session, and its short summary otherwise. Sessions are
-    ordered by their newest summary, most recent first, as a proxy for recent
-    activity that needs no message scan.
+    or ended, except that a scope peer needs a current one: a session removed from
+    a scope stops granting it access, as it does for message search. Each session
+    contributes its long summary when it has one, since that covers the whole
+    session, and its short summary otherwise. Sessions are ordered by their
+    newest summary, most recent first, as a proxy for recent activity that needs
+    no message scan.
 
     Args:
         db: Database session
@@ -1371,14 +1374,7 @@ async def get_recent_peer_summaries(
     )
     for peer_name in dict.fromkeys(peer_names):
         stmt = stmt.where(
-            select(models.SessionPeer.peer_name)
-            .where(
-                models.SessionPeer.tenant_id == tenant_id,
-                models.SessionPeer.workspace_name == workspace_name,
-                models.SessionPeer.session_name == models.Session.name,
-                models.SessionPeer.peer_name == peer_name,
-            )
-            .exists()
+            observer_scope_clause(workspace_name, peer_name, models.Session.name)
         )
     stmt = (
         stmt.order_by(last_summarized_at.desc(), models.Session.id.asc())

@@ -33,6 +33,7 @@ from src.utils.agent_tools import (
     _handle_get_session_summaries,  # pyright: ignore[reportPrivateUsage]
 )
 from src.utils.queue_payload import DreamPayload, create_dream_payload
+from src.utils.scopes import SCOPE_KIND, scope_peer_name
 from src.utils.summarizer import SUMMARIES_KEY, SummaryType
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
@@ -419,6 +420,13 @@ async def _add_session(
     await db_session.flush()
 
 
+async def _read_summaries(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
+    """Call get_session_summaries; these outputs are short enough to stay text."""
+    result = await _handle_get_session_summaries(ctx, tool_input)
+    assert isinstance(result, str)
+    return result
+
+
 class TestSessionSummariesTool:
     @pytest_asyncio.fixture
     async def summarized_sessions(
@@ -494,9 +502,7 @@ class TestSessionSummariesTool:
         self, summarized_sessions: tuple[str, str, str]
     ):
         workspace_name, peer, _ = summarized_sessions
-        result = await _handle_get_session_summaries(
-            self._context(workspace_name, peer, peer), {}
-        )
+        result = await _read_summaries(self._context(workspace_name, peer, peer), {})
 
         order = [
             result.index(f"## Session {name} ")
@@ -516,16 +522,16 @@ class TestSessionSummariesTool:
         workspace_name, peer, _ = summarized_sessions
         context = self._context(workspace_name, peer, peer)
 
-        first = await _handle_get_session_summaries(context, {"limit": 2})
+        first = await _read_summaries(context, {"limit": 2})
         assert "## Session newest " in first
         assert "## Session middle " in first
         assert "## Session oldest " not in first
 
-        second = await _handle_get_session_summaries(context, {"limit": 2, "offset": 2})
+        second = await _read_summaries(context, {"limit": 2, "offset": 2})
         assert second.startswith("Summaries of sessions 3-3")
         assert "## Session oldest " in second
 
-        past_the_end = await _handle_get_session_summaries(context, {"offset": 3})
+        past_the_end = await _read_summaries(context, {"offset": 3})
         assert past_the_end.startswith("No session summaries found")
 
     @pytest.mark.asyncio
@@ -533,20 +539,57 @@ class TestSessionSummariesTool:
         self, summarized_sessions: tuple[str, str, str]
     ):
         workspace_name, peer, other = summarized_sessions
-        result = await _handle_get_session_summaries(
-            self._context(workspace_name, other, peer), {}
-        )
+        result = await _read_summaries(self._context(workspace_name, other, peer), {})
 
         assert "## Session newest " in result
         assert "## Session middle " not in result
         assert "## Session not-a-member " not in result
 
     @pytest.mark.asyncio
+    async def test_a_scope_sees_only_sessions_it_is_still_in(
+        self,
+        db_session: AsyncSession,
+        summarized_sessions: tuple[str, str, str],
+    ):
+        workspace_name, peer, _ = summarized_sessions
+        scope = scope_peer_name("team")
+        db_session.add(
+            models.Peer(
+                name=scope,
+                workspace_name=workspace_name,
+                internal_metadata={"kind": SCOPE_KIND},
+            )
+        )
+        await db_session.flush()
+        for session_name, left_at in (
+            ("newest", None),
+            ("middle", datetime.datetime.now(datetime.UTC)),
+        ):
+            await db_session.execute(
+                models.session_peers_table.insert().values(
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    peer_name=scope,
+                    joined_at=datetime.datetime.now(datetime.UTC)
+                    - datetime.timedelta(days=1),
+                    left_at=left_at,
+                )
+            )
+        await db_session.commit()
+
+        result = await _read_summaries(self._context(workspace_name, scope, peer), {})
+
+        # A session removed from a scope stops granting it access, as it does
+        # for message search.
+        assert "## Session newest " in result
+        assert "## Session middle " not in result
+
+    @pytest.mark.asyncio
     async def test_refused_for_session_scoped_queries(
         self, summarized_sessions: tuple[str, str, str]
     ):
         workspace_name, peer, _ = summarized_sessions
-        result = await _handle_get_session_summaries(
+        result = await _read_summaries(
             self._context(workspace_name, peer, peer, session_allowlist=["newest"]),
             {},
         )

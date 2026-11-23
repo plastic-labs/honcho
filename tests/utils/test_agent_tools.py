@@ -1776,6 +1776,41 @@ class TestEditPeerCard:
             "ATTRIBUTE: Employer: Acme",
         ]
 
+    async def test_card_over_the_limit_can_shrink_but_not_grow(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+        # The API sets a card of any length; update_peer_card would truncate.
+        oversized = [
+            f"IDENTITY: Aliases: alias-{i}" for i in range(MAX_PEER_CARD_FACTS + 5)
+        ]
+        card_write = await crud.set_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            peer_card=oversized,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+        await db_session.commit()
+        await card_write.post_commit()
+
+        refused = await _handle_edit_peer_card(
+            ctx, {"add": ["ATTRIBUTE: Employer: Acme"]}
+        )
+        assert isinstance(refused, str)
+        assert "Not applied" in refused and "Remove at least 1" in refused
+
+        removed = await _handle_edit_peer_card(
+            ctx, {"remove": ["IDENTITY: Aliases: alias-0"]}
+        )
+        assert isinstance(removed, ToolResult)
+        assert "over the limit of 40: it can shrink but not grow" in removed.content
+        assert await self._card(db_session, workspace, peer1, peer2) == oversized[1:]
+
     async def test_reports_removals_not_on_the_card_and_invalid_additions(
         self,
         db_session: AsyncSession,

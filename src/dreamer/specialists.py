@@ -1001,6 +1001,11 @@ Use `create_observations_deductive`.
             if peer_card_enabled
             else ""
         )
+        hinted_card_task = (
+            "\nAlso check the peer card: add durable facts it lacks and remove entries that are wrong or have ended, with `edit_peer_card` before DONE."
+            if peer_card_enabled
+            else ""
+        )
 
         if hints:
             hints_str = "\n".join(f"- {q}" for q in hints[:5])
@@ -1013,7 +1018,7 @@ Use `create_observations_deductive`.
 
 {hints_str}
 
-But follow the evidence - if you find something more interesting, pursue that instead.{card_task.replace("4. ", "Also look for ")}
+But follow the evidence - if you find something more interesting, pursue that instead.{hinted_card_task}
 
 {begin}"""
 
@@ -1175,8 +1180,9 @@ class CardRefreshSpecialist(BaseSpecialist):
 
     Restricted to peer-card work: it may read evidence (get_recent_observations,
     search_memory, get_session_summaries) and write the peer card
-    (edit_peer_card, update_peer_card; a rebuild only the latter). It has NO observation-mutating tools — a card refresh
-    must never create or delete observations.
+    (edit_peer_card, update_peer_card; a rebuild only the latter). It has NO
+    observation-mutating tools — a card refresh must never create or delete
+    observations.
 
     Two modes:
     - refresh (default): the current card is injected into the prompt and the

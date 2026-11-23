@@ -1815,16 +1815,25 @@ async def _handle_edit_peer_card(
         suffix = "".join(f" {note}" for note in notes)
 
         if not added and not removed_count:
-            return f"No change: the card already has every entry to add.{suffix}"
-        if len(new_card) > MAX_PEER_CARD_FACTS:
-            excess = len(new_card) - MAX_PEER_CARD_FACTS
+            reason = (
+                "the card already has every entry to add"
+                if additions.entries
+                else "there is nothing valid to add and no `remove` entry is on "
+                + "the card"
+            )
+            return f"No change: {reason}.{suffix}"
+        # A card set through the API can already hold more than the limit: an
+        # edit may still shrink it or swap entries, but never grow it.
+        ceiling = max(MAX_PEER_CARD_FACTS, len(current))
+        if len(new_card) > ceiling:
+            excess = len(new_card) - ceiling
             return (
                 f"Not applied: the card would have {len(new_card)} entries and the "
                 + f"limit is {MAX_PEER_CARD_FACTS}. Remove at least {excess} more "
                 + f"entries (the ones that matter least) in the same call.{suffix}"
             )
         if not new_card:
-            return "Not applied: this edit would leave the card empty."
+            return f"Not applied: this edit would leave the card empty.{suffix}"
 
         card_write = await crud.set_peer_card(
             db,
@@ -1859,11 +1868,17 @@ async def _handle_edit_peer_card(
             )
         )
 
+    if len(new_card) > MAX_PEER_CARD_FACTS:
+        size = (
+            f"It now has {len(new_card)} entries, over the limit of "
+            + f"{MAX_PEER_CARD_FACTS}: it can shrink but not grow."
+        )
+    else:
+        size = f"It now has {len(new_card)} of {MAX_PEER_CARD_FACTS} entries."
     return ToolResult(
         content=(
             f"Edited peer card for {ctx.observed} by {ctx.observer}: added "
-            + f"{len(added)}, removed {removed_count}. It now has {len(new_card)} of "
-            + f"{MAX_PEER_CARD_FACTS} entries.{suffix}"
+            + f"{len(added)}, removed {removed_count}. {size}{suffix}"
         ),
         metadata={
             "peer_card_updated": True,
@@ -2322,7 +2337,7 @@ async def _handle_get_recent_observations(
 
 async def _handle_get_session_summaries(
     ctx: ToolContext, tool_input: dict[str, Any]
-) -> str:
+) -> "str | ToolResult":
     """Handle get_session_summaries tool."""
     # A session summary covers the whole conversation, so it cannot be cut down
     # to a session allowlist's view of a peer. Fail closed, as get_peer_card does.
@@ -2353,7 +2368,7 @@ async def _handle_get_session_summaries(
             f"\n## Session {session_name} (summarized {summary['created_at']})\n"
             + summary["content"]
         )
-    return "\n".join(parts)
+    return _maybe_truncated_result("\n".join(parts))
 
 
 async def _handle_get_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
