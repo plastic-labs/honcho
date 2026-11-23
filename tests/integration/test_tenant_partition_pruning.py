@@ -389,8 +389,10 @@ async def _graph_read(db: AsyncSession, _source_id: str) -> list[Any]:
     texts = await graph_crud.get_graph_text(db, "w", cols.ids)
     return [
         len(cols.ids),
-        len(cols.source_index),
-        sum(cols.unresolved),
+        len(cols.csr_targets),
+        sum(cols.unresolved_outside),
+        sum(cols.unresolved_deleted),
+        sum(cols.unresolved_unknown),
         sorted(c for _, c, _ in texts),
     ]
 

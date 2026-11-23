@@ -1,56 +1,30 @@
-"""Provisional binary graph encoding for the DEV-3414 spike; to be replaced by the shared wire module."""
+"""HONCHOGR v2 response bytes for the conclusion graph route."""
 
-import json
-from array import array
+from src.crud.graph import GraphColumns
+from src.utils.honchogr import encode_graph_columns
 
-from src.crud.graph import LEVELS, GraphColumns
-
-MAGIC = b"HGR0"
-CONTENT_TYPE = "application/vnd.honcho.graph"
-
-
-def _pad(buf: bytearray) -> None:
-    buf.extend(b"\0" * (-len(buf) % 8))
+# HONCHO_GRAPH_MEDIA_TYPE in the v2 decoder (honcho-viz lab/honcho-graph-format.mjs)
+CONTENT_TYPE = "application/vnd.honcho.graph-csr"
+# documents.id is exactly 21 characters of [A-Za-z0-9_-] (the id_length and id_format checks)
+ID_WIDTH = 21
 
 
-def encode_graph(cols: GraphColumns, header: dict[str, object]) -> bytes:
-    n = len(cols.ids)
-    meta = json.dumps(
-        {
-            **header,
-            "node_count": n,
-            "link_count": len(cols.source_index),
-            "levels": LEVELS,
-            "perspectives": [list(p) for p in cols.perspectives],
-            "sections": [
-                "ids:ascii21",
-                "created_at:f64",
-                "source_offsets:u32",
-                "source_index:u32",
-                "times_derived:u32",
-                "unresolved:u16",
-                "perspective:u16",
-                "level:u8",
-            ],
-        },
-        separators=(",", ":"),
-    ).encode()
-
-    out = bytearray(MAGIC)
-    out.extend(len(meta).to_bytes(4, "little"))
-    out.extend(meta)
-    _pad(out)
-    out.extend("".join(cols.ids).encode("ascii"))
-    _pad(out)
-    for typecode, values in (
-        ("d", cols.created_at),
-        ("I", cols.source_offsets),
-        ("I", cols.source_index),
-        ("I", cols.times_derived),
-        ("H", [min(u, 0xFFFF) for u in cols.unresolved]),
-        ("H", cols.perspective),
-        ("B", cols.levels),
-    ):
-        out.extend(array(typecode, values).tobytes())
-        _pad(out)
-    return bytes(out)
+def encode_graph(cols: GraphColumns) -> bytes:
+    return encode_graph_columns(
+        node_ids=cols.ids,
+        node_type=cols.node_type,
+        node_session=cols.node_session,
+        node_perspective=cols.node_perspective,
+        created_us=cols.created_us,
+        unresolved_outside=cols.unresolved_outside,
+        unresolved_deleted=cols.unresolved_deleted,
+        unresolved_unknown=cols.unresolved_unknown,
+        times_derived=cols.times_derived,
+        node_flags=cols.node_flags,
+        copied_from=cols.copied_from,
+        csr_offsets=cols.csr_offsets,
+        csr_targets=cols.csr_targets,
+        session_dict=cols.session_dict,
+        perspective_dict=cols.perspective_dict,
+        id_width=ID_WIDTH,
+    )

@@ -7,8 +7,9 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.crud.graph import (
-    get_graph_columns,
+    build_graph_columns,
     get_graph_overview,
+    get_graph_rows,
     get_graph_text,
 )
 from src.dependencies import read_db
@@ -58,17 +59,20 @@ async def graph(
     if_none_match: str | None = Header(None),
     db: AsyncSession = read_db,
 ):
-    """Structure-only conclusion graph as columnar binary. Experimental."""
+    """Structure-only conclusion graph as HONCHOGR v2 bytes. Experimental."""
     started = time.perf_counter()
-    cols = await get_graph_columns(db, workspace_id, observer, observed)
+    rows = await get_graph_rows(db, workspace_id, observer, observed)
     queried = time.perf_counter()
-    body = encode_graph(
-        cols,
-        {"workspace": workspace_id, "observer": observer, "observed": observed},
-    )
+    cols = build_graph_columns(rows)
+    built = time.perf_counter()
+    body = encode_graph(cols)
     encoded = time.perf_counter()
     etag = '"' + hashlib.sha256(body).hexdigest()[:32] + '"'
-    timing = f"db;dur={(queried - started) * 1000:.1f}, encode;dur={(encoded - queried) * 1000:.1f}"
+    timing = (
+        f"db;dur={(queried - started) * 1000:.1f}, "
+        f"build;dur={(built - queried) * 1000:.1f}, "
+        f"encode;dur={(encoded - built) * 1000:.1f}"
+    )
     headers = {
         "ETag": etag,
         "Cache-Control": "private, no-cache",
@@ -80,7 +84,7 @@ async def graph(
         observer,
         observed,
         len(cols.ids),
-        len(cols.source_index),
+        len(cols.csr_targets),
         len(body),
         timing,
     )
