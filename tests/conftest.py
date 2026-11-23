@@ -138,6 +138,8 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     # Pure prompt-rendering tests — string assembly only, no DB needed.
     "tests/deriver/test_prompts.py",
     "tests/utils/test_custom_instructions_prompts.py",
+    # HONCHOGR v2 encoding and decoding of graph columns — no DB needed.
+    "tests/utils/test_graph_wire.py",
     # Pure JWT scope tests — operate on src.security directly, no DB needed.
     "tests/test_security.py",
     "tests/test_generate_jwt_script.py",
@@ -160,6 +162,7 @@ _DB_FREE_TEST_PREFIXES = (
     "tests/crud/test_session_scope_clauses.py",
     "tests/deriver/test_prompts.py",
     "tests/utils/test_custom_instructions_prompts.py",
+    "tests/utils/test_graph_wire.py",
     "tests/test_security.py",
     "tests/test_generate_jwt_script.py",
     "tests/mock_provider/",
