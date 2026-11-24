@@ -588,7 +588,7 @@ EMBEDDING_MAX_TOKENS_PER_REQUEST=300000
 NAMESPACE=honcho
 ```
 
-`PAGINATION_COUNT_LIMIT` caps the rows a list endpoint counts for `total`. Up to the limit `total` is exact; beyond it, `total` is the limit plus one (`100001` by default), raised just past the current page while a next page exists, so `pages` still carries a client to the end of the list. Cursor pagination (`?cursor=`) never counts.
+`PAGINATION_COUNT_LIMIT` caps the rows a list endpoint counts for `total`. Up to the limit `total` is exact; beyond it, `total` is the limit plus one (`100001` by default), raised just past the current page while a next page exists, so `pages` still carries a client to the end of the list. With the cache enabled, a list past the limit reports its last full count instead, taken in the background (see below). `total_kind` says how to read `total`: `exact`, `estimate` (the background full count), `at_least` (the limit plus one, or one more than the current page's last row), or `at_most` (an empty page after the first), so a display can show it as `950,040`, `~950,000`, or `100,000+`. Every offset page also carries `next_cursor`: send it as `cursor` to read the rest of the list in cursor mode, which never counts and does not skip or repeat rows when the list changes during the walk.
 
 **Optional Integrations:**
 ```bash
@@ -658,10 +658,13 @@ CACHE_DEFAULT_LOCK_TTL_SECONDS=5  # Cache stampede prevention
 
 With the cache enabled, offset-paginated list requests (`?page=N`) are also served faster: after each page, Honcho remembers where it ended, so the next page seeks straight to it instead of scanning past every earlier row. Responses are unchanged, except that `total` on pages after the first may be up to `CACHE_PAGINATION_COUNT_TTL_SECONDS` old.
 
+A list longer than `PAGINATION_COUNT_LIMIT` reports a full count instead of the limit plus one, so its `total` keeps growing past the limit. The full count runs in the background after a response, at most once per `CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS` for each distinct list query, so that `total` may be up to that old. Until the first full count lands, the list reports the limit plus one. While a full count is fresh, requests report it without running the capped count.
+
 ```bash
 CACHE_PAGINATION_OFFSET_SHIM=true
 CACHE_PAGINATION_POSITION_TTL_SECONDS=600
 CACHE_PAGINATION_COUNT_TTL_SECONDS=60
+CACHE_PAGINATION_ESTIMATE_REFRESH_SECONDS=600
 ```
 
 List endpoints also accept a `cursor` query parameter (empty for the first page, then each response's `next_page`), which pages by cursor with no count at all, with or without the cache.

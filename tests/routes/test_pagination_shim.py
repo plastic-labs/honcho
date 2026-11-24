@@ -1,12 +1,17 @@
 """Pagination across every list endpoint: cursor mode and the offset shim.
 
-Each endpoint is walked three ways (offset through the shim, plain offset, and
-cursor) and must return the same rows in the same order. The shim tests then
+Each endpoint is walked four ways (offset through the shim, plain offset,
+cursor, and offset page 1 handing off to cursor mode through `next_cursor`)
+and must return the same rows in the same order. The shim tests then
 pin its own behavior: sequential pages seek instead of scanning, `total` is
-cached past page 1, paging past the end is free, and a cache failure falls back
-to the plain offset query.
+cached past page 1, paging past the end is free, a page that ends the list
+needs no count, an empty page after a deleted tail ends the walk, a list
+past the count limit reports a full count taken in the background (and skips
+the capped count while that is fresh), `total_kind` says how to read every
+total, and a cache failure falls back to the plain offset query.
 """
 
+import time
 from collections.abc import Callable
 from typing import Any, final
 
@@ -14,6 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 from fastapi_pagination.cursor import encode_cursor
 from nanoid import generate as generate_nanoid
+from sqlalchemy import Select, literal, select
 
 from src.cache.client import cache
 from src.config import settings
@@ -22,9 +28,19 @@ from src.telemetry.prometheus.metrics import (
     PaginationShimOutcomes,
     pagination_offset_shim_counter,
 )
+from src.utils import pagination
 
 SEEDED = 5
 SIZE = 2
+OFFSET_FIELDS = {
+    "items",
+    "total",
+    "total_kind",
+    "page",
+    "size",
+    "pages",
+    "next_cursor",
+}
 
 
 def _new_id() -> str:
@@ -178,9 +194,10 @@ def _walk_offset(
     page = 1
     while True:
         data = _get(client, endpoint, url, {"page": page, "size": SIZE, **extra})
-        assert set(data) == {"items", "total", "page", "size", "pages"}
+        assert set(data) == OFFSET_FIELDS
         ids += [item["id"] for item in data["items"]]
         if page >= data["pages"]:
+            assert data["next_cursor"] is None
             return ids
         page += 1
         assert page <= 50, "offset walk did not terminate"
@@ -194,6 +211,21 @@ def _walk_cursor(
     while cursor is not None:
         data = _get(client, endpoint, url, {"cursor": cursor, "size": SIZE, **extra})
         assert data["total"] is None
+        ids += [item["id"] for item in data["items"]]
+        cursor = data["next_page"]
+        assert len(ids) <= 200, "cursor walk did not terminate"
+    return ids
+
+
+def _walk_offset_then_cursor(
+    client: TestClient, endpoint: _Endpoint, url: str, extra: dict[str, Any]
+) -> list[str]:
+    """Read page 1 in offset mode, then follow its `next_cursor` in cursor mode."""
+    data = _get(client, endpoint, url, {"page": 1, "size": SIZE, **extra})
+    ids = [item["id"] for item in data["items"]]
+    cursor: str | None = data["next_cursor"]
+    while cursor is not None:
+        data = _get(client, endpoint, url, {"cursor": cursor, "size": SIZE, **extra})
         ids += [item["id"] for item in data["items"]]
         cursor = data["next_page"]
         assert len(ids) <= 200, "cursor walk did not terminate"
@@ -220,11 +252,13 @@ def test_every_walk_returns_the_same_rows_in_the_same_order(
         m.setattr(settings.CACHE, "PAGINATION_OFFSET_SHIM", False)
         plain_ids = _walk_offset(client, endpoint, url, extra)
     cursor_ids = _walk_cursor(client, endpoint, url, extra)
+    handoff_ids = _walk_offset_then_cursor(client, endpoint, url, extra)
 
     assert seeded <= set(plain_ids)
     assert len(plain_ids) == len(set(plain_ids))
     assert shim_ids == plain_ids
     assert cursor_ids == plain_ids
+    assert handoff_ids == plain_ids
 
 
 def _shim_counts() -> dict[PaginationShimOutcomes, float]:
@@ -426,3 +460,214 @@ def test_a_page_past_the_end_reports_the_real_total(
     assert far["items"] == []
     assert far["total"] == expected
     assert far["pages"] == -(-expected // SIZE)
+
+
+@pytest.mark.parametrize("shim", [True, False], ids=["shim", "plain"])
+@pytest.mark.parametrize("seeded", [True, False], ids=["one_page", "empty"])
+def test_a_list_that_fits_on_page_one_is_not_counted(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+    shim: bool,
+    seeded: bool,
+):
+    """Page 1 with no next page has seen every row, so its total needs no count."""
+    workspace, peer = sample_data
+    url = f"/v3/workspaces/{workspace.name}/sessions/list"
+    expected = 0
+    if seeded:
+        url, _ = _seed_sessions(client, workspace.name, peer.name)
+        expected = SEEDED
+    endpoint = ENDPOINTS[1]
+    monkeypatch.setattr(settings.CACHE, "PAGINATION_OFFSET_SHIM", shim)
+
+    def no_count(_stmt: Select[Any]) -> Select[Any]:
+        raise AssertionError("counted a list that fits on page 1")
+
+    monkeypatch.setattr(pagination, "_capped_count_query", no_count)
+
+    data = _get(client, endpoint, url, {"page": 1, "size": SEEDED})
+
+    assert len(data["items"]) == expected
+    assert data["total"] == expected
+    assert data["pages"] == (1 if seeded else 0)
+
+
+def test_a_stale_high_total_does_not_carry_a_walk_past_the_last_page(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A cached count can be too high (rows deleted after it was taken); the last page still ends the walk."""
+    workspace, peer = sample_data
+    url, _ = _seed_sessions(client, workspace.name, peer.name)
+    endpoint = ENDPOINTS[1]
+
+    def stale_count(_stmt: Select[Any]) -> Select[Any]:
+        return select(literal(100))
+
+    with monkeypatch.context() as patch:
+        patch.setattr(pagination, "_capped_count_query", stale_count)
+        first = _get(client, endpoint, url, {"page": 1, "size": SIZE})
+    assert first["total"] == 100
+
+    visited = [1]
+    data = first
+    while visited[-1] < data["pages"]:
+        visited.append(visited[-1] + 1)
+        data = _get(client, endpoint, url, {"page": visited[-1], "size": SIZE})
+
+    assert visited == [1, 2, 3]
+    assert data["total"] == SEEDED
+    assert data["pages"] == 3
+
+
+def _eventually_total(
+    client: TestClient, endpoint: _Endpoint, url: str, expected: int
+) -> dict[str, Any]:
+    """Re-read page 1 until the background count lands (it runs after a response)."""
+    data: dict[str, Any] = {}
+    for _ in range(100):
+        data = _get(client, endpoint, url, {"page": 1, "size": SIZE})
+        if data["total"] == expected:
+            return data
+        time.sleep(0.05)
+    raise AssertionError(f"total stayed {data.get('total')}, expected {expected}")
+
+
+def test_a_list_past_the_limit_reports_its_full_count(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Past the limit, `total` is the last full count, taken in the background and refreshed when stale."""
+    workspace, peer = sample_data
+    url, _ = _seed_sessions(client, workspace.name, peer.name)
+    endpoint = ENDPOINTS[1]
+    monkeypatch.setattr(settings, "PAGINATION_COUNT_LIMIT", SEEDED - 2)
+
+    first = _get(client, endpoint, url, {"page": 1, "size": SIZE})
+    assert first["total"] == SEEDED - 1  # nothing fully counted yet
+    _eventually_total(client, endpoint, url, SEEDED)
+
+    _seed_sessions(client, workspace.name, peer.name)
+    # Within the refresh interval the last full count stands.
+    assert _get(client, endpoint, url, {"page": 1, "size": SIZE})["total"] == SEEDED
+
+    monkeypatch.setattr(settings.CACHE, "PAGINATION_ESTIMATE_REFRESH_SECONDS", 0)
+    data = _eventually_total(client, endpoint, url, 2 * SEEDED)
+    assert data["pages"] == SEEDED  # 10 rows at size 2
+
+    ids = _walk_offset(client, endpoint, url, {})
+    assert len(ids) == len(set(ids)) == 2 * SEEDED
+
+
+def test_without_the_cache_a_list_past_the_limit_stays_capped(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace, peer = sample_data
+    url, _ = _seed_sessions(client, workspace.name, peer.name)
+    endpoint = ENDPOINTS[1]
+    monkeypatch.setattr(settings, "PAGINATION_COUNT_LIMIT", SEEDED - 2)
+    monkeypatch.setattr(settings.CACHE, "ENABLED", False)
+
+    for _ in range(3):
+        data = _get(client, endpoint, url, {"page": 1, "size": SIZE})
+        assert data["total"] == SEEDED - 1
+        time.sleep(0.05)
+    assert not pagination._estimate_tasks  # pyright: ignore[reportPrivateUsage]
+
+
+def _high_count(_stmt: Select[Any]) -> Select[Any]:
+    return select(literal(100))
+
+
+@pytest.mark.parametrize("shim", [True, False], ids=["shim", "plain"])
+def test_a_walk_stops_at_a_tail_deleted_mid_walk(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+    shim: bool,
+):
+    """A tail deleted mid-walk empties the next page; a high total must not carry the walk on."""
+    workspace, peer = sample_data
+    url, names = _seed_sessions(client, workspace.name, peer.name)
+    endpoint = ENDPOINTS[1]
+    monkeypatch.setattr(settings.CACHE, "PAGINATION_OFFSET_SHIM", shim)
+    # Every count is too high, as a stale cached count or a background count would be.
+    monkeypatch.setattr(pagination, "_capped_count_query", _high_count)
+
+    pages = [_get(client, endpoint, url, {"page": p, "size": SIZE}) for p in (1, 2)]
+    assert pages[1]["total"] == 100
+    seen = {item["id"] for page in pages for item in page["items"]}
+    for name in names - seen:
+        response = client.delete(f"/v3/workspaces/{workspace.name}/sessions/{name}")
+        assert response.status_code < 300, response.text
+
+    data = _get(client, endpoint, url, {"page": 3, "size": SIZE})
+
+    assert data["items"] == []
+    assert data["total"] == 2 * SIZE
+    assert data["pages"] == 2  # a client walking `page < pages` stops here
+    assert data["total_kind"] == "at_most"
+
+
+def test_total_kind_says_how_to_read_every_total(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace, peer = sample_data
+    url, _ = _seed_sessions(client, workspace.name, peer.name)
+    endpoint = ENDPOINTS[1]
+
+    def page(n: int) -> dict[str, Any]:
+        return _get(client, endpoint, url, {"page": n, "size": SIZE})
+
+    # Counted under the limit, cached past page 1, and the page that ends the list.
+    assert [(page(n)["total"], page(n)["total_kind"]) for n in (1, 2, 3)] == [
+        (SEEDED, "exact")
+    ] * 3
+
+    # Past the limit with nothing fully counted yet: the limit plus one.
+    monkeypatch.setattr(settings, "PAGINATION_COUNT_LIMIT", SEEDED - 2)
+    capped = page(1)
+    assert (capped["total"], capped["total_kind"]) == (SEEDED - 1, "at_least")
+
+    # The background full count.
+    data = _eventually_total(client, endpoint, url, SEEDED)
+    assert data["total_kind"] == "estimate"
+
+    # A count below the rows already seen is raised past them.
+    def low_count(_stmt: Select[Any]) -> Select[Any]:
+        return select(literal(1))
+
+    monkeypatch.setattr(settings, "PAGINATION_COUNT_LIMIT", 10_000)
+    with monkeypatch.context() as patch:
+        patch.setattr(settings.CACHE, "PAGINATION_OFFSET_SHIM", False)
+        patch.setattr(pagination, "_capped_count_query", low_count)
+        low = page(2)
+    assert (low["total"], low["total_kind"]) == (2 * SIZE + 1, "at_least")
+
+
+def test_a_fresh_full_count_past_the_limit_skips_the_capped_count(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace, peer = sample_data
+    url, _ = _seed_sessions(client, workspace.name, peer.name)
+    endpoint = ENDPOINTS[1]
+    monkeypatch.setattr(settings, "PAGINATION_COUNT_LIMIT", SEEDED - 2)
+    _get(client, endpoint, url, {"page": 1, "size": SIZE})
+    _eventually_total(client, endpoint, url, SEEDED)
+
+    def no_count(_stmt: Select[Any]) -> Select[Any]:
+        raise AssertionError("ran the capped count with a fresh full count stored")
+
+    monkeypatch.setattr(pagination, "_capped_count_query", no_count)
+    for n in (1, 2):
+        data = _get(client, endpoint, url, {"page": n, "size": SIZE})
+        assert (data["total"], data["total_kind"]) == (SEEDED, "estimate")

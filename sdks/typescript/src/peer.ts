@@ -14,6 +14,7 @@ import type { Scope } from './scope'
 import { Session } from './session'
 import type {
   ChatResponse,
+  CursorPageResponse,
   MessageResponse,
   PageResponse,
   PeerCardResponse,
@@ -231,6 +232,7 @@ export class Peer {
     filters?: Record<string, unknown>
     page?: number
     size?: number
+    cursor?: string
     reverse?: boolean
   }): Promise<PageResponse<SessionResponse>> {
     await this._ensureWorkspace()
@@ -241,6 +243,7 @@ export class Peer {
         query: {
           page: params?.page,
           size: params?.size,
+          cursor: params?.cursor,
           reverse: params?.reverse ? 'true' : undefined,
         },
       }
@@ -680,6 +683,18 @@ export class Peer {
       })
     }
 
+    const fetchByCursor = async (
+      cursor: string,
+      size: number
+    ): Promise<CursorPageResponse<SessionResponse>> => {
+      return this._listSessions({
+        filters: validatedFilter,
+        cursor,
+        size,
+        reverse,
+      })
+    }
+
     return new Page(
       sessionsPage,
       (session) =>
@@ -694,7 +709,8 @@ export class Peer {
           session.is_active,
           session.uid
         ),
-      fetchNextPage
+      fetchNextPage,
+      fetchByCursor
     )
   }
 

@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from .api_types import ConclusionLevel, ConclusionResponse, RepresentationResponse
 from .base import SessionBase
 from .http import NotFoundError, routes
-from .pagination import SyncPage
+from .pagination import SyncPage, cursor_query
 from .utils import resolve_id
 
 if TYPE_CHECKING:
@@ -131,9 +131,18 @@ def _list_conclusions(
             body=body,
             query=_list_query(next_page, size, reverse),
         )
-        return SyncPage(next_data, ConclusionResponse, transform, fetch_next)
+        return SyncPage(
+            next_data, ConclusionResponse, transform, fetch_next, fetch_cursor
+        )
 
-    return SyncPage(data, ConclusionResponse, transform, fetch_next)
+    def fetch_cursor(cursor: str) -> dict[str, Any]:
+        return honcho._http.post(
+            routes.conclusions_list(honcho.workspace_id),
+            body=body,
+            query=cursor_query(_list_query(page, size, reverse), cursor),
+        )
+
+    return SyncPage(data, ConclusionResponse, transform, fetch_next, fetch_cursor)
 
 
 class ConclusionCreateParams(BaseModel):

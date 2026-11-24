@@ -73,7 +73,7 @@ from .http import routes
 from .ingest import ingest_batches, offset_results
 from .message import Message
 from .mixins import AsyncMetadataConfigMixin
-from .pagination import AsyncPage
+from .pagination import AsyncPage, cursor_query
 from .session_context import SessionContext, SessionSummaries, Summary
 from .types import AsyncDialecticStreamResponse, ChatResponse
 from .utils import (
@@ -289,9 +289,18 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 body={"filters": filters} if filters else None,
                 query=next_query,
             )
-            return AsyncPage(next_data, PeerResponse, transform, fetch_next)
+            return AsyncPage(
+                next_data, PeerResponse, transform, fetch_next, fetch_cursor
+            )
 
-        return AsyncPage(data, PeerResponse, transform, fetch_next)
+        async def fetch_cursor(cursor: str) -> dict[str, Any]:
+            return await self._honcho._async_http_client.post(
+                routes.peers_list(self._honcho.workspace_id),
+                body={"filters": filters} if filters else None,
+                query=cursor_query(query, cursor),
+            )
+
+        return AsyncPage(data, PeerResponse, transform, fetch_next, fetch_cursor)
 
     async def session(
         self,
@@ -421,9 +430,18 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 body=body or None,
                 query=next_query,
             )
-            return AsyncPage(next_data, SessionResponse, transform, fetch_next)
+            return AsyncPage(
+                next_data, SessionResponse, transform, fetch_next, fetch_cursor
+            )
 
-        return AsyncPage(data, SessionResponse, transform, fetch_next)
+        async def fetch_cursor(cursor: str) -> dict[str, Any]:
+            return await self._honcho._async_http_client.post(
+                routes.sessions_list(self._honcho.workspace_id),
+                body=body or None,
+                query=cursor_query(query, cursor),
+            )
+
+        return AsyncPage(data, SessionResponse, transform, fetch_next, fetch_cursor)
 
     async def scope(
         self,
@@ -522,17 +540,27 @@ class HonchoAio(AsyncMetadataConfigMixin):
         """
         await self._honcho._ensure_workspace_async()
 
-        async def fetch(next_page: int) -> dict[str, Any]:
-            """Fetch one page of scopes with the caller's filters and options."""
+        def query_for(next_page: int) -> dict[str, Any]:
             query: dict[str, Any] = {"page": next_page, "size": size}
             if reverse:
                 query["reverse"] = "true"
             if include_session_count:
                 query["include_session_count"] = "true"
+            return query
+
+        async def fetch(next_page: int) -> dict[str, Any]:
+            """Fetch one page of scopes with the caller's filters and options."""
             return await self._honcho._async_http_client.post(
                 routes.scopes_list(self._honcho.workspace_id),
                 body={"filters": filters} if filters else None,
-                query=query,
+                query=query_for(next_page),
+            )
+
+        async def fetch_cursor(cursor: str) -> dict[str, Any]:
+            return await self._honcho._async_http_client.post(
+                routes.scopes_list(self._honcho.workspace_id),
+                body={"filters": filters} if filters else None,
+                query=cursor_query(query_for(page), cursor),
             )
 
         def transform(scope: ScopeResponse) -> Scope:
@@ -547,10 +575,16 @@ class HonchoAio(AsyncMetadataConfigMixin):
 
         async def fetch_next(next_page: int) -> AsyncPage[ScopeResponse, Scope]:
             return AsyncPage(
-                await fetch(next_page), ScopeResponse, transform, fetch_next
+                await fetch(next_page),
+                ScopeResponse,
+                transform,
+                fetch_next,
+                fetch_cursor,
             )
 
-        return AsyncPage(await fetch(page), ScopeResponse, transform, fetch_next)
+        return AsyncPage(
+            await fetch(page), ScopeResponse, transform, fetch_next, fetch_cursor
+        )
 
     async def workspaces(
         self,
@@ -585,9 +619,18 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 body={"filters": filters} if filters else None,
                 query=next_query,
             )
-            return AsyncPage(next_data, WorkspaceResponse, transform, fetch_next)
+            return AsyncPage(
+                next_data, WorkspaceResponse, transform, fetch_next, fetch_cursor
+            )
 
-        return AsyncPage(data, WorkspaceResponse, transform, fetch_next)
+        async def fetch_cursor(cursor: str) -> dict[str, Any]:
+            return await self._honcho._async_http_client.post(
+                routes.workspaces_list(),
+                body={"filters": filters} if filters else None,
+                query=cursor_query(query, cursor),
+            )
+
+        return AsyncPage(data, WorkspaceResponse, transform, fetch_next, fetch_cursor)
 
     async def delete_workspace(self, workspace_id: str) -> None:
         """Delete a workspace asynchronously."""
@@ -858,10 +901,20 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 query={"page": next_page, "size": size},
             )
 
-        async def fetch_next(next_page: int) -> AsyncPage[IngestPerson, IngestPerson]:
-            return AsyncPage(await fetch(next_page), IngestPerson, None, fetch_next)
+        async def fetch_cursor(cursor: str) -> dict[str, Any]:
+            return await self._honcho._async_http_client.get(
+                routes.workspace_ingest_people(self._honcho.workspace_id),
+                query={"cursor": cursor, "size": size},
+            )
 
-        return AsyncPage(await fetch(page), IngestPerson, None, fetch_next)
+        async def fetch_next(next_page: int) -> AsyncPage[IngestPerson, IngestPerson]:
+            return AsyncPage(
+                await fetch(next_page), IngestPerson, None, fetch_next, fetch_cursor
+            )
+
+        return AsyncPage(
+            await fetch(page), IngestPerson, None, fetch_next, fetch_cursor
+        )
 
     async def ingest_sessions(
         self, *, page: int = 1, size: int = 50
@@ -879,12 +932,22 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 query={"page": next_page, "size": size},
             )
 
+        async def fetch_cursor(cursor: str) -> dict[str, Any]:
+            return await self._honcho._async_http_client.get(
+                routes.workspace_ingest_sessions(self._honcho.workspace_id),
+                query={"cursor": cursor, "size": size},
+            )
+
         async def fetch_next(
             next_page: int,
         ) -> AsyncPage[IngestSession, IngestSession]:
-            return AsyncPage(await fetch(next_page), IngestSession, None, fetch_next)
+            return AsyncPage(
+                await fetch(next_page), IngestSession, None, fetch_next, fetch_cursor
+            )
 
-        return AsyncPage(await fetch(page), IngestSession, None, fetch_next)
+        return AsyncPage(
+            await fetch(page), IngestSession, None, fetch_next, fetch_cursor
+        )
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def dreams(
@@ -913,12 +976,23 @@ class HonchoAio(AsyncMetadataConfigMixin):
                 query={"page": next_page, "size": size},
             )
 
+        async def fetch_cursor(cursor: str) -> dict[str, Any]:
+            return await self._honcho._async_http_client.post(
+                routes.dreams_list(self._honcho.workspace_id),
+                body=body or None,
+                query={"cursor": cursor, "size": size},
+            )
+
         async def fetch_next(
             next_page: int,
         ) -> AsyncPage[DreamRunResponse, DreamRunResponse]:
-            return AsyncPage(await fetch(next_page), DreamRunResponse, None, fetch_next)
+            return AsyncPage(
+                await fetch(next_page), DreamRunResponse, None, fetch_next, fetch_cursor
+            )
 
-        return AsyncPage(await fetch(page), DreamRunResponse, None, fetch_next)
+        return AsyncPage(
+            await fetch(page), DreamRunResponse, None, fetch_next, fetch_cursor
+        )
 
     async def get_dream(self, run_id: str) -> DreamRunDetailResponse:
         """Get one dream run with every change it committed, asynchronously."""
@@ -1284,9 +1358,18 @@ class PeerAio(AsyncMetadataConfigMixin):
                 body={"filters": filters} if filters else None,
                 query=next_query,
             )
-            return AsyncPage(next_data, SessionResponse, transform, fetch_next)
+            return AsyncPage(
+                next_data, SessionResponse, transform, fetch_next, fetch_cursor
+            )
 
-        return AsyncPage(data, SessionResponse, transform, fetch_next)
+        async def fetch_cursor(cursor: str) -> dict[str, Any]:
+            return await self._peer._honcho._async_http_client.post(
+                routes.peer_sessions_list(self._peer.workspace_id, self._peer.id),
+                body={"filters": filters} if filters else None,
+                query=cursor_query(query, cursor),
+            )
+
+        return AsyncPage(data, SessionResponse, transform, fetch_next, fetch_cursor)
 
     @validate_call
     async def search(
@@ -1708,9 +1791,18 @@ class SessionAio(AsyncMetadataConfigMixin):
                 body={"filters": filters} if filters else None,
                 query=next_query,
             )
-            return AsyncPage(next_data, MessageResponse, transform, fetch_next)
+            return AsyncPage(
+                next_data, MessageResponse, transform, fetch_next, fetch_cursor
+            )
 
-        return AsyncPage(data, MessageResponse, transform, fetch_next)
+        async def fetch_cursor(cursor: str) -> dict[str, Any]:
+            return await self._session._honcho._async_http_client.post(
+                routes.messages_list(self._session.workspace_id, self._session.id),
+                body={"filters": filters} if filters else None,
+                query=cursor_query(query, cursor),
+            )
+
+        return AsyncPage(data, MessageResponse, transform, fetch_next, fetch_cursor)
 
     async def delete(self) -> None:
         """Delete this session asynchronously."""
@@ -2141,9 +2233,18 @@ async def _alist_conclusions(
             body=body,
             query=next_query,
         )
-        return AsyncPage(next_data, ConclusionResponse, transform, fetch_next)
+        return AsyncPage(
+            next_data, ConclusionResponse, transform, fetch_next, fetch_cursor
+        )
 
-    return AsyncPage(data, ConclusionResponse, transform, fetch_next)
+    async def fetch_cursor(cursor: str) -> dict[str, Any]:
+        return await honcho._async_http_client.post(
+            routes.conclusions_list(honcho.workspace_id),
+            body=body,
+            query=cursor_query(query, cursor),
+        )
+
+    return AsyncPage(data, ConclusionResponse, transform, fetch_next, fetch_cursor)
 
 
 class WorkspaceConclusionsAio:
@@ -2483,13 +2584,22 @@ class ScopeAio:
         """Get the sessions that are members of this scope asynchronously."""
         await self._scope._honcho._ensure_workspace_async()
 
-        async def fetch(next_page: int) -> dict[str, Any]:
+        def query_for(next_page: int) -> dict[str, Any]:
             query: dict[str, Any] = {"page": next_page, "size": size}
             if reverse:
                 query["reverse"] = "true"
+            return query
+
+        async def fetch(next_page: int) -> dict[str, Any]:
             return await self._scope._honcho._async_http_client.post(
                 routes.scope_sessions_list(self._scope.workspace_id, self._scope.id),
-                query=query,
+                query=query_for(next_page),
+            )
+
+        async def fetch_cursor(cursor: str) -> dict[str, Any]:
+            return await self._scope._honcho._async_http_client.post(
+                routes.scope_sessions_list(self._scope.workspace_id, self._scope.id),
+                query=cursor_query(query_for(page), cursor),
             )
 
         def transform(response: SessionResponse) -> Session:
@@ -2505,10 +2615,16 @@ class ScopeAio:
 
         async def fetch_next(next_page: int) -> AsyncPage[SessionResponse, Session]:
             return AsyncPage(
-                await fetch(next_page), SessionResponse, transform, fetch_next
+                await fetch(next_page),
+                SessionResponse,
+                transform,
+                fetch_next,
+                fetch_cursor,
             )
 
-        return AsyncPage(await fetch(page), SessionResponse, transform, fetch_next)
+        return AsyncPage(
+            await fetch(page), SessionResponse, transform, fetch_next, fetch_cursor
+        )
 
     async def status(self) -> dict[str, ScopeBackfillJob]:
         """Get the backfill/reconciliation progress for this scope asynchronously.

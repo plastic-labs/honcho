@@ -13,7 +13,7 @@ from pydantic import ConfigDict, PrivateAttr, validate_call
 from .api_types import ScopeBackfillJob, ScopeStatusResponse, SessionResponse
 from .base import ScopeBase, SessionBase
 from .http import routes
-from .pagination import SyncPage
+from .pagination import SyncPage, cursor_query
 from .session import Session
 from .utils import resolve_scope_membership, resolve_scope_session
 
@@ -223,13 +223,22 @@ class Scope(ScopeBase):
         """
         self._honcho._ensure_workspace()
 
-        def fetch(next_page: int) -> dict[str, Any]:
+        def query_for(next_page: int) -> dict[str, Any]:
             query: dict[str, Any] = {"page": next_page, "size": size}
             if reverse:
                 query["reverse"] = "true"
+            return query
+
+        def fetch(next_page: int) -> dict[str, Any]:
             return self._honcho._http.post(
                 routes.scope_sessions_list(self.workspace_id, self.id),
-                query=query,
+                query=query_for(next_page),
+            )
+
+        def fetch_cursor(cursor: str) -> dict[str, Any]:
+            return self._honcho._http.post(
+                routes.scope_sessions_list(self.workspace_id, self.id),
+                query=cursor_query(query_for(page), cursor),
             )
 
         def transform(response: SessionResponse) -> Session:
@@ -244,9 +253,13 @@ class Scope(ScopeBase):
             )
 
         def fetch_next(next_page: int) -> SyncPage[SessionResponse, Session]:
-            return SyncPage(fetch(next_page), SessionResponse, transform, fetch_next)
+            return SyncPage(
+                fetch(next_page), SessionResponse, transform, fetch_next, fetch_cursor
+            )
 
-        return SyncPage(fetch(page), SessionResponse, transform, fetch_next)
+        return SyncPage(
+            fetch(page), SessionResponse, transform, fetch_next, fetch_cursor
+        )
 
     def status(self) -> dict[str, ScopeBackfillJob]:
         """

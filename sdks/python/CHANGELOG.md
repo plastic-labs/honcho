@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- Iterating a list page (`for item in page`, `async for item in page`) reads every page after the first in cursor mode when the server sends `next_cursor`: each request seeks past the last row read and runs no count, so a long walk is faster and does not skip or repeat rows when the list changes during it. Servers that predate cursor mode are still walked by page number, and `get_next_page()` stays in offset mode. Requires a Honcho release after v3.6.1 for cursor mode
+- `page.total_kind` says what `page.total` is: `"exact"`, `"estimate"` (a background count past the server's count limit), `"at_least"` or `"at_most"`. Display anything but `"exact"` as approximate. For older servers it is `"at_least"` past 100,000 and `"exact"` otherwise. `page.next_cursor` returns the cursor that reads the rest of the list
 - `SessionPeerConfig.joined_at` sets when a peer joined a session, in `honcho.session(peers=...)`, `session.add_peers()`, `session.set_peers()` and `session.set_peer_configuration()` (sync and async). Set it when importing messages with their original dates: a search with `peer_perspective` only returns messages created at or after the peer's join time. Write-only, so `get_peer_configuration()` does not return it. Requires a Honcho release after v3.6.1
 
 ## [2.9.0] - 2026-11-05

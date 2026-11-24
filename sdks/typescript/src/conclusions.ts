@@ -6,6 +6,7 @@ import type { Session } from './session'
 import type {
   ConclusionLevel,
   ConclusionResponse,
+  CursorPageResponse,
   PageResponse,
   RepresentationOptions,
   RepresentationResponse,
@@ -175,6 +176,7 @@ export class ConclusionsView {
     filters?: Record<string, unknown>
     page?: number
     size?: number
+    cursor?: string
     reverse?: boolean
   }): Promise<PageResponse<ConclusionResponse>> {
     await this._ensureWorkspace()
@@ -185,6 +187,7 @@ export class ConclusionsView {
         query: {
           page: params.page,
           size: params.size,
+          cursor: params.cursor,
           reverse: params.reverse ? 'true' : undefined,
         },
       }
@@ -238,6 +241,7 @@ export class ConclusionsView {
     params: {
       page?: number
       size?: number
+      cursor?: string
       reverse?: boolean
     }
   ): Promise<PageResponse<ConclusionResponse>> {
@@ -251,6 +255,7 @@ export class ConclusionsView {
       },
       page: params.page,
       size: params.size,
+      cursor: params.cursor,
       reverse: params.reverse,
     })
   }
@@ -341,10 +346,18 @@ export class ConclusionsView {
       return this._list({ filters, page, size, reverse })
     }
 
+    const fetchByCursor = async (
+      cursor: string,
+      size: number
+    ): Promise<CursorPageResponse<ConclusionResponse>> => {
+      return this._list({ filters, cursor, size, reverse })
+    }
+
     return new Page(
       response,
       (item) => Conclusion.fromApiResponse(item),
-      fetchNextPage
+      fetchNextPage,
+      fetchByCursor
     )
   }
 
@@ -462,10 +475,18 @@ export class ConclusionsView {
       return this._derived(conclusionId, { page, size, reverse })
     }
 
+    const fetchByCursor = async (
+      cursor: string,
+      size: number
+    ): Promise<CursorPageResponse<ConclusionResponse>> => {
+      return this._derived(conclusionId, { cursor, size, reverse })
+    }
+
     return new Page(
       response,
       (item) => Conclusion.fromApiResponse(item),
-      fetchNextPage
+      fetchNextPage,
+      fetchByCursor
     )
   }
 
@@ -558,6 +579,7 @@ export class WorkspaceConclusions {
     filters?: Record<string, unknown>
     page?: number
     size?: number
+    cursor?: string
     reverse?: boolean
   }): Promise<PageResponse<ConclusionResponse>> {
     await this._ensureWorkspace()
@@ -568,6 +590,7 @@ export class WorkspaceConclusions {
         query: {
           page: params.page,
           size: params.size,
+          cursor: params.cursor,
           reverse: params.reverse ? 'true' : undefined,
         },
       }
@@ -603,10 +626,18 @@ export class WorkspaceConclusions {
       return this._list({ filters, page, size, reverse })
     }
 
+    const fetchByCursor = async (
+      cursor: string,
+      size: number
+    ): Promise<CursorPageResponse<ConclusionResponse>> => {
+      return this._list({ filters, cursor, size, reverse })
+    }
+
     return new Page(
       response,
       (item) => Conclusion.fromApiResponse(item),
-      fetchNextPage
+      fetchNextPage,
+      fetchByCursor
     )
   }
 

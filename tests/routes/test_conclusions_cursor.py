@@ -131,7 +131,7 @@ class TestConclusionCursorPagination:
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
-        """Without `cursor`, installed SDKs still get page/pages/total."""
+        """Without `cursor`, installed SDKs still get page/pages/total, plus the additive fields."""
         workspace, session = await _seed_conclusions(db_session, sample_data, 3)
 
         response = client.post(
@@ -141,13 +141,23 @@ class TestConclusionCursorPagination:
 
         assert response.status_code == 200
         data = response.json()
-        assert set(data) == {"items", "total", "page", "size", "pages"}
+        assert set(data) == {
+            "items",
+            "total",
+            "total_kind",
+            "page",
+            "size",
+            "pages",
+            "next_cursor",
+        }
         assert (data["total"], data["page"], data["size"], data["pages"]) == (
             3,
             1,
             50,
             1,
         )
+        assert data["total_kind"] == "exact"
+        assert data["next_cursor"] is None
 
     @pytest.mark.asyncio
     async def test_invalid_cursor_rejected(

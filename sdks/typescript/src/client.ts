@@ -12,6 +12,7 @@ import { Scope } from './scope'
 import { Session } from './session'
 import type {
   ChatResponse,
+  CursorPageResponse,
   DreamRun,
   DreamRunDetail,
   IngestAccount,
@@ -322,6 +323,7 @@ export class Honcho {
     filters?: Record<string, unknown>
     page?: number
     size?: number
+    cursor?: string
     reverse?: boolean
   }): Promise<PageResponse<WorkspaceResponse>> {
     return this._http.post<PageResponse<WorkspaceResponse>>(
@@ -333,6 +335,7 @@ export class Honcho {
         query: {
           page: params?.page,
           size: params?.size,
+          cursor: params?.cursor,
           reverse: params?.reverse ? 'true' : undefined,
         },
       }
@@ -375,6 +378,7 @@ export class Honcho {
       filters?: Record<string, unknown>
       page?: number
       size?: number
+      cursor?: string
       reverse?: boolean
     }
   ): Promise<PageResponse<PeerResponse>> {
@@ -385,6 +389,7 @@ export class Honcho {
         query: {
           page: params?.page,
           size: params?.size,
+          cursor: params?.cursor,
           reverse: params?.reverse ? 'true' : undefined,
         },
       }
@@ -441,6 +446,7 @@ export class Honcho {
       filters?: Record<string, unknown>
       page?: number
       size?: number
+      cursor?: string
       reverse?: boolean
       includeSessionCount?: boolean
     }
@@ -452,6 +458,7 @@ export class Honcho {
         query: {
           page: params?.page,
           size: params?.size,
+          cursor: params?.cursor,
           reverse: params?.reverse ? 'true' : undefined,
           include_session_count: params?.includeSessionCount
             ? 'true'
@@ -475,6 +482,7 @@ export class Honcho {
       filters?: Record<string, unknown>
       page?: number
       size?: number
+      cursor?: string
       reverse?: boolean
       scope?: string
       inNoScope?: boolean
@@ -492,6 +500,7 @@ export class Honcho {
         query: {
           page: params?.page,
           size: params?.size,
+          cursor: params?.cursor,
           reverse: params?.reverse ? 'true' : undefined,
           include_scopes: params?.includeScopes ? 'true' : undefined,
         },
@@ -659,6 +668,18 @@ export class Honcho {
       })
     }
 
+    const fetchByCursor = async (
+      cursor: string,
+      size: number
+    ): Promise<CursorPageResponse<PeerResponse>> => {
+      return this._listPeers(this.workspaceId, {
+        filters: validatedFilter,
+        cursor,
+        size,
+        reverse,
+      })
+    }
+
     return new Page(
       peersPage,
       (peer) =>
@@ -672,7 +693,8 @@ export class Honcho {
           peer.created_at,
           peer.uid
         ),
-      fetchNextPage
+      fetchNextPage,
+      fetchByCursor
     )
   }
 
@@ -856,6 +878,17 @@ export class Honcho {
       return this._listScopes(this.workspaceId, { ...listOptions, page, size })
     }
 
+    const fetchByCursor = async (
+      cursor: string,
+      size: number
+    ): Promise<CursorPageResponse<ScopeResponse>> => {
+      return this._listScopes(this.workspaceId, {
+        ...listOptions,
+        cursor,
+        size,
+      })
+    }
+
     return new Page(
       scopesPage,
       (scope) =>
@@ -868,7 +901,8 @@ export class Honcho {
           scope.created_at,
           scope.session_count
         ),
-      fetchNextPage
+      fetchNextPage,
+      fetchByCursor
     )
   }
 
@@ -939,6 +973,17 @@ export class Honcho {
       })
     }
 
+    const fetchByCursor = async (
+      cursor: string,
+      size: number
+    ): Promise<CursorPageResponse<SessionResponse>> => {
+      return this._listSessions(this.workspaceId, {
+        ...listOptions,
+        cursor,
+        size,
+      })
+    }
+
     return new Page(
       sessionsPage,
       (session) =>
@@ -954,7 +999,8 @@ export class Honcho {
           session.uid,
           session.scopes
         ),
-      fetchNextPage
+      fetchNextPage,
+      fetchByCursor
     )
   }
 
@@ -1096,7 +1142,24 @@ export class Honcho {
       })
     }
 
-    return new Page(workspacesPage, (workspace) => workspace.id, fetchNextPage)
+    const fetchByCursor = async (
+      cursor: string,
+      size: number
+    ): Promise<CursorPageResponse<WorkspaceResponse>> => {
+      return this._listWorkspaces({
+        filters: validatedFilter,
+        cursor,
+        size,
+        reverse,
+      })
+    }
+
+    return new Page(
+      workspacesPage,
+      (workspace) => workspace.id,
+      fetchNextPage,
+      fetchByCursor
+    )
   }
 
   /**
@@ -1535,6 +1598,14 @@ export class Honcho {
         `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/people`,
         { query: { page, size } }
       )
+    const fetchByCursor = (
+      cursor: string,
+      size: number
+    ): Promise<CursorPageResponse<IngestPersonResponse>> =>
+      this._http.get<CursorPageResponse<IngestPersonResponse>>(
+        `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/people`,
+        { query: { cursor, size } }
+      )
     return new Page(
       await fetchPage(options?.page, options?.size),
       (p) => ({
@@ -1544,7 +1615,8 @@ export class Honcho {
         messages: p.messages,
         modeled: p.modeled,
       }),
-      fetchPage
+      fetchPage,
+      fetchByCursor
     )
   }
 
@@ -1568,6 +1640,14 @@ export class Honcho {
         `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/sessions`,
         { query: { page, size } }
       )
+    const fetchByCursor = (
+      cursor: string,
+      size: number
+    ): Promise<CursorPageResponse<IngestSessionResponse>> =>
+      this._http.get<CursorPageResponse<IngestSessionResponse>>(
+        `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/sessions`,
+        { query: { cursor, size } }
+      )
     return new Page(
       await fetchPage(options?.page, options?.size),
       (s) => ({
@@ -1578,7 +1658,8 @@ export class Honcho {
         messages: s.messages,
         modeled: s.modeled,
       }),
-      fetchPage
+      fetchPage,
+      fetchByCursor
     )
   }
 
@@ -1663,10 +1744,20 @@ export class Honcho {
         { body, query: { page, size } }
       )
 
+    const fetchByCursor = (
+      cursor: string,
+      size: number
+    ): Promise<CursorPageResponse<DreamRun>> =>
+      this._http.post<CursorPageResponse<DreamRun>>(
+        `/${API_VERSION}/workspaces/${this.workspaceId}/dreams/list`,
+        { body, query: { cursor, size } }
+      )
+
     return new Page(
       await fetchPage(options?.page, options?.size),
       undefined,
-      fetchPage
+      fetchPage,
+      fetchByCursor
     )
   }
 

@@ -56,6 +56,7 @@ export type {
   ConclusionLevel,
   ConclusionQueryParams,
   ConclusionResponse,
+  CursorPageResponse,
   DreamConclusionRef,
   DreamCreatedConclusion,
   DreamPeerCardChange,
@@ -90,6 +91,7 @@ export type {
   SessionResponse,
   SessionSummariesResponse,
   SummaryResponse,
+  TotalKind,
   WorkspaceChatResponse,
   WorkspaceResponse,
 } from './types/api'
