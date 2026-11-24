@@ -552,7 +552,7 @@ async def register_tenant(db: AsyncSession, *, paused: bool) -> str:
     per-test table clear, so every test mints its own ids.
     """
     tenant_id = f"{PAUSED_TENANT if paused else LIVE_TENANT}-{generate_nanoid(size=6)}"
-    db.add(models.Tenant(tenant_id=tenant_id, tier="shared", derivation_paused=paused))
+    db.add(models.Tenant(tenant_id=tenant_id, derivation_paused=paused))
     await db.commit()
     return tenant_id
 

@@ -52,7 +52,6 @@ async def get_or_create_tenant(
     db: AsyncSession,
     tenant_id: str,
     vector_correlation_id: str | None,
-    tier: str,
 ) -> GetOrCreateResult[models.Tenant]:
     """Idempotent create.
 
@@ -62,10 +61,7 @@ async def get_or_create_tenant(
     """
 
     def _matching_or_conflict(existing: models.Tenant) -> models.Tenant:
-        if (
-            existing.vector_correlation_id == vector_correlation_id
-            and existing.tier == tier
-        ):
+        if existing.vector_correlation_id == vector_correlation_id:
             return existing
         raise ConflictException(
             f"Tenant {tenant_id} already exists with different fields"
@@ -80,7 +76,6 @@ async def get_or_create_tenant(
     tenant = models.Tenant(
         tenant_id=tenant_id,
         vector_correlation_id=vector_correlation_id,
-        tier=tier,
     )
     db.add(tenant)
     try:
@@ -107,7 +102,7 @@ async def get_or_create_tenant(
         return GetOrCreateResult(
             resource=_matching_or_conflict(existing), created=False
         )
-    logger.info("Created tenant %s (tier=%s)", tenant_id, tier)
+    logger.info("Created tenant %s", tenant_id)
     return GetOrCreateResult(resource=tenant, created=True)
 
 

@@ -32,7 +32,7 @@ from tests.deriver.conftest import SeedWorkUnit
 async def _register_tenant(db: AsyncSession, *, paused: bool) -> str:
     """A tenants row with an id unique to this test (the rows outlive the table clear)."""
     tenant_id = f"t-pause-{generate_nanoid(size=8)}"
-    db.add(models.Tenant(tenant_id=tenant_id, tier="shared", derivation_paused=paused))
+    db.add(models.Tenant(tenant_id=tenant_id, derivation_paused=paused))
     await db.commit()
     return tenant_id
 
