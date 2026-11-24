@@ -1811,7 +1811,7 @@ class TestEditPeerCard:
         assert "over the limit of 40: it can shrink but not grow" in removed.content
         assert await self._card(db_session, workspace, peer1, peer2) == oversized[1:]
 
-    async def test_reports_removals_not_on_the_card_and_invalid_additions(
+    async def test_reports_invalid_additions_and_applies_the_rest(
         self,
         db_session: AsyncSession,
         tool_test_data: Any,
@@ -1822,21 +1822,43 @@ class TestEditPeerCard:
         await _handle_update_peer_card(ctx, {"content": ["IDENTITY: Name: John"]})
 
         result = await _handle_edit_peer_card(
-            ctx,
-            {
-                "add": ["ATTRIBUTE: Location: NYC", "TRAIT: Analytical"],
-                "remove": ["ATTRIBUTE: Location: Boston"],
-            },
+            ctx, {"add": ["ATTRIBUTE: Location: NYC", "TRAIT: Analytical"]}
         )
 
         assert isinstance(result, ToolResult)
-        assert "not on the card" in result.content
-        assert "ATTRIBUTE: Location: Boston" in result.content
         assert "Rejected 1 of 2" in result.content
         assert await self._card(db_session, workspace, peer1, peer2) == [
             "IDENTITY: Name: John",
             "ATTRIBUTE: Location: NYC",
         ]
+
+    async def test_a_removal_not_on_the_card_refuses_the_whole_edit(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+        card = ["IDENTITY: Name: John", "ATTRIBUTE: Works on project Foo"]
+        await _handle_update_peer_card(ctx, {"content": card})
+
+        # A paraphrased removal must not leave the old entry beside the new one.
+        result = await _handle_edit_peer_card(
+            ctx,
+            {
+                "add": ["ATTRIBUTE: Works on project Bar"],
+                "remove": [
+                    "IDENTITY: Name: John",
+                    "ATTRIBUTE: Works on Foo",
+                ],
+            },
+        )
+
+        assert isinstance(result, str)
+        assert "Not applied" in result and "not on the card" in result
+        assert "ATTRIBUTE: Works on Foo" in result
+        assert await self._card(db_session, workspace, peer1, peer2) == card
 
     async def test_no_op_and_empty_edits_do_not_write(
         self,

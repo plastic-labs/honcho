@@ -1338,8 +1338,9 @@ async def get_recent_peer_summaries(
     A session qualifies when every named peer has a membership row in it, current
     or ended, except that a scope peer needs a current one: a session removed from
     a scope stops granting it access, as it does for message search. Each session
-    contributes its long summary when it has one, since that covers the whole
-    session, and its short summary otherwise. Sessions are ordered by their
+    contributes whichever of its summaries reaches the later message: both are
+    cumulative, and the short one is rewritten more often, so it is usually the
+    more current. On a tie the long one wins, since it is the more detailed. Sessions are ordered by their
     newest summary, most recent first, as a proxy for recent activity that needs
     no message scan.
 
@@ -1386,9 +1387,16 @@ async def get_recent_peer_summaries(
     results: list[tuple[str, Summary]] = []
     for session_name, session_summaries in rows:
         stored: dict[str, Summary] = session_summaries or {}
-        summary = stored.get(SummaryType.LONG.value) or stored.get(
-            SummaryType.SHORT.value
-        )
+        long_summary = stored.get(SummaryType.LONG.value)
+        short_summary = stored.get(SummaryType.SHORT.value)
+        if long_summary is None:
+            summary = short_summary
+        elif short_summary is None:
+            summary = long_summary
+        elif short_summary["message_id"] > long_summary["message_id"]:
+            summary = short_summary
+        else:
+            summary = long_summary
         if summary is not None:
             results.append((session_name, summary))
     return results

@@ -379,10 +379,12 @@ async def _add_session(
     summaries: dict[SummaryType, tuple[str, str]],
     *,
     deleted: bool = False,
+    message_ids: dict[SummaryType, int] | None = None,
 ) -> None:
     """Add a session with its members and stored summaries.
 
-    `summaries` maps a summary type to its (content, created_at) pair.
+    `summaries` maps a summary type to its (content, created_at) pair, and
+    `message_ids` to the message each summary reaches (1 when not given).
     """
     db_session.add(
         models.Session(
@@ -392,7 +394,7 @@ async def _add_session(
                 SUMMARIES_KEY: {
                     summary_type.value: {
                         "content": content,
-                        "message_id": 1,
+                        "message_id": (message_ids or {}).get(summary_type, 1),
                         "summary_type": summary_type.value,
                         "created_at": created_at,
                         "token_count": 1,
@@ -509,11 +511,41 @@ class TestSessionSummariesTool:
             for name in ("newest", "middle", "oldest")
         ]
         assert order == sorted(order)
-        # A session with a long summary shows it; its short summary is left out.
+        # Where both summaries reach the same message, the long one is shown.
         assert "oldest long" in result
         assert "oldest short" not in result
         for absent in ("not-a-member", "deleted", "unsummarized"):
             assert f"## Session {absent} " not in result
+
+    @pytest.mark.asyncio
+    async def test_a_short_summary_reaching_further_wins_over_the_long_one(
+        self,
+        db_session: AsyncSession,
+        summarized_sessions: tuple[str, str, str],
+    ):
+        workspace_name, peer, _ = summarized_sessions
+        # Both summaries are cumulative; the short one is rewritten more often, so
+        # it can cover messages the long one has not reached yet.
+        await _add_session(
+            db_session,
+            workspace_name,
+            "short-ahead",
+            [peer],
+            {
+                SummaryType.LONG: ("long to 60", "2026-11-06T00:00:00Z"),
+                SummaryType.SHORT: ("short to 100", "2026-11-06T01:00:00Z"),
+            },
+            message_ids={SummaryType.LONG: 60, SummaryType.SHORT: 100},
+        )
+        await db_session.commit()
+
+        result = await _read_summaries(
+            self._context(workspace_name, peer, peer), {"limit": 1}
+        )
+
+        assert "## Session short-ahead " in result
+        assert "short to 100" in result
+        assert "long to 60" not in result
 
     @pytest.mark.asyncio
     async def test_pages_back_with_offset(

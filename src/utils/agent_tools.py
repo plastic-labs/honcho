@@ -517,6 +517,8 @@ TOOLS: dict[str, dict[str, Any]] = {
             "Entries follow the same rules as `update_peer_card`: each starts with `IDENTITY: `, "
             "`ATTRIBUTE: `, `RELATIONSHIP: `, or `INSTRUCTION: ` followed by one concise fact. "
             "To replace an entry, put its current text in `remove` and the new text in `add` in the same call. "
+            "If any `remove` entry is not on the card, the whole edit is refused, so a replacement never "
+            "leaves both the old and the new entry. "
             f"The card holds at most {MAX_PEER_CARD_FACTS} entries. An edit that would go over is refused, "
             "so when the card is full, remove the entries that matter least in the same call that adds new ones."
         ),
@@ -1799,14 +1801,6 @@ async def _handle_edit_peer_card(
         removed_count = len(current) - len(kept)
 
         notes: list[str] = []
-        if unmatched:
-            listed = "\n".join(
-                f"  - {line[:_REJECTED_SAMPLE_LINE_LIMIT]!r}" for line in unmatched
-            )
-            notes.append(
-                "These `remove` entries are not on the card, so nothing was removed "
-                + f"for them; copy the exact text from the card:\n{listed}"
-            )
         if additions.rejected_count:
             total = len(additions.entries) + additions.rejected_count
             notes.append(
@@ -1814,14 +1808,22 @@ async def _handle_edit_peer_card(
             )
         suffix = "".join(f" {note}" for note in notes)
 
-        if not added and not removed_count:
-            reason = (
-                "the card already has every entry to add"
-                if additions.entries
-                else "there is nothing valid to add and no `remove` entry is on "
-                + "the card"
+        # A removal that misses is usually a paraphrase of an entry meant to be
+        # replaced. Applying the rest of the edit would keep the old entry beside
+        # its replacement, so refuse the whole edit instead.
+        if unmatched:
+            listed = "\n".join(
+                f"  - {line[:_REJECTED_SAMPLE_LINE_LIMIT]!r}" for line in unmatched
             )
-            return f"No change: {reason}.{suffix}"
+            return (
+                "Not applied: these `remove` entries are not on the card. Copy "
+                + "the exact text from the card and send the whole edit again:\n"
+                + f"{listed}{suffix}"
+            )
+        if not added and not removed_count:
+            # Every removal matched, so nothing was removed only if there were
+            # none, and the valid additions are all on the card already.
+            return f"No change: the card already has every entry to add.{suffix}"
         # A card set through the API can already hold more than the limit: an
         # edit may still shrink it or swap entries, but never grow it.
         ceiling = max(MAX_PEER_CARD_FACTS, len(current))
