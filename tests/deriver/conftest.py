@@ -54,20 +54,21 @@ async def sample_session_with_peers(
     await db_session.flush()
 
     # Create session with peer configurations
-    session = (
-        await crud.get_or_create_session(
-            db_session,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={
-                    peer1.name: schemas.SessionPeerConfigInput(observe_me=True),
-                    peer2.name: schemas.SessionPeerConfigInput(observe_others=True),
-                    peer3.name: schemas.SessionPeerConfigInput(),  # No special observation settings
-                },
-            ),
-            workspace.name,
-        )
-    ).resource
+    write_result = await crud.get_or_create_session(
+        db_session,
+        schemas.SessionCreate(
+            name=str(generate_nanoid()),
+            peers={
+                peer1.name: schemas.SessionPeerConfigInput(observe_me=True),
+                peer2.name: schemas.SessionPeerConfigInput(observe_others=True),
+                peer3.name: schemas.SessionPeerConfigInput(),  # No special observation settings
+            },
+        ),
+        workspace.name,
+    )
+    await db_session.commit()
+    await write_result.post_commit()
+    session = write_result.resource
     await db_session.commit()
 
     return session, [peer1, peer2, peer3]

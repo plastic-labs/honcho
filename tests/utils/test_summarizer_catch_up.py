@@ -52,16 +52,17 @@ def _configuration() -> ResolvedConfiguration:
 async def _session(
     db: AsyncSession, workspace: Workspace, peer: Peer, count: int
 ) -> tuple[models.Session, list[models.Message]]:
-    session = (
-        await crud.get_or_create_session(
-            db,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={peer.name: schemas.SessionPeerConfigInput()},
-            ),
-            workspace.name,
-        )
-    ).resource
+    write_result = await crud.get_or_create_session(
+        db,
+        schemas.SessionCreate(
+            name=str(generate_nanoid()),
+            peers={peer.name: schemas.SessionPeerConfigInput()},
+        ),
+        workspace.name,
+    )
+    await db.commit()
+    await write_result.post_commit()
+    session = write_result.resource
     messages = [
         models.Message(
             workspace_name=workspace.name,

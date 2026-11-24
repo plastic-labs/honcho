@@ -741,7 +741,11 @@ async def test_peer_perspective_search_after_active_readd(
         name=session.name,
         peers={peer1.name: schemas.SessionPeerConfigInput()},
     )
-    await crud.get_or_create_session(db_session, session_create, workspace.name)
+    write_result = await crud.get_or_create_session(
+        db_session, session_create, workspace.name
+    )
+    await db_session.commit()
+    await write_result.post_commit()
     results = await search(
         "persistent",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
@@ -760,7 +764,11 @@ async def test_peer_perspective_search_after_active_readd(
     )
     await db_session.commit()
 
-    await crud.get_or_create_session(db_session, session_create, workspace.name)
+    write_result = await crud.get_or_create_session(
+        db_session, session_create, workspace.name
+    )
+    await db_session.commit()
+    await write_result.post_commit()
     results = await search(
         "persistent",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
@@ -783,11 +791,13 @@ async def test_peer_perspective_search_sees_imported_messages_with_joined_at(
     session_name = "imported"
 
     async def add_peers(peers: dict[str, schemas.SessionPeerConfigInput]) -> None:
-        await crud.get_or_create_session(
+        write_result = await crud.get_or_create_session(
             db_session,
             schemas.SessionCreate(name=session_name, peers=peers),
             workspace.name,
         )
+        await db_session.commit()
+        await write_result.post_commit()
 
     async def membership(peer_name: str) -> models.SessionPeer:
         return (

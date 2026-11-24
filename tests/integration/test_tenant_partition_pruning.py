@@ -312,9 +312,12 @@ async def _message_fulltext_search(db: AsyncSession, _source_id: str) -> list[An
 
 
 async def _message_ingest(db: AsyncSession, _source_id: str) -> list[Any]:
-    created = await crud.create_messages(
+    write_result = await crud.create_messages(
         db, [schemas.MessageCreate(content="new", peer_id="p")], "w", "s"
     )
+    await db.commit()
+    await write_result.post_commit()
+    created = write_result.messages
     return [(m.content, m.seq_in_session) for m in created]
 
 
