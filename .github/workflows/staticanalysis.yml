@@ -65,6 +65,8 @@ jobs:
       # neither, so this needs no services.
       - name: check docs/v3/openapi.json matches the app
         run: uv run python -m scripts.generate_openapi --check
+      - name: check docs/schemas/ingest-record.v0.json matches the ingest record model
+        run: uv run python -m scripts.generate_ingest_schema --check
 
   alembic-heads:
     runs-on: ubuntu-latest
