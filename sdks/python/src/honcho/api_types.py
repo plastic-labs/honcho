@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import datetime
 import re
-from typing import Annotated, Any, Literal
+from collections.abc import Mapping
+from typing import Annotated, Any, Literal, cast
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
 
@@ -683,11 +684,16 @@ class IngestContainer(BaseModel):
 class IngestRecord(BaseModel):
     """One source record to ingest: a chat message, a meeting note, an event.
 
+    Sending it again with a later ``revised_at`` replaces it during the
+    workspace's dry run.
+
     Experimental: ingest may change or stop working without notice.
     """
 
     model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
+    op: Literal["upsert"] = "upsert"
+    """Ingest the record, or a newer version of it."""
     source: str = Field(min_length=1, max_length=64, pattern=_NAME_PATTERN)
     """The source type, e.g. ``discord``."""
     source_instance: str = Field(min_length=1, max_length=128, pattern=_NAME_PATTERN)
@@ -720,13 +726,49 @@ class IngestRecord(BaseModel):
     """An explicit author peer, used instead of mapping the author."""
 
 
+class IngestRecordDelete(BaseModel):
+    """A record the source deleted.
+
+    During the workspace's dry run its message is removed and a tombstone kept,
+    so the record never comes back; after the dry run it's refused. A delete is
+    final: a later version of the record is refused.
+
+    Experimental: ingest may change or stop working without notice.
+    """
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+    op: Literal["delete"] = "delete"
+    source: str = Field(min_length=1, max_length=64, pattern=_NAME_PATTERN)
+    source_instance: str = Field(min_length=1, max_length=128, pattern=_NAME_PATTERN)
+    source_id: _ExternalId
+    """The deleted record's ID in that instance."""
+    revised_at: datetime.datetime | None = None
+    """When the source deleted it. A delete older than the stored version
+    changes nothing."""
+
+
+def parse_ingest_record(
+    record: IngestRecord | IngestRecordDelete | Mapping[str, Any],
+) -> IngestRecord | IngestRecordDelete:
+    """A record as one of the two forms, by its ``op`` (an upsert may leave it out)."""
+    if isinstance(record, IngestRecord | IngestRecordDelete):
+        return record
+    # A JSONL line can hold any JSON value, whatever the annotation says.
+    if not isinstance(cast(object, record), Mapping):
+        raise ValueError("A record is a JSON object")
+    if record.get("op", "upsert") == "delete":
+        return IngestRecordDelete.model_validate(record)
+    return IngestRecord.model_validate(record)
+
+
 class IngestRecordResult(BaseModel):
     """What happened to one ingested record."""
 
     index: int
     """The record's position among the records passed to ``ingest``."""
     outcome: str
-    """``created``, ``duplicate`` or ``rejected``."""
+    """``created``, ``updated``, ``deleted``, ``duplicate`` or ``rejected``."""
     reason: str | None = None
     """Why a record was rejected, e.g. ``content_conflict``."""
     record_id: str | None = None
@@ -734,7 +776,7 @@ class IngestRecordResult(BaseModel):
     session_id: str | None = None
     peer_id: str | None = None
     derivation: str | None = None
-    """``pending``, ``queued`` or ``deferred``."""
+    """``pending``, ``queued``, ``deferred``, or ``deleted`` for a tombstone."""
 
 
 class IngestResponse(BaseModel):
@@ -752,6 +794,8 @@ class IngestRecordCounts(BaseModel):
     """Released, about to be queued."""
     queued: int
     """Queued for derivation, or derived."""
+    deleted: int = 0
+    """Tombstones: records the source deleted, kept so they don't come back."""
 
 
 class IngestSuggestionStageCounts(BaseModel):
@@ -769,6 +813,31 @@ class IngestSuggestionCounts(BaseModel):
     )
     """Made by the identity rules."""
     refreshing: bool = False
+
+
+class IngestSyncSource(BaseModel):
+    """How a connector following one source is doing."""
+
+    source: str
+    source_instance: str
+    last_synced_at: datetime.datetime
+    """When the connector last saved its position."""
+    last_record_at: datetime.datetime | None = None
+    """The source time of the newest record the connector has sent."""
+    error: str | None = None
+    """The connector's last error; None once it's fine."""
+
+
+class IngestSyncState(IngestSyncSource):
+    """Where a connector following one source has got to.
+
+    Experimental: ingest may change or stop working without notice.
+    """
+
+    position: dict[str, Any]
+    """The connector's own cursor, as it saved it."""
+    revision: str
+    """Changes on every save: pass it back to save only if nothing else has."""
 
 
 class IngestStatusResponse(BaseModel):
@@ -789,6 +858,8 @@ class IngestStatusResponse(BaseModel):
     """Sessions a reset is still deleting; 0 once it has finished."""
     suggestions: IngestSuggestionCounts = Field(default_factory=IngestSuggestionCounts)
     """Open suggested links between accounts."""
+    sources: list[IngestSyncSource] = Field(default_factory=list)
+    """The sources connectors follow, with each one's last sync."""
 
 
 class IngestAccount(BaseModel):

@@ -1,9 +1,10 @@
 # Discord connector
 
 Reads a Discord server's history as Honcho ingest records, and writes them to
-JSONL files or sends them to the ingest API. This is the backfill half of a
-Discord connector: it reads history once, oldest first. It has no live events,
-install flow or stored read position yet.
+JSONL files or sends them to the ingest API. Run from the Honcho CLI with
+`--follow`, it then follows the server live: new messages, edits and deletes,
+with its position saved in Honcho. It has no install flow yet: it runs with
+your own bot token.
 
 > **Experimental.** Ingest into auto workspaces is experimental, and so is
 > this connector: its records, its options and the ingest API it sends to may
@@ -19,8 +20,9 @@ A bot token, in a file, for a bot that has been added to the server with:
 - optionally the **Server Members** intent, for nicknames. Without it, names
   fall back to each account's global display name.
 
-It only uses Discord's HTTP API and never opens a gateway connection, so it can
-run beside a bot that is already connected with the same token.
+An export only uses Discord's HTTP API and never opens a gateway connection, so
+it can run beside a bot that is already connected with the same token.
+Following opens one (as a second session of the same bot, if it's running).
 
 ## Use
 
@@ -51,6 +53,38 @@ and holds back bot records no person interacted with (`--bots`).
 channel's threads, active and archived, come with it. Private archived threads
 aren't read.
 
+## Following a server
+
+```bash
+export HONCHO_EXPERIMENTAL=1
+honcho ingest from discord --follow --token-file ~/.discord.token --guild GUILD_ID -w discord
+```
+
+It reads the history from the position it saved (all of it the first time),
+then follows live events until you stop it with Ctrl-C or SIGTERM, when it sends
+what's pending and saves its position. Run it again, on any machine, and it
+carries on from there. Records are sent with `--derive auto`: stored for later
+during the dry run, derived as they arrive after it.
+
+- **New messages** are never missed: each channel's and thread's position moves
+  only past messages Honcho accepted (or that were skipped on purpose). After a
+  restart, a dropped connection or falling behind, it reads the history again
+  from there. A message created and deleted while it was down isn't seen.
+- **Edits and deletes** are taken while it's connected. They change stored
+  records only during the dry run; after it, Honcho refuses them
+  (`edited_after_derivation`). One made while it was down isn't seen.
+- **New threads and channels** under the selected channels are followed as they
+  appear.
+- **Bot messages** wait up to `--bot-window` minutes (60 by default) for a person
+  to reply to or mention the bot; unanswered, they're dropped. While it reads
+  history, the wait is measured in the history's own time.
+- **One runner per server.** A second runner, or a reset that forgot the
+  position, is noticed at the next save: it stops with `SYNC_CONFLICT`. It isn't
+  a lock: two first runs both start.
+
+`honcho ingest status` shows the server's last sync, newest record and last
+error.
+
 ## What a record holds
 
 | Ingest field | From Discord |
@@ -75,5 +109,9 @@ flag), `containers.jsonl`, and `export.json` (counts and category names).
 ## Limits
 
 - Discord's history API returns each message's current text only, and never a
-  deleted message, so an export has no edit history or deletions.
+  deleted message, so an export has no edit history or deletions. Following
+  sees edits and deletes only while it's connected.
+- Deleting a whole channel or thread isn't followed: Discord sends no message
+  IDs for it.
+- A link preview Discord adds after a message is sent isn't followed.
 - Names are as of the export, not as of each message.

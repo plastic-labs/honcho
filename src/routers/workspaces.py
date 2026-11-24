@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
+from src.crud.ingest_dry_run import end_dry_run
 from src.crud.message import get_peer_session_names
 from src.dependencies import db, read_db, tracked_db
 from src.deriver.enqueue import enqueue_deletion, enqueue_dream
@@ -285,6 +286,22 @@ async def schedule_dream(
     # transaction as the queue insert. Nothing expensive happens before it here, so
     # no early duplicate is needed.
 
+    # A dream scheduled by hand ends an auto workspace's dry run before it's
+    # queued. The scope check runs first here, so a refused dream doesn't end
+    # it; enqueue_dream checks again with the insert (a peer flagged as a scope
+    # in between has ended the dry run for nothing, which is harmless).
+    async with tracked_db("dream_dry_run") as dry_run_db:
+        await crud.reject_scope_observed(
+            dry_run_db,
+            workspace_id,
+            [observed],
+            action=(
+                "No representation is formed of a scope, so a scope cannot be the"
+                " observed peer of a dream."
+            ),
+        )
+        seen_workspace_id = await end_dry_run(dry_run_db, workspace_id)
+
     await enqueue_dream(
         workspace_id,
         observer=observer,
@@ -299,6 +316,7 @@ async def schedule_dream(
         # analytics joins on `trigger_reason`.
         trigger_reason="manual",
         delay_reason="immediate",
+        expected_workspace_id=seen_workspace_id,
     )
 
     logger.info(

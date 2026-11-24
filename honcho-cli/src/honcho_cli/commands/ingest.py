@@ -23,7 +23,9 @@ read when records are released. Needs a workspace or admin key.
 
 from __future__ import annotations
 
+import datetime
 import json
+import signal
 import sys
 import time
 from collections import Counter
@@ -34,21 +36,24 @@ import typer
 from honcho import ConflictError, Honcho, NotFoundError, Peer, filter_bot_records
 from honcho.api_types import (
     IngestRecord,
+    IngestRecordDelete,
     IngestStatusResponse,
     PeerConfig,
     ReasoningConfiguration,
     SessionConfiguration,
+    parse_ingest_record,
 )
 from pydantic import ValidationError
 from rich.table import Table
 from rich.text import Text
 
+from honcho_cli import ingest_sources
 from honcho_cli._help import HonchoTyperGroup
 from honcho_cli.commands.workspace import _handle_error
 from honcho_cli.common import add_common_options, get_client, handle_cmd_flags
-from honcho_cli import ingest_sources
 from honcho_cli.experimental import experimental
 from honcho_cli.experimental import require as require_experimental
+from honcho_cli.follow import FollowConflict, FollowRecordError, FollowSink
 from honcho_cli.ingest_refs import (
     resolve,
     save_listing,
@@ -109,13 +114,13 @@ def _lines(path: str) -> Iterator[tuple[int, str]]:
         raise typer.Exit(1) from None
 
 
-def _records(path: str) -> Iterator[IngestRecord]:
+def _records(path: str) -> Iterator[IngestRecord | IngestRecordDelete]:
     """Each non-blank line as a validated record; a bad line stops the import."""
     for number, line in _lines(path):
         if not line.strip():
             continue
         try:
-            yield IngestRecord.model_validate(json.loads(line))
+            yield parse_ingest_record(json.loads(line))
         except (ValueError, ValidationError) as e:
             detail = (
                 e.errors(include_url=False, include_input=False)[0]["msg"]
@@ -143,7 +148,8 @@ def _chunks(items: Iterable[T], size: int) -> Iterator[list[T]]:
 
 _DERIVE_HELP = (
     "later (default): store without deriving until `honcho ingest derive`;"
-    + " now: derive as records arrive"
+    + " now: derive as records arrive, which ends the dry run; auto: later during"
+    + " the dry run, now after it"
 )
 _BOTS_HELP = (
     "Bot records to import. interacted (default): only those a person replied to"
@@ -152,8 +158,8 @@ _BOTS_HELP = (
 
 
 def _check_choices(derive: str, bots: str) -> None:
-    if derive not in ("now", "later"):
-        print_error("INVALID_ARGUMENT", "--derive must be 'now' or 'later'")
+    if derive not in ("now", "later", "auto"):
+        print_error("INVALID_ARGUMENT", "--derive must be 'now', 'later' or 'auto'")
         raise typer.Exit(1)
     if bots not in ("interacted", "all", "none"):
         print_error("INVALID_ARGUMENT", "--bots must be 'interacted', 'all' or 'none'")
@@ -161,8 +167,8 @@ def _check_choices(derive: str, bots: str) -> None:
 
 
 def _hold_back(
-    records: Iterable[IngestRecord], bots: str
-) -> tuple[Iterable[IngestRecord], int]:
+    records: Iterable[IngestRecord | IngestRecordDelete], bots: str
+) -> tuple[Iterable[IngestRecord | IngestRecordDelete], int]:
     """The records to send, and how many bot records `bots` holds back.
 
     With `all` the records stream through; otherwise they're read whole, since
@@ -186,11 +192,9 @@ class _Sender:
         self.sent = 0
         self.held_back = 0
 
-    def send(self, records: Iterable[IngestRecord]) -> None:
+    def send(self, records: Iterable[IngestRecord | IngestRecordDelete]) -> None:
         for chunk in _chunks(records, CHUNK):
-            result = self.client.ingest(
-                chunk, derive="now" if self.derive == "now" else "later"
-            )
+            result = self.client.ingest(chunk, derive=self.derive)  # pyright: ignore[reportArgumentType]
             for record in result.records:
                 self.outcomes[record.outcome] += 1
                 if record.reason:
@@ -213,6 +217,8 @@ class _Sender:
             "workspace": workspace,
             "records": self.sent,
             "created": self.outcomes["created"],
+            "updated": self.outcomes["updated"],
+            "deleted": self.outcomes["deleted"],
             "duplicate": self.outcomes["duplicate"],
             "rejected": self.outcomes["rejected"],
             "rejected_reasons": dict(self.reasons),
@@ -228,8 +234,11 @@ def _print_import_summary(summary: dict[str, Any], bots: str) -> None:
         print_json(summary)
         return
     sent = summary["records"]
+    changed = "".join(
+        f"{summary[key]:,} {key} · " for key in ("updated", "deleted") if summary[key]
+    )
     stdout_console.print(
-        f"{sent:,} records: {summary['created']:,} created · "
+        f"{sent:,} records: {summary['created']:,} created · {changed}"
         + f"{summary['duplicate']:,} duplicate · {summary['rejected']:,} rejected"
     )
     for reason, count in Counter(summary["rejected_reasons"]).most_common():
@@ -260,13 +269,17 @@ can have. A server can set another; `--check` checks against the default."""
 def _check_file(path: str, bots: str) -> None:
     """Validate every line of an import without sending anything."""
     valid: list[IngestRecord] = []
+    deletes = 0
     errors: list[dict[str, Any]] = []
     invalid = 0
     for number, line in _lines(path):
         if not line.strip():
             continue
         try:
-            record = IngestRecord.model_validate(json.loads(line))
+            record = parse_ingest_record(json.loads(line))
+            if isinstance(record, IngestRecordDelete):
+                deletes += 1
+                continue
             if len(record.content) > DEFAULT_MAX_CONTENT:
                 raise ValueError(
                     f"content: {len(record.content):,} characters, over the server's"
@@ -281,7 +294,8 @@ def _check_file(path: str, bots: str) -> None:
     sources = Counter(f"{r.source}:{r.source_instance}" for r in valid)
     summary: dict[str, Any] = {
         "valid": invalid == 0,
-        "records": len(valid) + invalid,
+        "records": len(valid) + deletes + invalid,
+        "deletes": deletes,
         "invalid": invalid,
         "errors": errors,
         "sources": dict(sources),
@@ -289,7 +303,7 @@ def _check_file(path: str, bots: str) -> None:
         "authors": len({(r.source, r.source_instance, r.author.id or r.author.name) for r in valid if r.author}),
         "bot_records": sum(1 for r in valid if r.author is not None and r.author.bot),
         "bot_records_held_back": held_back,
-        "would_send": len(valid) - held_back,
+        "would_send": len(valid) + deletes - held_back,
     }
     if use_json():
         print_json(summary)
@@ -299,7 +313,9 @@ def _check_file(path: str, bots: str) -> None:
         if invalid > len(errors):
             stdout_console.print(f"… and {invalid - len(errors):,} more invalid lines")
         stdout_console.print(
-            f"{summary['records']:,} records: {len(valid):,} valid · {invalid:,} invalid"
+            f"{summary['records']:,} records: {len(valid) + deletes:,} valid"
+            + (f" ({deletes:,} deletes)" if deletes else "")
+            + f" · {invalid:,} invalid"
         )
         for source, count in sources.most_common():
             stdout_console.print(f"  {source}: {count:,}")
@@ -385,7 +401,7 @@ class _SourceSink:
         self.bots = bots
         self.containers = 0
         self._name = "(before any container)"
-        self._buffer: list[IngestRecord] = []
+        self._buffer: list[IngestRecord | IngestRecordDelete] = []
 
     def container(self, name: str) -> None:
         self.flush()
@@ -394,7 +410,7 @@ class _SourceSink:
 
     def record(self, record: Mapping[str, Any]) -> None:
         try:
-            self._buffer.append(IngestRecord.model_validate(record))
+            self._buffer.append(parse_ingest_record(record))
         except ValidationError as e:
             raise _SourceRecordError(self._name, _validation_message(e)) from None
 
@@ -453,8 +469,21 @@ def import_from(
     source: Optional[str] = typer.Argument(
         None, help="An installed source; leave it out to list them"
     ),
-    derive: str = typer.Option("later", "--derive", help=_DERIVE_HELP),
+    derive: Optional[str] = typer.Option(
+        None, "--derive", help=_DERIVE_HELP + " (default: later; auto with --follow)"
+    ),
     bots: str = typer.Option("interacted", "--bots", help=_BOTS_HELP),
+    follow: bool = typer.Option(
+        False,
+        "--follow",
+        help="Catch up from the saved position, then follow the source live until"
+        + " stopped (Ctrl-C); for sources that can",
+    ),
+    bot_window: int = typer.Option(
+        60,
+        "--bot-window",
+        help="With --follow: minutes a bot record waits for a person to interact",
+    ),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
@@ -463,8 +492,12 @@ def import_from(
     The source's own options follow its name: `honcho ingest from github --help`
     shows them. Records are sent the way `ingest import` sends a file: deriving
     later, and holding back bot records no person interacted with, judged one
-    container at a time. `--derive`, `--bots`, `-w` and `--json` are this
-    command's own; everything else goes to the source.
+    container at a time. With `--follow`, a source that can follows its source
+    live: it catches up from the position it saved, then sends new records,
+    edits and deletes as they happen, deriving `auto` (later during the dry run,
+    as they arrive after it), until stopped. `--derive`, `--bots`, `--follow`,
+    `--bot-window`, `-w` and `--json` are this command's own; everything else
+    goes to the source.
     """
     handle_cmd_flags(json_output=json_output, workspace=workspace)
     argv = list(ctx.args)
@@ -494,8 +527,20 @@ def import_from(
             + " `honcho ingest from` lists the installed sources.",
         )
         raise typer.Exit(1)
+    derive = derive or ("auto" if follow else "later")
     _check_choices(derive, bots)
     loaded = _load_source(source)
+    if follow:
+        if not getattr(loaded, "follows", False):
+            print_error(
+                "CANT_FOLLOW",
+                f"'{source}' can only import its history, not follow it: drop --follow.",
+                {"source": source},
+            )
+            raise typer.Exit(1)
+        if bot_window < 1:
+            print_error("INVALID_ARGUMENT", "--bot-window must be at least 1 minute")
+            raise typer.Exit(1)
 
     client, config = get_client()
     wid = config.workspace_id
@@ -504,6 +549,11 @@ def import_from(
         client.ingest_status()
     except Exception as e:
         _ingest_error(e, wid)
+
+    if follow:
+        raise typer.Exit(
+            _follow(loaded, source, argv, client, wid, derive, bots, bot_window)
+        )
 
     sender = _Sender(client, derive)
     sink = _SourceSink(sender, bots)
@@ -531,6 +581,80 @@ def import_from(
     _print_import_summary(summary, bots)
     if code:
         raise typer.Exit(code)
+
+
+def _follow(
+    loaded: ingest_sources.IngestSource,
+    source: str,
+    argv: list[str],
+    client: Honcho,
+    wid: str,
+    derive: str,
+    bots: str,
+    bot_window: int,
+) -> int:
+    """Run a source in follow mode until it stops; return its exit code.
+
+    The first Ctrl-C (or SIGTERM) asks the source to stop: it flushes and saves
+    its position. A second one stops at once.
+    """
+    sink = FollowSink(
+        client,
+        source,
+        derive=derive,
+        bots=bots,
+        window=datetime.timedelta(minutes=bot_window),
+    )
+
+    def ask_to_stop(signum: int, _frame: Any) -> None:
+        if sink.stop.is_set():
+            raise KeyboardInterrupt
+        sink.stop.set()
+        status("Stopping: sending what's pending and saving the position…")
+
+    previous = {
+        sig: signal.signal(sig, ask_to_stop) for sig in (signal.SIGINT, signal.SIGTERM)
+    }
+    try:
+        code = _run_source(loaded, [*argv, "--follow"], sink)  # pyright: ignore[reportArgumentType]
+    except FollowConflict as e:
+        print_error("SYNC_CONFLICT", str(e), {"source": source})
+        return 1
+    except FollowRecordError as e:
+        print_error(
+            "INVALID_RECORD",
+            f"'{source}' produced a record that isn't a valid ingest record, in {e}",
+            {"source": source, "container": e.container},
+        )
+        return 1
+    except KeyboardInterrupt:
+        status("Stopped without saving the latest position; it carries on from the last one.")
+        return 130
+    except Exception as e:
+        _ingest_error(e, wid)
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+    summary = {
+        "workspace": wid,
+        "source": source,
+        "records": sink.sent,
+        **{key: sink.outcomes[key] for key in ("created", "updated", "deleted", "duplicate", "rejected")},
+        "rejected_reasons": dict(sink.reasons),
+        "bot_records_held_back": sink.held_back,
+        "derive": derive,
+    }
+    if use_json():
+        print_json(summary)
+    else:
+        stdout_console.print(
+            f"{sink.sent:,} records sent: "
+            + " · ".join(
+                f"{summary[key]:,} {key}"
+                for key in ("created", "updated", "deleted", "duplicate", "rejected")
+            )
+        )
+    return code
 
 
 def _load_source(source: str) -> ingest_sources.IngestSource:
@@ -588,6 +712,16 @@ def _first(items: Iterable[T], limit: int) -> list[T]:
     return taken
 
 
+def _ago(moment: datetime.datetime) -> str:
+    """How long ago, roughly: `3 min ago`."""
+    when = moment if moment.tzinfo else moment.replace(tzinfo=datetime.UTC)
+    seconds = max(0, int((datetime.datetime.now(datetime.UTC) - when).total_seconds()))
+    for unit, size in (("d", 86400), ("h", 3600), ("min", 60)):
+        if seconds >= size:
+            return f"{seconds // size} {unit} ago"
+    return f"{seconds} s ago"
+
+
 def _modeled(modeled: bool) -> Text:
     return Text("yes", style="green") if modeled else Text("no", style="yellow")
 
@@ -598,6 +732,7 @@ def _print_status(
     r = st.records
     stdout_console.print(
         f"Records: {r.deferred:,} deferred · {r.pending:,} pending · {r.queued:,} queued"
+        + (f" · {r.deleted:,} deleted" if r.deleted else "")
     )
     if r.deferred:
         stdout_console.print(f"{st.deferred_tokens:,} tokens waiting to be derived")
@@ -648,6 +783,24 @@ def _print_status(
     stdout_console.print(sessions_table)
     if len(sessions) < st.sessions:
         status(f"showing {len(sessions)} of {st.sessions:,} sessions; --limit for more")
+    if st.sources:
+        sources_table = Table(
+            title=f"Synced sources ({len(st.sources):,})",
+            show_header=True,
+            header_style="bold",
+        )
+        sources_table.add_column("source", no_wrap=True)
+        sources_table.add_column("last sync")
+        sources_table.add_column("newest record")
+        sources_table.add_column("error", overflow="fold")
+        for source in st.sources:
+            sources_table.add_row(
+                f"{source.source}/{source.source_instance}",
+                _ago(source.last_synced_at),
+                _ago(source.last_record_at) if source.last_record_at else "",
+                Text(source.error, style="red") if source.error else "",
+            )
+        stdout_console.print(sources_table)
     if r.deferred:
         status(
             "Exclude with `honcho peer exclude N` or `honcho session exclude N`,"

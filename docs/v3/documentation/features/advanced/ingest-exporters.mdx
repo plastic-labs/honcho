@@ -32,7 +32,7 @@ The format is published as a JSON Schema: [`ingest-record.v0.json`](https://gith
 | `configuration` | | Per-message settings, such as `{"reasoning": {"enabled": false}}` to store a record as context only |
 | `session_id`, `peer_id` | | An explicit session or author peer, used instead of mapping the container or author. Most exporters leave these out |
 
-A record already stored that comes again with a newer `revised_at` is rejected as `edit_not_supported` for now, and the stored version stays. Send `revised_at` anyway: it is how an edit will be recognized.
+A record already stored that comes again with a newer `revised_at` is an edit: during the workspace's dry run (before it first derives) it replaces the stored text, and after it it's refused and the stored version stays. A record the source deleted is a line of its own, `{"op": "delete", "source": ..., "source_instance": ..., "source_id": ...}`, with `revised_at` if the source says when; during the dry run it removes the message and keeps a tombstone, so the record never comes back. See [the dry run](/v3/documentation/features/advanced/ingest#the-dry-run-edits-and-deletes).
 
 ## What makes a clean import
 
@@ -118,6 +118,21 @@ honcho ingest from                                   # lists the installed sourc
 honcho ingest from mychat --help                     # its own options
 honcho ingest from mychat --token-file ~/.mychat.token --room general -w acme
 ```
+
+### Follow the source live
+
+A source that can follow its source as it changes sets `follows = True`. `honcho ingest from mychat --follow` then adds `--follow` to `argv` and hands `main` a sink with more methods:
+
+| Method | What it does |
+|---|---|
+| `sink.position(instance)` | The position saved for this source instance, or `None` the first time |
+| `sink.flush()` | Sends what's pending (records are sent with `derive="auto"`) and returns which `source_id`s are `settled` (answered, or a bot record dropped) and which are `held` (a bot record waiting for a person). A failure that may pass is in `error`; what wasn't sent stays pending |
+| `sink.save_position(instance, position, last_record_at=..., error=...)` | Saves the position, refused if another runner saved since (the CLI stops with a clear error) |
+| `sink.context(record)` | A record read again only as context for the bot filter; it's never sent |
+| `sink.stop` | A `threading.Event` set on Ctrl-C or SIGTERM: send, save and return |
+| `sink.window` | How long a bot record waits for a person (`--bot-window`) |
+
+Save a position only past records that are settled: a held bot record, or a batch Honcho didn't answer, must be read again after a restart. A delete is a record of its own, `{"op": "delete", "source": ..., "source_instance": ..., "source_id": ...}`.
 
 The CLI does the rest: the workspace and API key from its configuration, validating each record, holding back bot records no person interacted with (judged one container at a time), sending in batches without deriving, and the summary `ingest import` prints. `-w`, `--derive`, `--bots` and `--json` are the CLI's own options; everything else goes to the source. A source doesn't import anything from Honcho.
 

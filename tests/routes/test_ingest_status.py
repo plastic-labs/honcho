@@ -80,7 +80,7 @@ def test_status_counts_an_import_waiting_to_be_derived(client: TestClient) -> No
 
     status = _status(client, workspace)
 
-    assert status["records"] == {"deferred": 6, "pending": 0, "queued": 0}
+    assert status["records"] == {"deferred": 6, "pending": 0, "queued": 0, "deleted": 0}
     assert status["deferred_tokens"] > 0
     assert (status["people"], status["people_not_modeled"]) == (3, 1)
     assert (status["sessions"], status["sessions_not_modeled"]) == (2, 0)
@@ -248,7 +248,7 @@ def test_an_empty_auto_workspace_has_an_empty_status(client: TestClient) -> None
     workspace = _workspace(client)
 
     assert _status(client, workspace) == {
-        "records": {"deferred": 0, "pending": 0, "queued": 0},
+        "records": {"deferred": 0, "pending": 0, "queued": 0, "deleted": 0},
         "deferred_tokens": 0,
         "people": 0,
         "people_not_modeled": 0,
@@ -256,6 +256,7 @@ def test_an_empty_auto_workspace_has_an_empty_status(client: TestClient) -> None
         "sessions_not_modeled": 0,
         "sessions_being_deleted": 0,
         "suggestions": {"rules": {"high": 0, "low": 0}, "refreshing": False},
+        "sources": [],
     }
     assert _people(client, workspace)["items"] == []
 

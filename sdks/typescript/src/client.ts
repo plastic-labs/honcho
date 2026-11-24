@@ -1,6 +1,7 @@
 import { API_VERSION } from './api-version'
 import { WorkspaceConclusions } from './conclusions'
 import { HonchoHTTPClient } from './http/client'
+import { NotFoundError } from './http/errors'
 import {
   createDialecticStream,
   type DialecticStreamResponse,
@@ -32,6 +33,10 @@ import type {
   IngestSuggestion,
   IngestSuggestionAccepted,
   IngestSuggestionResponse,
+  IngestSyncSource,
+  IngestSyncSourceResponse,
+  IngestSyncState,
+  IngestSyncStateResponse,
   IngestUnlinkResponse,
   IngestUnlinkResult,
   MessageResponse,
@@ -54,6 +59,7 @@ import {
   type HonchoConfig,
   HonchoConfigSchema,
   type IngestRecord,
+  type IngestRecordDelete,
   ingestRecordToApi,
   LimitSchema,
   normalizeListOptions,
@@ -95,6 +101,24 @@ function ingestAccountFromApi(a: IngestAccountResponse): IngestAccount {
     sourceInstance: a.source_instance,
     id: a.id ?? undefined,
     displayName: a.display_name ?? undefined,
+  }
+}
+function ingestSyncSourceFromApi(
+  s: IngestSyncSourceResponse
+): IngestSyncSource {
+  return {
+    source: s.source,
+    sourceInstance: s.source_instance,
+    lastSyncedAt: s.last_synced_at,
+    lastRecordAt: s.last_record_at ?? undefined,
+    error: s.error ?? undefined,
+  }
+}
+function ingestSyncStateFromApi(s: IngestSyncStateResponse): IngestSyncState {
+  return {
+    ...ingestSyncSourceFromApi(s),
+    position: s.position,
+    revision: s.revision,
   }
 }
 function ingestSuggestionFromApi(
@@ -1373,10 +1397,12 @@ export class Honcho {
    * creates it on first use; otherwise it must already exist (`NotFoundError`)
    * and be auto (`ConflictError`).
    *
-   * @param records - The records to ingest
+   * @param records - The records to ingest, and deletes (`op: 'delete'`)
    * @param options.derive - `'now'` (default) queues derivation as records
-   *                         arrive; `'later'` stores them without deriving
-   *                         until `ingestDerive()`
+   *                         arrive, which ends the workspace's dry run;
+   *                         `'later'` stores them without deriving until
+   *                         `ingestDerive()`; `'auto'` is `'later'` during the
+   *                         dry run and `'now'` after it
    * @returns One result per record, with `index` counted across all batches.
    *          If a request fails, the batches before it are already stored;
    *          sending all the records again is safe.
@@ -1384,8 +1410,10 @@ export class Honcho {
    * @experimental Ingest may change or stop working without notice.
    */
   async ingest(
-    records: Iterable<IngestRecord> | AsyncIterable<IngestRecord>,
-    options?: { derive?: 'now' | 'later' }
+    records:
+      | Iterable<IngestRecord | IngestRecordDelete>
+      | AsyncIterable<IngestRecord | IngestRecordDelete>,
+    options?: { derive?: 'now' | 'later' | 'auto' }
   ): Promise<IngestResult> {
     if (this._auto) {
       await this._ensureWorkspace()
@@ -1531,7 +1559,7 @@ export class Honcho {
       `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/status`
     )
     return {
-      records: s.records,
+      records: { ...s.records, deleted: s.records.deleted ?? 0 },
       deferredTokens: s.deferred_tokens,
       people: s.people,
       peopleNotModeled: s.people_not_modeled,
@@ -1542,7 +1570,101 @@ export class Honcho {
         rules: { high: 0, low: 0 },
         refreshing: false,
       },
+      sources: (s.sources ?? []).map(ingestSyncSourceFromApi),
     }
+  }
+
+  /**
+   * The sources connectors follow in this workspace, with each one's last sync.
+   *
+   * @experimental Ingest may change or stop working without notice.
+   */
+  async ingestSyncStates(): Promise<IngestSyncSource[]> {
+    const states = await this._http.get<IngestSyncSourceResponse[]>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/sync`
+    )
+    return states.map(ingestSyncSourceFromApi)
+  }
+
+  /**
+   * Where the connector following a source has got to; null to start afresh.
+   *
+   * @experimental Ingest may change or stop working without notice.
+   */
+  async ingestSyncState(
+    source: string,
+    sourceInstance: string
+  ): Promise<IngestSyncState | null> {
+    try {
+      return ingestSyncStateFromApi(
+        await this._http.get<IngestSyncStateResponse>(
+          `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/sync/${source}/${sourceInstance}`
+        )
+      )
+    } catch (error) {
+      if (error instanceof NotFoundError) {
+        return null
+      }
+      throw error
+    }
+  }
+
+  /**
+   * Save where the connector following a source has got to.
+   *
+   * With `revision` (the one read), the save is refused with `ConflictError`
+   * if another runner saved since or a reset forgot the state. Resolves to
+   * the state with its new revision.
+   *
+   * @experimental Ingest may change or stop working without notice.
+   */
+  async ingestSaveSyncState(
+    source: string,
+    sourceInstance: string,
+    position: Record<string, unknown>,
+    options?: {
+      revision?: string
+      lastRecordAt?: string | Date
+      error?: string
+    }
+  ): Promise<IngestSyncState> {
+    const lastRecordAt = options?.lastRecordAt
+    return ingestSyncStateFromApi(
+      await this._http.put<IngestSyncStateResponse>(
+        `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/sync/${source}/${sourceInstance}`,
+        {
+          body: {
+            position,
+            error: options?.error ?? null,
+            ...(options?.revision ? { revision: options.revision } : {}),
+            ...(lastRecordAt
+              ? {
+                  last_record_at:
+                    lastRecordAt instanceof Date
+                      ? lastRecordAt.toISOString()
+                      : lastRecordAt,
+                }
+              : {}),
+          },
+        }
+      )
+    )
+  }
+
+  /**
+   * Forget a source's sync state, so its connector reads it from the start.
+   * Resolves to whether there was one.
+   *
+   * @experimental Ingest may change or stop working without notice.
+   */
+  async ingestForgetSyncState(
+    source: string,
+    sourceInstance: string
+  ): Promise<boolean> {
+    const r = await this._http.delete<{ forgotten: boolean }>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/ingest/sync/${source}/${sourceInstance}`
+    )
+    return r.forgotten
   }
 
   /**

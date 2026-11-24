@@ -618,7 +618,12 @@ export interface IngestResult {
 }
 
 export interface IngestStatusResponse {
-  records: { deferred: number; pending: number; queued: number }
+  records: {
+    deferred: number
+    pending: number
+    queued: number
+    deleted?: number
+  }
   deferred_tokens: number
   people: number
   people_not_modeled: number
@@ -626,6 +631,44 @@ export interface IngestStatusResponse {
   sessions_not_modeled: number
   sessions_being_deleted?: number
   suggestions?: IngestSuggestionCounts
+  sources?: IngestSyncSourceResponse[]
+}
+
+export interface IngestSyncSourceResponse {
+  source: string
+  source_instance: string
+  last_synced_at: string
+  last_record_at?: string | null
+  error?: string | null
+}
+
+export interface IngestSyncStateResponse extends IngestSyncSourceResponse {
+  position: Record<string, unknown>
+  revision: string
+}
+
+/** How a connector following one source is doing. */
+export interface IngestSyncSource {
+  source: string
+  sourceInstance: string
+  /** When the connector last saved its position. */
+  lastSyncedAt: string
+  /** The source time of the newest record the connector has sent. */
+  lastRecordAt?: string
+  /** The connector's last error; undefined once it's fine. */
+  error?: string
+}
+
+/**
+ * Where a connector following one source has got to.
+ *
+ * @experimental Ingest may change or stop working without notice.
+ */
+export interface IngestSyncState extends IngestSyncSource {
+  /** The connector's own cursor, as it saved it. */
+  position: Record<string, unknown>
+  /** Changes on every save: pass it back to save only if nothing else has. */
+  revision: string
 }
 
 export interface IngestAccountResponse {
@@ -654,8 +697,16 @@ export interface IngestSessionResponse {
 
 /** What the workspace's imports produced, for review before deriving. */
 export interface IngestStatus {
-  /** Records by derivation state: `deferred` waits for `ingestDerive()`. */
-  records: { deferred: number; pending: number; queued: number }
+  /**
+   * Records by derivation state: `deferred` waits for `ingestDerive()`;
+   * `deleted` counts tombstones, records the source deleted.
+   */
+  records: {
+    deferred: number
+    pending: number
+    queued: number
+    deleted: number
+  }
   /** Tokens in the messages of deferred records. */
   deferredTokens: number
   /** Peers created for imported accounts. */
@@ -670,6 +721,8 @@ export interface IngestStatus {
   sessionsBeingDeleted: number
   /** Open suggested links by stage, and whether a refresh is under way. */
   suggestions: IngestSuggestionCounts
+  /** The sources connectors follow, with each one's last sync. */
+  sources: IngestSyncSource[]
 }
 
 /** Open suggested links by stage, and whether a refresh is under way. */

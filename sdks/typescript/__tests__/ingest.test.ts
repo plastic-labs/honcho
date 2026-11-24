@@ -188,7 +188,12 @@ describe('ingest', () => {
     const reset = await client.ingestReset()
     expect(reset.sessions.length).toBe(3)
     const status = await client.ingestStatus()
-    expect(status.records).toEqual({ deferred: 0, pending: 0, queued: 0 })
+    expect(status.records).toEqual({
+      deferred: 0,
+      pending: 0,
+      queued: 0,
+      deleted: 0,
+    })
     expect(status.sessions).toBe(0)
   })
 
@@ -211,5 +216,62 @@ describe('ingest', () => {
     await expect(
       client.ingestDismissSuggestion('missing')
     ).rejects.toBeInstanceOf(NotFoundError)
+  })
+
+  test('a delete in the dry run removes the record for good', async () => {
+    const client = sdk(generateWorkspaceId('ingest-delete'), true)
+    await client.ingest(records(2), { derive: 'later' })
+
+    const deleted = await client.ingest([
+      {
+        op: 'delete',
+        source: 'discord',
+        sourceInstance: 'guild1',
+        sourceId: 'msg-0',
+      },
+    ])
+    expect(deleted.records[0].outcome).toBe('deleted')
+    const again = await client.ingest(
+      (function* () {
+        yield* records(1)
+      })(),
+      { derive: 'auto' }
+    )
+    expect(again.records[0].reason).toBe('deleted')
+  })
+
+  test('a sync state is saved, guarded by its revision, and forgotten', async () => {
+    const client = sdk(generateWorkspaceId('ingest-sync'), true)
+    await client.ingest(records(1), { derive: 'later' })
+    expect(await client.ingestSyncState('discord', 'guild1')).toBeNull()
+
+    const first = await client.ingestSaveSyncState('discord', 'guild1', {
+      'chan-0': 'msg-0',
+    })
+    const second = await client.ingestSaveSyncState(
+      'discord',
+      'guild1',
+      { 'chan-0': 'msg-1' },
+      {
+        revision: first.revision,
+        lastRecordAt: new Date(Date.UTC(2026, 10, 4)),
+      }
+    )
+    await expect(
+      client.ingestSaveSyncState(
+        'discord',
+        'guild1',
+        {},
+        { revision: first.revision }
+      )
+    ).rejects.toBeInstanceOf(ConflictError)
+
+    const state = await client.ingestSyncState('discord', 'guild1')
+    expect(state?.position).toEqual({ 'chan-0': 'msg-1' })
+    expect(state?.revision).toBe(second.revision)
+    const status = await client.ingestStatus()
+    expect(status.sources.map((s) => s.sourceInstance)).toEqual(['guild1'])
+    expect(await client.ingestForgetSyncState('discord', 'guild1')).toBe(true)
+    expect(await client.ingestForgetSyncState('discord', 'guild1')).toBe(false)
   })
 })

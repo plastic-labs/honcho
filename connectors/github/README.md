@@ -106,16 +106,36 @@ GraphQL rate-limit cost).
 ## Running again
 
 Ingest deduplicates on `source_id`, so an overlapping or repeated export adds
-only what's new. What changed at GitHub since the first export doesn't replace
-what's stored yet: ingest refuses an edited comment (`edit_not_supported`), and
-a record whose text changed without an edit, such as a review later dismissed
-or an issue renamed (its opening post carries the title), comes back as
-`content_conflict`. Both are reported as rejections and the export exits
-non-zero; the stored version stays. A repository that can't be read completely
+only what's new. An edited comment (one with a later edit time) replaces the
+stored one during the dry run; after the workspace first derives, ingest
+refuses it (`edited_after_derivation`). A record whose text changed without an
+edit, such as a review later dismissed or an issue renamed (its opening post
+carries the title), comes back as `content_conflict`. Refusals are reported as
+rejections and the export exits non-zero; the stored version stays. A repository that can't be read completely
 sends nothing, and the export exits non-zero.
 
 Pending reviews and review comments, which only their author can see, are never
 exported, even with that author's token.
+
+## Following repositories
+
+```bash
+export HONCHO_EXPERIMENTAL=1
+honcho ingest from github --follow --token-file ~/.github.token --repo plastic-labs/honcho -w acme
+```
+
+Every `--interval` seconds (300 by default) it reads, for each repository, the
+issues and pull requests updated since its last poll, each in full, and the
+commits the default branch gained since the head it last saw (a merged branch's
+too, however old), and sends what's new or edited (with its edit time). Records are sent with `--derive auto`. The first
+poll reads everything, or what changed since `--since`. Stop it with Ctrl-C; run
+it again, on any machine, and it carries on from the position it saved in
+Honcho: per repository, the time its last complete poll began (less a minute,
+for clock skew) and the default branch's head.
+
+It doesn't see deletions, or an edit to a comment or review on an issue or pull
+request that nothing else changed (GitHub doesn't count that as an update):
+both need webhooks. Edits change stored records only during the dry run.
 
 ## Limits
 

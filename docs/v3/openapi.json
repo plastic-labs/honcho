@@ -4645,6 +4645,374 @@
         }
       }
     },
+    "/v3/workspaces/{workspace_id}/ingest/sync": {
+      "get": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "List Sync",
+        "description": "The sources connectors follow in this workspace, with each one's last sync.\n\nOnly workspace and admin keys may call it.\n\nExperimental: ingest may change or stop working without notice.",
+        "operationId": "list_sync_v3_workspaces__workspace_id__ingest_sync_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IngestSyncSource"
+                  },
+                  "title": "Response List Sync V3 Workspaces  Workspace Id  Ingest Sync Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace not found, or no state saved for the source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not an auto workspace, or the state changed since the revision the connector read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/ingest/sync/{source}/{source_instance}": {
+      "get": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Get Sync",
+        "description": "Where the connector following a source has got to: its saved position.\n\nA connector reads it when it starts, to carry on from there; 404 means read\nthe source from the start. Only workspace and admin keys may call it.\n\nExperimental: ingest may change or stop working without notice.",
+        "operationId": "get_sync_v3_workspaces__workspace_id__ingest_sync__source___source_instance__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "description": "The source, e.g. `discord`",
+              "title": "Source"
+            },
+            "description": "The source, e.g. `discord`"
+          },
+          {
+            "name": "source_instance",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "description": "The server, team or account inside the source",
+              "title": "Source Instance"
+            },
+            "description": "The server, team or account inside the source"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestSyncState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace not found, or no state saved for the source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not an auto workspace, or the state changed since the revision the connector read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Save Sync",
+        "description": "Save where the connector following a source has got to.\n\nPass the `revision` you read to save only if nothing else has saved since:\na second runner on the same source, or a reset that forgot the state, makes\nit a 409. The response has the new revision. Only workspace and admin keys\nmay call it.\n\nExperimental: ingest may change or stop working without notice.",
+        "operationId": "save_sync_v3_workspaces__workspace_id__ingest_sync__source___source_instance__put",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "description": "The source, e.g. `discord`",
+              "title": "Source"
+            },
+            "description": "The source, e.g. `discord`"
+          },
+          {
+            "name": "source_instance",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "description": "The server, team or account inside the source",
+              "title": "Source Instance"
+            },
+            "description": "The server, team or account inside the source"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestSyncStateSave"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestSyncState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace not found, or no state saved for the source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not an auto workspace, or the state changed since the revision the connector read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "ingest"
+        ],
+        "summary": "Forget Sync",
+        "description": "Forget a source's sync state, so its connector reads it from the start.\n\nOnly workspace and admin keys may call it.\n\nExperimental: ingest may change or stop working without notice.",
+        "operationId": "forget_sync_v3_workspaces__workspace_id__ingest_sync__source___source_instance__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the workspace",
+              "title": "Workspace Id"
+            },
+            "description": "ID of the workspace"
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "description": "The source, e.g. `discord`",
+              "title": "Source"
+            },
+            "description": "The source, e.g. `discord`"
+          },
+          {
+            "name": "source_instance",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "description": "The server, team or account inside the source",
+              "title": "Source Instance"
+            },
+            "description": "The server, team or account inside the source"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestSyncForgotten"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace not found, or no state saved for the source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not an auto workspace, or the state changed since the revision the connector read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v3/workspaces/{workspace_id}/ingest/suggestions/refresh": {
       "post": {
         "tags": [
@@ -7895,15 +8263,23 @@
             "type": "string",
             "enum": [
               "now",
-              "later"
+              "later",
+              "auto"
             ],
             "title": "Derive",
-            "description": "`later` stores the records without queuing derivation; POST /ingest/derive queues them",
+            "description": "`now` queues derivation, which ends the workspace's dry run. `later` stores the records without queuing derivation; POST /ingest/derive queues them. `auto` is `later` during the dry run and `now` after it, for a connector following a source live",
             "default": "now"
           },
           "records": {
             "items": {
-              "$ref": "#/components/schemas/IngestRecordCreate"
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/IngestRecordCreate"
+                },
+                {
+                  "$ref": "#/components/schemas/IngestRecordDelete"
+                }
+              ]
             },
             "type": "array",
             "maxItems": 100,
@@ -8174,6 +8550,12 @@
             "type": "integer",
             "title": "Queued",
             "description": "Queued for derivation, or derived"
+          },
+          "deleted": {
+            "type": "integer",
+            "title": "Deleted",
+            "description": "Tombstones: records the source deleted, kept so they don't come back",
+            "default": 0
           }
         },
         "type": "object",
@@ -8187,6 +8569,13 @@
       },
       "IngestRecordCreate": {
         "properties": {
+          "op": {
+            "type": "string",
+            "const": "upsert",
+            "title": "Op",
+            "description": "`upsert`, the default: ingest the record, or replace it with a newer version (a later `revised_at`) during the dry run",
+            "default": "upsert"
+          },
           "source": {
             "type": "string",
             "maxLength": 64,
@@ -8328,7 +8717,59 @@
           "content"
         ],
         "title": "IngestRecordCreate",
-        "description": "One source record to ingest."
+        "description": "One source record to ingest, or a newer version of one already ingested."
+      },
+      "IngestRecordDelete": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "delete",
+            "title": "Op"
+          },
+          "source": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "title": "Source",
+            "description": "The source type, e.g. `discord`"
+          },
+          "source_instance": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "title": "Source Instance",
+            "description": "The server, team or account inside the source"
+          },
+          "source_id": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Source Id",
+            "description": "The deleted record's ID in that instance"
+          },
+          "revised_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revised At",
+            "description": "When the source deleted it. A delete older than the stored version changes nothing"
+          }
+        },
+        "type": "object",
+        "required": [
+          "op",
+          "source",
+          "source_instance",
+          "source_id"
+        ],
+        "title": "IngestRecordDelete",
+        "description": "A record the source deleted.\n\nDuring the workspace's dry run its message is removed and a tombstone kept,\nso the record never comes back; a delete for a record not seen yet leaves a\ntombstone too. After the dry run it's refused. A delete is final: a later\nversion of the record is refused."
       },
       "IngestRecordResult": {
         "properties": {
@@ -8341,6 +8782,8 @@
             "type": "string",
             "enum": [
               "created",
+              "updated",
+              "deleted",
               "duplicate",
               "rejected"
             ],
@@ -8353,6 +8796,9 @@
                 "enum": [
                   "stale_revision",
                   "edit_not_supported",
+                  "edited_after_derivation",
+                  "deleted",
+                  "superseded",
                   "content_conflict",
                   "session_inactive",
                   "observers_limit",
@@ -8417,7 +8863,8 @@
                 "enum": [
                   "pending",
                   "queued",
-                  "deferred"
+                  "deferred",
+                  "deleted"
                 ]
               },
               {
@@ -8568,6 +9015,14 @@
           "suggestions": {
             "$ref": "#/components/schemas/IngestSuggestionCounts",
             "description": "Open suggested links between accounts, by stage and confidence"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/IngestSyncSource"
+            },
+            "type": "array",
+            "title": "Sources",
+            "description": "The sources connectors follow, with each one's last sync"
           }
         },
         "type": "object",
@@ -8862,6 +9317,190 @@
         ],
         "title": "IngestSuggestionsRefresh",
         "description": "Whether a refresh was queued; one already waiting covers this request."
+      },
+      "IngestSyncForgotten": {
+        "properties": {
+          "forgotten": {
+            "type": "boolean",
+            "title": "Forgotten"
+          }
+        },
+        "type": "object",
+        "required": [
+          "forgotten"
+        ],
+        "title": "IngestSyncForgotten",
+        "description": "Whether there was a state to forget."
+      },
+      "IngestSyncSource": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "source_instance": {
+            "type": "string",
+            "title": "Source Instance"
+          },
+          "last_synced_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Synced At",
+            "description": "When the connector last saved its position"
+          },
+          "last_record_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Record At",
+            "description": "The source time of the newest record the connector has sent"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "The connector's last error; null once it's fine"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "source_instance",
+          "last_synced_at"
+        ],
+        "title": "IngestSyncSource",
+        "description": "How a connector following one source is doing."
+      },
+      "IngestSyncState": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "source_instance": {
+            "type": "string",
+            "title": "Source Instance"
+          },
+          "last_synced_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Synced At",
+            "description": "When the connector last saved its position"
+          },
+          "last_record_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Record At",
+            "description": "The source time of the newest record the connector has sent"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "The connector's last error; null once it's fine"
+          },
+          "position": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Position",
+            "description": "The connector's own cursor, as it saved it"
+          },
+          "revision": {
+            "type": "string",
+            "title": "Revision",
+            "description": "Changes on every save: pass it back to save only if nothing else has saved since"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "source_instance",
+          "last_synced_at",
+          "position",
+          "revision"
+        ],
+        "title": "IngestSyncState",
+        "description": "Where a connector following one source has got to: its position and health."
+      },
+      "IngestSyncStateSave": {
+        "properties": {
+          "position": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Position",
+            "description": "The connector's own cursor; Honcho stores it as is"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision",
+            "description": "The revision the connector read. When given, the save is refused (409) if the state has changed or been forgotten since"
+          },
+          "last_record_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Record At",
+            "description": "The source time of the newest record sent; kept when omitted"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "The connector's last error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "position"
+        ],
+        "title": "IngestSyncStateSave",
+        "description": "A connector's position and health, to save."
       },
       "IngestUnlink": {
         "properties": {

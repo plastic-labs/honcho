@@ -122,6 +122,8 @@ def test_import_sends_the_file_deferred_and_summarizes(cfg, runner, tmp_path):
         "workspace": "ws1",
         "records": 3,
         "created": 3,
+        "updated": 0,
+        "deleted": 0,
         "duplicate": 0,
         "rejected": 0,
         "rejected_reasons": {},
@@ -863,6 +865,24 @@ def test_import_check_lists_every_invalid_line(cfg, runner, tmp_path):
     assert summary["invalid"] == 2
     assert [e["line"] for e in summary["errors"]] == [2, 4]
     assert summary["errors"][0]["error"].startswith("source:")
+
+
+def test_import_check_takes_deletes_and_reports_lines_that_arent_objects(
+    cfg, runner, tmp_path
+):
+    delete = {"op": "delete", "source": "discord", "source_instance": "g1", "source_id": "m9"}
+    path = tmp_path / "records.jsonl"
+    path.write_text(
+        json.dumps(_record(0)) + "\n" + json.dumps(delete) + "\nnull\n[1, 2]\n"
+    )
+    with patch("honcho_cli.commands.ingest.get_client", _no_client):
+        result = runner.invoke(app, ["ingest", "import", str(path), "--check"])
+
+    assert result.exit_code == 1
+    summary = json.loads(result.stdout)
+    assert (summary["deletes"], summary["invalid"]) == (1, 2)
+    assert [e["line"] for e in summary["errors"]] == [3, 4]
+    assert "JSON object" in summary["errors"][0]["error"]
 
 
 # --- ingest from ----------------------------------------------------------------

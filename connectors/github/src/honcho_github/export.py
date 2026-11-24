@@ -32,6 +32,7 @@ from honcho_github.mapping import (
     commit_author,
     commit_record,
     instance_for,
+    items,
     login_key,
     mentions,
     nodes,
@@ -49,6 +50,12 @@ _ACTOR = (
     + " ... on Bot { databaseId } ... on Mannequin { databaseId } }"
 )
 _PAGE = "pageInfo { hasNextPage endCursor }"
+_COMMIT = (
+    "id oid url committedDate message"
+    + " author { name user { databaseId login name } }"
+    + " associatedPullRequests(first: 1) {"
+    + " nodes { number files(first: 100) { nodes { path } } } }"
+)
 _COMMENT = f"id createdAt lastEditedAt url body {_ACTOR}"
 _REVIEW = f"id state body createdAt submittedAt lastEditedAt url {_ACTOR}"
 _THREAD_COMMENT = f"id state createdAt lastEditedAt url body path line originalLine replyTo {{ id }} {_ACTOR}"
@@ -114,19 +121,19 @@ query($owner: String!, $name: String!, $after: String, $since: GitTimestamp) {{
         ... on Commit {{
           history(first: 100, after: $after, since: $since) {{
             {_PAGE}
-            nodes {{
-              id oid url committedDate message
-              author {{ name user {{ databaseId login name }} }}
-              associatedPullRequests(first: 1) {{
-                nodes {{ number files(first: 100) {{ nodes {{ path }} }} }}
-              }}
-            }}
+            nodes {{ {_COMMIT} }}
           }}
         }}
       }}
     }}
   }}
 }}"""
+
+HEAD_QUERY = """
+query($owner: String!, $name: String!) {
+  rateLimit { cost remaining }
+  repository(owner: $owner, name: $name) { defaultBranchRef { target { oid } } }
+}"""
 
 
 def _rest_query(typename: str, connection: str, fields: str) -> str:
@@ -302,8 +309,120 @@ def _paged(
         after = str(page["endCursor"])
 
 
-def fetch(client: GitHubClient, repo: Repo, since: str | None) -> Fetched:
-    """Read a repository's issues, pull requests and default-branch commits."""
+def read_commits(
+    client: GitHubClient,
+    repo: Repo,
+    *,
+    since: str | None = None,
+    limit: int | None = None,
+) -> tuple[list[Json], bool]:
+    """Default-branch commits, newest first, and whether `limit` cut them short.
+
+    All of them, or those made since `since`.
+    """
+    owner, name = _split(repo.name_with_owner)
+    count = 0
+    cut = False
+
+    def keep(_node: Json) -> bool:
+        nonlocal count, cut
+        count += 1
+        if limit is not None and count > limit:
+            cut = True
+            return False
+        return True
+
+    commits = _paged(
+        client,
+        COMMITS_QUERY,
+        {"owner": owner, "name": name, "since": since},
+        lambda d: obj(
+            obj(
+                obj(obj(obj(d.get("repository")).get("defaultBranchRef")).get("target"))
+            ).get("history")
+        ),
+        keep,
+    )
+    return commits, cut
+
+
+def head_commit(client: GitHubClient, repo: Repo) -> str | None:
+    """The SHA at the head of the default branch; None for an empty repository."""
+    owner, name = _split(repo.name_with_owner)
+    data = client.query(HEAD_QUERY, {"owner": owner, "name": name})
+    target = obj(obj(obj(data.get("repository")).get("defaultBranchRef")).get("target"))
+    return str(target["oid"]) if target.get("oid") else None
+
+
+_COMPARE_PAGE = 100
+_COMMIT_BATCH = 25
+
+
+def commits_between(
+    client: GitHubClient, repo: Repo, base: str, head: str, *, limit: int
+) -> tuple[list[Json], bool] | None:
+    """The commits `head` has that `base` hasn't, and whether `limit` cut them short.
+
+    That's what `git log base..head` lists: the commits pushed since, including
+    those of a branch merged since, however long ago they were made. The newest
+    `limit` are kept. None when GitHub doesn't know `base` (history rewritten).
+    """
+    owner, name = _split(repo.name_with_owner)
+    path = f"/repos/{owner}/{name}/compare/{base}...{head}"
+    first = client.rest(path, {"per_page": _COMPARE_PAGE, "page": 1})
+    if first is None:
+        return None
+    total = int(obj(first).get("total_commits") or 0)
+    last_page = max(1, -(-total // _COMPARE_PAGE))
+    from_page = max(0, total - limit) // _COMPARE_PAGE + 1
+    shas: list[str] = []
+    # Pages run oldest first: read the last ones, for the newest commits.
+    for page in range(from_page, last_page + 1):
+        body = (
+            first
+            if page == 1
+            else client.rest(path, {"per_page": _COMPARE_PAGE, "page": page})
+        )
+        if body is None:
+            return None
+        shas.extend(
+            str(c["sha"]) for c in items(obj(body).get("commits")) if c.get("sha")
+        )
+    shas = shas[-limit:]
+    return commits_by_sha(client, repo, shas[::-1]), total > len(shas)
+
+
+def commits_by_sha(client: GitHubClient, repo: Repo, shas: Sequence[str]) -> list[Json]:
+    """These commits, as the commit history query reads them, in the same order."""
+    owner, name = _split(repo.name_with_owner)
+    found: list[Json] = []
+    for start in range(0, len(shas), _COMMIT_BATCH):
+        batch = shas[start : start + _COMMIT_BATCH]
+        params = ", ".join(f"$o{i}: GitObjectID!" for i in range(len(batch)))
+        fields = " ".join(
+            f"c{i}: object(oid: $o{i}) {{ ... on Commit {{ {_COMMIT} }} }}"
+            for i in range(len(batch))
+        )
+        data = client.query(
+            f"query($owner: String!, $name: String!, {params}) {{"
+            + " rateLimit { cost remaining }"
+            + f" repository(owner: $owner, name: $name) {{ {fields} }} }}",
+            {"owner": owner, "name": name}
+            | {f"o{i}": sha for i, sha in enumerate(batch)},
+        )
+        repository = obj(data.get("repository"))
+        for i in range(len(batch)):
+            node = obj(repository.get(f"c{i}"))
+            if node:
+                found.append(node)
+    return found
+
+
+def fetch(
+    client: GitHubClient, repo: Repo, since: str | None, *, with_commits: bool = True
+) -> Fetched:
+    """Read a repository's issues, pull requests and (unless not wanted)
+    default-branch commits."""
     owner, name = _split(repo.name_with_owner)
     where = {"owner": owner, "name": name}
 
@@ -370,16 +489,7 @@ def fetch(client: GitHubClient, repo: Repo, since: str | None) -> Fetched:
                 review_threads.append((review_thread, submitted))
         threads.append((thread, node, comments, reviews, review_threads))
 
-    commits = _paged(
-        client,
-        COMMITS_QUERY,
-        {**where, "since": since},
-        lambda d: obj(
-            obj(
-                obj(obj(obj(d.get("repository")).get("defaultBranchRef")).get("target"))
-            ).get("history")
-        ),
-    )
+    commits = read_commits(client, repo, since=since)[0] if with_commits else []
     return Fetched(threads=threads, commits=commits)
 
 
