@@ -31,6 +31,7 @@ from src.crud.peer_card import construct_peer_card_label, set_peer_card
 from src.crud.session import get_or_create_session
 from src.deriver.enqueue import (
     _insert_queue_records,  # pyright: ignore[reportPrivateUsage]
+    stage_enqueue,
 )
 from src.exceptions import ResourceNotFoundException
 from src.utils.summarizer import (
@@ -47,6 +48,7 @@ CALLER_COMMITS: list[Callable[..., Any]] = [
     set_peer_card,
     _save_summary,
     _insert_queue_records,
+    stage_enqueue,
     get_or_create_session,
     create_messages,
 ]

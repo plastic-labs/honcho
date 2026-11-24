@@ -1,8 +1,9 @@
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import exists, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +30,8 @@ from src.utils.work_unit import (
 
 logger = logging.getLogger(__name__)
 
+_ConfigT = TypeVar("_ConfigT", bound=BaseModel)
+
 # Caps the queue writes one process runs at once, so a burst of enqueues
 # cannot take every pooled DB connection from request handlers.
 _ENQUEUE_DB_SLOTS = asyncio.Semaphore(
@@ -36,9 +39,16 @@ _ENQUEUE_DB_SLOTS = asyncio.Semaphore(
 )
 
 
+T = TypeVar("T")
+
+
 async def enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> None:
     """
-    Add message(s) to the deriver queue for processing.
+    Add one session's messages to the deriver queue, in a transaction of its own.
+
+    For messages that are already committed. Failures are logged, not raised.
+    The message routes don't use this: they stage the queue rows with
+    ``stage_enqueue`` in the transaction that inserts the messages.
 
     Args:
         payload: List of message payload dictionaries
@@ -46,62 +56,27 @@ async def enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> No
             while its request was still bound to it; None when MULTI_TENANT
             is off
     """
-
-    # Cancel any pending dreams for affected collections since user is active again.
-    # This cancels dreams for all collections where observed=peer_name, which covers
-    # both self-observation and peer-to-peer observation cases.
-    dream_scheduler = get_dream_scheduler()
-    if dream_scheduler and payload:
-        cancelled_dreams: set[str] = set()
-        for message in payload:
-            workspace_name = message.get("workspace_name")
-            peer_name = message.get("peer_name")
-            if workspace_name and peer_name:
-                cancelled = await dream_scheduler.cancel_dreams_for_observed(
-                    workspace_name, peer_name, tenant_id=tenant_id
-                )
-                cancelled_dreams.update(cancelled)
-
-        if cancelled_dreams:
-            logger.info(
-                f"Cancelled {len(cancelled_dreams)} pending dreams due to new activity"
-            )
+    await cancel_dreams_for_activity(payload, tenant_id=tenant_id)
 
     # region ai
     # Per-tenant work: the payload is a single session's messages (one workspace +
     # session, below), so the session/workspace/peer resolution in handle_session
     # must be RLS-scoped to the caller's tenant, not run on the cross-tenant service
     # session. The tenant arrives as an argument rather than from the ambient
-    # tenant_context: this runs as a background task, and whether the request's
-    # binding is still in place by then is a FastAPI ordering detail. The queue
-    # table has no RLS, so the insert is fine on this session too.
+    # tenant_context, since a caller outside the request may run after its
+    # binding is gone. The queue table has no RLS, so the insert is fine on this
+    # session too.
     # endregion
     async with (
         _ENQUEUE_DB_SLOTS,
         tracked_db("message_enqueue", tenant_id=tenant_id) as db_session,
     ):
         try:
-            # Determine if batch or single processing
-            if not payload:  # Empty list check
-                return
-            workspace_name = payload[0]["workspace_name"]
-            session_name = payload[0]["session_name"]
-
-            if session_name is None or workspace_name is None:
-                raise ValidationException("Session and workspace are required")
-
-            queue_records = await handle_session(
-                db_session, payload, workspace_name, session_name
+            await commit_with_retry(
+                db_session, lambda: stage_enqueue(db_session, payload)
             )
-
-            if queue_records:
-                await _commit_with_retry(
-                    db_session,
-                    lambda: _insert_queue_records(db_session, queue_records),
-                )
-
         except Exception as e:
-            # Reached only after _commit_with_retry has exhausted its
+            # Reached only after commit_with_retry has exhausted its
             # transient-error retries; enqueue stays fire-and-forget by
             # contract, so the failure surfaces here rather than to a caller.
             logger.exception("Failed to enqueue message(s)!")
@@ -111,10 +86,70 @@ async def enqueue(payload: list[dict[str, Any]], *, tenant_id: str | None) -> No
                 sentry_sdk.capture_exception(e)
 
 
-async def _commit_with_retry(
-    db_session: AsyncSession, stage: Callable[[], Awaitable[None]]
+async def stage_enqueue(
+    db_session: AsyncSession,
+    payload: list[dict[str, Any]],
+    *,
+    session: models.Session | None = None,
 ) -> None:
-    """Run ``stage`` and commit, rerunning the whole transaction on a transient failure."""
+    """Insert the queue rows for one session's messages in the caller's transaction.
+
+    Does not commit. A caller whose transaction created the session passes it
+    as ``session``: looking it up would cache the uncommitted row, and the
+    cached copy would outlive a rollback.
+
+    Raises:
+        ValidationException: If the payload names no session or workspace
+        ResourceNotFoundException: If the session doesn't exist or is inactive
+    """
+    if not payload:
+        return
+    workspace_name = payload[0]["workspace_name"]
+    session_name = payload[0]["session_name"]
+    if session_name is None or workspace_name is None:
+        raise ValidationException("Session and workspace are required")
+
+    queue_records = await handle_session(
+        db_session, payload, workspace_name, session_name, session=session
+    )
+    await insert_queue_records_in_transaction(db_session, queue_records)
+
+
+async def cancel_dreams_for_activity(
+    payload: list[dict[str, Any]], *, tenant_id: str | None
+) -> None:
+    """Cancel pending dreams about the peers who just wrote. Run after the commit."""
+    # This cancels dreams for all collections where observed=peer_name, which covers
+    # both self-observation and peer-to-peer observation cases.
+    dream_scheduler = get_dream_scheduler()
+    if not dream_scheduler or not payload:
+        return
+    cancelled_dreams: set[str] = set()
+    for message in payload:
+        workspace_name = message.get("workspace_name")
+        peer_name = message.get("peer_name")
+        if workspace_name and peer_name:
+            cancelled = await dream_scheduler.cancel_dreams_for_observed(
+                workspace_name, peer_name, tenant_id=tenant_id
+            )
+            cancelled_dreams.update(cancelled)
+
+    if cancelled_dreams:
+        logger.info(
+            f"Cancelled {len(cancelled_dreams)} pending dreams due to new activity"
+        )
+
+
+async def commit_with_retry(
+    db_session: AsyncSession,
+    stage: Callable[[], Awaitable[T]],
+    *,
+    retryable: Callable[[BaseException], bool] = is_retryable_error,
+) -> T:
+    """Run ``stage`` and commit, rerunning the whole transaction on a transient failure.
+
+    Returns what the successful ``stage`` returned.
+    """
     # region ai
     # The bounded retry covers transient failures (deadlock, serialization,
     # lost connection): without it, a deadlock-victim enqueue is swallowed by
@@ -125,14 +160,15 @@ async def _commit_with_retry(
     last_attempt = 2
     for attempt in range(last_attempt + 1):
         try:
-            await stage()
+            result = await stage()
             await db_session.commit()
-            return
+            return result
         except Exception as exc:
             await db_session.rollback()
-            if attempt == last_attempt or not is_retryable_error(exc):
+            if attempt == last_attempt or not retryable(exc):
                 raise
             await asyncio.sleep(0.1 * (attempt + 1))
+    raise AssertionError("unreachable")
 
 
 async def _insert_queue_records(
@@ -148,8 +184,9 @@ async def _insert_queue_records(
     records = sorted(
         _stamp_tenant_id(queue_records), key=lambda record: record["work_unit_key"]
     )
-    # No lock_timeout here: the message is already committed, so giving up
-    # loses its derivation. A time limit needs a durable retry first.
+    # Sets no lock_timeout of its own. In ``enqueue`` the message is already
+    # committed, so giving up would lose its derivation. In the message routes
+    # the transaction's lock_timeout applies, and giving up fails the whole write.
     await db_session.execute(insert(QueueItem).returning(QueueItem), records)
 
 
@@ -195,6 +232,8 @@ async def handle_session(
     payload: list[dict[str, Any]],
     workspace_name: str,
     session_name: str,
+    *,
+    session: models.Session | None = None,
 ) -> list[dict[str, Any]]:
     """
     Handle enqueueing for normal session cases, creating appropriate queue items based on configurations.
@@ -204,21 +243,19 @@ async def handle_session(
         payload: List of message payloads
         workspace_name: Name of the workspace
         session_name: Name of the session
+        session: The session, when the caller's transaction already has it;
+            otherwise it is looked up
 
     Returns:
         List of queue records to insert
     """
-    session_result = await crud.get_or_create_session(
-        db_session,
-        session=schemas.SessionCreate(name=session_name),
-        workspace_name=workspace_name,
-    )
-    await db_session.commit()
-    await session_result.post_commit()
-    session = session_result.resource
+    if session is None:
+        session = await crud.get_session(db_session, session_name, workspace_name)
 
-    # Fetch workspace for configuration resolution
-    workspace = await crud.get_workspace(db_session, workspace_name=workspace_name)
+    # Fetch workspace for configuration resolution. Read from the database: the
+    # caller's transaction may have created it, and a cached copy of an
+    # uncommitted row would outlive a rollback.
+    workspace = await crud.get_workspace_uncached(db_session, workspace_name)
 
     # Resolve summary configuration with hierarchical fallback
     session_level_configuration = get_configuration(None, session, workspace)
@@ -365,6 +402,26 @@ def create_summary_record(
     }
 
 
+def _parse_config_leniently(
+    model: type[_ConfigT], raw: Any, observed: str
+) -> _ConfigT | None:
+    """Parse a stored free-form configuration, treating a malformed one as unset.
+
+    Peer and session-peer configuration are stored as arbitrary JSON, so a row can
+    hold a value the schema rejects. This runs inside the message write
+    transaction, where raising would fail every write by that peer; fall back to
+    the default (observe) and log instead.
+    """
+    try:
+        return model(**raw)
+    except (ValidationError, TypeError):
+        logger.warning(
+            "Ignoring malformed stored configuration for peer %s; using defaults",
+            observed,
+        )
+        return None
+
+
 def get_effective_observe_me(
     observed: str, peers_with_configuration: dict[str, list[dict[str, Any]]]
 ) -> bool:
@@ -383,13 +440,15 @@ def get_effective_observe_me(
     # peer-level and session-level configs.
     configuration: list[Any] = peers_with_configuration.get(observed, [{}, {}])
     sender_session_peer_config = (
-        schemas.SessionPeerConfig(**configuration[1]) if configuration[1] else None
+        _parse_config_leniently(schemas.SessionPeerConfig, configuration[1], observed)
+        if configuration[1]
+        else None
     )
     sender_peer_config = (
-        schemas.PeerConfig(**configuration[0])
+        _parse_config_leniently(schemas.PeerConfig, configuration[0], observed)
         if configuration[0]
-        else schemas.PeerConfig()
-    )
+        else None
+    ) or schemas.PeerConfig()
 
     # Session peer config takes precedence if it exists and has observe_me set
     if sender_session_peer_config and sender_session_peer_config.observe_me is not None:
