@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 from honcho import ConflictError, NotFoundError
 from honcho.api_types import (
@@ -1062,9 +1063,11 @@ def test_from_help_shows_its_options_and_the_sources(cfg, runner, monkeypatch, f
         result = runner.invoke(app, ["ingest", "from", flag])
 
     assert result.exit_code == 0, result.output
-    assert "Experimental:" in result.stdout
-    assert "--bots" in result.stdout
-    assert "fake" in result.stdout
+    # Typer styles help under GitHub Actions, splitting `--bots` with escapes.
+    text = click.unstyle(result.stdout)
+    assert "Experimental:" in text
+    assert "--bots" in text
+    assert "fake" in text
 
 
 def test_a_sources_help_needs_no_opt_in(cfg, runner, monkeypatch):
