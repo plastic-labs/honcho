@@ -408,6 +408,8 @@ async def get_or_create_session(
             acting_peer=acting_peer,
             acting_scope=jwt_params.sc,
         )
+        await db.commit()
+        await result.post_commit()
         response.status_code = 201 if result.created else 200
         return result.resource
     except ValueError as e:
@@ -550,6 +552,8 @@ async def add_peers_to_session(
             ),
             workspace_name=workspace_id,
         )
+        await db.commit()
+        await result.post_commit()
         return result.resource
     except ValueError as e:
         logger.warning(f"Failed to add peers to session {session_id}: {str(e)}")
@@ -595,6 +599,8 @@ async def set_session_peers(
             session=schemas.SessionCreate(name=session_id),
             workspace_name=workspace_id,
         )
+        await db.commit()
+        await result.post_commit()
         logger.debug("Set peers for session %s successfully", session_id)
         return result.resource
     except ValueError as e:
@@ -637,6 +643,8 @@ async def remove_peers_from_session(
             session=schemas.SessionCreate(name=session_id),
             workspace_name=workspace_id,
         )
+        await db.commit()
+        await result.post_commit()
         logger.debug("Removed peers from session %s successfully", session_id)
         return result.resource
     except ValueError as e:

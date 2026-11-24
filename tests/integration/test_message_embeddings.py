@@ -91,12 +91,15 @@ async def test_message_embedding_created_when_setting_enabled(
         )
     ]
 
-    created_messages = await create_messages(
+    write_result = await create_messages(
         db=db_session,
         messages=messages,
         workspace_name=test_workspace.name,
         session_name=test_session.name,
     )
+    await db_session.commit()
+    await write_result.post_commit()
+    created_messages = write_result.messages
 
     assert len(created_messages) == 1
     created_message = created_messages[0]
@@ -150,12 +153,15 @@ async def test_blank_messages_are_not_sent_for_embedding(
         ),
     ]
 
-    created_messages = await create_messages(
+    write_result = await create_messages(
         db=db_session,
         messages=messages,
         workspace_name=test_workspace.name,
         session_name=test_session.name,
     )
+    await db_session.commit()
+    await write_result.post_commit()
+    created_messages = write_result.messages
 
     assert [message.content for message in created_messages] == [
         blank_content,
@@ -213,12 +219,15 @@ async def test_message_embedding_not_created_when_setting_disabled(
         )
     ]
 
-    created_messages = await create_messages(
+    write_result = await create_messages(
         db=db_session,
         messages=messages,
         workspace_name=test_workspace.name,
         session_name=test_session.name,
     )
+    await db_session.commit()
+    await write_result.post_commit()
+    created_messages = write_result.messages
 
     assert len(created_messages) == 1
     created_message = created_messages[0]
@@ -267,12 +276,15 @@ async def test_multiple_message_embeddings_created_when_setting_enabled(
         ),
     ]
 
-    created_messages = await create_messages(
+    write_result = await create_messages(
         db=db_session,
         messages=messages,
         workspace_name=test_workspace.name,
         session_name=test_session.name,
     )
+    await db_session.commit()
+    await write_result.post_commit()
+    created_messages = write_result.messages
 
     assert len(created_messages) == 2
 
@@ -323,12 +335,15 @@ async def test_semantic_search_when_embeddings_enabled(
         )
     ]
 
-    created_messages = await create_messages(
+    write_result = await create_messages(
         db=db_session,
         messages=messages,
         workspace_name=test_workspace.name,
         session_name=test_session.name,
     )
+    await db_session.commit()
+    await write_result.post_commit()
+    created_messages = write_result.messages
 
     assert len(created_messages) == 1
     created_message = created_messages[0]
@@ -742,12 +757,15 @@ async def test_message_chunking_creates_multiple_embeddings(
         )
     ]
 
-    created_messages = await create_messages(
+    write_result = await create_messages(
         db=db_session,
         messages=messages,
         workspace_name=test_workspace.name,
         session_name=test_session.name,
     )
+    await db_session.commit()
+    await write_result.post_commit()
+    created_messages = write_result.messages
 
     assert len(created_messages) == 1
     created_message = created_messages[0]

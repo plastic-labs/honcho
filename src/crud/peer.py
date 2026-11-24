@@ -262,6 +262,7 @@ async def get_or_create_peers(
     workspace_name: str,
     peers: list[schemas.PeerSpec],
     *,
+    workspace_ensured: bool = False,
     _retry: bool = False,
     _pending_invalidation: list[str] | None = None,
 ) -> GetOrCreateResult[list[models.Peer]]:
@@ -273,6 +274,10 @@ async def get_or_create_peers(
         db: Database session
         workspace_name: Name of the workspace
         peers: List of peer creation schemas
+        workspace_ensured: The caller's transaction already got or created the
+            workspace. Skips a second lookup, which would read a workspace this
+            transaction created through the cache and cache the uncommitted
+            row, so a rollback would leave a cached workspace that doesn't exist
         _retry: Whether to retry the operation
         _pending_invalidation: Names of peers already mutated by a prior attempt,
             whose cache keys must still be purged. See the retry branch below.
@@ -286,8 +291,13 @@ async def get_or_create_peers(
             reserved-prefix or non-conforming name on the create path
     """
 
-    ws_result = await get_or_create_workspace(
-        db, schema_from_path(schemas.WorkspaceCreate, "workspace_id", workspace_name)
+    ws_result = (
+        None
+        if workspace_ensured
+        else await get_or_create_workspace(
+            db,
+            schema_from_path(schemas.WorkspaceCreate, "workspace_id", workspace_name),
+        )
     )
     peer_names = [p.name for p in peers]
     # Before the lookup: these values cannot match a stored row and would fail
@@ -382,6 +392,7 @@ async def get_or_create_peers(
             db,
             workspace_name,
             peers,
+            workspace_ensured=True,
             _retry=True,
             _pending_invalidation=(_pending_invalidation or [])
             + [p.name for p in changed_peers],
@@ -398,7 +409,8 @@ async def get_or_create_peers(
     new_peer_names = [p.name for p in new_peers]
 
     async def _after_commit():
-        await ws_result.post_commit()
+        if ws_result is not None:
+            await ws_result.post_commit()
         for cache_key in _cache_keys_to_invalidate:
             await safe_cache_delete(cache_key)
         for name in new_peer_names:

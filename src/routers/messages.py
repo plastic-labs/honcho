@@ -1,4 +1,6 @@
 import logging
+from collections.abc import Sequence
+from typing import Any
 
 from fastapi import (
     APIRouter,
@@ -16,11 +18,16 @@ from fastapi_pagination.bases import AbstractParams
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, schemas
+from src import crud, models, schemas
 from src.config import settings
+from src.crud.message import CreateMessagesResult
 from src.db import tenant_context
 from src.dependencies import db, read_db
-from src.deriver import enqueue
+from src.deriver.enqueue import (
+    cancel_dreams_for_activity,
+    commit_with_retry,
+    stage_enqueue,
+)
 from src.exceptions import FileTooLargeError, ResourceNotFoundException
 from src.reconciler.embed_now import embed_task_gate
 from src.security import require_auth
@@ -33,6 +40,7 @@ from src.utils.pagination import (
     paginate_offset_or_cursor,
     pagination_params,
 )
+from src.utils.retryable_errors import is_retryable_conflict
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +117,61 @@ async def parse_upload_form(
         ) from None
 
 
+async def _create_and_enqueue(
+    db: AsyncSession,
+    background_tasks: BackgroundTasks,
+    *,
+    workspace_name: str,
+    session_name: str,
+    messages: list[schemas.MessageCreate],
+    configurations: Sequence[schemas.MessageConfiguration | None],
+    internal_metadata: Sequence[dict[str, Any]] | None = None,
+) -> list[models.Message]:
+    """Insert messages and their queue rows in one transaction, then commit.
+
+    A message is never saved without the work that derives it: if the queue
+    insert fails, the whole write fails. A deadlock or serialization failure
+    reruns the transaction from the start.
+    """
+    payloads: list[dict[str, Any]] = []
+
+    async def stage() -> CreateMessagesResult:
+        result = await crud.create_messages(
+            db,
+            messages=messages,
+            workspace_name=workspace_name,
+            session_name=session_name,
+            internal_metadata=internal_metadata,
+        )
+        payloads[:] = [
+            {
+                "workspace_name": workspace_name,
+                "session_name": session_name,
+                "message_id": message.id,
+                "content": message.content,
+                "peer_name": message.peer_name,
+                "created_at": message.created_at,
+                "message_public_id": message.public_id,
+                "seq_in_session": message.seq_in_session,
+                "configuration": configuration,
+            }
+            for message, configuration in zip(
+                result.messages, configurations, strict=True
+            )
+        ]
+        await stage_enqueue(db, payloads, session=result.session)
+        return result
+
+    result = await commit_with_retry(db, stage, retryable=is_retryable_conflict)
+    await result.post_commit()
+
+    # ai: tenant read now, in the request, for the reason EmbedTaskGate.try_schedule gives
+    background_tasks.add_task(
+        cancel_dreams_for_activity, payloads, tenant_id=tenant_context.get()
+    )
+    return result.messages
+
+
 @router.post(
     "",
     response_model=list[schemas.Message],
@@ -131,11 +194,13 @@ async def create_messages_for_session(
 ):
     """Add new message(s) to a session."""
     try:
-        created_messages = await crud.create_messages(
+        created_messages = await _create_and_enqueue(
             db,
-            messages=messages.messages,
+            background_tasks,
             workspace_name=workspace_id,
             session_name=session_id,
+            messages=messages.messages,
+            configurations=[message.configuration for message in messages.messages],
         )
 
         # Prometheus metrics
@@ -155,28 +220,6 @@ async def create_messages_for_session(
                 last_message_id=created_messages[-1].public_id,
             )
         )
-
-        # Enqueue for processing (existing logic)
-        payloads = [
-            {
-                "workspace_name": workspace_id,
-                "session_name": session_id,
-                "message_id": message.id,
-                "content": message.content,
-                "peer_name": message.peer_name,
-                "created_at": message.created_at,
-                "message_public_id": message.public_id,
-                "seq_in_session": message.seq_in_session,
-                "configuration": original.configuration,
-            }
-            for message, original in zip(
-                created_messages, messages.messages, strict=True
-            )
-        ]
-
-        # Enqueue all messages in one call
-        # ai: tenant read now, in the request, for the reason EmbedTaskGate.try_schedule gives
-        background_tasks.add_task(enqueue, payloads, tenant_id=tenant_context.get())
 
         # Embed immediately so messages are searchable within seconds; the
         # reconciler is the fallback for anything left pending. Scheduling is
@@ -228,33 +271,17 @@ async def create_messages_with_file(
         created_at=form_data.created_at,
     )
 
-    # Create messages, each carrying its file metadata in the same insert
-    created_messages = await crud.create_messages(
+    # Create messages, each carrying its file metadata in the same insert, and
+    # queue them for processing in the same transaction
+    created_messages = await _create_and_enqueue(
         db,
-        messages=[item["message_create"] for item in all_message_data],
+        background_tasks,
         workspace_name=workspace_id,
         session_name=session_id,
+        messages=[item["message_create"] for item in all_message_data],
+        configurations=[form_data.configuration] * len(all_message_data),
         internal_metadata=[item["file_metadata"] for item in all_message_data],
     )
-
-    # Enqueue for processing (same as regular messages)
-    payloads = [
-        {
-            "workspace_name": workspace_id,
-            "session_name": session_id,
-            "message_id": message.id,
-            "content": message.content,
-            "peer_name": message.peer_name,
-            "created_at": message.created_at,
-            "message_public_id": message.public_id,
-            "seq_in_session": message.seq_in_session,
-            "configuration": form_data.configuration,
-        }
-        for message in created_messages
-    ]
-
-    # ai: tenant read now, in the request, for the reason EmbedTaskGate.try_schedule gives
-    background_tasks.add_task(enqueue, payloads, tenant_id=tenant_context.get())
 
     # Embed immediately so messages are searchable within seconds; the
     # reconciler is the fallback for anything left pending. Scheduling is

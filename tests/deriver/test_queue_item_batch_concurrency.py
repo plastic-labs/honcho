@@ -36,8 +36,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from src import models
 from src.config import settings
 from src.deriver.enqueue import (
-    _commit_with_retry,  # pyright: ignore[reportPrivateUsage]
     _insert_queue_records,  # pyright: ignore[reportPrivateUsage]
+    commit_with_retry,
 )
 from src.models import DEFAULT_TENANT_ID
 from tests.deriver.conftest import (
@@ -308,7 +308,7 @@ class _RecordingEnqueueSession:
 def _as_session(recording_session: _RecordingEnqueueSession) -> AsyncSession:
     """Hand the double to the code under test.
 
-    ``_commit_with_retry`` around ``_insert_queue_records`` only ever calls
+    ``commit_with_retry`` around ``_insert_queue_records`` only ever calls
     execute / commit / rollback, so the
     double covers the whole of the surface it uses; the cast goes through
     ``object`` because a partial stand-in deliberately does not structurally
@@ -321,7 +321,7 @@ async def _insert_and_commit(
     db_session: AsyncSession, records: list[dict[str, Any]]
 ) -> None:
     """What ``enqueue`` does with its batch: insert, commit, retry on a transient error."""
-    await _commit_with_retry(
+    await commit_with_retry(
         db_session, lambda: _insert_queue_records(db_session, records)
     )
 
@@ -363,7 +363,7 @@ class TestTheEnqueueRetriesADeadlockedBatch:
             await session.execute(insert(models.QueueItem), [{"first": True}])
             await session.execute(insert(models.QueueItem), [{"second": True}])
 
-        await _commit_with_retry(session, two_writes)
+        await commit_with_retry(session, two_writes)
 
         assert recording_session.executed_batches == [
             [{"first": True}],

@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Peer card entries may cover durable work facts: ongoing roles and responsibilities, projects, things the peer owns or maintains, and the tools and environments it works in. The rule was that anything likely to change within six months stayed off the card, which kept rebuilt cards to a few lines. Entries carry no pronouns for the peer, and the dreamer never infers them
 
+### Fixed
+
+- A message is saved together with the queue work that derives it. `POST /sessions/{session_id}/messages` and `POST /sessions/{session_id}/messages/upload` committed the messages first and queued them afterwards in a background task that logged and dropped any failure, so a message could be saved and never derived. Both now insert the messages and their queue rows in one transaction: if queuing fails, the request fails and nothing is saved, so the client can retry it. A deadlock or serialization failure reruns the write up to twice before failing; a lock or statement timeout fails it at once (#1621)
+
 ## [3.6.2] - 2026-11-19
 
 ### Fixed

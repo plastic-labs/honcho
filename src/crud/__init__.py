@@ -116,6 +116,7 @@ from .workspace import (
     get_or_create_workspace,
     get_workspace,
     get_workspace_stats,
+    get_workspace_uncached,
     update_workspace,
 )
 
@@ -230,6 +231,7 @@ __all__ = [
     "delete_workspace",
     "get_or_create_workspace",
     "get_workspace",
+    "get_workspace_uncached",
     "get_all_workspaces",
     "update_workspace",
 ]

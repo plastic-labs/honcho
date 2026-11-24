@@ -999,11 +999,12 @@ async def test_refusing_position_and_a_missing_reserved_name(
     never adopt.
     """
     test_workspace, _ = sample_data
-    session_name, _ = _setup(client, test_workspace.name)
+    workspace_name = test_workspace.name
+    session_name, _ = _setup(client, workspace_name)
     missing = scope_peer_name(str(generate_nanoid()))
 
     assert case.build is not None
-    result = case.build(client, test_workspace.name, session_name, missing)
+    result = case.build(client, workspace_name, session_name, missing)
 
     if case.refuse_missing:
         assert result.status_code == 422, (
@@ -1023,7 +1024,7 @@ async def test_refusing_position_and_a_missing_reserved_name(
 
     minted = await db_session.scalar(
         select(models.Peer)
-        .where(models.Peer.workspace_name == test_workspace.name)
+        .where(models.Peer.workspace_name == workspace_name)
         .where(models.Peer.name == missing)
     )
     assert minted is None, (

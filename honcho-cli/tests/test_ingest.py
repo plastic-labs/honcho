@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 from honcho import ConflictError, NotFoundError
 from honcho.api_types import (
@@ -747,6 +748,7 @@ _EXPERIMENTAL = [
     ["ingest", "reset", "-w", "ws1", "--yes"],
     ["ingest", "link", "1", "2", "-w", "ws1"],
     ["ingest", "unlink", "1", "alex", "-w", "ws1"],
+    ["ingest", "from", "github", "-w", "ws1"],
     ["peer", "exclude", "1", "-w", "ws1"],
     ["peer", "include", "1", "-w", "ws1"],
     ["session", "exclude", "1", "-w", "ws1"],
@@ -811,3 +813,269 @@ def test_the_refusal_honors_a_commands_own_json_flag(cfg, runner, monkeypatch):
 
     assert result.exit_code == 1
     assert json.loads(result.stderr)["error"]["code"] == "EXPERIMENTAL"
+
+
+# --- import --check -------------------------------------------------------------
+
+
+def _no_client(*_args, **_kwargs):
+    raise AssertionError("--check needs no workspace or credentials")
+
+
+def test_import_check_validates_without_sending(cfg, runner, tmp_path):
+    path = _jsonl(tmp_path, [_record(0), *_bot_thread()[1:]])
+    with patch("honcho_cli.commands.ingest.get_client", _no_client):
+        result = runner.invoke(app, ["ingest", "import", str(path), "--check"])
+
+    assert result.exit_code == 0, result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["valid"] is True
+    assert summary["records"] == 4
+    assert summary["invalid"] == 0
+    assert summary["sources"] == {"discord:g1": 4}
+    assert summary["containers"] == 1
+    assert summary["bot_records"] == 2
+    # The bot post no one answered is held back; the one a person replied to isn't.
+    assert summary["bot_records_held_back"] == 1
+    assert summary["would_send"] == 3
+
+
+def test_import_check_lists_every_invalid_line(cfg, runner, tmp_path):
+    bad = {**_record(1)}
+    del bad["source"]
+    path = tmp_path / "records.jsonl"
+    path.write_text(
+        json.dumps(_record(0)) + "\n" + json.dumps(bad) + "\n"
+        + json.dumps(_record(2)) + "\nnot json\n"
+    )
+    with patch("honcho_cli.commands.ingest.get_client", _no_client):
+        result = runner.invoke(app, ["ingest", "import", str(path), "--check"])
+
+    assert result.exit_code == 1
+    summary = json.loads(result.stdout)
+    assert summary["valid"] is False
+    assert summary["invalid"] == 2
+    assert [e["line"] for e in summary["errors"]] == [2, 4]
+    assert summary["errors"][0]["error"].startswith("source:")
+
+
+# --- ingest from ----------------------------------------------------------------
+
+
+class _FakeSource:
+    help = "A fake chat"
+
+    def __init__(self, containers: dict[str, list[dict]], code: int = 0) -> None:
+        self.containers = containers
+        self.code = code
+        self.argv: list[str] | None = None
+
+    def main(self, argv, sink):
+        self.argv = argv
+        if "--help" in argv:
+            print("usage: honcho ingest from fake [--guild ID]")
+            raise SystemExit(0)
+        for name, records in self.containers.items():
+            sink.container(name)
+            for record in records:
+                sink.record(record)
+        return self.code
+
+
+class _FakePoint:
+    def __init__(self, name: str, source: object) -> None:
+        self.name = name
+        self.value = f"fake_connector:{name.upper()}"
+        self._source = source
+
+    def load(self):
+        return self._source
+
+
+def _installed(**sources):
+    return patch(
+        "honcho_cli.ingest_sources.installed",
+        return_value={name: _FakePoint(name, src) for name, src in sources.items()},
+    )
+
+
+def _from(runner, args, client, **sources):
+    with (
+        _installed(**sources),
+        patch("honcho_cli.commands.ingest.get_client", return_value=(client, _config())),
+    ):
+        return runner.invoke(app, ["ingest", "from", *args])
+
+
+def _sending_client():
+    ingest = MagicMock(side_effect=lambda chunk, derive: _ingest_response(len(chunk)))
+    return _client(ingest=ingest, ingest_status=MagicMock(return_value=STATUS)), ingest
+
+
+def test_from_lists_the_installed_sources(cfg, runner):
+    with _installed(fake=_FakeSource({})), patch(
+        "honcho_cli.commands.ingest.get_client", _no_client
+    ):
+        result = runner.invoke(app, ["ingest", "from"])
+
+    assert result.exit_code == 0, result.stderr
+    assert json.loads(result.stdout) == [
+        {"source": "fake", "help": "A fake chat", "entry_point": "fake_connector:FAKE"}
+    ]
+
+
+def test_from_runs_the_source_and_imports_each_container(cfg, runner):
+    source = _FakeSource({"#dev": [_record(0)], "#ci": _bot_thread()[1:]})
+    client, ingest = _sending_client()
+
+    result = _from(
+        runner, ["fake", "--guild", "1", "-w", "ws1", "--token-file", "t"], client,
+        fake=source,
+    )
+
+    assert result.exit_code == 0, result.stderr
+    # Everything that isn't this command's own goes to the source.
+    assert source.argv == ["--guild", "1", "--token-file", "t"]
+    sent = [r.source_id for (chunk,), _ in ingest.call_args_list for r in chunk]
+    # #ci's unanswered bot post is held back; the rest are sent, a container at a time.
+    assert sent == ["m0", "m2", "m3"]
+    assert all(kwargs == {"derive": "later"} for _, kwargs in ingest.call_args_list)
+    summary = json.loads(result.stdout)
+    assert summary["source"] == "fake"
+    assert summary["containers"] == 2
+    assert summary["records"] == 3
+    assert summary["bot_records_held_back"] == 1
+
+
+def test_from_an_unknown_source_is_an_error(cfg, runner):
+    client, _ = _sending_client()
+
+    result = _from(runner, ["nope", "-w", "ws1"], client, fake=_FakeSource({}))
+
+    assert result.exit_code == 1
+    error = json.loads(result.stderr)["error"]
+    assert error["code"] == "UNKNOWN_SOURCE"
+    assert "fake" in error["message"]
+
+
+def test_from_passes_help_to_the_source_without_credentials(cfg, runner):
+    with _installed(fake=_FakeSource({})), patch(
+        "honcho_cli.commands.ingest.get_client", _no_client
+    ):
+        result = runner.invoke(app, ["ingest", "from", "fake", "--help"])
+
+    assert result.exit_code == 0
+    assert "usage: honcho ingest from fake" in result.stdout
+
+
+def test_from_refuses_a_workspace_that_isnt_auto_before_reading(cfg, runner):
+    source = _FakeSource({"#dev": [_record(0)]})
+    client = _client(ingest_status=MagicMock(side_effect=_api_error(ConflictError, 409)))
+
+    result = _from(runner, ["fake", "-w", "ws1"], client, fake=source)
+
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["error"]["code"] == "NOT_AUTO_WORKSPACE"
+    assert source.argv is None  # never ran
+
+
+def test_from_names_the_container_of_an_invalid_record(cfg, runner):
+    bad = {**_record(1)}
+    del bad["source"]
+    client, ingest = _sending_client()
+
+    result = _from(
+        runner, ["fake", "-w", "ws1"], client,
+        fake=_FakeSource({"#dev": [_record(0)], "#random": [bad]}),
+    )
+
+    assert result.exit_code == 1
+    # What was stored before the error is said first; the error comes last.
+    assert "1 records were stored before this" in result.stderr
+    error = json.loads(result.stderr.strip().splitlines()[-1])["error"]
+    assert error["code"] == "INVALID_RECORD"
+    assert error["details"]["container"] == "#random"
+    # The container before it was complete, and was sent.
+    assert [r.source_id for (chunk,), _ in ingest.call_args_list for r in chunk] == ["m0"]
+
+
+def test_from_sends_what_it_read_and_keeps_the_source_exit_code(cfg, runner):
+    client, ingest = _sending_client()
+
+    result = _from(
+        runner, ["fake", "-w", "ws1"], client,
+        fake=_FakeSource({"#dev": [_record(0)]}, code=1),
+    )
+
+    assert result.exit_code == 1
+    assert ingest.called
+    assert json.loads(result.stdout)["records"] == 1
+
+
+def test_from_reports_a_source_message(cfg, runner):
+    class Refusing(_FakeSource):
+        def main(self, argv, sink):
+            raise SystemExit("no channels match --channel 9")
+
+    client, _ = _sending_client()
+
+    result = _from(runner, ["fake", "-w", "ws1"], client, fake=Refusing({}))
+
+    assert result.exit_code == 1
+    error = json.loads(result.stderr)["error"]
+    assert error["code"] == "SOURCE_ERROR"
+    assert "no channels match" in error["message"]
+
+
+def test_import_check_applies_the_servers_rules(cfg, runner, tmp_path):
+    long = {**_record(1), "content": "x" * 25_001}
+    slashed = {**_record(2), "source": "bad/source"}
+    path = _jsonl(tmp_path, [_record(0), long, slashed])
+    with patch("honcho_cli.commands.ingest.get_client", _no_client):
+        result = runner.invoke(app, ["ingest", "import", str(path), "--check"])
+
+    assert result.exit_code == 1
+    errors = json.loads(result.stdout)["errors"]
+    assert [e["line"] for e in errors] == [2, 3]
+    assert "25,001 characters" in errors[0]["error"]
+    assert errors[1]["error"].startswith("source:")
+
+
+def test_from_wants_the_source_name_first(cfg, runner):
+    client, _ = _sending_client()
+
+    result = _from(
+        runner, ["--token-file", "t", "fake", "-w", "ws1"], client, fake=_FakeSource({})
+    )
+
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["error"]["code"] == "INVALID_ARGUMENT"
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_from_help_shows_its_options_and_the_sources(cfg, runner, monkeypatch, flag):
+    # Like `--help` on the other ingest commands: no opt-in needed, and text
+    # even when the output isn't a terminal (as under the test runner).
+    monkeypatch.delenv("HONCHO_EXPERIMENTAL")
+    with _installed(fake=_FakeSource({})), patch(
+        "honcho_cli.commands.ingest.get_client", _no_client
+    ):
+        result = runner.invoke(app, ["ingest", "from", flag])
+
+    assert result.exit_code == 0, result.output
+    # Typer styles help under GitHub Actions, splitting `--bots` with escapes.
+    text = click.unstyle(result.stdout)
+    assert "Experimental:" in text
+    assert "--bots" in text
+    assert "fake" in text
+
+
+def test_a_sources_help_needs_no_opt_in(cfg, runner, monkeypatch):
+    monkeypatch.delenv("HONCHO_EXPERIMENTAL")
+    with _installed(fake=_FakeSource({})), patch(
+        "honcho_cli.commands.ingest.get_client", _no_client
+    ):
+        result = runner.invoke(app, ["ingest", "from", "fake", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "usage: honcho ingest from fake" in result.stdout
