@@ -5,11 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [Unreleased]
+## [2.10.0] - 2026-11-24
 
 ### Added
 
-- `joinedAt` on a session-peer configuration (an ISO 8601 string) sets when a peer joined a session, in `honcho.session(id, { peers })`, `session.addPeers()`, `session.setPeers()` and `session.setPeerConfiguration()`. Set it when importing messages with their original dates: a search with `peer_perspective` only returns messages created at or after the peer's join time. Write-only, so `getPeerConfiguration()` does not return it. Requires a Honcho release after v3.6.1
+- Ingest (experimental): `auto: true` on the client creates its workspace as an auto workspace, and `ingest()` sends source records to it, validated and 100 per request, returning one result per record. `ingestDerive()` releases records sent with `derive: 'later'`, `ingestStatus()`, `ingestPeople()` and `ingestSessions()` show what an import became, and `ingestLink()`, `ingestUnlink()` and `ingestReset()` merge one person's accounts and start an import over. Requires Honcho v3.7.0+ (#1608)
+- `joinedAt` on a session-peer configuration (an ISO 8601 string) sets when a peer joined a session, in `honcho.session(id, { peers })`, `session.addPeers()`, `session.setPeers()` and `session.setPeerConfiguration()`. Set it when importing messages with their original dates: a search with `peer_perspective` only returns messages created at or after the peer's join time. Write-only, so `getPeerConfiguration()` does not return it. Requires Honcho v3.7.0+ (#1613)
+- `honcho.dreams()` takes `filters`, for example a `started_at` range. Requires Honcho v3.7.0+ (#1604)
 
 ## [2.9.0] - 2026-11-05
 

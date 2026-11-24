@@ -5,11 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [Unreleased]
+## [2.10.0] - 2026-11-24
 
 ### Added
 
-- `SessionPeerConfig.joined_at` sets when a peer joined a session, in `honcho.session(peers=...)`, `session.add_peers()`, `session.set_peers()` and `session.set_peer_configuration()` (sync and async). Set it when importing messages with their original dates: a search with `peer_perspective` only returns messages created at or after the peer's join time. Write-only, so `get_peer_configuration()` does not return it. Requires a Honcho release after v3.6.1
+- Ingest (experimental): `Honcho(auto=True)` creates its workspace as an auto workspace, and `ingest()` sends source records to it, validated with the server's rules and 100 per request, returning one result per record. `ingest_derive()` releases records sent with `derive="later"`, `ingest_status()`, `ingest_people()` and `ingest_sessions()` show what an import became, and `ingest_link()`, `ingest_unlink()` and `ingest_reset()` merge one person's accounts and start an import over. Sync and async. `IngestRecord` and the other ingest types are exported. Requires Honcho v3.7.0+ (#1608, #1622)
+- `filter_bot_records(records, keep=...)` holds back bot records no person interacted with. With the default, `"interacted"`, a bot's record is kept only when a person is in its reply chain or @-mentions the bot in the same conversation; `"all"` and `"none"` keep every bot record or none (#1611)
+- `SessionPeerConfig.joined_at` sets when a peer joined a session, in `honcho.session(peers=...)`, `session.add_peers()`, `session.set_peers()` and `session.set_peer_configuration()` (sync and async). Set it when importing messages with their original dates: a search with `peer_perspective` only returns messages created at or after the peer's join time. Write-only, so `get_peer_configuration()` does not return it. Requires Honcho v3.7.0+ (#1613)
+- `honcho.dreams()` takes `filters`, for example a `started_at` range. Requires Honcho v3.7.0+ (#1604)
 
 ## [2.9.0] - 2026-11-05
 
