@@ -6,6 +6,7 @@ of each item's rank in each list, then summing these reciprocal ranks.
 """
 
 import re
+import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -24,6 +25,7 @@ from sqlalchemy import (
     func,
     or_,
     select,
+    text,
 )
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,12 +45,20 @@ from src.vector_store import get_external_vector_store
 T = TypeVar("T")
 
 
+_SEARCH_DEADLINE = "search_deadline"
+
+
 @asynccontextmanager
 async def search_db(operation_name: str) -> AsyncGenerator[AsyncSession]:
-    """A session for message search, bounded by ``DB.SEARCH_STATEMENT_TIMEOUT_MS``.
+    """A session for one message search, bounded by ``DB.SEARCH_STATEMENT_TIMEOUT_MS``.
+
+    The limit is a budget for the whole search, not for each statement: callers
+    run ``bound_search_statement`` before each statement, which caps that
+    statement at the time the search has left. A server ``statement_timeout``
+    lower than the setting is kept.
 
     Raises:
-        SearchTimeoutError: A statement in the block hit the timeout.
+        SearchTimeoutError: The search ran out of time.
     """
     # region ai
     # A transaction, not the AUTOCOMMIT read engine, because SET LOCAL needs one
@@ -57,19 +67,57 @@ async def search_db(operation_name: str) -> AsyncGenerator[AsyncSession]:
     # back), so it never reaches the next user of the pooled connection, which a
     # session-level SET + RESET could on a cancelled task. The block is
     # SELECT-only and holds no external call, so the transaction is short.
+    #
+    # The budget is enforced by Postgres (statement_timeout per statement, set to
+    # the time remaining), not by cancelling the Python task: a cancelled task
+    # does not reliably stop the query on the server, which would leave the
+    # runaway running with nothing waiting for it.
     # endregion
     async with tracked_db(operation_name) as db:
-        timeout_ms = settings.DB.SEARCH_STATEMENT_TIMEOUT_MS
-        if timeout_ms:
-            await db.execute(
-                select(func.set_config("statement_timeout", f"{timeout_ms}ms", True))
-            )
+        budget_ms = settings.DB.SEARCH_STATEMENT_TIMEOUT_MS
         try:
+            if budget_ms:
+                server_ms = await _server_statement_timeout_ms(db)
+                if server_ms:
+                    budget_ms = min(budget_ms, server_ms)
+                db.info[_SEARCH_DEADLINE] = time.monotonic() + budget_ms / 1000
+                await bound_search_statement(db)
             yield db
         except DBAPIError as e:
             if isinstance(e.orig, QueryCanceled):
                 raise SearchTimeoutError() from e
             raise
+        finally:
+            if budget_ms:
+                db.info.pop(_SEARCH_DEADLINE, None)
+
+
+async def _server_statement_timeout_ms(db: AsyncSession) -> int:
+    """The session's ``statement_timeout`` before search sets one, in ms (0 = none)."""
+    setting = await db.scalar(
+        text("SELECT setting FROM pg_settings WHERE name = 'statement_timeout'")
+    )
+    return int(setting or 0)
+
+
+async def bound_search_statement(db: AsyncSession) -> None:
+    """Cap the next statement of a ``search_db`` block at the search's remaining time.
+
+    A no-op outside a ``search_db`` block, or with the timeout disabled.
+
+    Raises:
+        SearchTimeoutError: The search has no time left.
+    """
+    info: dict[Any, Any] | None = getattr(db, "info", None)
+    deadline = info.get(_SEARCH_DEADLINE) if info is not None else None
+    if deadline is None:
+        return
+    remaining_ms = int((deadline - time.monotonic()) * 1000)
+    if remaining_ms <= 0:
+        raise SearchTimeoutError()
+    await db.execute(
+        select(func.set_config("statement_timeout", f"{remaining_ms}ms", True))
+    )
 
 
 def _uses_pgvector_message_search() -> bool:
@@ -378,6 +426,7 @@ async def matching_messages(
     found: list[models.Message] = []
     after: tuple[float, datetime, int] | None = None
     while len(found) < limit:
+        await bound_search_statement(db)
         page = (
             await db.execute(
                 message_text_page(
@@ -392,6 +441,7 @@ async def matching_messages(
         if not page:
             break
         position = {row.id: index for index, row in enumerate(page)}
+        await bound_search_statement(db)
         rows = (
             await db.execute(stmt.where(models.Message.id.in_(list(position))))
         ).scalars()
@@ -457,6 +507,7 @@ async def _fulltext_search(
 
     fulltext_query = fulltext_query.limit(limit)
 
+    await bound_search_statement(db)
     result = await db.execute(fulltext_query)
     return list(result.scalars().all())
 
@@ -567,6 +618,7 @@ async def search(
             and query_embedding is not None
         ):
             if _uses_pgvector_message_search():
+                await bound_search_statement(active_db)
                 semantic_results = await _semantic_search_pgvector(
                     db=active_db,
                     workspace_name=workspace_name,
@@ -575,6 +627,7 @@ async def search(
                     filters=filters,
                 )
             else:
+                await bound_search_statement(active_db)
                 semantic_results = await fetch_messages_by_ids(
                     db=active_db,
                     message_ids=semantic_message_ids or [],
@@ -582,6 +635,7 @@ async def search(
                 )
 
             if peer_perspective_name:
+                await bound_search_statement(active_db)
                 semantic_results = await _filter_by_peer_perspective(
                     active_db,
                     semantic_results,

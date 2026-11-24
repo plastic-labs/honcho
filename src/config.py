@@ -778,8 +778,9 @@ class DBSettings(HonchoSettings):
     # deriver backs off and retries on a later poll).
     CONNECT_TIMEOUT_SECONDS: Annotated[int, Field(default=2, gt=0, le=60)] = 2
 
-    # Statement timeout (milliseconds) for message search and grep; 0 disables it.
-    # A search that hits it fails with a 504 instead of running to completion.
+    # Time budget (milliseconds) for each message search and grep; 0 disables it.
+    # It covers the whole search, and a lower server statement_timeout is kept.
+    # A search that runs out fails with a 504 instead of running to completion.
     SEARCH_STATEMENT_TIMEOUT_MS: Annotated[
         int, Field(default=60_000, ge=0, le=3_600_000)
     ] = 60_000

@@ -631,8 +631,9 @@ DB_SQL_DEBUG=false
 # Per-connection establish timeout (seconds) so a single connection attempt
 # fails fast instead of hanging when the server/pooler is unreachable.
 DB_CONNECT_TIMEOUT_SECONDS=2
-# Statement timeout for message search and grep (milliseconds; 0 disables).
-# A search that exceeds it returns 504 instead of running to completion.
+# Time budget for each message search and grep (milliseconds; 0 disables).
+# Covers the whole search; a search that runs out returns 504. A lower
+# statement_timeout already set on the database or role is kept.
 DB_SEARCH_STATEMENT_TIMEOUT_MS=60000
 # Seconds a migrator waits for another migrator's lock before failing
 DB_MIGRATION_LOCK_WAIT_SECONDS=300

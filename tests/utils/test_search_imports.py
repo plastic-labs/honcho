@@ -104,10 +104,11 @@ async def run():
             yield db
         search.tracked_db = tracked_db
         search.settings.EMBED_MESSAGES = False
+        search.settings.DB.SEARCH_STATEMENT_TIMEOUT_MS = 0
         rows = await search.search('needle', filters={{'workspace_id': 'workspace'}})
     assert rows == []
-    # search() sets its statement timeout first; the search itself is last.
-    sql = str(db.statements[-1])
+    assert len(db.statements) == 1
+    sql = str(db.statements[0])
     assert 'messages.deleted_at IS NULL' in sql, sql
     for table in ('workspaces', 'peers', 'sessions'):
         assert f'{{table}}_1.deleted_at IS NULL' in sql, sql
