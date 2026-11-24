@@ -23,7 +23,7 @@ The response is an [Arrow IPC stream](https://arrow.apache.org/docs/format/Colum
 
 The schema metadata key `honcho.graph.version` changes when a column changes meaning or type. New columns don't change it.
 
-A graph with more conclusions than the server's `GRAPH_MAX_CONCLUSIONS` (1,000,000 by default) returns a 422. Filter by `observer` or `observed`, and use `GET /graph/overview` to see each pair's count.
+A graph with more conclusions than the server's `GRAPH_MAX_CONCLUSIONS` (300,000 by default) returns a 422. Filter by `observer` or `observed`, and use `GET /graph/overview` to see each pair's count.
 
 Each response carries an `ETag`. Send it back in `If-None-Match` to get a 304 when nothing changed. The server still runs the full query before it compares.
 

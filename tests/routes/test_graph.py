@@ -2,6 +2,7 @@
 
 import datetime
 from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 from arro3.core import Table
@@ -13,6 +14,7 @@ from src import models
 from src.config import settings
 from src.models import Peer, Workspace
 from src.security import JWTParams, create_jwt
+from src.telemetry import prometheus_metrics
 from src.utils.graph_arrow import MEDIA_TYPE
 from src.utils.scopes import scope_peer_name
 
@@ -210,14 +212,28 @@ async def test_a_graph_over_the_limit_is_refused(
     workspace, alice = sample_data
     await _seed(db_session, workspace, alice)
     url = f"/v3/workspaces/{workspace.name}/graph"
+    built, refused = MagicMock(), MagicMock()
+    monkeypatch.setattr(prometheus_metrics, "record_graph_built", built)
+    monkeypatch.setattr(prometheus_metrics, "record_graph_refused", refused)
 
     # the seed has six live conclusions
     monkeypatch.setattr(settings.GRAPH, "MAX_CONCLUSIONS", 6)
     assert client.get(url).status_code == 200
+    assert built.call_args.kwargs["conclusions"] == 6
+    assert set(built.call_args.kwargs["stages"]) == {
+        "probe",
+        "wait",
+        "db",
+        "build",
+        "encode",
+    }
+    refused.assert_not_called()
+
     monkeypatch.setattr(settings.GRAPH, "MAX_CONCLUSIONS", 5)
     response = client.get(url)
     assert response.status_code == 422
     assert "more than 5 conclusions" in response.json()["detail"]
+    refused.assert_called_once_with()
     assert client.get(url, params={"observer": TEAM}).status_code == 200
 
 

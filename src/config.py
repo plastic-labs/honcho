@@ -1363,7 +1363,7 @@ class GraphSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="GRAPH_", extra="ignore")  # pyright: ignore
 
     # Above this, GET /graph asks the caller to filter by observer or observed.
-    MAX_CONCLUSIONS: Annotated[int, Field(gt=0)] = 1_000_000
+    MAX_CONCLUSIONS: Annotated[int, Field(gt=0)] = 300_000
 
 
 class MetricsSettings(HonchoSettings):

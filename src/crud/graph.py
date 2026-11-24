@@ -278,6 +278,31 @@ def _graph_statement(
     return union_all(nodes, link_rows, missing_rows, scope_rows)
 
 
+def graph_too_large(max_conclusions: int) -> ValidationException:
+    return ValidationException(
+        f"This graph has more than {max_conclusions:,} conclusions. "
+        + "Filter by observer or observed to request a smaller one."
+    )
+
+
+async def graph_exceeds(
+    db: AsyncSession,
+    workspace_name: str,
+    observer: str | None,
+    observed: str | None,
+    max_conclusions: int,
+) -> bool:
+    """Whether the graph is over max_conclusions, checked without loading it."""
+    D = models.Document
+    over = await db.scalar(
+        select(D.id)
+        .where(*_live(workspace_name, observer, observed))
+        .offset(max_conclusions)
+        .limit(1)
+    )
+    return over is not None
+
+
 def _lineage(level: str, unresolved: int, sources: int) -> str:
     if unresolved:
         return LINEAGE_PARTIAL
@@ -302,10 +327,7 @@ def build_graph_columns(
     for row in rows:
         by_kind[row[0]](row)
     if len(nodes) > max_conclusions:
-        raise ValidationException(
-            f"This graph has more than {max_conclusions:,} conclusions. "
-            + "Filter by observer or observed to request a smaller one."
-        )
+        raise graph_too_large(max_conclusions)
     # Python orders str by code point, which is also UTF-8 byte order
     nodes.sort(key=itemgetter(7, 1))
     count = len(nodes)

@@ -14,10 +14,14 @@ from src.crud.graph import (
     get_graph_overview,
     get_graph_rows,
     get_graph_text,
+    graph_exceeds,
+    graph_too_large,
     require_graph_names,
 )
 from src.dependencies import read_db, tracked_db
+from src.exceptions import ValidationException
 from src.security import require_auth
+from src.telemetry import prometheus_metrics
 from src.utils.graph_arrow import MEDIA_TYPE, encode_graph
 
 logger = logging.getLogger(__name__)
@@ -66,6 +70,11 @@ def etag_matches(if_none_match: str | None, etag: str) -> bool:
     )
 
 
+# a build holds about 1.1 KB per conclusion, so one at a time keeps the process
+# inside its memory limit; the lock is per process, so shared-pool tenants share it
+_build_slot = asyncio.Semaphore(1)
+
+
 def _encode(cols: GraphColumns) -> tuple[bytes, str]:
     body = encode_graph(cols)
     return body, '"' + hashlib.sha256(body).hexdigest()[:32] + '"'
@@ -91,20 +100,39 @@ async def graph(
     """Structure-only conclusion graph as an Arrow IPC stream. Experimental."""
     limit = settings.GRAPH.MAX_CONCLUSIONS
     started = time.perf_counter()
-    # the connection goes back to the pool before the CPU work below
     async with tracked_db("graph", read_only=True) as db:
         await require_graph_names(db, workspace_id, (observer, observed))
-        rows = await get_graph_rows(db, workspace_id, observer, observed, limit)
-    queried = time.perf_counter()
-    # in threads, so other requests on this worker run between GIL switches
-    cols = await asyncio.to_thread(build_graph_columns, rows, limit)
-    built = time.perf_counter()
-    body, etag = await asyncio.to_thread(_encode, cols)
-    encoded = time.perf_counter()
-    timing = (
-        f"db;dur={(queried - started) * 1000:.1f}, "
-        + f"build;dur={(built - queried) * 1000:.1f}, "
-        + f"encode;dur={(encoded - built) * 1000:.1f}"
+        if await graph_exceeds(db, workspace_id, observer, observed, limit):
+            prometheus_metrics.record_graph_refused()
+            raise graph_too_large(limit)
+    probed = time.perf_counter()
+    async with _build_slot:
+        claimed = time.perf_counter()
+        # the connection goes back to the pool before the CPU work below
+        async with tracked_db("graph", read_only=True) as db:
+            rows = await get_graph_rows(db, workspace_id, observer, observed, limit)
+        queried = time.perf_counter()
+        try:
+            # in threads, so other requests on this worker run between GIL switches
+            cols = await asyncio.to_thread(build_graph_columns, rows, limit)
+        except ValidationException:
+            prometheus_metrics.record_graph_refused()
+            raise
+        # the rows are the largest object; free them before encoding
+        del rows
+        built = time.perf_counter()
+        body, etag = await asyncio.to_thread(_encode, cols)
+        encoded = time.perf_counter()
+    stages = {
+        "probe": probed - started,
+        "wait": claimed - probed,
+        "db": queried - claimed,
+        "build": built - queried,
+        "encode": encoded - built,
+    }
+    prometheus_metrics.record_graph_built(conclusions=len(cols.ids), stages=stages)
+    timing = ", ".join(
+        f"{stage};dur={seconds * 1000:.1f}" for stage, seconds in stages.items()
     )
     headers = {
         "ETag": etag,
