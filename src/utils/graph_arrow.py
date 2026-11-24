@@ -3,6 +3,7 @@
 Every arro3 call lives here, so moving to another Arrow library changes one file.
 """
 
+from array import array
 from io import BytesIO
 
 from arro3.core import (
@@ -33,6 +34,16 @@ _NAME = DataType.dictionary(DataType.int32(), _STRING)
 _SOURCES = DataType.list(Field("item", _UINT32, nullable=False))
 
 
+_EMPTY_TYPES = {"q": DataType.int64(), "I": _UINT32, "i": DataType.int32()}
+
+
+def _ints(values: array[int]) -> Array:
+    # arro3 rejects a zero-length array as "Not a buffer protocol object"
+    if not values:
+        return Array([], _EMPTY_TYPES[values.typecode])
+    return Array.from_buffer(values)
+
+
 def _strings(values: list[str] | list[str | None], kind: DataType) -> Array:
     return Array(values, _STRING).cast(kind)
 
@@ -47,19 +58,19 @@ def graph_batch(cols: GraphColumns) -> RecordBatch:
             "observed": _strings(cols.observeds, _NAME),
             "observer_kind": _strings(cols.observer_kinds, _LABEL),
             "session": _strings(cols.sessions, _NAME),
-            "created_at": Array.from_buffer(cols.created_us).cast(
+            "created_at": _ints(cols.created_us).cast(
                 DataType.timestamp("us", tz="UTC")
             ),
-            "times_derived": Array.from_buffer(cols.times_derived),
+            "times_derived": _ints(cols.times_derived),
             "lineage": _strings(cols.lineage, _LABEL),
-            "unresolved_outside": Array.from_buffer(cols.unresolved_outside),
-            "unresolved_deleted": Array.from_buffer(cols.unresolved_deleted),
-            "unresolved_unknown": Array.from_buffer(cols.unresolved_unknown),
+            "unresolved_outside": _ints(cols.unresolved_outside),
+            "unresolved_deleted": _ints(cols.unresolved_deleted),
+            "unresolved_unknown": _ints(cols.unresolved_unknown),
             "is_copy": Array(cols.is_copy, DataType.bool()),
             "copied_from": Array(cols.copied_from, _UINT32),
             "sources": list_array(
-                Array.from_buffer(cols.source_offsets),
-                Array.from_buffer(cols.source_targets),
+                _ints(cols.source_offsets),
+                _ints(cols.source_targets),
                 type=_SOURCES,
             ),
         },
