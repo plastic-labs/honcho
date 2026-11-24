@@ -5,7 +5,7 @@ icon: 'file-import'
 ---
 
 <Warning>
-Ingest and auto workspaces are experimental and under active development. The API, SDK methods and CLI commands described here may change or stop working without notice, and aren't ready for production use. The CLI's ingest commands are off by default: set `HONCHO_EXPERIMENTAL=1` to run them.
+Ingest and auto workspaces are experimental and under active development. The API, SDK methods and CLI commands described here may change or stop working without notice, and aren't ready for production use. The CLI's ingest commands are off by default: set `HONCHO_EXPERIMENTAL=1` to run them. See [Auto Workspaces](/v3/documentation/features/experimental/auto-workspaces) for what works today and the server it needs.
 </Warning>
 
 Ingest turns records from another system (a chat message, a meeting note, an event) into Honcho messages. You send the record as the source has it: who wrote it, where it lives, and its ID in the source. Honcho picks the session and peers for you:
@@ -183,4 +183,4 @@ honcho session exclude 12 -w acme                # after the last reset: a reset
 honcho ingest derive -w acme --watch
 ```
 
-`honcho ingest import FILE --check` validates a file without a workspace or credentials and sends nothing. Installed connectors run straight from the CLI: `honcho ingest from` lists them, and `honcho ingest from github --repo OWNER/NAME --token-file FILE -w acme` reads and imports in one step, holding back unanswered bot records the same way. To write your own exporter or connector, see [Writing an Exporter](/v3/documentation/features/advanced/ingest-exporters).
+`honcho ingest import FILE --check` validates a file without a workspace or credentials and sends nothing. Installed connectors run straight from the CLI: `honcho ingest from` lists them, and `honcho ingest from github --repo OWNER/NAME --token-file FILE -w acme` reads and imports in one step, holding back unanswered bot records the same way. To write your own exporter or connector, see [Writing an Exporter](/v3/documentation/features/experimental/ingest-exporters).

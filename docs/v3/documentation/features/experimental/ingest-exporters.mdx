@@ -5,10 +5,10 @@ icon: 'file-export'
 ---
 
 <Warning>
-Ingest is experimental: the record format (v0), the CLI commands and the source interface described here may change or stop working without notice. The CLI's ingest commands run only with `HONCHO_EXPERIMENTAL=1` set.
+Ingest is experimental: the record format (v0), the CLI commands and the source interface described here may change or stop working without notice. The CLI's ingest commands run only with `HONCHO_EXPERIMENTAL=1` set. See [Auto Workspaces](/v3/documentation/features/experimental/auto-workspaces) for what works today and the server it needs.
 </Warning>
 
-An exporter reads another system (a chat, a tracker, a mailbox) and turns its history into [ingest records](/v3/documentation/features/advanced/ingest). There are two ways to use one:
+An exporter reads another system (a chat, a tracker, a mailbox) and turns its history into [ingest records](/v3/documentation/features/experimental/ingest). There are two ways to use one:
 
 - **Print JSONL.** Write one record per line and pipe it in: `my-exporter | honcho ingest import - -w acme`. Any language works.
 - **Register it as a source.** A Python package can plug into the CLI so it runs as `honcho ingest from <name>`, with the CLI handling the workspace, credentials and sending.

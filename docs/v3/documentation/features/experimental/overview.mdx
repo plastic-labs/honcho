@@ -1,0 +1,19 @@
+---
+title: Experimental Features
+description: Features you can try while they're being built
+icon: 'flask'
+---
+
+Experimental features can be tried while they're still being built. They may change or stop working without notice, and they aren't ready for production use. Each feature's page says what works today and which Honcho server it needs.
+
+Their CLI commands are off by default. Set `HONCHO_EXPERIMENTAL=1` to run them:
+
+```bash
+export HONCHO_EXPERIMENTAL=1
+```
+
+| Feature | What it does | Server |
+| --- | --- | --- |
+| [Auto Workspaces](/v3/documentation/features/experimental/auto-workspaces) | Send records as other systems have them; Honcho picks the sessions and peers | Newer than 3.6.2 |
+
+When a feature is stable, its pages move into the regular feature docs.

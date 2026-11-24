@@ -4,6 +4,10 @@
   "name": "Honcho",
   "redirects": [
     {
+      "source": "/v3/documentation/features/advanced/ingest",
+      "destination": "/v3/documentation/features/experimental/ingest"
+    },
+    {
       "source": "/",
       "destination": "/v3/documentation/introduction/overview"
     },
@@ -326,9 +330,16 @@
                   "v3/documentation/features/advanced/evidence",
                   "v3/documentation/features/advanced/streaming-response",
                   "v3/documentation/features/advanced/file-uploads",
-                  "v3/documentation/features/advanced/ingest",
-                  "v3/documentation/features/advanced/ingest-exporters",
                   "v3/documentation/features/advanced/deleting-data"
+                ]
+              },
+              {
+                "group": "Experimental",
+                "pages": [
+                  "v3/documentation/features/experimental/overview",
+                  "v3/documentation/features/experimental/auto-workspaces",
+                  "v3/documentation/features/experimental/ingest",
+                  "v3/documentation/features/experimental/ingest-exporters"
                 ]
               }
             ]
@@ -451,7 +462,7 @@
             ]
           },
           {
-            "group": "ingest",
+            "group": "ingest (experimental)",
             "pages": [
               "v3/api-reference/endpoint/ingest/ingest-records",
               "v3/api-reference/endpoint/ingest/derive",
