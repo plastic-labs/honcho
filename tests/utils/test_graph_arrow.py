@@ -206,6 +206,12 @@ def test_the_stream_splits_into_batches_with_a_short_last_one(
     assert _decode(body)["sources"] == [[], [], [], [], [0]]
 
 
+def test_a_graph_without_links_encodes():
+    # an empty array.array is not aligned for uint32 on Linux; encoding must not use it
+    body = encode_graph(build_graph_columns([_node("a", 1), _node("b", 2)], LIMIT))
+    assert _decode(body)["sources"] == [[], []]
+
+
 def test_an_empty_graph_encodes():
     body = encode_graph(GraphColumns(source_offsets=array("i", [0])))
     assert _decode(body)["id"] == []

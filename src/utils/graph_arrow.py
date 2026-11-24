@@ -38,7 +38,7 @@ _EMPTY_TYPES = {"q": DataType.int64(), "I": _UINT32, "i": DataType.int32()}
 
 
 def _ints(values: array[int]) -> Array:
-    # arro3 rejects a zero-length array as "Not a buffer protocol object"
+    # an empty array.array exports a 1-byte-aligned buffer, which pyo3 refuses
     if not values:
         return Array([], _EMPTY_TYPES[values.typecode])
     return Array.from_buffer(values)
