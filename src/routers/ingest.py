@@ -623,7 +623,10 @@ async def accept(
     peers = await current_peers(db, workspace_id, [a["subject"] for a in row.accounts])
     accepted = to_schema(row, peers)
     await db.commit()
-    for name in set(peers.values()):
+    touched = {*peers.values(), *(a["subject"] for a in row.accounts)}
+    if link_result is not None:
+        touched.update((link_result.peer_id, *link_result.merged))
+    for name in touched:
         await safe_cache_delete(peer_cache_key(workspace_id, name))
     return schemas.IngestSuggestionAccepted(suggestion=accepted, link=link_result)
 

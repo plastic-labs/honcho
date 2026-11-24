@@ -25,7 +25,7 @@ import datetime
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import ColumnElement, Select, case, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -398,6 +398,21 @@ async def save_suggestions(
             .returning(table.id)
         )
         written += len(result.all())
+    # A refresh that read no records for a pair (after a reset) never rewrites
+    # an open suggestion, and never lowers a `high` one to `low`.
+    sighted: list[dict[str, Any]] = []
+    blind: list[dict[str, Any]] = []
+    for row in rows:
+        accounts = cast(list[Mapping[str, Any]], row["accounts"])
+        seen = any(a.get("records") for a in accounts)
+        (sighted if seen else blind).append(row)
+    for start in range(0, len(blind), 500):
+        statement = pg_insert(table).values(blind[start : start + 500])
+        statement = statement.on_conflict_do_nothing(
+            constraint="uq_ingest_suggestions_subject"
+        ).returning(table.id)
+        written += len((await db.execute(statement)).all())
+    rows = sighted
     for start in range(0, len(rows), 500):
         statement = pg_insert(table).values(rows[start : start + 500])
         statement = statement.on_conflict_do_update(
@@ -416,7 +431,10 @@ async def save_suggestions(
                 )
             },
             where=(table.status == "open")
-            & (table.refreshed_at < statement.excluded.refreshed_at),
+            & (table.refreshed_at < statement.excluded.refreshed_at)
+            & ~(
+                (table.confidence == "high") & (statement.excluded.confidence == "low")
+            ),
         ).returning(table.id)
         written += len((await db.execute(statement)).all())
     return written

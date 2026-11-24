@@ -66,6 +66,10 @@ FRESH = datetime.timedelta(hours=6)
 MAX_BLOCK = 50
 """A name held by more accounts than this tells nobody apart; it proposes no pairs."""
 
+MAX_EMAIL_BLOCK = 3
+"""An address held by more accounts than this is shared (a team inbox, a noreply
+address), not one person's: it counts as no evidence and proposes no pairs."""
+
 _WEIGHT: dict[tuple[Signal, Level], float] = {
     ("email", "strong"): 4.0,
     ("self_reference", "strong"): 3.0,
@@ -613,13 +617,25 @@ def suggest_with(
         words=Counter(w for a in people.values() for w in _words(a)),
     )
 
+    shared_emails = {
+        digest
+        for digest, n in Counter(
+            a.email_digest for a in people.values() if a.email_digest
+        ).items()
+        if n > MAX_EMAIL_BLOCK
+    }
+
+    def email_of(account: Account) -> str | None:
+        digest = account.email_digest
+        return None if digest in shared_emails else digest
+
     candidates: set[tuple[str, str]] = set()
     blocks: dict[str, list[str]] = defaultdict(list)
     for key, account in people.items():
         for block in _name_keys(account):
             blocks[block].append(key)
-        if account.email_digest:
-            blocks["e:" + account.email_digest].append(key)
+        if digest := email_of(account):
+            blocks["e:" + digest].append(key)
     for block, keys in blocks.items():
         if len(keys) <= MAX_BLOCK or block.startswith("e:"):
             candidates.update(combinations(sorted(set(keys)), 2))
@@ -642,7 +658,7 @@ def suggest_with(
         if a is None or b is None or (a.peer is not None and a.peer == b.peer):
             continue
         evidence: list[Evidence] = []
-        if a.email_digest and a.email_digest == b.email_digest:
+        if email_of(a) and email_of(a) == email_of(b):
             evidence.append(Evidence("email", "strong", "same email address"))
         for writer, other in ((a, b), (b, a)):
             if claims.get((writer.key, other.key)):

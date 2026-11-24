@@ -237,6 +237,20 @@ def test_reposting_one_record_counts_once_and_a_comment_is_its_author_s() -> Non
     assert work and work[0].level == "weak" and "linked 1 " in work[0].detail
 
 
+def test_an_address_shared_by_many_accounts_is_no_evidence() -> None:
+    inbox = [
+        discord(str(i), f"Person {i}", handle=f"user{i}", email_digest="shared")
+        for i in range(4)
+    ]
+    assert suggest(inbox, []) == []
+    three = inbox[:3] + [github("9", "Someone Else", handle="other")]
+    assert _pairs(suggest(three, []), "high") == {
+        ("d:0", "d:1"),
+        ("d:0", "d:2"),
+        ("d:1", "d:2"),
+    }
+
+
 def test_two_accounts_in_one_instance_need_an_email_or_a_self_reference() -> None:
     old = discord("1", "Riley Okafor", handle="rokafor1")
     new = discord("2", "Riley Okafor", handle="rokafor2")
