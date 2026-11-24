@@ -821,3 +821,96 @@ def test_a_hard_linked_output_file_is_replaced_not_overwritten(tmp_path: Path) -
     assert outside.read_text() == "keep me"
     assert outside.stat().st_mode & 0o777 == 0o644
     assert _read(out, "records.jsonl") == [_valid("a")]
+
+
+# --- honcho ingest from github --------------------------------------------------
+
+
+class _CliSink:
+    """Stands in for the CLI's record sink."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str]] = []
+
+    def container(self, name: str) -> None:
+        self.events.append(("container", name))
+
+    def record(self, record: Any) -> None:
+        self.events.append(("record", record["source_id"]))
+
+
+def _source_main(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake: FakeGitHub, *argv: str
+) -> tuple[int, _CliSink]:
+    from honcho_github import source
+
+    token = tmp_path / "token"
+    token.write_text(TOKEN)
+
+    def fake_client(*_args: object, **_kwargs: object) -> GitHubClient:
+        return _client(fake)
+
+    monkeypatch.setattr(source, "GitHubClient", fake_client)
+    sink = _CliSink()
+    code = source.SOURCE.main(["--token-file", str(token), *argv], sink)
+    return code, sink
+
+
+def test_ingest_from_github_hands_each_repository_to_the_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    code, sink = _source_main(tmp_path, monkeypatch, FakeGitHub(), "--repo", "acme/web")
+
+    assert code == 0
+    assert sink.events[0] == ("container", "acme/web")
+    assert [name for kind, name in sink.events[1:] if kind == "record"] == [
+        "PR_13",
+        "C_old",
+        "I_1",
+        "IC_1",
+        "IC_2",
+        "PR_12",
+        "PC_1",
+        "PC_2",
+        "RC_1",
+        "RC_2",
+        "RC_3",
+        "PRR_1",
+        "C_1",
+    ]
+
+
+def test_the_github_source_is_registered() -> None:
+    from importlib.metadata import entry_points
+
+    from honcho_github.source import SOURCE
+
+    points = {p.name: p for p in entry_points(group="honcho.ingest_sources")}
+    assert points["github"].load() is SOURCE
+    assert SOURCE.help
+
+
+def test_the_github_source_help_and_a_bad_selection_exit_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from honcho_github.source import SOURCE
+
+    with pytest.raises(SystemExit) as helped:
+        SOURCE.main(["--help"], _CliSink())
+    assert helped.value.code == 0
+
+    with pytest.raises(SystemExit) as refused:
+        _source_main(tmp_path, monkeypatch, FakeGitHub())  # no --repo or --org
+    assert isinstance(refused.value.code, str)
+
+
+def test_an_unreadable_token_file_is_the_sources_error(tmp_path: Path) -> None:
+    from honcho_github.source import SOURCE
+
+    missing = str(tmp_path / "missing")
+    with pytest.raises(SystemExit, match="Can't read .*missing"):
+        SOURCE.main(["--token-file", missing, "--repo", "acme/web"], _CliSink())
+    binary = tmp_path / "binary"
+    binary.write_bytes(b"\xff\xfe")
+    with pytest.raises(SystemExit, match="one line"):
+        SOURCE.main(["--token-file", str(binary), "--repo", "acme/web"], _CliSink())

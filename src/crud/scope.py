@@ -90,6 +90,7 @@ async def get_or_create_scopes(
     workspace_name: str,
     scopes: list[schemas.ScopeCreate],
     *,
+    workspace_ensured: bool = False,
     _retry: bool = False,
     _pending_invalidation: list[str] | None = None,
 ) -> GetOrCreateResult[list[models.Peer]]:
@@ -119,6 +120,10 @@ async def get_or_create_scopes(
         db: Database session
         workspace_name: Name of the workspace
         scopes: List of scope creation schemas (unprefixed names)
+        workspace_ensured: The caller's transaction already got or created the
+            workspace. Skips a second lookup, which would read a workspace this
+            transaction created through the cache and cache the uncommitted
+            row, so a rollback would leave a cached workspace that doesn't exist
         _retry: Whether this is the retry attempt
         _pending_invalidation: Names of scope peers already mutated by a prior
             attempt, whose cache keys must still be purged. See the retry branch.
@@ -132,8 +137,13 @@ async def get_or_create_scopes(
             without the scope kind flag, or if we fail to get or create the
             scope peers
     """
-    ws_result = await get_or_create_workspace(
-        db, schema_from_path(schemas.WorkspaceCreate, "workspace_id", workspace_name)
+    ws_result = (
+        None
+        if workspace_ensured
+        else await get_or_create_workspace(
+            db,
+            schema_from_path(schemas.WorkspaceCreate, "workspace_id", workspace_name),
+        )
     )
 
     peer_names = {scope_peer_name(s.name): s for s in scopes}
@@ -196,6 +206,7 @@ async def get_or_create_scopes(
             db,
             workspace_name,
             scopes,
+            workspace_ensured=True,
             _retry=True,
             _pending_invalidation=(_pending_invalidation or [])
             + [p.name for p in changed_peers],
@@ -211,7 +222,8 @@ async def get_or_create_scopes(
     new_scope_names = [peer_names[p.name].name for p in new_peers]
 
     async def _after_commit():
-        await ws_result.post_commit()
+        if ws_result is not None:
+            await ws_result.post_commit()
         for cache_key in _cache_keys_to_invalidate:
             await safe_cache_delete(cache_key)
         for name in new_scope_names:

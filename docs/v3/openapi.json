@@ -13,7 +13,7 @@
       "name": "GNU Affero General Public License v3.0",
       "url": "https://github.com/plastic-labs/honcho/blob/main/LICENSE"
     },
-    "version": "3.6.2"
+    "version": "3.7.0"
   },
   "servers": [
     {
@@ -7748,7 +7748,8 @@
               {
                 "type": "string",
                 "maxLength": 512,
-                "minLength": 1
+                "minLength": 1,
+                "pattern": "^[a-zA-Z0-9_-]+$"
               },
               {
                 "type": "null"

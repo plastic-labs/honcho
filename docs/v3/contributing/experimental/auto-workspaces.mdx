@@ -1,0 +1,34 @@
+---
+title: Auto Workspaces
+description: Send records as other systems have them, and let Honcho organize the workspace
+icon: 'wand-magic-sparkles'
+---
+
+<Warning>
+Auto workspaces are [experimental](/v3/contributing/experimental/overview) and available only on self-hosted Honcho for now: they aren't turned on in managed Honcho yet. The API, SDK methods and CLI commands may change or stop working without notice, and they aren't ready for production use. They need a Honcho server newer than 3.6.2. No release includes them yet, so [run Honcho yourself](/v3/contributing/self-hosting) from `main`.
+</Warning>
+
+An auto workspace organizes itself. You send records the way another system has them, such as a chat message, an issue comment or a meeting note, with who wrote it, where it lives and its ID in the source. Honcho picks the sessions and peers, and builds memory from the records, right away or after you've reviewed the import.
+
+A workspace is auto only if it was created that way. Regular workspaces work as before.
+
+## What works today
+
+- **Create** an auto workspace with the SDKs (`auto=True`) or the API.
+- **Import** records through the ingest API, the SDKs or `honcho ingest import`. `honcho ingest import FILE --check` validates a file without sending it.
+- **Run a connector** from the CLI: `honcho ingest from discord` reads a Discord server, and `honcho ingest from github` reads GitHub repositories.
+- **Review before memory is built.** Records imported with `derive="later"` wait until you derive them. The CLI imports this way by default; the API and SDKs derive right away unless you ask for `later`. In the meantime, list the people and sessions an import created, exclude bots and noise, and link accounts that belong to one person.
+- **Derive** when the workspace looks right.
+
+## Guides
+
+<CardGroup cols={2}>
+  <Card title="Ingesting Source Records" icon="file-import" href="/v3/contributing/experimental/ingest">
+    Create an auto workspace, send records, review them and derive.
+  </Card>
+  <Card title="Writing an Exporter" icon="file-export" href="/v3/contributing/experimental/ingest-exporters">
+    Turn another system's history into ingest records, and run it from the CLI.
+  </Card>
+</CardGroup>
+
+The API reference lists the [ingest endpoints](/v3/api-reference/endpoint/ingest/ingest-records).

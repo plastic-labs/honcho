@@ -64,16 +64,17 @@ async def dialectic_test_data(
     db_session.add(observed)
     await db_session.flush()
 
-    session = (
-        await crud.get_or_create_session(
-            db_session,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={observed.name: schemas.SessionPeerConfigInput(observe_me=True)},
-            ),
-            workspace.name,
-        )
-    ).resource
+    write_result = await crud.get_or_create_session(
+        db_session,
+        schemas.SessionCreate(
+            name=str(generate_nanoid()),
+            peers={observed.name: schemas.SessionPeerConfigInput(observe_me=True)},
+        ),
+        workspace.name,
+    )
+    await db_session.commit()
+    await write_result.post_commit()
+    session = write_result.resource
     db_session.add(
         models.Collection(
             workspace_name=workspace.name,
@@ -366,13 +367,14 @@ class TestScopedEvidence:
         self, dialectic_test_data: Any, db_session: AsyncSession
     ):
         _, observer, observed, session, _, documents = dialectic_test_data
-        other_session = (
-            await crud.get_or_create_session(
-                db_session,
-                schemas.SessionCreate(name=str(generate_nanoid())),
-                observer.workspace_name,
-            )
-        ).resource
+        write_result = await crud.get_or_create_session(
+            db_session,
+            schemas.SessionCreate(name=str(generate_nanoid())),
+            observer.workspace_name,
+        )
+        await db_session.commit()
+        await write_result.post_commit()
+        other_session = write_result.resource
         outsider = models.Document(
             workspace_name=observer.workspace_name,
             observer=observer.name,

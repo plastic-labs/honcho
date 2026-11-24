@@ -783,16 +783,17 @@ def test_message_author_cannot_create_invalid_peer_name(
 ):
     """A message author must not be able to create a non-conforming peer."""
     test_workspace, _ = sample_data
-    session_name = _create_session(client, test_workspace.name)
+    workspace_name = test_workspace.name
+    session_name = _create_session(client, workspace_name)
 
     response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/messages",
+        f"/v3/workspaces/{workspace_name}/sessions/{session_name}/messages",
         json={"messages": [{"peer_id": bad_name, "content": "hello"}]},
     )
     assert response.status_code == 422, response.text
 
     response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/peers/list", json={"kind": "all"}
+        f"/v3/workspaces/{workspace_name}/peers/list", json={"kind": "all"}
     )
     assert bad_name not in [p["id"] for p in response.json()["items"]]
 

@@ -1,4 +1,4 @@
-"""Ingest commands: import, status, derive, reset, link, unlink.
+"""Ingest commands: import, from, status, derive, reset, link, unlink.
 
 Experimental, and off unless `HONCHO_EXPERIMENTAL=1` is set (see
 `honcho_cli.experimental`).
@@ -27,7 +27,7 @@ import json
 import sys
 import time
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from typing import Any, NoReturn, Optional, TypeVar
 
 import typer
@@ -43,10 +43,12 @@ from pydantic import ValidationError
 from rich.table import Table
 from rich.text import Text
 
+from honcho_cli import ingest_sources
 from honcho_cli._help import HonchoTyperGroup
 from honcho_cli.commands.workspace import _handle_error
 from honcho_cli.common import add_common_options, get_client, handle_cmd_flags
 from honcho_cli.experimental import experimental
+from honcho_cli.experimental import require as require_experimental
 from honcho_cli.ingest_refs import resolve, save_listing
 from honcho_cli.output import print_error, print_json, status, stdout_console, use_json
 from honcho_cli.replay import read_only
@@ -134,23 +136,199 @@ def _chunks(items: Iterable[T], size: int) -> Iterator[list[T]]:
         yield chunk
 
 
+_DERIVE_HELP = (
+    "later (default): store without deriving until `honcho ingest derive`;"
+    + " now: derive as records arrive"
+)
+_BOTS_HELP = (
+    "Bot records to import. interacted (default): only those a person replied to"
+    + " or mentioned the bot about; all; none"
+)
+
+
+def _check_choices(derive: str, bots: str) -> None:
+    if derive not in ("now", "later"):
+        print_error("INVALID_ARGUMENT", "--derive must be 'now' or 'later'")
+        raise typer.Exit(1)
+    if bots not in ("interacted", "all", "none"):
+        print_error("INVALID_ARGUMENT", "--bots must be 'interacted', 'all' or 'none'")
+        raise typer.Exit(1)
+
+
+def _hold_back(
+    records: Iterable[IngestRecord], bots: str
+) -> tuple[Iterable[IngestRecord], int]:
+    """The records to send, and how many bot records `bots` holds back.
+
+    With `all` the records stream through; otherwise they're read whole, since
+    a reply can come after what it answers.
+    """
+    if bots == "all":
+        return records, 0
+    return filter_bot_records(records, keep="interacted" if bots == "interacted" else "none")
+
+
+class _Sender:
+    """Sends records in batches and tallies what ingest made of them."""
+
+    def __init__(self, client: Honcho, derive: str) -> None:
+        self.client = client
+        self.derive = derive
+        self.outcomes: Counter[str] = Counter()
+        self.reasons: Counter[str] = Counter()
+        self.sessions: set[str] = set()
+        self.authors: set[str] = set()
+        self.sent = 0
+        self.held_back = 0
+
+    def send(self, records: Iterable[IngestRecord]) -> None:
+        for chunk in _chunks(records, CHUNK):
+            result = self.client.ingest(
+                chunk, derive="now" if self.derive == "now" else "later"
+            )
+            for record in result.records:
+                self.outcomes[record.outcome] += 1
+                if record.reason:
+                    self.reasons[record.reason] += 1
+                if record.session_id:
+                    self.sessions.add(record.session_id)
+                if record.peer_id:
+                    self.authors.add(record.peer_id)
+            self.sent += len(chunk)
+            if not use_json():
+                status(f"sent {self.sent:,} records")
+
+    def stored_before(self) -> None:
+        """Say what was stored before a failure; a second import is safe."""
+        if self.sent:
+            status(f"{self.sent:,} records were stored before this; importing again is safe.")
+
+    def summary(self, workspace: str) -> dict[str, Any]:
+        return {
+            "workspace": workspace,
+            "records": self.sent,
+            "created": self.outcomes["created"],
+            "duplicate": self.outcomes["duplicate"],
+            "rejected": self.outcomes["rejected"],
+            "rejected_reasons": dict(self.reasons),
+            "bot_records_held_back": self.held_back,
+            "sessions": len(self.sessions),
+            "authors": len(self.authors),
+            "derive": self.derive,
+        }
+
+
+def _print_import_summary(summary: dict[str, Any], bots: str) -> None:
+    if use_json():
+        print_json(summary)
+        return
+    sent = summary["records"]
+    stdout_console.print(
+        f"{sent:,} records: {summary['created']:,} created · "
+        + f"{summary['duplicate']:,} duplicate · {summary['rejected']:,} rejected"
+    )
+    for reason, count in Counter(summary["rejected_reasons"]).most_common():
+        stdout_console.print(f"  rejected, {reason}: {count:,}")
+    stdout_console.print(f"{summary['sessions']:,} sessions, {summary['authors']:,} authors")
+    held_back = summary["bot_records_held_back"]
+    if held_back:
+        stdout_console.print(
+            f"{held_back:,} bot records held back"
+            + (" (no one interacted with them)" if bots == "interacted" else "")
+            + "; `--bots all` imports them"
+        )
+    if summary["derive"] == "later":
+        status(
+            "Nothing is derived yet. Review with `honcho ingest status`, exclude what"
+            + " shouldn't be modeled, then run `honcho ingest derive`."
+        )
+
+
+CHECK_ERRORS_SHOWN = 20
+"""Invalid lines `import --check` lists before it stops listing them."""
+
+DEFAULT_MAX_CONTENT = 25_000
+"""The server's default MAX_MESSAGE_SIZE: the most characters a record's content
+can have. A server can set another; `--check` checks against the default."""
+
+
+def _check_file(path: str, bots: str) -> None:
+    """Validate every line of an import without sending anything."""
+    valid: list[IngestRecord] = []
+    errors: list[dict[str, Any]] = []
+    invalid = 0
+    for number, line in _lines(path):
+        if not line.strip():
+            continue
+        try:
+            record = IngestRecord.model_validate(json.loads(line))
+            if len(record.content) > DEFAULT_MAX_CONTENT:
+                raise ValueError(
+                    f"content: {len(record.content):,} characters, over the server's"
+                    + f" default limit of {DEFAULT_MAX_CONTENT:,} (MAX_MESSAGE_SIZE)"
+                )
+            valid.append(record)
+        except (ValueError, ValidationError) as e:
+            invalid += 1
+            if len(errors) < CHECK_ERRORS_SHOWN:
+                errors.append({"line": number, "error": _validation_message(e)})
+    _, held_back = _hold_back(valid, bots)
+    sources = Counter(f"{r.source}:{r.source_instance}" for r in valid)
+    summary: dict[str, Any] = {
+        "valid": invalid == 0,
+        "records": len(valid) + invalid,
+        "invalid": invalid,
+        "errors": errors,
+        "sources": dict(sources),
+        "containers": len({(r.source, r.source_instance, r.container.id) for r in valid if r.container}),
+        "authors": len({(r.source, r.source_instance, r.author.id or r.author.name) for r in valid if r.author}),
+        "bot_records": sum(1 for r in valid if r.author is not None and r.author.bot),
+        "bot_records_held_back": held_back,
+        "would_send": len(valid) - held_back,
+    }
+    if use_json():
+        print_json(summary)
+    else:
+        for error in errors:
+            stdout_console.print(f"line {error['line']}: {error['error']}")
+        if invalid > len(errors):
+            stdout_console.print(f"… and {invalid - len(errors):,} more invalid lines")
+        stdout_console.print(
+            f"{summary['records']:,} records: {len(valid):,} valid · {invalid:,} invalid"
+        )
+        for source, count in sources.most_common():
+            stdout_console.print(f"  {source}: {count:,}")
+        stdout_console.print(
+            f"{summary['containers']:,} containers, {summary['authors']:,} authors,"
+            + f" {summary['bot_records']:,} bot records ({held_back:,} held back"
+            + f" with --bots {bots})"
+        )
+        if invalid == 0:
+            status("Valid. Nothing was sent: run it again without --check to import.")
+    if invalid:
+        raise typer.Exit(1)
+
+
+def _validation_message(e: Exception) -> str:
+    if isinstance(e, ValidationError):
+        error = e.errors(include_url=False, include_input=False)[0]
+        where = ".".join(str(part) for part in error["loc"])
+        return f"{where}: {error['msg']}" if where else error["msg"]
+    return str(e)
+
+
 @app.command("import")
 @experimental
 def import_records(
     file: str = typer.Argument(
         help="JSONL file of ingest records, one per line (`-` reads stdin)"
     ),
-    derive: str = typer.Option(
-        "later",
-        "--derive",
-        help="later (default): store without deriving until `honcho ingest derive`;"
-        + " now: derive as records arrive",
-    ),
-    bots: str = typer.Option(
-        "interacted",
-        "--bots",
-        help="Bot records to import. interacted (default): only those a person"
-        + " replied to or mentioned the bot about; all; none",
+    derive: str = typer.Option("later", "--derive", help=_DERIVE_HELP),
+    bots: str = typer.Option("interacted", "--bots", help=_BOTS_HELP),
+    check: bool = typer.Option(
+        False,
+        "--check",
+        help="Validate every line and report what would be sent; send nothing",
     ),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
@@ -165,85 +343,235 @@ def import_records(
     derived about a bot, but its text is read as context around the people, so
     unanswered bot posts cost tokens. The file is read whole first, since a
     reply can come after what it answers. `--bots all` imports them too.
+
+    `--check` validates every line against the ingest record format without a
+    workspace or credentials, and sends nothing.
     """
     handle_cmd_flags(json_output=json_output, workspace=workspace)
-    if derive not in ("now", "later"):
-        print_error("INVALID_ARGUMENT", "--derive must be 'now' or 'later'")
-        raise typer.Exit(1)
-    if bots not in ("interacted", "all", "none"):
-        print_error("INVALID_ARGUMENT", "--bots must be 'interacted', 'all' or 'none'")
-        raise typer.Exit(1)
+    _check_choices(derive, bots)
+    if check:
+        _check_file(file, bots)
+        return
     client, config = get_client()
     wid = config.workspace_id
 
-    records: Iterable[IngestRecord] = _records(file)
-    held_back = 0
-    if bots != "all":
-        records, held_back = filter_bot_records(
-            records, keep="interacted" if bots == "interacted" else "none"
-        )
-
-    outcomes: Counter[str] = Counter()
-    reasons: Counter[str] = Counter()
-    sessions: set[str] = set()
-    authors: set[str] = set()
-    sent = 0
+    records, held_back = _hold_back(_records(file), bots)
+    sender = _Sender(client, derive)
+    sender.held_back = held_back
     try:
-        for chunk in _chunks(records, CHUNK):
-            result = client.ingest(chunk, derive="now" if derive == "now" else "later")
-            for record in result.records:
-                outcomes[record.outcome] += 1
-                if record.reason:
-                    reasons[record.reason] += 1
-                if record.session_id:
-                    sessions.add(record.session_id)
-                if record.peer_id:
-                    authors.add(record.peer_id)
-            sent += len(chunk)
-            if not use_json():
-                status(f"sent {sent:,} records")
+        sender.send(records)
     except typer.Exit:
-        if sent:
-            status(f"{sent:,} records were stored before this; importing again is safe.")
+        sender.stored_before()
         raise
     except Exception as e:
-        if sent:
-            status(f"{sent:,} records were stored before this; importing again is safe.")
+        sender.stored_before()
         _ingest_error(e, wid)
 
-    summary: dict[str, Any] = {
-        "workspace": wid,
-        "records": sent,
-        "created": outcomes["created"],
-        "duplicate": outcomes["duplicate"],
-        "rejected": outcomes["rejected"],
-        "rejected_reasons": dict(reasons),
-        "bot_records_held_back": held_back,
-        "sessions": len(sessions),
-        "authors": len(authors),
-        "derive": derive,
-    }
-    if use_json():
-        print_json(summary)
+    _print_import_summary(sender.summary(wid), bots)
+
+
+class _SourceSink:
+    """Takes a source's records a container at a time, and sends each container's
+    records once it's complete, so bot records are judged against the replies
+    and mentions around them."""
+
+    def __init__(self, sender: _Sender, bots: str) -> None:
+        self.sender = sender
+        self.bots = bots
+        self.containers = 0
+        self._name = "(before any container)"
+        self._buffer: list[IngestRecord] = []
+
+    def container(self, name: str) -> None:
+        self.flush()
+        self.containers += 1
+        self._name = name
+
+    def record(self, record: Mapping[str, Any]) -> None:
+        try:
+            self._buffer.append(IngestRecord.model_validate(record))
+        except ValidationError as e:
+            raise _SourceRecordError(self._name, _validation_message(e)) from None
+
+    def flush(self) -> None:
+        if not self._buffer:
+            return
+        kept, held_back = _hold_back(self._buffer, self.bots)
+        self._buffer = []
+        self.sender.held_back += held_back
+        self.sender.send(kept)
+
+
+class _SourceRecordError(Exception):
+    def __init__(self, container: str, message: str) -> None:
+        super().__init__(f"{container}: {message}")
+        self.container = container
+
+
+def _list_sources(*, as_text: bool = False) -> None:
+    rows: list[dict[str, str]] = []
+    for name, point in ingest_sources.installed().items():
+        try:
+            help_text = ingest_sources.load(point).help
+        except ingest_sources.SourceError as e:
+            help_text = f"(unavailable: {e})"
+        rows.append({"source": name, "help": help_text, "entry_point": point.value})
+    if use_json() and not as_text:
+        print_json(rows)
         return
-    stdout_console.print(
-        f"{sent:,} records: {outcomes['created']:,} created · "
-        + f"{outcomes['duplicate']:,} duplicate · {outcomes['rejected']:,} rejected"
-    )
-    for reason, count in reasons.most_common():
-        stdout_console.print(f"  rejected, {reason}: {count:,}")
-    stdout_console.print(f"{len(sessions):,} sessions, {len(authors):,} authors")
-    if held_back:
+    if not rows:
         stdout_console.print(
-            f"{held_back:,} bot records held back"
-            + (" (no one interacted with them)" if bots == "interacted" else "")
-            + "; `--bots all` imports them"
+            "No ingest sources are installed. Install a connector package, or pipe any"
+            + " exporter's JSONL into `honcho ingest import -`."
         )
-    if derive == "later":
-        status(
-            "Nothing is derived yet. Review with `honcho ingest status`, exclude what"
-            + " shouldn't be modeled, then run `honcho ingest derive`."
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Source")
+    table.add_column("Reads")
+    for row in rows:
+        table.add_row(row["source"], row["help"])
+    stdout_console.print(table)
+    status("Run `honcho ingest from SOURCE --help` for a source's own options.")
+
+
+@app.command(
+    "from",
+    context_settings={
+        "allow_extra_args": True,
+        "ignore_unknown_options": True,
+        # `--help` after the source name is the source's own help.
+        "help_option_names": [],
+    },
+)
+def import_from(
+    ctx: typer.Context,
+    source: Optional[str] = typer.Argument(
+        None, help="An installed source; leave it out to list them"
+    ),
+    derive: str = typer.Option("later", "--derive", help=_DERIVE_HELP),
+    bots: str = typer.Option("interacted", "--bots", help=_BOTS_HELP),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Experimental: import straight from an installed connector, such as `github`.
+
+    The source's own options follow its name: `honcho ingest from github --help`
+    shows them. Records are sent the way `ingest import` sends a file: deriving
+    later, and holding back bot records no person interacted with, judged one
+    container at a time. `--derive`, `--bots`, `-w` and `--json` are this
+    command's own; everything else goes to the source.
+    """
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    argv = list(ctx.args)
+    # Help, this command's or a source's, needs no opt-in, workspace or
+    # credentials, as `--help` on the other ingest commands doesn't.
+    asked_for_help = (source in ("-h", "--help") and not argv) or (
+        source is None and argv in (["-h"], ["--help"])
+    )
+    if asked_for_help:
+        stdout_console.print(ctx.get_help())
+        _list_sources(as_text=True)
+        return
+    named = source is not None and not source.startswith("-")
+    if source is not None and named and any(arg in ("-h", "--help") for arg in argv):
+        code = _run_source(_load_source(source), argv, None)
+        raise typer.Exit(code)
+
+    require_experimental()
+    if source is None and not argv:
+        _list_sources()
+        return
+    if source is None or not named:
+        # A source option before the name: Click took it for the name.
+        print_error(
+            "INVALID_ARGUMENT",
+            "Name the source first: `honcho ingest from SOURCE [its options]`."
+            + " `honcho ingest from` lists the installed sources.",
         )
+        raise typer.Exit(1)
+    _check_choices(derive, bots)
+    loaded = _load_source(source)
+
+    client, config = get_client()
+    wid = config.workspace_id
+    # Refuse before a long read, rather than when the first batch is sent.
+    try:
+        client.ingest_status()
+    except Exception as e:
+        _ingest_error(e, wid)
+
+    sender = _Sender(client, derive)
+    sink = _SourceSink(sender, bots)
+    try:
+        code = _run_source(loaded, argv, sink)
+        sink.flush()
+    except _SourceRecordError as e:
+        sender.stored_before()
+        print_error(
+            "INVALID_RECORD",
+            f"'{source}' produced a record that isn't a valid ingest record, in {e}",
+            {"source": source, "container": e.container},
+        )
+        raise typer.Exit(1) from None
+    except typer.Exit:
+        sender.stored_before()
+        raise
+    except Exception as e:
+        sender.stored_before()
+        _ingest_error(e, wid)
+
+    summary = sender.summary(wid)
+    summary["source"] = source
+    summary["containers"] = sink.containers
+    _print_import_summary(summary, bots)
+    if code:
+        raise typer.Exit(code)
+
+
+def _load_source(source: str) -> ingest_sources.IngestSource:
+    """The installed source by that name, or an error and exit 1."""
+    point = ingest_sources.installed().get(source)
+    if point is None:
+        names = ", ".join(ingest_sources.installed()) or "none"
+        print_error(
+            "UNKNOWN_SOURCE",
+            f"No ingest source named '{source}' is installed (installed: {names}).",
+            {"source": source},
+        )
+        raise typer.Exit(1)
+    try:
+        return ingest_sources.load(point)
+    except ingest_sources.SourceError as e:
+        print_error("SOURCE_UNAVAILABLE", f"'{source}': {e}", {"source": source})
+        raise typer.Exit(1) from None
+
+
+def _run_source(
+    loaded: ingest_sources.IngestSource,
+    argv: list[str],
+    sink: _SourceSink | None,
+) -> int:
+    """Run a source's `main`, turning its own exits (argparse's `--help` and
+    usage errors, or a message) into an exit code."""
+    try:
+        return loaded.main(argv, sink if sink is not None else _NoSink())
+    except SystemExit as exit_:
+        if exit_.code is None:
+            return 0
+        if isinstance(exit_.code, int):
+            return exit_.code
+        print_error("SOURCE_ERROR", str(exit_.code))
+        return 1
+
+
+class _NoSink:
+    """For a source run that only prints its help: records are an error."""
+
+    def container(self, name: str) -> None:
+        raise RuntimeError("a source run for --help must not read anything")
+
+    def record(self, record: Mapping[str, Any]) -> None:
+        raise RuntimeError("a source run for --help must not read anything")
 
 
 def _first(items: Iterable[T], limit: int) -> list[T]:

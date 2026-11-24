@@ -1484,7 +1484,7 @@ class QueueManager:
             await db.commit()
 
             if (
-                work_unit.task_type in ["representation", "summary"]
+                work_unit.task_type not in ("webhook", "reconciler")
                 and work_unit.workspace_name is not None
                 and settings.METRICS.ENABLED
             ):

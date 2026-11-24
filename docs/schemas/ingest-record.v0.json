@@ -1,0 +1,299 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/plastic-labs/honcho/main/docs/schemas/ingest-record.v0.json",
+  "title": "Honcho ingest record (v0)",
+  "description": "One source record for Honcho's ingest API: a line of a JSONL file for `honcho ingest import`, or an item of the `records` array of `POST /v3/workspaces/{workspace_id}/ingest`. Experimental: v0 may change until edits and deletes settle. Unknown fields are rejected, as `honcho ingest import` and the SDKs reject them; the API itself ignores them.",
+  "$defs": {
+    "IngestContainer": {
+      "description": "Where a record lives in its source: a channel, a thread, a repository.",
+      "properties": {
+        "id": {
+          "description": "The container's ID in the source",
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The container's display name",
+          "title": "Name"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The parent container's ID, e.g. a thread's channel",
+          "title": "Parent Id"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "IngestContainer",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "IngestParticipant": {
+      "description": "A person on a record. The `id` is what connects them across records.",
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The person's ID in the source, if it has one",
+          "title": "Id"
+        },
+        "name": {
+          "description": "The person's display name",
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "bot": {
+          "default": false,
+          "description": "The source marks this account as a bot or an integration. Ingest creates its peer with `observe_me` off, so nothing is derived about it; its messages are still stored and read as context.",
+          "title": "Bot",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "IngestParticipant",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "MessageConfiguration": {
+      "description": "The set of options that can be in a message DB-level configuration dictionary.\n\nAll fields are optional. Message-level configuration overrides all other configurations.",
+      "properties": {
+        "reasoning": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningConfiguration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Configuration for reasoning functionality."
+        }
+      },
+      "title": "MessageConfiguration",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "ReasoningConfiguration": {
+      "properties": {
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Whether to enable reasoning functionality.",
+          "title": "Enabled"
+        },
+        "custom_instructions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Custom instructions for the deriver. Overrides the top-level custom_instructions at the same level. Set to an empty string to explicitly use none.",
+          "title": "Custom Instructions"
+        }
+      },
+      "title": "ReasoningConfiguration",
+      "type": "object",
+      "additionalProperties": false
+    }
+  },
+  "properties": {
+    "source": {
+      "description": "The source type, e.g. `discord`",
+      "maxLength": 64,
+      "pattern": "^[a-zA-Z0-9_-]+$",
+      "title": "Source",
+      "type": "string"
+    },
+    "source_instance": {
+      "description": "The server, team or account inside the source",
+      "maxLength": 128,
+      "pattern": "^[a-zA-Z0-9_-]+$",
+      "title": "Source Instance",
+      "type": "string"
+    },
+    "source_id": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The record's ID in that instance. Without it, the record is identified by a hash of its content, so only identical content dedups; sources whose records can change must send it.",
+      "title": "Source Id"
+    },
+    "revised_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "When the source last changed this record",
+      "title": "Revised At"
+    },
+    "created_at": {
+      "description": "The source's timestamp",
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "container": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/IngestContainer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Where the record lives; omit for a standalone record"
+    },
+    "author": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/IngestParticipant"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Who wrote it; omit when there is no single author"
+    },
+    "participants": {
+      "items": {
+        "$ref": "#/$defs/IngestParticipant"
+      },
+      "maxItems": 100,
+      "title": "Participants",
+      "type": "array"
+    },
+    "content": {
+      "maxLength": 25000,
+      "title": "Content",
+      "type": "string"
+    },
+    "metadata": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Metadata"
+    },
+    "configuration": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MessageConfiguration"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "An explicit session, used instead of mapping the container",
+      "title": "Session Id"
+    },
+    "peer_id": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "An explicit author peer, used instead of mapping the author",
+      "title": "Peer Id"
+    }
+  },
+  "required": [
+    "source",
+    "source_instance",
+    "created_at",
+    "content"
+  ],
+  "type": "object",
+  "additionalProperties": false
+}

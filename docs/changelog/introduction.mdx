@@ -27,7 +27,30 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v3.6.2 (Current)">
+        <Update label="v3.7.0 (Current)">
+        ### Added
+
+        - Auto workspaces and the ingest API, both experimental, import history from another system, such as a chat server or a repository, and model the people in it. `auto: true` on `POST /workspaces` creates an auto workspace; only a new workspace can be made auto, and asking for it on an existing workspace that isn't auto is a 409. `POST /workspaces/{workspace_id}/ingest` takes up to 100 source records per request, each with its source identity, container, author and participants, creates the sessions, peers and messages they map to, and reports each record as created, duplicate or rejected, so an import can be sent again safely. Records sent with `derive: "later"` are stored without being derived until `POST /workspaces/{workspace_id}/ingest/derive` releases them. `GET .../ingest/status`, `.../ingest/people` and `.../ingest/sessions` show what an import became before it is derived, and `POST .../ingest/link`, `.../ingest/unlink` and `.../ingest/reset` merge one person's several accounts and start an import over. Nothing is derived about people marked as bots, and imported history is summarized once rather than at every interval. The record format is published as a JSON Schema, `docs/schemas/ingest-record.v0.json`. Migration `7dbf160eb7c9` adds the ingest tables and `workspaces.auto_enabled_at`. Ingest may change or stop working without notice (#1584, #1587, #1588, #1593, #1606, #1608, #1622)
+        - A webhook endpoint can subscribe to event types. Registering an endpoint accepts `event_types`, and delivery sends it only those types. Without a list it receives every type, so existing endpoints are unchanged. Registering a URL that already exists with `event_types` set replaces its list, `null` resets it to every type, and leaving the field out keeps it as it is. `test.event` reaches every endpoint and can't be subscribed to. An empty list or an unknown type is a 422. Migration `0e32bf9d5a22` adds the nullable `webhook_endpoints.event_types` column (#1581)
+        - A peer's session join time can be set by the caller. `joined_at` is accepted next to `observe_me` and `observe_others` wherever a session-peer configuration is sent: `peers` on `POST /sessions`, `POST` and `PUT /sessions/{session_id}/peers`, and `PUT /sessions/{session_id}/peers/{peer_id}/config`. A search with `peer_perspective` only returns messages created at or after the peer's join time, and that time was always the moment the peer was added, so messages imported with their original dates were hidden from it. A supplied `joined_at` always applies, including to a peer that is already in the session, which is how an existing import is repaired; without one nothing changes. It is write-only (not stored in the configuration, not returned), a timestamp without a timezone is read as UTC, and a time more than five minutes in the future is a 422. Changing the join time of a peer that is already in a session needs a key that can edit the session (session-level or broader): a peer-scoped key that sends `joined_at` to `POST /sessions` for an existing session gets a 401 (#1613)
+        - `POST /workspaces/{workspace_id}/dreams/list` takes the shared `filters` object, so a caller can list the dreams that started in a date range, for example `{"filters": {"started_at": {"gte": "...", "lte": "..."}}}`. The filterable fields are `started_at`, `finished_at`, `observer_id` and `observed_id`; any other field is a 422. The filter is ANDed with the top-level `observer_id` and `observed_id`, and `total`, `pages` and cursor paging count only the matching dreams (#1604)
+
+        ### Changed
+
+        - Representation History is kept indefinitely by default. `DREAM_HISTORY_RETENTION_DAYS` now defaults to unset, not 30, and with it unset the reconciler no longer prunes any run; deleting a conclusion, its session or the workspace still removes what history recorded of it. Setting a window keeps the old behavior. Only an unset value means indefinitely: a set value must be 1 to 3650, and an empty value or 0 refuses boot. Setting a peer card through `PUT /peers/{peer_id}/card` now deletes the cards dreams recorded for that observer and peer, so text the new card replaces is no longer readable in history; the runs still report `peer_card_updated` (#1590)
+        - Tenant responses from `/v3/tenants` no longer carry `tier`. Create still accepts one and ignores it, so existing callers keep working (#1636)
+        - `deriver_queue_items_processed` also counts the dream and deletion items the deriver finishes. Before, it counted only representation and summary items (#1629)
+
+        ### Fixed
+
+        - Concurrent requests that create the same new peers no longer deadlock. Two requests naming the same new peers in opposite orders (a message batch from alice then bob, and one from bob then alice) could each wait on the other's insert, and the loser got a 500. New peers are now inserted in name order (#1589)
+        - Concurrent member changes on one session no longer deadlock. Two replaces of a session's members with different sets, or a replace and a remove, locked rows in opposite orders and one got a 500. Replaces and removes of one session now run one at a time (#1594)
+        - A member removed while another request re-added them no longer ends up with `left_at` earlier than `joined_at`, and a remove that waited while its session was deleted no longer ends the deleted session's memberships (#1616)
+        - The deriver unwraps a structured-output answer that an OpenAI-compatible proxy returned nested in a tool call (`{"name": "json_tool_call", "arguments": {...}}` and similar). Before, each such answer was rejected and retried, and when every attempt failed the batch's first queue item was marked errored and never derived (#1586)
+        - A message write that fails no longer leaves a newly created session or new session memberships behind: the session is created in the same transaction as the messages (#1612)
+        </Update>
+
+        <Update label="v3.6.2">
         ### Fixed
 
         - The check for due dreams no longer fails when many collections are due. It loaded every candidate's workspace and session in one row-value `IN` list, which Postgres rejects with `stack depth limit exceeded` once the list is long enough, and its other lookups bound one parameter per candidate. The deriver metrics poller runs the same check, so a failure also froze the deriver queue metrics and, with `DERIVER_SCHEDULER=api`, stopped due dreams from being enqueued. The lookups now run in batches, and the work-unit and tenant lists are each sent as one array parameter. (#1623)
@@ -1042,7 +1065,15 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
-        <Update label="v2.9.0 (Current)">
+        <Update label="v2.10.0 (Current)">
+            ### Added
+
+            - Ingest (experimental): `Honcho(auto=True)` creates its workspace as an auto workspace, and `ingest()` sends source records to it, validated with the server's rules and 100 per request, returning one result per record. `ingest_derive()` releases records sent with `derive="later"`, `ingest_status()`, `ingest_people()` and `ingest_sessions()` show what an import became, and `ingest_link()`, `ingest_unlink()` and `ingest_reset()` merge one person's accounts and start an import over. Sync and async. `IngestRecord` and the other ingest types are exported. Requires Honcho v3.7.0+ (#1608, #1622)
+            - `filter_bot_records(records, keep=...)` holds back bot records no person interacted with. With the default, `"interacted"`, a bot's record is kept only when a person is in its reply chain or @-mentions the bot in the same conversation; `"all"` and `"none"` keep every bot record or none (#1611)
+            - `SessionPeerConfig.joined_at` sets when a peer joined a session, in `honcho.session(peers=...)`, `session.add_peers()`, `session.set_peers()` and `session.set_peer_configuration()` (sync and async). Set it when importing messages with their original dates: a search with `peer_perspective` only returns messages created at or after the peer's join time. Write-only, so `get_peer_configuration()` does not return it. Requires Honcho v3.7.0+ (#1613)
+            - `honcho.dreams()` takes `filters`, for example a `started_at` range. Requires Honcho v3.7.0+ (#1604)
+        </Update>
+        <Update label="v2.9.0">
             ### Added
 
             - `honcho.dreams()` and `honcho.get_dream()` (sync and async) read Representation History: the dream runs over a workspace's representations, newest first and filterable by `observed` and `observer`, and one run's created conclusions with their sources, removed conclusions, and peer-card change. `pruned_at` marks a run that retention cut down to the created conclusions that still exist. New response types `DreamRunResponse` and `DreamRunDetailResponse`. Requires Honcho v3.6.0+ (#1542)
@@ -1274,7 +1305,14 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
-        <Update label="v2.9.0 (Current)">
+        <Update label="v2.10.0 (Current)">
+            ### Added
+
+            - Ingest (experimental): `auto: true` on the client creates its workspace as an auto workspace, and `ingest()` sends source records to it, validated and 100 per request, returning one result per record. `ingestDerive()` releases records sent with `derive: 'later'`, `ingestStatus()`, `ingestPeople()` and `ingestSessions()` show what an import became, and `ingestLink()`, `ingestUnlink()` and `ingestReset()` merge one person's accounts and start an import over. Requires Honcho v3.7.0+ (#1608)
+            - `joinedAt` on a session-peer configuration (an ISO 8601 string) sets when a peer joined a session, in `honcho.session(id, { peers })`, `session.addPeers()`, `session.setPeers()` and `session.setPeerConfiguration()`. Set it when importing messages with their original dates: a search with `peer_perspective` only returns messages created at or after the peer's join time. Write-only, so `getPeerConfiguration()` does not return it. Requires Honcho v3.7.0+ (#1613)
+            - `honcho.dreams()` takes `filters`, for example a `started_at` range. Requires Honcho v3.7.0+ (#1604)
+        </Update>
+        <Update label="v2.9.0">
             ### Added
 
             - `honcho.dreams()` and `honcho.getDream()` read Representation History: the dream runs over a workspace's representations, newest first and filterable by `observed` and `observer`, and one run's created conclusions with their sources, removed conclusions, and peer-card change. `pruned_at` marks a run that retention cut down to the created conclusions that still exist. New types `DreamRun` and `DreamRunDetail`. Requires Honcho v3.6.0+ (#1542)
