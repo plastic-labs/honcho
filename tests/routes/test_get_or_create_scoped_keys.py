@@ -162,13 +162,15 @@ async def test_member_peer_key_does_not_rejoin_after_concurrent_removal(
     True. The self-upsert must not run, or it would clear ``left_at``."""
     workspace, me = sample_data
     session_id = str(generate_nanoid())
-    await crud.get_or_create_session(
+    write_result = await crud.get_or_create_session(
         db_session,
         workspace_name=workspace.name,
         session=schemas.SessionCreate(
             name=session_id, peers={me.name: SessionPeerConfigInput()}
         ),
     )
+    await db_session.commit()
+    await write_result.post_commit()
     await db_session.commit()
 
     async def check_then_remove(db: AsyncSession, *_args: object) -> bool:
@@ -181,7 +183,7 @@ async def test_member_peer_key_does_not_rejoin_after_concurrent_removal(
         return True
 
     monkeypatch.setattr(crud_session, "is_peer_in_session", check_then_remove)
-    await crud.get_or_create_session(
+    write_result = await crud.get_or_create_session(
         db_session,
         workspace_name=workspace.name,
         session=schemas.SessionCreate(
@@ -189,6 +191,8 @@ async def test_member_peer_key_does_not_rejoin_after_concurrent_removal(
         ),
         acting_peer=me.name,
     )
+    await db_session.commit()
+    await write_result.post_commit()
     await db_session.commit()
     assert await _members(db_session, workspace.name, session_id) == set()
 

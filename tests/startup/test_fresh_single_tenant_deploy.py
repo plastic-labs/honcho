@@ -165,7 +165,7 @@ async def _write_and_enqueue_first_message(
         await crud.get_or_create_peers(
             db, workspace_name, [schemas.PeerSpec(name=peer_name)]
         )
-        await crud.get_or_create_session(
+        write_result = await crud.get_or_create_session(
             db,
             schemas.SessionCreate(
                 name=session_name,
@@ -173,12 +173,17 @@ async def _write_and_enqueue_first_message(
             ),
             workspace_name,
         )
-        [message] = await crud.create_messages(
+        await db.commit()
+        await write_result.post_commit()
+        write_result = await crud.create_messages(
             db,
             [schemas.MessageCreate(content="hello, honcho", peer_id=peer_name)],
             workspace_name,
             session_name,
         )
+        await db.commit()
+        await write_result.post_commit()
+        [message] = write_result.messages
         await db.commit()
         payload: list[dict[str, Any]] = [
             {

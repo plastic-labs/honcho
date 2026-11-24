@@ -131,16 +131,17 @@ async def create_test_session_with_peer(
     peer: Peer,
 ) -> models.Session:
     """Create a session with a peer configured for observation."""
-    session = (
-        await crud.get_or_create_session(
-            db_session,
-            schemas.SessionCreate(
-                name=str(generate_nanoid()),
-                peers={peer.name: schemas.SessionPeerConfigInput(observe_me=True)},
-            ),
-            workspace.name,
-        )
-    ).resource
+    write_result = await crud.get_or_create_session(
+        db_session,
+        schemas.SessionCreate(
+            name=str(generate_nanoid()),
+            peers={peer.name: schemas.SessionPeerConfigInput(observe_me=True)},
+        ),
+        workspace.name,
+    )
+    await db_session.commit()
+    await write_result.post_commit()
+    session = write_result.resource
     await db_session.commit()
     return session
 

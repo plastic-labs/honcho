@@ -83,12 +83,14 @@ async def test_get_or_create_session_releases_its_connection_before_enqueue(
     fake_enqueue, enqueued = _enqueue_asserting_no_open_transaction(db_session)
 
     with patch("src.deriver.enqueue.enqueue_scope_backfill", fake_enqueue):
-        await crud.get_or_create_session(
+        write_result = await crud.get_or_create_session(
             db_session,
             schemas.SessionCreate.model_validate(
                 {"id": session_name, "scopes": [scope_name]}
             ),
             workspace.name,
         )
+        await db_session.commit()
+        await write_result.post_commit()
 
     assert enqueued == [session_name]

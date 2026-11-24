@@ -35,6 +35,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 - Run `honcho peer inspect` before `honcho peer chat` to understand context.
 - Use `honcho session context` to see exactly what an agent receives.
 - Never run `honcho workspace delete` without `honcho workspace inspect` first.
+- `honcho ingest import` holds back bot records no person interacted with (`--bots interacted`, the default); `--bots all` imports every record.
 - After `honcho ingest import`, run `honcho ingest status` and exclude what shouldn't be modeled before `honcho ingest derive`: exclusions apply only to records not yet released.
 - To make two imported accounts one person: `honcho ingest link <kept> <other> --reset --yes`, then `honcho ingest import` again. A link never moves imported messages, so it's refused without the reset. Resolve the people before any separate `ingest reset`: a reset re-sorts the numbered list.
 - Compare peer card with conclusions to understand memory state.

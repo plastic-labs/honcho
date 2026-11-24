@@ -26,12 +26,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from src import crud, models, schemas
 from src.crud import collection as collection_crud
 from src.crud.document import create_documents
+from src.crud.message import CreateMessagesResult, create_messages
 from src.crud.peer_card import construct_peer_card_label, set_peer_card
+from src.crud.session import get_or_create_session
 from src.deriver.enqueue import (
     _insert_queue_records,  # pyright: ignore[reportPrivateUsage]
 )
 from src.exceptions import ResourceNotFoundException
-from src.routers.messages import create_messages_with_file
 from src.utils.summarizer import (
     SUMMARIES_KEY,
     Summary,
@@ -46,7 +47,8 @@ CALLER_COMMITS: list[Callable[..., Any]] = [
     set_peer_card,
     _save_summary,
     _insert_queue_records,
-    create_messages_with_file,
+    get_or_create_session,
+    create_messages,
 ]
 
 
@@ -345,6 +347,153 @@ async def test_creating_a_collection_keeps_the_caller_row_locks(
     await result.post_commit()
 
 
+async def _committed_session_names(
+    db_engine: AsyncEngine, workspace_name: str
+) -> list[str]:
+    async with _other_sessions(db_engine)() as other:
+        return list(
+            (
+                await other.scalars(
+                    select(models.Session.name).where(
+                        models.Session.workspace_name == workspace_name
+                    )
+                )
+            ).all()
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_session_waits_for_the_caller_commit(
+    db_engine: AsyncEngine,
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+) -> None:
+    workspace, peer = sample_data
+    session_name = str(generate_nanoid())
+
+    with patch("src.crud.session.emit") as emit:
+        result = await get_or_create_session(
+            db_session,
+            schemas.SessionCreate(
+                name=session_name, peers={peer.name: schemas.SessionPeerConfigInput()}
+            ),
+            workspace.name,
+        )
+        assert result.created
+        assert session_name not in await _committed_session_names(
+            db_engine, workspace.name
+        )
+        emit.assert_not_called()
+
+        await db_session.commit()
+        await result.post_commit()
+        emit.assert_called_once()
+
+    assert session_name in await _committed_session_names(db_engine, workspace.name)
+    async with _other_sessions(db_engine)() as other:
+        members = await other.scalars(
+            select(models.SessionPeer.peer_name).where(
+                models.SessionPeer.workspace_name == workspace.name,
+                models.SessionPeer.session_name == session_name,
+            )
+        )
+        assert list(members) == [peer.name]
+
+
+@pytest.mark.asyncio
+async def test_create_messages_waits_for_the_caller_commit(
+    db_engine: AsyncEngine,
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+) -> None:
+    """The session, its members and the messages commit together, ids assigned."""
+    workspace, peer = sample_data
+    session_name = str(generate_nanoid())
+
+    async def committed_messages() -> int:
+        async with _other_sessions(db_engine)() as other:
+            return (
+                await other.scalar(
+                    select(func.count())
+                    .select_from(models.Message)
+                    .where(
+                        models.Message.workspace_name == workspace.name,
+                        models.Message.session_name == session_name,
+                    )
+                )
+                or 0
+            )
+
+    result = await create_messages(
+        db_session,
+        messages=[schemas.MessageCreate(content="hello", peer_id=peer.name)],
+        workspace_name=workspace.name,
+        session_name=session_name,
+    )
+    assert all(m.id is not None for m in result.messages)
+    assert await committed_messages() == 0
+    assert session_name not in await _committed_session_names(db_engine, workspace.name)
+
+    await db_session.commit()
+    await result.post_commit()
+    assert await committed_messages() == 1
+    assert session_name in await _committed_session_names(db_engine, workspace.name)
+
+
+@pytest.mark.asyncio
+async def test_a_rolled_back_message_write_leaves_no_session(
+    db_engine: AsyncEngine,
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+) -> None:
+    """A message write that fails takes the session it created down with it."""
+    workspace, peer = sample_data
+    workspace_name, session_name = workspace.name, str(generate_nanoid())
+
+    await create_messages(
+        db_session,
+        messages=[schemas.MessageCreate(content="hello", peer_id=peer.name)],
+        workspace_name=workspace_name,
+        session_name=session_name,
+    )
+    await db_session.rollback()
+
+    assert session_name not in await _committed_session_names(db_engine, workspace_name)
+
+
+@pytest.mark.asyncio
+async def test_a_rolled_back_write_into_a_new_workspace_leaves_nothing_cached(
+    db_session: AsyncSession,
+) -> None:
+    """The first write creates the workspace, session and peer, then rolls back.
+    Nothing it read may stay cached: the next write creates them again."""
+    workspace_name, session_name = str(generate_nanoid()), str(generate_nanoid())
+
+    async def write() -> CreateMessagesResult:
+        return await create_messages(
+            db_session,
+            messages=[schemas.MessageCreate(content="hello", peer_id="alice")],
+            workspace_name=workspace_name,
+            session_name=session_name,
+        )
+
+    await write()
+    await db_session.rollback()
+
+    result = await write()
+    await db_session.commit()
+    await result.post_commit()
+    stored = await db_session.scalar(
+        select(func.count())
+        .select_from(models.Message)
+        .where(
+            models.Message.workspace_name == workspace_name,
+            models.Message.session_name == session_name,
+        )
+    )
+    assert stored == 1
+
+
 @pytest.mark.asyncio
 async def test_upload_metadata_is_written_with_the_message(
     db_session: AsyncSession,
@@ -353,7 +502,7 @@ async def test_upload_metadata_is_written_with_the_message(
     """One insert carries the file metadata; no second write follows it."""
     workspace, peer = sample_data
     session_name = str(generate_nanoid())
-    created = await crud.create_messages(
+    write_result = await crud.create_messages(
         db_session,
         messages=[
             schemas.MessageCreate(content="chunk one", peer_id=peer.name),
@@ -363,6 +512,9 @@ async def test_upload_metadata_is_written_with_the_message(
         session_name=session_name,
         internal_metadata=[{"chunk_index": 0}, {"chunk_index": 1}],
     )
+    await db_session.commit()
+    await write_result.post_commit()
+    created = write_result.messages
     assert [m.internal_metadata for m in created] == [
         {"chunk_index": 0},
         {"chunk_index": 1},

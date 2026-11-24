@@ -76,6 +76,7 @@ from .api_types import (
     ScopeStatusResponse,
 )
 from .base import PeerBase, ScopeBase, SessionBase
+from .bot_records import BotRecords, filter_bot_records
 from .client import Honcho
 from .conclusions import Conclusion, ConclusionsView, WorkspaceConclusions
 from .http.client import __version__ as __version__
@@ -125,6 +126,8 @@ __all__ = [
     "IngestContainer",
     "IngestParticipant",
     "IngestRecord",
+    "BotRecords",
+    "filter_bot_records",
     "Message",
     "MessageCreateParams",
     "Peer",
