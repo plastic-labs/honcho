@@ -10,12 +10,13 @@ Think of it as the front of a contact card: the information an agent needs at a 
 
 ## What Goes in a Peer Card
 
-Peer cards are designed for **durable, biographical information**--things that remain true across sessions and contexts. Each fact is stored as a single string in a list.
+Peer cards are designed for **durable, biographical information**--things that remain true across sessions and contexts, for months rather than for one task. Ongoing roles, projects, things the peer owns or maintains, and the tools it works with count. Each fact is stored as a single string in a list.
 
 | Category | Examples |
 |----------|---------|
 | Identity | `"Name: Alice"`, `"Age: 28"`, `"Location: Portland, OR"` |
 | Occupation | `"Works as a senior engineer at Acme Corp"` |
+| Work | `"ATTRIBUTE: Maintains: the billing service"`, `"ATTRIBUTE: Tool: Zed"` |
 | Relationships | `"Has a dog named Max"`, `"Married to Bob"` |
 | Instructions | `"INSTRUCTION: Always address as Dr. Chen"` |
 | Preferences | `"PREFERENCE: Prefers concise responses"` |
@@ -29,7 +30,7 @@ Peer cards are populated through two paths:
 
 **1. Automatic (via Dreaming)**
 
-When [dreaming](/v3/documentation/features/advanced/dreaming) runs, the deduction and induction specialists extract stable biographical facts from existing conclusions and write them to the peer card. This happens without any manual intervention--Honcho identifies facts like names, occupations, and preferences from conversation history and records them automatically.
+When [dreaming](/v3/documentation/features/advanced/dreaming) runs, the deduction specialist checks the conclusions it reviews against the peer card, adds durable facts the card lacks, and removes entries that turn out wrong or have ended. This happens without any manual intervention--Honcho identifies facts like names, occupations, and preferences from conversation history and records them automatically.
 
 **2. Manual (via SDK or API)**
 
@@ -152,7 +153,7 @@ console.log(context.peerRepresentation);  // Full representation text
 
 ### During Dreaming
 
-The [dreaming](/v3/documentation/features/advanced/dreaming) process reads the current peer card before consolidation, then updates it with any new stable facts discovered during the deduction and induction phases.
+The [dreaming](/v3/documentation/features/advanced/dreaming) process reads the current peer card before consolidation. During the deduction phase it edits the card one entry at a time: it adds new durable facts, and removes or replaces entries the conclusions show are wrong or have ended. A full card still takes changes: the dreamer removes the entries that matter least to make room.
 
 ## Limits
 
@@ -161,7 +162,7 @@ The [dreaming](/v3/documentation/features/advanced/dreaming) process reads the c
 | Maximum facts per card | **40** |
 | Data type | `list[str]` (each fact is a string) |
 
-When the dreaming process or a manual update pushes the card beyond 40 facts, it is automatically truncated to the first 40 entries. Keep facts concise and deduplicated to stay within the limit.
+When dreaming edits a full card, an edit that would go past 40 facts is refused and the dreamer removes entries to make room. A dreamer rewrite of the whole card is truncated to the first 40 entries. Keep facts concise and deduplicated to stay within the limit.
 
 <Warning>
 If you manually set a peer card, it **replaces** the entire card--it does not merge with existing facts. Make sure to include all facts you want to keep when calling `set_card()`.

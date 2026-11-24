@@ -6,10 +6,13 @@ Covers:
 - process_dream dispatch of DreamType.CARD_REFRESH (and that it does NOT
   advance the omni dream guard pair)
 - specialist tool restriction (no observation-mutating tools)
-- the low tool-iteration cap
+- the low tool-iteration cap, and the higher one for rebuilds
 - rebuild mode omitting the prior peer card from the prompt
+- the get_session_summaries tool: membership, ordering, paging, fallback
+  from long to short summary, deleted sessions, and session-scoped refusal
 """
 
+import datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -25,7 +28,13 @@ from src.dreamer.orchestrator import DreamResult, process_dream
 from src.dreamer.specialists import CardRefreshSpecialist
 from src.llm import HonchoLLMCallResponse
 from src.schemas import DreamType
+from src.utils.agent_tools import (
+    ToolContext,
+    _handle_get_session_summaries,  # pyright: ignore[reportPrivateUsage]
+)
 from src.utils.queue_payload import DreamPayload, create_dream_payload
+from src.utils.scopes import SCOPE_KIND, scope_peer_name
+from src.utils.summarizer import SUMMARIES_KEY, SummaryType
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
 OBSERVATION_MUTATION_TOOLS = {
@@ -204,21 +213,33 @@ class TestProcessDreamDispatch:
 
 class TestCardRefreshSpecialist:
     def test_tools_exclude_observation_mutation(self):
+        read_tools = {
+            "get_recent_observations",
+            "search_memory",
+            "get_session_summaries",
+        }
+        refresh = {t["name"] for t in CardRefreshSpecialist().get_tools()}
+        assert refresh == read_tools | {"edit_peer_card", "update_peer_card"}
+        # A rebuild cannot see the card it would be editing; it rewrites it.
+        rebuild = {t["name"] for t in CardRefreshSpecialist(rebuild=True).get_tools()}
+        assert rebuild == read_tools | {"update_peer_card"}
+        assert not (refresh | rebuild) & OBSERVATION_MUTATION_TOOLS
+
+    def test_tools_without_peer_card_strip_card_writes(self):
         for rebuild in (False, True):
             specialist = CardRefreshSpecialist(rebuild=rebuild)
-            tool_names = {t["name"] for t in specialist.get_tools()}
-            assert tool_names == {
-                "get_recent_observations",
-                "search_memory",
-                "update_peer_card",
+            tool_names = {
+                t["name"] for t in specialist.get_tools(peer_card_enabled=False)
             }
+            assert not tool_names & {"update_peer_card", "edit_peer_card"}
             assert not tool_names & OBSERVATION_MUTATION_TOOLS
 
-    def test_tools_without_peer_card_strip_update(self):
-        specialist = CardRefreshSpecialist()
-        tool_names = {t["name"] for t in specialist.get_tools(peer_card_enabled=False)}
-        assert "update_peer_card" not in tool_names
-        assert not tool_names & OBSERVATION_MUTATION_TOOLS
+    def test_prompt_matches_the_card_tools(self):
+        refresh = CardRefreshSpecialist().build_system_prompt("alice")
+        assert "edit_peer_card" in refresh
+        rebuild = CardRefreshSpecialist(rebuild=True).build_system_prompt("alice")
+        assert "edit_peer_card" not in rebuild
+        assert "complete deduplicated list" in rebuild
 
     def test_low_iteration_cap(self, monkeypatch: pytest.MonkeyPatch):
         specialist = CardRefreshSpecialist()
@@ -232,19 +253,37 @@ class TestCardRefreshSpecialist:
         monkeypatch.setattr(settings.DREAM, "MAX_TOOL_ITERATIONS", 30)
         assert specialist.get_max_iterations() == 6
 
+    def test_rebuild_iteration_cap(self, monkeypatch: pytest.MonkeyPatch):
+        specialist = CardRefreshSpecialist(rebuild=True)
+        monkeypatch.setattr(settings.DREAM, "MAX_TOOL_ITERATIONS", 50)
+        assert specialist.get_max_iterations() == 20
+
+        monkeypatch.setattr(settings.DREAM, "MAX_TOOL_ITERATIONS", 8)
+        assert specialist.get_max_iterations() == 8
+
     def test_rebuild_flag_controls_card_injection(self):
         assert CardRefreshSpecialist(rebuild=False).inject_peer_card is True
         assert CardRefreshSpecialist(rebuild=True).inject_peer_card is False
 
-    def test_rebuild_prompts_instruct_observation_only_build(self):
+    def test_rebuild_prompts_instruct_a_survey_before_writing(self):
         specialist = CardRefreshSpecialist(rebuild=True)
         system_prompt = specialist.build_system_prompt("alice")
         assert "REBUILD MODE" in system_prompt
-        assert "solely from the observations" in system_prompt
+        assert "only from evidence you find now" in system_prompt
+        assert "get_session_summaries" in system_prompt
+        assert "Keep it short" not in system_prompt
+        # Summaries find candidates; only current conclusions support entries.
+        assert "Only a current conclusion counts as support" in system_prompt
+        assert f"at most {specialist.get_max_iterations()} tool rounds" in system_prompt
 
         user_prompt = specialist.build_user_prompt("alice", hints=None, peer_card=None)
         assert "Rebuild the peer card" in user_prompt
         assert "CURRENT PEER CARD" not in user_prompt
+
+    def test_refresh_prompt_stays_short(self):
+        system_prompt = CardRefreshSpecialist().build_system_prompt("alice")
+        assert "REBUILD MODE" not in system_prompt
+        assert "Keep it short" in system_prompt
 
     async def _run_specialist(
         self, specialist: CardRefreshSpecialist, stored_card: list[str]
@@ -333,3 +372,261 @@ class TestCardRefreshSpecialist:
         # No CURRENT PEER CARD block in the user prompt (the system prompt's
         # shared taxonomy section legitimately mentions the phrase).
         assert "CURRENT PEER CARD" not in kwargs["messages"][1]["content"]
+
+
+async def _add_session(
+    db_session: AsyncSession,
+    workspace_name: str,
+    name: str,
+    members: list[str],
+    summaries: dict[SummaryType, tuple[str, str]],
+    *,
+    deleted: bool = False,
+    message_ids: dict[SummaryType, int] | None = None,
+) -> None:
+    """Add a session with its members and stored summaries.
+
+    `summaries` maps a summary type to its (content, created_at) pair, and
+    `message_ids` to the message each summary reaches (1 when not given).
+    """
+    db_session.add(
+        models.Session(
+            name=name,
+            workspace_name=workspace_name,
+            internal_metadata={
+                SUMMARIES_KEY: {
+                    summary_type.value: {
+                        "content": content,
+                        "message_id": (message_ids or {}).get(summary_type, 1),
+                        "summary_type": summary_type.value,
+                        "created_at": created_at,
+                        "token_count": 1,
+                        "message_public_id": "m",
+                    }
+                    for summary_type, (content, created_at) in summaries.items()
+                }
+            }
+            if summaries
+            else {},
+            deleted_at=datetime.datetime.now(datetime.UTC) if deleted else None,
+        )
+    )
+    await db_session.flush()
+    for member in members:
+        await db_session.execute(
+            models.session_peers_table.insert().values(
+                workspace_name=workspace_name,
+                session_name=name,
+                peer_name=member,
+                joined_at=datetime.datetime.now(datetime.UTC),
+                left_at=None,
+            )
+        )
+    await db_session.flush()
+
+
+async def _read_summaries(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
+    """Call get_session_summaries; these outputs are short enough to stay text."""
+    result = await _handle_get_session_summaries(ctx, tool_input)
+    assert isinstance(result, str)
+    return result
+
+
+class TestSessionSummariesTool:
+    @pytest_asyncio.fixture
+    async def summarized_sessions(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> tuple[str, str, str]:
+        workspace, peer = sample_data
+        other = models.Peer(name="other-peer", workspace_name=workspace.name)
+        db_session.add(other)
+        await db_session.flush()
+
+        long_and_short = {
+            SummaryType.LONG: ("oldest long", "2026-11-01T00:00:00Z"),
+            SummaryType.SHORT: ("oldest short", "2026-11-01T01:00:00Z"),
+        }
+        await _add_session(
+            db_session, workspace.name, "oldest", [peer.name], long_and_short
+        )
+        await _add_session(
+            db_session,
+            workspace.name,
+            "newest",
+            [peer.name, other.name],
+            {SummaryType.SHORT: ("newest short", "2026-11-03T00:00:00Z")},
+        )
+        await _add_session(
+            db_session,
+            workspace.name,
+            "middle",
+            [peer.name],
+            {SummaryType.SHORT: ("middle short", "2026-11-02T00:00:00Z")},
+        )
+        await _add_session(
+            db_session,
+            workspace.name,
+            "not-a-member",
+            [other.name],
+            {SummaryType.SHORT: ("not a member", "2026-11-04T00:00:00Z")},
+        )
+        await _add_session(
+            db_session,
+            workspace.name,
+            "deleted",
+            [peer.name],
+            {SummaryType.SHORT: ("deleted", "2026-11-05T00:00:00Z")},
+            deleted=True,
+        )
+        await _add_session(db_session, workspace.name, "unsummarized", [peer.name], {})
+        await db_session.commit()
+        return workspace.name, peer.name, other.name
+
+    @staticmethod
+    def _context(
+        workspace_name: str,
+        observer: str,
+        observed: str,
+        session_allowlist: list[str] | None = None,
+    ) -> ToolContext:
+        return ToolContext(
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+            session_name=None,
+            current_messages=None,
+            include_observation_ids=True,
+            db_lock=AsyncMock(),
+            session_allowlist=session_allowlist,
+        )
+
+    @pytest.mark.asyncio
+    async def test_reads_the_peers_sessions_newest_first(
+        self, summarized_sessions: tuple[str, str, str]
+    ):
+        workspace_name, peer, _ = summarized_sessions
+        result = await _read_summaries(self._context(workspace_name, peer, peer), {})
+
+        order = [
+            result.index(f"## Session {name} ")
+            for name in ("newest", "middle", "oldest")
+        ]
+        assert order == sorted(order)
+        # Where both summaries reach the same message, the long one is shown.
+        assert "oldest long" in result
+        assert "oldest short" not in result
+        for absent in ("not-a-member", "deleted", "unsummarized"):
+            assert f"## Session {absent} " not in result
+
+    @pytest.mark.asyncio
+    async def test_a_short_summary_reaching_further_wins_over_the_long_one(
+        self,
+        db_session: AsyncSession,
+        summarized_sessions: tuple[str, str, str],
+    ):
+        workspace_name, peer, _ = summarized_sessions
+        # Both summaries are cumulative; the short one is rewritten more often, so
+        # it can cover messages the long one has not reached yet.
+        await _add_session(
+            db_session,
+            workspace_name,
+            "short-ahead",
+            [peer],
+            {
+                SummaryType.LONG: ("long to 60", "2026-11-06T00:00:00Z"),
+                SummaryType.SHORT: ("short to 100", "2026-11-06T01:00:00Z"),
+            },
+            message_ids={SummaryType.LONG: 60, SummaryType.SHORT: 100},
+        )
+        await db_session.commit()
+
+        result = await _read_summaries(
+            self._context(workspace_name, peer, peer), {"limit": 1}
+        )
+
+        assert "## Session short-ahead " in result
+        assert "short to 100" in result
+        assert "long to 60" not in result
+
+    @pytest.mark.asyncio
+    async def test_pages_back_with_offset(
+        self, summarized_sessions: tuple[str, str, str]
+    ):
+        workspace_name, peer, _ = summarized_sessions
+        context = self._context(workspace_name, peer, peer)
+
+        first = await _read_summaries(context, {"limit": 2})
+        assert "## Session newest " in first
+        assert "## Session middle " in first
+        assert "## Session oldest " not in first
+
+        second = await _read_summaries(context, {"limit": 2, "offset": 2})
+        assert second.startswith("Summaries of sessions 3-3")
+        assert "## Session oldest " in second
+
+        past_the_end = await _read_summaries(context, {"offset": 3})
+        assert past_the_end.startswith("No session summaries found")
+
+    @pytest.mark.asyncio
+    async def test_cross_peer_view_needs_both_peers_in_the_session(
+        self, summarized_sessions: tuple[str, str, str]
+    ):
+        workspace_name, peer, other = summarized_sessions
+        result = await _read_summaries(self._context(workspace_name, other, peer), {})
+
+        assert "## Session newest " in result
+        assert "## Session middle " not in result
+        assert "## Session not-a-member " not in result
+
+    @pytest.mark.asyncio
+    async def test_a_scope_sees_only_sessions_it_is_still_in(
+        self,
+        db_session: AsyncSession,
+        summarized_sessions: tuple[str, str, str],
+    ):
+        workspace_name, peer, _ = summarized_sessions
+        scope = scope_peer_name("team")
+        db_session.add(
+            models.Peer(
+                name=scope,
+                workspace_name=workspace_name,
+                internal_metadata={"kind": SCOPE_KIND},
+            )
+        )
+        await db_session.flush()
+        for session_name, left_at in (
+            ("newest", None),
+            ("middle", datetime.datetime.now(datetime.UTC)),
+        ):
+            await db_session.execute(
+                models.session_peers_table.insert().values(
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    peer_name=scope,
+                    joined_at=datetime.datetime.now(datetime.UTC)
+                    - datetime.timedelta(days=1),
+                    left_at=left_at,
+                )
+            )
+        await db_session.commit()
+
+        result = await _read_summaries(self._context(workspace_name, scope, peer), {})
+
+        # A session removed from a scope stops granting it access, as it does
+        # for message search.
+        assert "## Session newest " in result
+        assert "## Session middle " not in result
+
+    @pytest.mark.asyncio
+    async def test_refused_for_session_scoped_queries(
+        self, summarized_sessions: tuple[str, str, str]
+    ):
+        workspace_name, peer, _ = summarized_sessions
+        result = await _read_summaries(
+            self._context(workspace_name, peer, peer, session_allowlist=["newest"]),
+            {},
+        )
+
+        assert "unavailable for session-scoped queries" in result

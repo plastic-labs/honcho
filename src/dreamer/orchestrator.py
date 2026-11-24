@@ -440,8 +440,10 @@ async def run_card_refresh_dream(
     Run a lightweight card-only refresh dream.
 
     Runs a single CardRefreshSpecialist restricted to peer-card tools
-    (get_recent_observations, search_memory, update_peer_card) with a low
-    tool-iteration cap. It never creates or deletes observations.
+    (get_recent_observations, search_memory, get_session_summaries,
+    edit_peer_card, update_peer_card; a rebuild only the last) with a low
+    tool-iteration cap, higher for a rebuild. It never creates or deletes
+    observations.
 
     Args:
         workspace_name: Workspace identifier
@@ -449,8 +451,9 @@ async def run_card_refresh_dream(
         observed: Observed peer name
         session_name: Session identifier if specified
         rebuild: When True the existing card is NOT injected into the prompt
-            and the specialist rebuilds it solely from observations present in
-            the collection (used after removals).
+            and the specialist rebuilds it from the observations present in the
+            collection (used after removals). It reads session summaries only
+            to find candidates and keeps entries a current observation supports.
     """
     if not settings.DREAM.ENABLED:
         return None

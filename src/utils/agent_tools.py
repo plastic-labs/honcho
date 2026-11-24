@@ -41,6 +41,7 @@ from src.utils.representation import (
 )
 from src.utils.sanitization import strip_nul
 from src.utils.scopes import is_scope_peer_name
+from src.utils.summarizer import get_recent_peer_summaries
 from src.utils.types import ToolResult, embedding_call_purpose, get_current_iteration
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,86 @@ def _validate_peer_card_entry(line: str) -> bool:
             body = line[len(prefix_with_space) :].strip()
             return bool(body)
     return False
+
+
+def _peer_card_entry_key(line: str) -> str:
+    """Case- and whitespace-insensitive identity of a peer card entry."""
+    return " ".join(line.lower().split())
+
+
+# Rejected entries echoed back to the model so it can correct them; capped to
+# keep the tool response small.
+_REJECTED_SAMPLE_CAP = 3
+_REJECTED_SAMPLE_LINE_LIMIT = 120
+
+
+@dataclass
+class _NormalizedPeerCardEntries:
+    """Peer card entries after NUL stripping, validation and dedupe."""
+
+    entries: list[str]
+    rejected_count: int
+    rejected_samples: list[str]
+
+    def rejection_feedback(self, scope: str) -> str:
+        """Build a self-correction hint for the model.
+
+        Args:
+            scope: Grammar glue, either "all N" or e.g. "3 of 12".
+        """
+        samples_block = ""
+        if self.rejected_samples:
+            sample_lines = "\n".join(f"  - {s!r}" for s in self.rejected_samples)
+            extra = (
+                f" (+{self.rejected_count - len(self.rejected_samples)} more)"
+                if self.rejected_count > len(self.rejected_samples)
+                else ""
+            )
+            samples_block = f" Examples of rejected entries{extra}:\n{sample_lines}"
+        return (
+            f"Rejected {scope} entries for failing structural validation. "
+            + "Each entry must start with one of `IDENTITY: `, `ATTRIBUTE: `, "
+            + "`RELATIONSHIP: `, or `INSTRUCTION: ` and stay under the per-entry "
+            + f"length cap.{samples_block}"
+        )
+
+
+def _as_str_list(raw: Any) -> list[str]:
+    """Read a tool argument that should be a list of strings."""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [str(item) for item in cast(list[Any], raw)]
+    return [str(raw)]
+
+
+def _normalize_peer_card_entries(items: list[str]) -> _NormalizedPeerCardEntries:
+    """Strip, validate and deduplicate entries a model sent for the peer card."""
+    result = _NormalizedPeerCardEntries(
+        entries=[], rejected_count=0, rejected_samples=[]
+    )
+    seen: set[str] = set()
+    for item in items:
+        # Strip NUL first: jsonb rejects it, and the checks below (emptiness,
+        # body, length cap, dedupe) must judge the text that gets stored.
+        line = strip_nul(item).strip()
+        if not line:
+            continue
+        if not _validate_peer_card_entry(line):
+            result.rejected_count += 1
+            if len(result.rejected_samples) < _REJECTED_SAMPLE_CAP:
+                result.rejected_samples.append(line[:_REJECTED_SAMPLE_LINE_LIMIT])
+            logger.info(
+                "Rejecting peer card entry (no allowed prefix, empty body, or over length cap): %r",
+                line[:80],
+            )
+            continue
+        key = _peer_card_entry_key(line)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.entries.append(line)
+    return result
 
 
 def _normalized_observation_input(
@@ -429,6 +510,34 @@ TOOLS: dict[str, dict[str, Any]] = {
             "required": ["content"],
         },
     },
+    "edit_peer_card": {
+        "name": "edit_peer_card",
+        "description": (
+            "Add, remove, or replace individual peer card entries without resending the whole card. "
+            "Entries follow the same rules as `update_peer_card`: each starts with `IDENTITY: `, "
+            "`ATTRIBUTE: `, `RELATIONSHIP: `, or `INSTRUCTION: ` followed by one concise fact. "
+            "To replace an entry, put its current text in `remove` and the new text in `add` in the same call. "
+            "If any `remove` entry is not on the card, the whole edit is refused, so a replacement never "
+            "leaves both the old and the new entry. "
+            f"The card holds at most {MAX_PEER_CARD_FACTS} entries. An edit that would go over is refused, "
+            "so when the card is full, remove the entries that matter least in the same call that adds new ones."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "add": {
+                    "type": "array",
+                    "description": "Entries to add to the card.",
+                    "items": {"type": "string"},
+                },
+                "remove": {
+                    "type": "array",
+                    "description": "Entries to remove, copied exactly from the current card.",
+                    "items": {"type": "string"},
+                },
+            },
+        },
+    },
     "search_memory": {
         "name": "search_memory",
         "description": "Search for observations in memory using semantic similarity. Use this to find relevant information about the peer when you need to recall specific details.",
@@ -585,6 +694,29 @@ TOOLS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "get_session_summaries": {
+        "name": "get_session_summaries",
+        "description": (
+            "Read the summaries of the sessions the peer took part in most recently, newest first. "
+            "A summary is written from the whole conversation rather than retrieved by a query, "
+            "so it shows what the peer actually said and did. Use offset to page back to older sessions."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of sessions to read (default: 5, max: 10)",
+                    "default": 5,
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Number of most recent sessions to skip, to page back to older ones (default: 0)",
+                    "default": 0,
+                },
+            },
+        },
+    },
     "delete_observations": {
         "name": "delete_observations",
         "description": "Delete observations by their IDs. Use the exact ID shown in [id:xxx] format from search results. Example: if observation shows '[id:abc123XYZ]', pass 'abc123XYZ' to delete it.",
@@ -734,6 +866,7 @@ DEDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     # Action tools
     TOOLS["create_observations_deductive"],
     TOOLS["delete_observations"],
+    TOOLS["edit_peer_card"],
     TOOLS["update_peer_card"],
 ]
 
@@ -751,14 +884,16 @@ INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
 ]
 
 # Tools for the card-refresh specialist (card_refresh dream type).
-# Card-only maintenance: discovery plus update_peer_card. Deliberately
+# Card-only maintenance: discovery plus the card writes. Deliberately
 # excludes every observation-mutating tool (create_observations*,
 # delete_observations) — a card refresh must never touch observations.
 CARD_REFRESH_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     # Discovery tools
     TOOLS["get_recent_observations"],
     TOOLS["search_memory"],
-    # Action tool
+    TOOLS["get_session_summaries"],
+    # Action tools
+    TOOLS["edit_peer_card"],
     TOOLS["update_peer_card"],
 ]
 
@@ -1522,42 +1657,9 @@ async def _handle_update_peer_card(
 
     # Normalize, validate structure, and deduplicate to keep peer cards bounded
     # and on-spec.
-    normalized_peer_card: list[str] = []
-    seen: set[str] = set()
-    rejected_count = 0
-    # Keep a small sample of rejected entries to surface back to the model so it
-    # can self-correct on a retry. Capped to avoid bloating the tool response.
-    rejected_samples: list[str] = []
-    _REJECTED_SAMPLE_CAP = 3
-    _REJECTED_SAMPLE_LINE_LIMIT = 120
-    items = (
-        cast(list[str], raw_peer_card_content)
-        if isinstance(raw_peer_card_content, list)
-        else [str(raw_peer_card_content)]
-    )
-    for item in items:
-        # Strip NUL first: jsonb rejects it, and the checks below (emptiness,
-        # body, length cap, dedupe) must judge the text that gets stored.
-        line = strip_nul(str(item)).strip()
-        if not line:
-            continue
-
-        if not _validate_peer_card_entry(line):
-            rejected_count += 1
-            if len(rejected_samples) < _REJECTED_SAMPLE_CAP:
-                rejected_samples.append(line[:_REJECTED_SAMPLE_LINE_LIMIT])
-            logger.info(
-                "Rejecting peer card entry (no allowed prefix, empty body, or over length cap): %r",
-                line[:80],
-            )
-            continue
-
-        # Case-insensitive dedupe with whitespace normalization.
-        normalized_key = " ".join(line.lower().split())
-        if normalized_key in seen:
-            continue
-        seen.add(normalized_key)
-        normalized_peer_card.append(line)
+    normalized = _normalize_peer_card_entries(_as_str_list(raw_peer_card_content))
+    normalized_peer_card = normalized.entries
+    rejected_count = normalized.rejected_count
 
     if rejected_count:
         logger.info(
@@ -1566,25 +1668,6 @@ async def _handle_update_peer_card(
             ctx.observer,
             ctx.observed,
             rejected_count,
-        )
-
-    def _format_rejection_feedback(scope: str) -> str:
-        """Build a self-correction hint for the model. `scope` is grammar glue:
-        either "all" (every entry rejected) or e.g. "3 of 12" (partial)."""
-        samples_block = ""
-        if rejected_samples:
-            sample_lines = "\n".join(f"  - {s!r}" for s in rejected_samples)
-            extra = (
-                f" (+{rejected_count - len(rejected_samples)} more)"
-                if rejected_count > len(rejected_samples)
-                else ""
-            )
-            samples_block = f" Examples of rejected entries{extra}:\n{sample_lines}"
-        return (
-            f"Rejected {scope} entries for failing structural validation. "
-            "Each entry must start with one of `IDENTITY: `, `ATTRIBUTE: `, "
-            "`RELATIONSHIP: `, or `INSTRUCTION: ` and stay under the per-entry "
-            f"length cap.{samples_block}"
         )
 
     # Don't clear the peer card if all content normalized to empty or every
@@ -1596,7 +1679,7 @@ async def _handle_update_peer_card(
             rejected_count,
         )
         if rejected_count:
-            return _format_rejection_feedback(f"all {rejected_count}")
+            return normalized.rejection_feedback(f"all {rejected_count}")
         return "Peer card content was empty after normalization, no update performed."
 
     if len(normalized_peer_card) > MAX_PEER_CARD_FACTS:
@@ -1653,13 +1736,164 @@ async def _handle_update_peer_card(
         # silently losing them.
         accepted = len(normalized_peer_card)
         total = accepted + rejected_count
-        success_content = f"{success_content} {_format_rejection_feedback(f'{rejected_count} of {total}')}"
+        success_content = f"{success_content} {normalized.rejection_feedback(f'{rejected_count} of {total}')}"
     return ToolResult(
         content=success_content,
         metadata={
             "peer_card_updated": True,
             "facts_count": len(normalized_peer_card),
             "rejected_count": rejected_count,
+        },
+    )
+
+
+async def _handle_edit_peer_card(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> "str | ToolResult":
+    """Handle edit_peer_card: add and remove single entries in one write."""
+    if ctx.configuration is not None and not ctx.configuration.peer_card.create:
+        logger.info(
+            "Peer card creation disabled for %s, skipping edit",
+            ctx.workspace_name,
+        )
+        return (
+            "Peer card creation is disabled for this workspace/session configuration."
+        )
+
+    additions = _normalize_peer_card_entries(_as_str_list(tool_input.get("add")))
+    removals = [
+        line
+        for line in (
+            strip_nul(item).strip() for item in _as_str_list(tool_input.get("remove"))
+        )
+        if line
+    ]
+    if not additions.entries and not removals:
+        if additions.rejected_count:
+            return additions.rejection_feedback(f"all {additions.rejected_count}")
+        return "Nothing to edit: pass entries in `add` or `remove`."
+
+    removal_keys = {_peer_card_entry_key(line) for line in removals}
+    async with ctx.db_lock, tracked_db("tool.edit_peer_card") as db:
+        current = (
+            await crud.get_peer_card_for_update(
+                db,
+                ctx.workspace_name,
+                observer=ctx.observer,
+                observed=ctx.observed,
+            )
+            or []
+        )
+        current_keys = {_peer_card_entry_key(line) for line in current}
+        unmatched = [
+            line for line in removals if _peer_card_entry_key(line) not in current_keys
+        ]
+        kept = [
+            line for line in current if _peer_card_entry_key(line) not in removal_keys
+        ]
+        kept_keys = {_peer_card_entry_key(line) for line in kept}
+        added = [
+            line
+            for line in additions.entries
+            if _peer_card_entry_key(line) not in kept_keys
+        ]
+        new_card = kept + added
+        removed_count = len(current) - len(kept)
+
+        notes: list[str] = []
+        if additions.rejected_count:
+            total = len(additions.entries) + additions.rejected_count
+            notes.append(
+                additions.rejection_feedback(f"{additions.rejected_count} of {total}")
+            )
+        suffix = "".join(f" {note}" for note in notes)
+
+        # A removal that misses is usually a paraphrase of an entry meant to be
+        # replaced. Applying the rest of the edit would keep the old entry beside
+        # its replacement, so refuse the whole edit instead.
+        if unmatched:
+            listed = "\n".join(
+                f"  - {line[:_REJECTED_SAMPLE_LINE_LIMIT]!r}" for line in unmatched
+            )
+            return (
+                "Not applied: these `remove` entries are not on the card. Copy "
+                + "the exact text from the card and send the whole edit again:\n"
+                + f"{listed}{suffix}"
+            )
+        # A replacement whose new text was rejected would delete the old entry
+        # and add nothing, so refuse the whole edit and show why.
+        if removals and additions.rejected_count:
+            return (
+                "Not applied: an entry in `add` was rejected, so the removals were "
+                + "not applied either (the card is unchanged). Fix the rejected "
+                + f"entries and send the whole edit again.{suffix}"
+            )
+        if not added and not removed_count:
+            # Every removal matched, so nothing was removed only if there were
+            # none, and the valid additions are all on the card already.
+            return f"No change: the card already has every entry to add.{suffix}"
+        # A card set through the API can already hold more than the limit: an
+        # edit may still shrink it or swap entries, but never grow it.
+        ceiling = max(MAX_PEER_CARD_FACTS, len(current))
+        if len(new_card) > ceiling:
+            excess = len(new_card) - ceiling
+            return (
+                f"Not applied: the card would have {len(new_card)} entries and the "
+                + f"limit is {MAX_PEER_CARD_FACTS}. Remove at least {excess} more "
+                + f"entries (the ones that matter least) in the same call.{suffix}"
+            )
+        if not new_card:
+            return f"Not applied: this edit would leave the card empty.{suffix}"
+
+        card_write = await crud.set_peer_card(
+            db,
+            workspace_name=ctx.workspace_name,
+            peer_card=new_card,
+            observer=ctx.observer,
+            observed=ctx.observed,
+            history=ctx.history,
+        )
+        await db.commit()
+        await card_write.post_commit()
+    logger.info(
+        "Edited peer card for %s/%s/%s: +%d -%d",
+        ctx.workspace_name,
+        ctx.observer,
+        ctx.observed,
+        len(added),
+        removed_count,
+    )
+
+    if ctx.run_id and ctx.agent_type and ctx.parent_category:
+        emit(
+            AgentToolPeerCardUpdatedEvent(
+                run_id=ctx.run_id,
+                iteration=get_current_iteration(),
+                parent_category=ctx.parent_category,
+                agent_type=ctx.agent_type,
+                workspace_name=ctx.workspace_name,
+                observer=ctx.observer,
+                observed=ctx.observed,
+                facts_count=len(new_card),
+            )
+        )
+
+    if len(new_card) > MAX_PEER_CARD_FACTS:
+        size = (
+            f"It now has {len(new_card)} entries, over the limit of "
+            + f"{MAX_PEER_CARD_FACTS}: it can shrink but not grow."
+        )
+    else:
+        size = f"It now has {len(new_card)} of {MAX_PEER_CARD_FACTS} entries."
+    return ToolResult(
+        content=(
+            f"Edited peer card for {ctx.observed} by {ctx.observer}: added "
+            + f"{len(added)}, removed {removed_count}. {size}{suffix}"
+        ),
+        metadata={
+            "peer_card_updated": True,
+            "facts_count": len(new_card),
+            "rejected_count": additions.rejected_count,
         },
     )
 
@@ -2111,6 +2345,42 @@ async def _handle_get_recent_observations(
     return f"Found {total_count} recent observations from {scope}:\n\n{repr_str}"
 
 
+async def _handle_get_session_summaries(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> "str | ToolResult":
+    """Handle get_session_summaries tool."""
+    # A session summary covers the whole conversation, so it cannot be cut down
+    # to a session allowlist's view of a peer. Fail closed, as get_peer_card does.
+    if ctx.session_allowlist is not None:
+        return (
+            "Session summaries are unavailable for session-scoped queries. "
+            "Use search_memory instead."
+        )
+    limit = _bounded_int(tool_input.get("limit"), 5, hi=10)
+    offset = _bounded_int(tool_input.get("offset"), 0, lo=0, hi=10_000)
+    async with tracked_db("tool.get_session_summaries", read_only=True) as db:
+        rows = await get_recent_peer_summaries(
+            db,
+            ctx.workspace_name,
+            [ctx.observer, ctx.observed],
+            limit=limit,
+            offset=offset,
+        )
+    if not rows:
+        if offset:
+            return f"No session summaries found after the {offset} most recent sessions"
+        return "No session summaries found"
+    parts = [
+        f"Summaries of sessions {offset + 1}-{offset + len(rows)}, most recent first:"
+    ]
+    for session_name, summary in rows:
+        parts.append(
+            f"\n## Session {session_name} (summarized {summary['created_at']})\n"
+            + summary["content"]
+        )
+    return _maybe_truncated_result("\n".join(parts))
+
+
 async def _handle_get_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle get_peer_card tool."""
     _ = tool_input
@@ -2397,6 +2667,7 @@ _TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
     "create_observations_deductive": _handle_create_observations_deductive,
     "create_observations_inductive": _handle_create_observations_inductive,
     "update_peer_card": _handle_update_peer_card,
+    "edit_peer_card": _handle_edit_peer_card,
     "search_memory": _handle_search_memory,
     "get_observation_context": _handle_get_observation_context,
     "search_messages": _handle_search_messages,
@@ -2404,6 +2675,7 @@ _TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
     "get_messages_by_date_range": _handle_get_messages_by_date_range,
     "search_messages_temporal": _handle_search_messages_temporal,
     "get_recent_observations": _handle_get_recent_observations,
+    "get_session_summaries": _handle_get_session_summaries,
     "delete_observations": _handle_delete_observations,
     "get_reasoning_chain": _handle_get_reasoning_chain,
 }

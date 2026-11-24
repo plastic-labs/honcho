@@ -180,7 +180,7 @@ class DreamSpecialistEvent(BaseEvent, CustomInstructionsFields):
     )
     peer_card_updated: bool = Field(
         default=False,
-        description="True when at least one update_peer_card tool call succeeded",
+        description="True when at least one update_peer_card or edit_peer_card tool call wrote the card",
     )
     search_tool_calls_count: int = Field(
         default=0,
