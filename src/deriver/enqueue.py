@@ -3,6 +3,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal, TypeVar
 
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import exists, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +29,8 @@ from src.utils.work_unit import (
 )
 
 logger = logging.getLogger(__name__)
+
+_ConfigT = TypeVar("_ConfigT", bound=BaseModel)
 
 # Caps the queue writes one process runs at once, so a burst of enqueues
 # cannot take every pooled DB connection from request handlers.
@@ -399,6 +402,26 @@ def create_summary_record(
     }
 
 
+def _parse_config_leniently(
+    model: type[_ConfigT], raw: Any, observed: str
+) -> _ConfigT | None:
+    """Parse a stored free-form configuration, treating a malformed one as unset.
+
+    Peer and session-peer configuration are stored as arbitrary JSON, so a row can
+    hold a value the schema rejects. This runs inside the message write
+    transaction, where raising would fail every write by that peer; fall back to
+    the default (observe) and log instead.
+    """
+    try:
+        return model(**raw)
+    except (ValidationError, TypeError):
+        logger.warning(
+            "Ignoring malformed stored configuration for peer %s; using defaults",
+            observed,
+        )
+        return None
+
+
 def get_effective_observe_me(
     observed: str, peers_with_configuration: dict[str, list[dict[str, Any]]]
 ) -> bool:
@@ -417,13 +440,15 @@ def get_effective_observe_me(
     # peer-level and session-level configs.
     configuration: list[Any] = peers_with_configuration.get(observed, [{}, {}])
     sender_session_peer_config = (
-        schemas.SessionPeerConfig(**configuration[1]) if configuration[1] else None
+        _parse_config_leniently(schemas.SessionPeerConfig, configuration[1], observed)
+        if configuration[1]
+        else None
     )
     sender_peer_config = (
-        schemas.PeerConfig(**configuration[0])
+        _parse_config_leniently(schemas.PeerConfig, configuration[0], observed)
         if configuration[0]
-        else schemas.PeerConfig()
-    )
+        else None
+    ) or schemas.PeerConfig()
 
     # Session peer config takes precedence if it exists and has observe_me set
     if sender_session_peer_config and sender_session_peer_config.observe_me is not None:

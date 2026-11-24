@@ -824,6 +824,28 @@ class TestGetEffectiveObserveMeFunction:
 
         assert result is False
 
+    @pytest.mark.parametrize(
+        "peer_config",
+        [{"observe_me": "sometimes"}, {"observe_me": [1]}, ["observe_me"]],
+    )
+    def test_malformed_peer_config_falls_back_to_default(self, peer_config: Any):
+        """A malformed stored peer config is ignored instead of raising."""
+        from src.deriver.enqueue import get_effective_observe_me
+
+        peers_with_configuration: dict[str, list[Any]] = {"sender": [peer_config, {}]}
+
+        assert get_effective_observe_me("sender", peers_with_configuration) is True
+
+    def test_malformed_session_config_falls_back_to_peer_config(self):
+        """A malformed session-peer config is ignored; the peer config applies."""
+        from src.deriver.enqueue import get_effective_observe_me
+
+        peers_with_configuration: dict[str, list[Any]] = {
+            "sender": [{"observe_me": False}, {"observe_me": "sometimes"}]
+        }
+
+        assert get_effective_observe_me("sender", peers_with_configuration) is False
+
     def test_session_config_none_falls_back_to_peer_config(self):
         """Test that session config with None observe_me falls back to peer config"""
         from src.deriver.enqueue import get_effective_observe_me
