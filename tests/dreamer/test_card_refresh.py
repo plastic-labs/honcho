@@ -272,6 +272,9 @@ class TestCardRefreshSpecialist:
         assert "only from evidence you find now" in system_prompt
         assert "get_session_summaries" in system_prompt
         assert "Keep it short" not in system_prompt
+        # Summaries find candidates; only current conclusions support entries.
+        assert "Only a current conclusion counts as support" in system_prompt
+        assert f"at most {specialist.get_max_iterations()} tool rounds" in system_prompt
 
         user_prompt = specialist.build_user_prompt("alice", hints=None, peer_card=None)
         assert "Rebuild the peer card" in user_prompt

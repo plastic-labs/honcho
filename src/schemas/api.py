@@ -1617,9 +1617,10 @@ class ScheduleDreamRequest(BaseModel):
     rebuild: bool = Field(
         False,
         description=(
-            "card_refresh dreams only: rebuild the peer card from the evidence "
-            "available now (session summaries and conclusions), without injecting "
-            "the existing card (use after removals)"
+            "card_refresh dreams only: rebuild the peer card from the current "
+            "conclusions, without injecting the existing card (use after "
+            "removals). Session summaries only point at candidates; an entry "
+            "is kept only when a current conclusion supports it."
         ),
     )
 

@@ -451,8 +451,9 @@ async def run_card_refresh_dream(
         observed: Observed peer name
         session_name: Session identifier if specified
         rebuild: When True the existing card is NOT injected into the prompt
-            and the specialist rebuilds it solely from observations present in
-            the collection (used after removals).
+            and the specialist rebuilds it from the observations present in the
+            collection (used after removals). It reads session summaries only
+            to find candidates and keeps entries a current observation supports.
     """
     if not settings.DREAM.ENABLED:
         return None

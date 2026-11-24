@@ -1820,6 +1820,14 @@ async def _handle_edit_peer_card(
                 + "the exact text from the card and send the whole edit again:\n"
                 + f"{listed}{suffix}"
             )
+        # A replacement whose new text was rejected would delete the old entry
+        # and add nothing, so refuse the whole edit and show why.
+        if removals and additions.rejected_count:
+            return (
+                "Not applied: an entry in `add` was rejected, so the removals were "
+                + "not applied either (the card is unchanged). Fix the rejected "
+                + f"entries and send the whole edit again.{suffix}"
+            )
         if not added and not removed_count:
             # Every removal matched, so nothing was removed only if there were
             # none, and the valid additions are all on the card already.

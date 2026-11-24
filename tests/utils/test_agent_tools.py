@@ -1860,6 +1860,31 @@ class TestEditPeerCard:
         assert "ATTRIBUTE: Works on Foo" in result
         assert await self._card(db_session, workspace, peer1, peer2) == card
 
+    async def test_a_rejected_replacement_refuses_the_whole_edit(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+        card = ["IDENTITY: Name: John", "ATTRIBUTE: Works on project Foo"]
+        await _handle_update_peer_card(ctx, {"content": card})
+
+        # The replacement fails validation (TRAIT is not an allowed kind), so
+        # the old entry must stay rather than vanish with nothing in its place.
+        result = await _handle_edit_peer_card(
+            ctx,
+            {
+                "add": ["TRAIT: Works on project Bar"],
+                "remove": ["ATTRIBUTE: Works on project Foo"],
+            },
+        )
+
+        assert isinstance(result, str)
+        assert "Not applied" in result
+        assert await self._card(db_session, workspace, peer1, peer2) == card
+
     async def test_no_op_and_empty_edits_do_not_write(
         self,
         db_session: AsyncSession,

@@ -342,6 +342,9 @@ class BaseSpecialist(ABC):
     # layout, counts, work list), DREAM.BUDGET_ENABLED (budget line, write
     # window) and DREAM.NOTES_MODE (working notes).
     uses_working_memory: bool = True
+    # Offer the write tools on the last call even without a budget line, so a
+    # run that spends every round reading can still save its result.
+    final_write_call: bool = False
 
     @abstractmethod
     def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
@@ -660,7 +663,7 @@ The target observee is the peer identified above. When created observations need
                 budget_line=dream_budget_line(window) if budget_enabled else None,
                 final_call_tools=(
                     [t for t in tools if t["name"] not in SEARCH_TOOL_NAMES]
-                    if budget_enabled
+                    if budget_enabled or self.final_write_call
                     else None
                 ),
                 messages=messages,
@@ -1192,7 +1195,10 @@ class CardRefreshSpecialist(BaseSpecialist):
       the old card may contain facts whose support was deleted, and on request.
       It starts from nothing, so it gets a higher iteration ceiling and is told
       to survey session summaries before searching, since a vector search for
-      the peer can return near-duplicate or nearly empty conclusions.
+      the peer can return near-duplicate or nearly empty conclusions. Summaries
+      only point at candidates: an entry is written only when a current
+      conclusion supports it, because removing a conclusion does not rewrite
+      the summaries that were written while it existed.
 
     Not a singleton — instantiated per run because ``rebuild`` is per-dream
     state.
@@ -1200,6 +1206,7 @@ class CardRefreshSpecialist(BaseSpecialist):
 
     name: str = "card_refresh"
     uses_working_memory: bool = False
+    final_write_call: bool = True
     peer_card_update_instruction: str = "Change this with `edit_peer_card`. See the PEER CARD section in the system prompt for the allowed entry kinds and rules."
 
     # Low iteration ceiling for this lightweight, single-purpose run.
@@ -1255,18 +1262,20 @@ class CardRefreshSpecialist(BaseSpecialist):
         _ = observed
         _ = peer_card_enabled
         if self.rebuild:
-            process_section = """## REBUILD MODE
+            process_section = f"""## REBUILD MODE
 
 The existing peer card is deliberately NOT shown to you: it may contain entries whose supporting evidence has since been removed. Build the card only from evidence you find now. Do not carry over or guess at prior card content — if an identity marker is not supported by current evidence, it does not go on the card.
+
+Only a current conclusion counts as support. Session summaries were written from whole conversations and may still describe facts whose conclusions were removed, so use them to find candidates, then confirm each candidate with `get_recent_observations` or `search_memory`. An entry that no current conclusion supports does not go on the card, however clearly a summary states it.
 
 A rebuild starts from nothing, so it needs a thorough survey over several turns, not a quick look. Search alone is unreliable here: a query that names the target observee can return many near-duplicate or nearly empty conclusions, and the most recent conclusions cover only a short stretch of time.
 
 ## PROCESS
 
-1. Read session summaries with `get_session_summaries`, then page back with `offset` to older sessions. Summaries are written from whole conversations and are the broadest view of who the target observee is.
+1. Read session summaries with `get_session_summaries`, then page back with `offset` to older sessions. Summaries are the broadest view of who the target observee is, so use them to find candidate facts, not as support.
 2. Read recent conclusions with `get_recent_observations`, using a large `limit`.
-3. Go through each allowed entry kind and use `search_memory` to confirm the candidates you found and look for others: names, aliases and IDs (IDENTITY); roles and responsibilities, projects, things the target observee owns or maintains, the tools and environments it works in, and stated preferences (ATTRIBUTE); durable links to other entities (RELATIONSHIP); standing rules it has stated (INSTRUCTION). Phrase each query by the kind of fact you are looking for, not by the target observee's name. When results repeat one conclusion or say nothing, rephrase rather than conclude the fact is absent.
-4. Call `update_peer_card` once, at the end, with the complete deduplicated list.
+3. Go through each allowed entry kind and use `search_memory` to confirm each candidate against current conclusions and look for others: names, aliases and IDs (IDENTITY); roles and responsibilities, projects, things the target observee owns or maintains, the tools and environments it works in, and stated preferences (ATTRIBUTE); durable links to other entities (RELATIONSHIP); standing rules it has stated (INSTRUCTION). Phrase each query by the kind of fact you are looking for, not by the target observee's name. When results repeat one conclusion or say nothing, rephrase rather than conclude the fact is absent.
+4. Call `update_peer_card` once, at the end, with the complete deduplicated list. You have at most {self.get_max_iterations()} tool rounds, so start writing by round {max(self.get_max_iterations() - 3, 1)} even if the survey is unfinished: a card that is never written is worse than a partial one.
 
 Prefer specific entries over generic ones: name the project, the system, the tool. A peer with many sessions of history usually supports many entries, so keep surveying until the sources stop turning up new durable facts. An entry kind with no supporting evidence stays empty, but conclude that only after looking in every source."""
         else:
@@ -1305,7 +1314,7 @@ Refresh the peer card and nothing else. You cannot create or delete observations
         if self.rebuild:
             return f"""{target_observee_context}Rebuild the peer card from scratch.
 
-The previous card is not shown and must not be assumed: reconstruct it from the evidence available now. Follow the REBUILD MODE process — session summaries first, then recent conclusions, then searches for each entry kind — and call `update_peer_card` once with the complete list.
+The previous card is not shown and must not be assumed: reconstruct it from the evidence available now. Follow the REBUILD MODE process — session summaries to find candidates, then recent conclusions and searches to confirm them, keeping only entries a current conclusion supports — and call `update_peer_card` once with the complete list.
 
 Go."""
 
