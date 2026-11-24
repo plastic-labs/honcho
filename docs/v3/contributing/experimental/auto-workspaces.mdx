@@ -5,7 +5,7 @@ icon: 'wand-magic-sparkles'
 ---
 
 <Warning>
-Auto workspaces are [experimental](/v3/documentation/features/experimental/overview): the API, SDK methods and CLI commands may change or stop working without notice, and they aren't ready for production use. They need a Honcho server newer than 3.6.2. No release includes them yet, so today that means a self-hosted server built from `main`.
+Auto workspaces are [experimental](/v3/contributing/experimental/overview) and available only on self-hosted Honcho for now: they aren't turned on in managed Honcho yet. The API, SDK methods and CLI commands may change or stop working without notice, and they aren't ready for production use. They need a Honcho server newer than 3.6.2. No release includes them yet, so [run Honcho yourself](/v3/contributing/self-hosting) from `main`.
 </Warning>
 
 An auto workspace organizes itself. You send records the way another system has them, such as a chat message, an issue comment or a meeting note, with who wrote it, where it lives and its ID in the source. Honcho picks the sessions and peers, and builds memory from the records, right away or after you've reviewed the import.
@@ -23,10 +23,10 @@ A workspace is auto only if it was created that way. Regular workspaces work as 
 ## Guides
 
 <CardGroup cols={2}>
-  <Card title="Ingesting Source Records" icon="file-import" href="/v3/documentation/features/experimental/ingest">
+  <Card title="Ingesting Source Records" icon="file-import" href="/v3/contributing/experimental/ingest">
     Create an auto workspace, send records, review them and derive.
   </Card>
-  <Card title="Writing an Exporter" icon="file-export" href="/v3/documentation/features/experimental/ingest-exporters">
+  <Card title="Writing an Exporter" icon="file-export" href="/v3/contributing/experimental/ingest-exporters">
     Turn another system's history into ingest records, and run it from the CLI.
   </Card>
 </CardGroup>

@@ -5,7 +5,7 @@
   "redirects": [
     {
       "source": "/v3/documentation/features/advanced/ingest",
-      "destination": "/v3/documentation/features/experimental/ingest"
+      "destination": "/v3/contributing/experimental/ingest"
     },
     {
       "source": "/",
@@ -332,15 +332,6 @@
                   "v3/documentation/features/advanced/file-uploads",
                   "v3/documentation/features/advanced/deleting-data"
                 ]
-              },
-              {
-                "group": "Experimental",
-                "pages": [
-                  "v3/documentation/features/experimental/overview",
-                  "v3/documentation/features/experimental/auto-workspaces",
-                  "v3/documentation/features/experimental/ingest",
-                  "v3/documentation/features/experimental/ingest-exporters"
-                ]
               }
             ]
           },
@@ -429,7 +420,16 @@
               "v3/contributing/self-hosting",
               "v3/contributing/configuration",
               "v3/contributing/changing-embeddings",
-              "v3/contributing/troubleshooting"
+              "v3/contributing/troubleshooting",
+              {
+                "group": "Experimental Features",
+                "pages": [
+                  "v3/contributing/experimental/overview",
+                  "v3/contributing/experimental/auto-workspaces",
+                  "v3/contributing/experimental/ingest",
+                  "v3/contributing/experimental/ingest-exporters"
+                ]
+              }
             ]
           },
           {
