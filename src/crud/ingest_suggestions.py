@@ -27,7 +27,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import Select, case, func, or_, select, update
+from sqlalchemy import ColumnElement, Select, case, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -427,13 +427,30 @@ async def open_high_pairs(
 ) -> list[tuple[str, str]]:
     """The account pairs of the workspace's open `high` suggestions."""
     table = models.IngestSuggestion
+    return await _same_person_pairs(
+        db, workspace_name, table.status == "open", table.confidence == "high"
+    )
+
+
+async def dismissed_pairs(
+    db: AsyncSession, workspace_name: str
+) -> list[tuple[str, str]]:
+    """The account pairs a person dismissed in the workspace."""
+    return await _same_person_pairs(
+        db, workspace_name, models.IngestSuggestion.status == "dismissed"
+    )
+
+
+async def _same_person_pairs(
+    db: AsyncSession, workspace_name: str, *where: ColumnElement[bool]
+) -> list[tuple[str, str]]:
+    table = models.IngestSuggestion
     keys = await db.scalars(
         select(table.subject_key).where(
             table.tenant_id == models.scoped_tenant_id(),
             table.workspace_name == workspace_name,
             table.kind == "same_person",
-            table.status == "open",
-            table.confidence == "high",
+            *where,
         )
     )
     pairs: list[tuple[str, str]] = []

@@ -1303,3 +1303,25 @@ def test_a_batch_reports_what_was_done_before_a_failure(cfg, runner):
     body = json.loads(result.stdout)
     assert [d["id"] for d in body["dismissed"]] == ["sg1"]
     assert body["failed"][0]["suggestion"] == "sg2"
+
+
+def test_a_workspace_given_before_the_subcommand_applies_to_it(cfg, runner):
+    # `-w` before `accept` or `dismiss` names the workspace they act on.
+    from honcho_cli.common import get_flag_overrides
+
+    seen: list[str | None] = []
+    dismiss = MagicMock(return_value=SUGGESTIONS[0].model_copy(update={"status": "dismissed"}))
+    client = _suggestions_client(ingest_dismiss_suggestion=dismiss)
+
+    def get_client():
+        seen.append(get_flag_overrides()["workspace"])
+        return client, _config()
+
+    with patch("honcho_cli.commands.ingest.get_client", side_effect=get_client):
+        result = runner.invoke(
+            app, ["ingest", "suggestions", "-w", "target", "dismiss", "sg1"]
+        )
+
+    assert result.exit_code == 0, result.stderr
+    assert seen == ["target"]
+    dismiss.assert_called_once_with("sg1")

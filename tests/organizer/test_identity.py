@@ -339,3 +339,54 @@ def test_a_retained_high_pair_joins_the_conflict_check() -> None:
     # Without the retained pair, the new one alone is fine.
     found, demoted = suggest_with(accounts, posts, retained=[])
     assert _pairs(found, "high") == {("d:2", "g:1")} and demoted == {}
+
+
+def test_a_handle_is_matched_whole_not_as_the_start_of_another() -> None:
+    # `alex.dev` is a different Discord username from `alex`.
+    accounts = [discord("1", "Alex", handle="alex"), github("1", handle="anguyen4821")]
+    for text in (
+        "my Discord username is alex.dev",
+        "I'm alex.dev on Discord",
+    ):
+        found = suggest(accounts, [Post("g:1", T0, text)])
+        assert _pairs(found, "high") == set(), text
+    # A full stop after the handle still ends it.
+    found = suggest(accounts, [Post("g:1", T0, "my Discord username is alex.")])
+    assert _pairs(found, "high") == {("d:1", "g:1")}
+
+
+def test_a_forwarded_message_is_not_the_forwarder_s_own_words() -> None:
+    accounts = [
+        discord("1", "Sam", handle="sam_k"),
+        github("1", handle="anguyen4821"),
+    ]
+    forwarded = "[forwarded message]\nI'm anguyen4821 on GitHub"
+    for text in (
+        forwarded,
+        "look at this\n" + forwarded,
+        # A marker inside a code block is part of the quoted example.
+        "```\nI'm anguyen4821 on GitHub\n[forwarded message]\n```",
+    ):
+        found = suggest(accounts, [Post("d:1", T0, text)])
+        assert _pairs(found) == set(), text
+    assert own_words("mine\n[forwarded message]\ntheirs") == "mine"
+    # Their own words before the forward still count.
+    claimed = "I'm anguyen4821 on GitHub\n[forwarded message]\nlunch?"
+    found = suggest(accounts, [Post("d:1", T0, claimed)])
+    assert _pairs(found, "high") == {("d:1", "g:1")}
+
+
+def test_a_dismissed_pair_neither_returns_nor_holds_others_to_low() -> None:
+    # Both Discord accounts claim one GitHub account; a person dismissed d:1.
+    accounts = [
+        discord("1", "Alex", handle="alex1"),
+        discord("2", "Sam", handle="sam2"),
+        github("1", handle="anguyen4821"),
+    ]
+    posts = [
+        Post("d:1", T0, "I'm anguyen4821 on GitHub"),
+        Post("d:2", T0, "I'm anguyen4821 on GitHub"),
+    ]
+    found, _ = suggest_with(accounts, posts, retained=[], dismissed=[("d:1", "g:1")])
+    assert _pairs(found) == {("d:2", "g:1")}
+    assert _pairs(found, "high") == {("d:2", "g:1")}

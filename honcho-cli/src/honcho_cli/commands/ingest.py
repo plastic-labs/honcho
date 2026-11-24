@@ -1228,9 +1228,10 @@ def list_suggestions(
     have evidence to accept at a glance; `rules:low` ones need a closer look.
     Nothing is linked until you accept one.
     """
+    # Before any subcommand runs: `-w` here applies to `accept` and `dismiss` too.
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
     if ctx.invoked_subcommand is not None:
         return
-    handle_cmd_flags(json_output=json_output, workspace=workspace)
     stage, confidence = _parse_label(only) if only else (None, None)
     if state not in ("open", "accepted", "dismissed", "all"):
         print_error(

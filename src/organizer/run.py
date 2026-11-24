@@ -14,7 +14,12 @@ import time
 from sqlalchemy import select
 
 from src import models
-from src.crud.ingest_suggestions import load_inputs, open_high_pairs, save_suggestions
+from src.crud.ingest_suggestions import (
+    dismissed_pairs,
+    load_inputs,
+    open_high_pairs,
+    save_suggestions,
+)
 from src.dependencies import tracked_db
 from src.organizer.identity import suggest_with
 
@@ -37,11 +42,12 @@ async def refresh_suggestions(workspace_name: str) -> None:
             return
         inputs = await load_inputs(db, workspace_name)
         retained = await open_high_pairs(db, workspace_name)
+        dismissed = await dismissed_pairs(db, workspace_name)
 
     clock = time.monotonic()
     # Checked with the `high` suggestions still open from earlier refreshes:
     # accepting them all must not join two people either.
-    found, demoted = suggest_with(inputs.accounts, inputs.posts, retained)
+    found, demoted = suggest_with(inputs.accounts, inputs.posts, retained, dismissed)
     elapsed = time.monotonic() - clock
 
     async with tracked_db("organize_write") as db:

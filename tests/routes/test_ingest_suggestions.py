@@ -449,3 +449,38 @@ async def test_accept_keeps_a_peer_holding_an_account_without_an_id(
     )
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["link"]["peer_id"] == by_name["Riley O"]
+
+
+@pytest.mark.asyncio
+async def test_dismissing_one_of_two_claims_lets_the_other_be_high(
+    client: TestClient,
+) -> None:
+    # Two Discord accounts both say they're alexdev on GitHub: accepting both
+    # would make them one person, so neither is high until one is dismissed.
+    workspace = _workspace(client)
+    response = client.post(
+        f"/v3/workspaces/{workspace}/ingest",
+        json={
+            "derive": "later",
+            "records": [
+                _record(1, ALEX, "I'm alexdev on GitHub"),
+                _record(2, SAM, "I'm alexdev on GitHub"),
+                _record(3, ALEX_GITHUB, "PR: fix the onboarding link", "github"),
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    await _refresh(client, workspace)
+
+    def handles(suggestion: Any) -> set[str]:
+        return {a["handle"] for a in suggestion["accounts"]}
+
+    claims = [s for s in _suggestions(client, workspace) if "alexdev" in handles(s)]
+    assert {s["confidence"] for s in claims} == {"low"}
+    [sams] = [s for s in claims if "samwise" in handles(s)]
+    base = f"/v3/workspaces/{workspace}/ingest/suggestions"
+    assert client.post(f"{base}/{sams['id']}/dismiss").status_code == 200
+
+    await _refresh(client, workspace)
+    [high] = _suggestions(client, workspace, confidence="high")
+    assert handles(high) == {"alex_d", "alexdev"}

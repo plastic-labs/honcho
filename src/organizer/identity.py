@@ -300,12 +300,21 @@ def _name_keys(account: Account) -> set[str]:
 # ---------------------------------------------------------------------------
 
 _REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
+# The Discord connector puts a forward's text after this line, under the
+# forwarder's name; Discord doesn't say who wrote the original.
+_FORWARDED = re.compile(r"^\[forwarded message\]$", re.MULTILINE)
 _FENCED = re.compile(r"```.*?```", re.DOTALL)
 _INLINE_CODE = re.compile(r"`[^`\n]*`")
 
 
 def own_words(text: str) -> str:
-    """The text without quoted lines, code or injected system reminders."""
+    """The writer's own text: no forwards, quoted lines, code or system reminders."""
+    # A marker inside a code block or a reminder is quoted text, not a forward.
+    quoted = [m.span() for m in (*_REMINDER.finditer(text), *_FENCED.finditer(text))]
+    for marker in _FORWARDED.finditer(text):
+        if not any(start <= marker.start() < end for start, end in quoted):
+            text = text[: marker.start()]
+            break
     text = _FENCED.sub(" ", _REMINDER.sub(" ", text))
     text = _INLINE_CODE.sub(" ", text)
     return "\n".join(
@@ -392,6 +401,9 @@ def _shared_work(
 _SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
 _ACCOUNT_WORDS = r"(?:account|handle|username|user\s*name|login|name|id)"
 _NEGATION = re.compile(r"\b(?:not|never|no\s+longer)\b|n't\b", re.IGNORECASE)
+# The end of a handle: no handle character follows. A dot counts only when more
+# of a handle follows it (`alex.dev`), so a sentence's full stop still ends one.
+_HANDLE_END = r"(?![\w-]|\.\w)"
 
 
 def _claims_handle(sentence: str, handle: str, source: str) -> bool:
@@ -403,7 +415,7 @@ def _claims_handle(sentence: str, handle: str, source: str) -> bool:
     """
     if _NEGATION.search(sentence):
         return False
-    h = r"@?" + re.escape(handle) + r"(?![\w-])"
+    h = r"@?" + re.escape(handle) + _HANDLE_END
     s = re.escape(source)
     patterns = (
         # "I'm on GitHub as alexdev", "I am on GitHub as alexdev"
@@ -430,7 +442,10 @@ def _self_references(
         return {}
     alternatives = sorted(by_handle, key=len, reverse=True)
     pattern = re.compile(
-        r"(?<![\w./-])@?(" + "|".join(map(re.escape, alternatives)) + r")(?![\w-])",
+        r"(?<![\w./-])@?("
+        + "|".join(map(re.escape, alternatives))
+        + r")"
+        + _HANDLE_END,
         re.IGNORECASE,
     )
     found: Counter[tuple[str, str]] = Counter()
@@ -579,13 +594,17 @@ def suggest_with(
     accounts: Iterable[Account],
     posts: Iterable[Post],
     retained: Iterable[tuple[str, str]],
+    dismissed: Iterable[tuple[str, str]] = (),
 ) -> tuple[list[Suggestion], dict[tuple[str, str], str]]:
     """`suggest`, checked against the `high` pairs still open from earlier.
 
-    Returns the suggestions, best first, and the retained pairs that would
-    now join two people (each with why): they must drop to `low` as well.
-    Each retained pair is its two account keys in sorted order.
+    Pairs a person `dismissed` are left out, so they neither come back nor
+    hold other suggestions to `low` in the conflict check. Returns the
+    suggestions, best first, and the retained pairs that would now join two
+    people (each with why): they must drop to `low` as well. Each retained or
+    dismissed pair is its two account keys in sorted order.
     """
+    kept_apart = set(dismissed)
     by_key = {a.key: a for a in accounts}
     people = {k: a for k, a in by_key.items() if not a.bot and a.kind != "source"}
     post_list = [p for p in posts if p.author in by_key]
@@ -617,6 +636,8 @@ def suggest_with(
 
     suggestions: list[Suggestion] = []
     for a_key, b_key in sorted(candidates):
+        if (a_key, b_key) in kept_apart:
+            continue
         a, b = people.get(a_key), people.get(b_key)
         if a is None or b is None or (a.peer is not None and a.peer == b.peer):
             continue
