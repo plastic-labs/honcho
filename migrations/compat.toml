@@ -6,4 +6,4 @@
 # Alembic head this floor was declared against.
 alembic_revision = "7dbf160eb7c9"
 # Oldest released Honcho version whose image can still run against alembic_revision.
-compat_floor = "3.2.2"
+compat_floor = "3.7.0"
