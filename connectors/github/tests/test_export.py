@@ -902,3 +902,15 @@ def test_the_github_source_help_and_a_bad_selection_exit_cleanly(
     with pytest.raises(SystemExit) as refused:
         _source_main(tmp_path, monkeypatch, FakeGitHub())  # no --repo or --org
     assert isinstance(refused.value.code, str)
+
+
+def test_an_unreadable_token_file_is_the_sources_error(tmp_path: Path) -> None:
+    from honcho_github.source import SOURCE
+
+    missing = str(tmp_path / "missing")
+    with pytest.raises(SystemExit, match="Can't read .*missing"):
+        SOURCE.main(["--token-file", missing, "--repo", "acme/web"], _CliSink())
+    binary = tmp_path / "binary"
+    binary.write_bytes(b"\xff\xfe")
+    with pytest.raises(SystemExit, match="one line"):
+        SOURCE.main(["--token-file", str(binary), "--repo", "acme/web"], _CliSink())

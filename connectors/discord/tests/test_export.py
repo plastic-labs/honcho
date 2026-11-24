@@ -760,3 +760,70 @@ def test_the_discord_source_help_exits_cleanly() -> None:
     with pytest.raises(SystemExit) as helped:
         SOURCE.main(["--help"], _CliSink())
     assert helped.value.code == 0
+
+
+def _refused(_request: httpx.Request) -> httpx.Response:
+    return httpx.Response(401, json={"message": "401: Unauthorized"})
+
+
+def _refusing_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_init = DiscordClient.__init__
+
+    def client_init(self: DiscordClient, token: str, **_kwargs: Any) -> None:
+        real_init(
+            self,
+            token,
+            base_url="https://discord.test/api/v10",
+            transport=httpx.MockTransport(_refused),
+            sleep=lambda _s: None,
+        )
+
+    monkeypatch.setattr(DiscordClient, "__init__", client_init)
+
+
+def test_a_refused_token_is_the_sources_error_not_a_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from honcho_discord.source import SOURCE
+
+    _refusing_client(monkeypatch)
+    token = tmp_path / "token"
+    token.write_text("t")
+
+    # The CLI reports a source's exit message as SOURCE_ERROR.
+    with pytest.raises(SystemExit) as exited:
+        SOURCE.main(["--token-file", str(token), "--guild", GUILD], _CliSink())
+    assert exited.value.code == (
+        f"Discord 401 on /guilds/{GUILD}/channels: 401: Unauthorized"
+    )
+    with pytest.raises(SystemExit) as exited:
+        main(["channels", "--token-file", str(token), "--guild", GUILD])
+    assert str(exited.value.code).startswith("Discord 401 on ")
+
+
+def test_unreadable_token_and_channels_files_are_errors_not_crashes(
+    tmp_path: Path,
+) -> None:
+    from honcho_discord.source import SOURCE
+
+    missing = str(tmp_path / "missing")
+    with pytest.raises(SystemExit, match="Can't read .*missing"):
+        SOURCE.main(["--token-file", missing, "--guild", GUILD], _CliSink())
+    binary = tmp_path / "binary"
+    binary.write_bytes(b"\xff\xfe")
+    with pytest.raises(SystemExit, match="one line"):
+        main(["channels", "--token-file", str(binary), "--guild", GUILD])
+    token = tmp_path / "token"
+    token.write_text("t")
+    with pytest.raises(SystemExit, match="Can't read .*missing"):
+        main(
+            [
+                "channels",
+                "--token-file",
+                str(token),
+                "--guild",
+                GUILD,
+                "--channels-file",
+                missing,
+            ]
+        )

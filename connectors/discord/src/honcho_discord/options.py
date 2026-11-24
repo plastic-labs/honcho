@@ -24,7 +24,12 @@ def add_limit_option(parser: argparse.ArgumentParser) -> None:
 
 def read_token(path: str) -> str:
     """The bot token: one line of printable ASCII, never echoed."""
-    token = Path(path).expanduser().read_text(encoding="utf-8").strip()
+    try:
+        token = Path(path).expanduser().read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise SystemExit(f"Can't read {path}: {_reason(error)}") from None
+    except UnicodeDecodeError:
+        raise SystemExit(f"{path} should hold just the token, on one line") from None
     if not token:
         raise SystemExit(f"{path} is empty")
     if (
@@ -45,10 +50,22 @@ def channel_ids(args: argparse.Namespace) -> set[str] | None:
         return None
     ids = set(args.channel or [])
     if args.channels_file:
-        for line in Path(args.channels_file).expanduser().read_text().splitlines():
+        try:
+            text = Path(args.channels_file).expanduser().read_text(encoding="utf-8")
+        except OSError as error:
+            raise SystemExit(
+                f"Can't read {args.channels_file}: {_reason(error)}"
+            ) from None
+        except UnicodeDecodeError:
+            raise SystemExit(f"{args.channels_file} isn't a text file") from None
+        for line in text.splitlines():
             line = line.split("#", 1)[0].strip()
             if line:
                 ids.add(line)
     if not ids:
         raise SystemExit(f"{args.channels_file} lists no channel IDs")
     return ids
+
+
+def _reason(error: OSError) -> str:
+    return error.strerror or type(error).__name__

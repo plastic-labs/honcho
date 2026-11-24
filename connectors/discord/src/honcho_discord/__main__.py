@@ -20,8 +20,9 @@ import os
 import sys
 from pathlib import Path
 
-from honcho_discord.client import DiscordClient
+from honcho_discord.client import DiscordClient, DiscordError
 from honcho_discord.export import (
+    IngestError,
     IngestSink,
     JsonlSink,
     SelectionError,
@@ -129,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
         return _channels(args) if args.command == "channels" else _export(args)
-    except SelectionError as error:
+    except (SelectionError, DiscordError, IngestError) as error:
         raise SystemExit(str(error)) from None
 
 

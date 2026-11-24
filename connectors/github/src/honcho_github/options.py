@@ -32,7 +32,12 @@ def add_since_option(parser: argparse.ArgumentParser) -> None:
 
 def read_token(path: str) -> str:
     """The token: one line of printable ASCII, never echoed."""
-    token = Path(path).expanduser().read_text(encoding="utf-8").strip()
+    try:
+        token = Path(path).expanduser().read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise SystemExit(f"Can't read {path}: {_reason(error)}") from None
+    except UnicodeDecodeError:
+        raise SystemExit(f"{path} should hold just the token, on one line") from None
     if not token:
         raise SystemExit(f"{path} is empty")
     if (
@@ -55,3 +60,7 @@ def parse_since(value: str | None) -> str | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=datetime.UTC)
     return parsed.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _reason(error: OSError) -> str:
+    return error.strerror or type(error).__name__

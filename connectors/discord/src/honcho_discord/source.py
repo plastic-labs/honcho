@@ -11,7 +11,7 @@ import sys
 from collections.abc import Iterable, Mapping
 from typing import Any, Protocol
 
-from honcho_discord.client import DiscordClient
+from honcho_discord.client import DiscordClient, DiscordError
 from honcho_discord.export import SelectionError, export
 from honcho_discord.mapping import Container
 from honcho_discord.options import (
@@ -76,7 +76,7 @@ class DiscordSource:
                     channel_ids=selected,
                     limit_per_container=args.limit_per_container,
                 )
-        except SelectionError as error:
+        except (SelectionError, DiscordError) as error:
             raise SystemExit(str(error)) from None
         print(
             f"read {stats.records} records from {stats.containers} channels and"

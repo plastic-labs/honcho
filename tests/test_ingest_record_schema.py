@@ -53,6 +53,9 @@ def test_a_connector_record_validates_and_a_bad_one_does_not() -> None:
     assert list(
         validator.iter_errors({**RECORD, "container": {"id": "R_1", "nmae": "web"}})
     )
+    # Explicit session IDs follow the resource-name pattern, as ingest checks.
+    assert list(validator.iter_errors({**RECORD, "session_id": "bad/session"}))
+    assert list(validator.iter_errors({**RECORD, "session_id": "team_chat-1"})) == []
 
 
 @pytest.mark.parametrize(

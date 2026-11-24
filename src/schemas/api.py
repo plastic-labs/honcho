@@ -615,8 +615,9 @@ class IngestRecordCreate(BaseModel):
     session_id: (
         Annotated[
             str,
-            StorableOnly,
+            # Before the validator, so the pattern is in the published schema.
             Field(min_length=1, max_length=512, pattern=RESOURCE_NAME_PATTERN),
+            StorableOnly,
         ]
         | None
     ) = Field(

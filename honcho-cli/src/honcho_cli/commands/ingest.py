@@ -43,10 +43,10 @@ from pydantic import ValidationError
 from rich.table import Table
 from rich.text import Text
 
+from honcho_cli import ingest_sources
 from honcho_cli._help import HonchoTyperGroup
 from honcho_cli.commands.workspace import _handle_error
 from honcho_cli.common import add_common_options, get_client, handle_cmd_flags
-from honcho_cli import ingest_sources
 from honcho_cli.experimental import experimental
 from honcho_cli.experimental import require as require_experimental
 from honcho_cli.ingest_refs import resolve, save_listing
