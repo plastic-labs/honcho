@@ -5067,7 +5067,7 @@
           "graph"
         ],
         "summary": "Graph",
-        "description": "Structure-only conclusion graph as HONCHOGR v2 bytes. Experimental.",
+        "description": "Structure-only conclusion graph as an Arrow IPC stream. Experimental.",
         "operationId": "graph_v3_workspaces__workspace_id__graph_get",
         "security": [
           {
@@ -5135,12 +5135,18 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "The graph as an Arrow IPC stream.",
             "content": {
-              "application/json": {
-                "schema": {}
+              "application/vnd.apache.arrow.stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
               }
             }
+          },
+          "304": {
+            "description": "The graph matches the If-None-Match ETag."
           },
           "422": {
             "description": "Validation Error",

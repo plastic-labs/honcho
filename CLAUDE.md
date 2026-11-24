@@ -47,6 +47,7 @@ All API routes follow the pattern: `/v3/{resource}/{id}/{action}`. Most "list/se
 - **Sessions**: Create, list, update, delete, clone, manage peers, get context
 - **Messages**: Create (batch up to 100), upload (file), list, get, update
 - **Conclusions**: Create, list, query (semantic search), delete — the API-facing name for observations stored in `(observer, observed)` collections
+- **Graph** (experimental): the conclusion graph as an Arrow IPC stream (`GET /workspaces/{id}/graph`, capped by `GRAPH_MAX_CONCLUSIONS`), conclusion counts per observer and observed pair (`/graph/overview`), and text for up to 20,000 conclusion IDs (`POST /graph/text`). Workspace and admin keys only
 - **Keys**: Create scoped JWTs
 - **Tenants**: Create (idempotent), get, update (`PATCH`, `derivation_paused` only), delete — the above-tenant provisioning surface for control-plane use; authenticated by a service secret, not a JWT (see Tenant isolation)
 - **Webhooks**: Register endpoint, list, delete, test
@@ -243,9 +244,10 @@ src/
 │   ├── collection.py, deriver.py, document.py, message.py
 │   ├── peer.py, peer_card.py, representation.py  (RepresentationManager)
 │   ├── session.py, tenant.py, webhook.py, workspace.py
+│   ├── graph.py          # Conclusion graph query, columns, overview and text
 ├── routers/             # FastAPI route handlers (all under /v3)
 │   ├── workspaces.py, peers.py (dialectic /chat lives here), sessions.py
-│   ├── messages.py, conclusions.py, keys.py, tenants.py, webhooks.py
+│   ├── messages.py, conclusions.py, graph.py, keys.py, tenants.py, webhooks.py
 ├── dialectic/           # Dialectic agent — runs inline per chat request
 │   ├── chat.py           # agentic_chat() / agentic_chat_stream()
 │   ├── core.py           # DialecticAgent (the tool-loop driver)
@@ -295,6 +297,7 @@ src/
 │   ├── pagination.py     # List pagination: opt-in cursor mode + the cached offset shim
 │   ├── work_unit.py, queue_payload.py
 │   ├── config_helpers.py, json_parser.py, files.py
+│   ├── graph_arrow.py    # Arrow IPC encoding for the graph route (all arro3 calls)
 │   └── types.py
 └── webhooks/            # Webhook delivery
     ├── events.py

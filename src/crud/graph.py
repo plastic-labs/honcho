@@ -1,9 +1,8 @@
-import hashlib
 from array import array
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from itertools import accumulate, compress
+from itertools import accumulate
 from operator import itemgetter
 from typing import Any
 
@@ -27,18 +26,21 @@ from sqlalchemy.orm import aliased
 from sqlalchemy.sql import ColumnElement
 
 from src import models
-from src.crud.lifecycle import live_document_row
+from src.crud.lifecycle import live_document_row, live_peer_row, live_workspace_row
 from src.crud.peer import scope_peer_clause
 from src.deriver.scope_backfill import COPIED_FROM_KEY
-from src.utils.honchogr_reference import NO_COPIED_FROM, NULL_SESSION, TYPE_DICTIONARY
-
-_TYPE_INDEX = {name: i for i, name in enumerate(TYPE_DICTIONARY)}
+from src.exceptions import ResourceNotFoundException, ValidationException
 
 # Row kinds of the graph statement.
 ROW_NODE, ROW_LINK, ROW_MISSING, ROW_SCOPE = 0, 1, 2, 3
 
-# Classes of a source that is not a node of the response, in WIRE.md's terms.
+# Classes of a source that is not a conclusion in the response.
 OUTSIDE, DELETED, UNKNOWN = 0, 1, 2
+
+LINEAGE_NOT_APPLICABLE = "not_applicable"
+LINEAGE_COMPLETE = "complete"
+LINEAGE_PARTIAL = "partial"
+LINEAGE_UNKNOWN = "unknown"
 
 
 @dataclass
@@ -48,7 +50,6 @@ class PerspectiveSummary:
     conclusions: int
     derived: int
     newest_at: datetime | None
-    version: str
 
 
 @dataclass
@@ -56,42 +57,101 @@ class GraphOverview:
     workspace: str
     conclusions: int
     perspectives: list[PerspectiveSummary]
-    version: str
-
-
-def _u32() -> array[int]:
-    return array("I")
 
 
 @dataclass
 class GraphColumns:
-    """HONCHOGR v2 columns in node order: created_us, then ID bytes."""
+    """One entry per conclusion, ordered by creation time, then ID."""
 
     ids: list[str] = field(default_factory=list)
-    node_type: array[int] = field(default_factory=_u32)
-    node_session: array[int] = field(default_factory=_u32)
-    node_perspective: array[int] = field(default_factory=_u32)
+    levels: list[str] = field(default_factory=list)
+    observers: list[str] = field(default_factory=list)
+    observeds: list[str] = field(default_factory=list)
+    observer_kinds: list[str] = field(default_factory=list)
+    sessions: list[str | None] = field(default_factory=list)
     created_us: array[int] = field(default_factory=lambda: array("q"))
-    unresolved_outside: array[int] = field(default_factory=_u32)
-    unresolved_deleted: array[int] = field(default_factory=_u32)
-    unresolved_unknown: array[int] = field(default_factory=_u32)
-    times_derived: array[int] = field(default_factory=_u32)
-    node_flags: array[int] = field(default_factory=_u32)
-    copied_from: array[int] = field(default_factory=_u32)
-    csr_offsets: array[int] = field(default_factory=lambda: array("I", [0]))
-    csr_targets: array[int] = field(default_factory=_u32)
-    session_dict: list[str] = field(default_factory=list)
-    perspective_dict: list[tuple[str, str, str]] = field(default_factory=list)
+    times_derived: array[int] = field(default_factory=lambda: array("I"))
+    lineage: list[str] = field(default_factory=list)
+    unresolved_outside: array[int] = field(default_factory=lambda: array("I"))
+    unresolved_deleted: array[int] = field(default_factory=lambda: array("I"))
+    unresolved_unknown: array[int] = field(default_factory=lambda: array("I"))
+    is_copy: list[bool] = field(default_factory=list)
+    copied_from: list[int | None] = field(default_factory=list)
+    source_offsets: array[int] = field(default_factory=lambda: array("i", [0]))
+    source_targets: array[int] = field(default_factory=lambda: array("I"))
 
 
-def _version(*parts: Any) -> str:
-    return hashlib.sha256("|".join(map(str, parts)).encode()).hexdigest()[:16]
+async def require_graph_names(
+    db: AsyncSession, workspace_name: str, peer_names: Iterable[str | None]
+) -> None:
+    """Raise ResourceNotFoundException for a missing workspace or peer."""
+    W, P = models.Workspace, models.Peer
+    tenant = models.scoped_tenant_id()
+    workspace = await db.scalar(
+        select(W.name).where(
+            W.tenant_id == tenant, W.name == workspace_name, live_workspace_row()
+        )
+    )
+    if workspace is None:
+        raise ResourceNotFoundException(f"Workspace {workspace_name} not found")
+    wanted = sorted({name for name in peer_names if name is not None})
+    if not wanted:
+        return
+    found = set(
+        await db.scalars(
+            select(P.name).where(
+                P.tenant_id == tenant,
+                P.workspace_name == workspace_name,
+                P.name.in_(wanted),
+                live_peer_row(),
+            )
+        )
+    )
+    for name in wanted:
+        if name not in found:
+            raise ResourceNotFoundException(
+                f"Peer {name} not found in workspace {workspace_name}"
+            )
+
+
+async def get_graph_overview(db: AsyncSession, workspace_name: str) -> GraphOverview:
+    D = models.Document
+    n = func.count()
+    rows = (
+        await db.execute(
+            select(
+                D.observer,
+                D.observed,
+                n.label("n"),
+                func.count().filter(D.level != "explicit").label("derived"),
+                func.max(D.created_at).label("newest"),
+            )
+            .where(live_document_row(workspace_name))
+            .group_by(D.observer, D.observed)
+            .order_by(n.desc(), D.observer, D.observed)
+        )
+    ).all()
+    perspectives = [
+        PerspectiveSummary(
+            observer=r.observer,
+            observed=r.observed,
+            conclusions=r.n,
+            derived=r.derived,
+            newest_at=r.newest,
+        )
+        for r in rows
+    ]
+    return GraphOverview(
+        workspace=workspace_name,
+        conclusions=sum(p.conclusions for p in perspectives),
+        perspectives=perspectives,
+    )
 
 
 def _live(
     workspace_name: str, observer: str | None, observed: str | None
 ) -> list[ColumnElement[bool]]:
-    # same liveness as the conclusions list: hides rows under deleted peers and sessions, binds the tenant
+    # the conclusions list's liveness: hides rows under deleted peers and sessions
     D = models.Document
     if observer is not None and observed is not None:
         return [live_document_row(workspace_name, peer_pair=(observer, observed))]
@@ -103,63 +163,13 @@ def _live(
     return conds
 
 
-async def get_graph_overview(db: AsyncSession, workspace_name: str) -> GraphOverview:
-    D, C = models.Document, models.Collection
-    n = func.count()
-    # sum(times_derived) catches dedup reinforcement, which changes no timestamp
-    rows = (
-        await db.execute(
-            select(
-                D.observer,
-                D.observed,
-                n.label("n"),
-                func.count().filter(D.level != "explicit").label("derived"),
-                func.max(D.created_at).label("newest"),
-                func.sum(D.times_derived).label("reinforced"),
-            )
-            .where(live_document_row(workspace_name))
-            .group_by(D.observer, D.observed)
-            .order_by(n.desc(), D.observer, D.observed)
-        )
-    ).all()
-    generations = {
-        (r.observer, r.observed): r.deletion_generation
-        for r in (
-            await db.execute(
-                select(C.observer, C.observed, C.deletion_generation).where(
-                    C.tenant_id == models.scoped_tenant_id(),
-                    C.workspace_name == workspace_name,
-                )
-            )
-        ).all()
-    }
-    perspectives = [
-        PerspectiveSummary(
-            observer=r.observer,
-            observed=r.observed,
-            conclusions=r.n,
-            derived=r.derived,
-            newest_at=r.newest,
-            version=_version(
-                r.n, r.newest, r.reinforced, generations.get((r.observer, r.observed))
-            ),
-        )
-        for r in rows
-    ]
-    return GraphOverview(
-        workspace=workspace_name,
-        conclusions=sum(p.conclusions for p in perspectives),
-        perspectives=perspectives,
-        version=_version(*(p.version for p in perspectives)),
-    )
-
-
 def _graph_statement(
-    workspace_name: str, observer: str | None, observed: str | None
+    workspace_name: str, observer: str | None, observed: str | None, limit: int
 ) -> CompoundSelect[Any]:
     D, S = models.Document, models.DocumentSource
     tenant = models.scoped_tenant_id()
 
+    # one row past the limit tells build_graph_columns the graph is too large
     n = (
         select(
             D.id,
@@ -175,6 +185,7 @@ def _graph_statement(
             D.internal_metadata.has_key(COPIED_FROM_KEY).label("is_copy"),
         )
         .where(*_live(workspace_name, observer, observed))
+        .limit(limit + 1)
         .cte("n")
         .prefix_with("MATERIALIZED")
     )
@@ -182,7 +193,7 @@ def _graph_statement(
         select(S.derived_id, S.position, S.source_id)
         .select_from(n)
         .join(S, S.derived_id == n.c.id)
-        # n is already tenant-bound; constants on S prune its partitions and let the planner hash-join
+        # n is tenant-bound; constants on S prune partitions and allow a hash join
         .where(S.tenant_id == tenant, S.workspace_name == workspace_name)
         .cte("l")
     )
@@ -192,7 +203,7 @@ def _graph_statement(
         .distinct()
         .subquery("m")
     )
-    # Only rows of this tenant and workspace decide a class, so a source the caller cannot read stays unknown.
+    # only this tenant's workspace decides a class, so an unreadable source is unknown
     d = aliased(models.Document)
     source_class = case(
         (live_document_row(workspace_name, d, tenant_id=tenant), OUTSIDE),
@@ -267,11 +278,21 @@ def _graph_statement(
     return union_all(nodes, link_rows, missing_rows, scope_rows)
 
 
-def build_graph_columns(rows: Iterable[Sequence[Any]]) -> GraphColumns:
-    """Turn the rows of the graph statement into HONCHOGR v2 columns.
+def _lineage(level: str, unresolved: int, sources: int) -> str:
+    if unresolved:
+        return LINEAGE_PARTIAL
+    if level == "explicit":
+        return LINEAGE_NOT_APPLICABLE
+    return LINEAGE_COMPLETE if sources else LINEAGE_UNKNOWN
+
+
+def build_graph_columns(
+    rows: Iterable[Sequence[Any]], max_conclusions: int
+) -> GraphColumns:
+    """Turn the rows of the graph statement into columns.
 
     Raises:
-        ValueError: If a conclusion has a level outside the v2 type dictionary.
+        ValidationException: If the graph has more than max_conclusions conclusions.
     """
     nodes: list[Sequence[Any]] = []
     links: list[Sequence[Any]] = []
@@ -280,45 +301,36 @@ def build_graph_columns(rows: Iterable[Sequence[Any]]) -> GraphColumns:
     by_kind = (nodes.append, links.append, missing.append, scopes.append)
     for row in rows:
         by_kind[row[0]](row)
-    # created_us, then ID; Python orders str by code point, which is also UTF-8 byte order
+    if len(nodes) > max_conclusions:
+        raise ValidationException(
+            f"This graph has more than {max_conclusions:,} conclusions. "
+            + "Filter by observer or observed to request a smaller one."
+        )
+    # Python orders str by code point, which is also UTF-8 byte order
     nodes.sort(key=itemgetter(7, 1))
     count = len(nodes)
     columns = list(zip(*nodes, strict=True)) or [()] * 10
     ids, observers, observeds, levels, sessions = columns[1:6]
     refs, created_us, times_derived, copies = columns[6:10]
-
-    unknown_levels = set(levels) - _TYPE_INDEX.keys()
-    if unknown_levels:
-        raise ValueError(
-            f"HONCHOGR v2 has no type for conclusion levels {sorted(map(str, unknown_levels))}"
-        )
-    cols = GraphColumns(ids=list(ids))
-    index = dict(zip(cols.ids, range(count), strict=True))
-    cols.node_type = array("I", map(_TYPE_INDEX.__getitem__, levels))
-
-    cols.session_dict = sorted(set(sessions) - {None})
-    session_index: dict[str | None, int] = {None: NULL_SESSION}
-    session_index.update(
-        zip(cols.session_dict, range(len(cols.session_dict)), strict=True)
-    )
-    cols.node_session = array("I", map(session_index.__getitem__, sessions))
-
-    pairs = list(zip(observers, observeds, strict=True))
-    ordered_pairs = sorted(set(pairs))
-    perspective_index = dict(zip(ordered_pairs, range(len(ordered_pairs)), strict=True))
-    cols.node_perspective = array("I", map(perspective_index.__getitem__, pairs))
+    index = dict(zip(ids, range(count), strict=True))
     scope_observers = {row[2] for row in scopes}
-    cols.perspective_dict = [
-        (obs, obd, "scope" if obs in scope_observers else "peer")
-        for obs, obd in ordered_pairs
-    ]
 
-    cols.created_us = array("q", created_us)
-    cols.times_derived = array("I", times_derived)
-    cols.node_flags = array("I", map(bool, copies))
-    cols.copied_from = array("I", [NO_COPIED_FROM]) * count
-    for node in compress(range(count), copies):
-        cols.copied_from[node] = index.get(refs[node], NO_COPIED_FROM)
+    cols = GraphColumns(
+        ids=list(ids),
+        levels=list(levels),
+        observers=list(observers),
+        observeds=list(observeds),
+        observer_kinds=[
+            "scope" if obs in scope_observers else "peer" for obs in observers
+        ],
+        sessions=list(sessions),
+        created_us=array("q", created_us),
+        times_derived=array("I", times_derived),
+        is_copy=[bool(copy) for copy in copies],
+    )
+    cols.copied_from = [
+        index.get(ref) if copy else None for ref, copy in zip(refs, copies, strict=True)
+    ]
 
     classes = {row[6]: row[8] for row in missing}
     unresolved = tuple(array("I", [0]) * count for _ in range(3))
@@ -334,13 +346,19 @@ def build_graph_columns(rows: Iterable[Sequence[Any]]) -> GraphColumns:
     cols.unresolved_outside, cols.unresolved_deleted, cols.unresolved_unknown = (
         unresolved
     )
-    # a node's sources follow their position in document_sources
+    # a conclusion's sources follow their position in document_sources
     edges.sort()
-    cols.csr_targets = array("I", map(itemgetter(2), edges))
+    cols.source_targets = array("I", map(itemgetter(2), edges))
     degree = [0] * count
     for node, _, _ in edges:
         degree[node] += 1
-    cols.csr_offsets.extend(accumulate(degree))
+    cols.source_offsets.extend(accumulate(degree))
+    cols.lineage = [
+        _lineage(level, out + gone + unknown, sources)
+        for level, out, gone, unknown, sources in zip(
+            levels, *unresolved, degree, strict=True
+        )
+    ]
     return cols
 
 
@@ -349,10 +367,13 @@ async def get_graph_rows(
     workspace_name: str,
     observer: str | None,
     observed: str | None,
+    max_conclusions: int,
 ) -> Sequence[Sequence[Any]]:
-    # one statement so nodes, links and source classes come from the same snapshot under the autocommit read engine
-    # server-side cursors need a transaction, which the autocommit read engine never opens
-    result = await db.execute(_graph_statement(workspace_name, observer, observed))
+    # one statement, so nodes, links and source classes share a snapshot under the
+    # autocommit read engine, which never opens the transaction a server-side cursor
+    # would need
+    statement = _graph_statement(workspace_name, observer, observed, max_conclusions)
+    result = await db.execute(statement)
     return result.tuples().all()
 
 
@@ -361,10 +382,10 @@ async def get_graph_columns(
     workspace_name: str,
     observer: str | None,
     observed: str | None,
+    max_conclusions: int,
 ) -> GraphColumns:
-    return build_graph_columns(
-        await get_graph_rows(db, workspace_name, observer, observed)
-    )
+    rows = await get_graph_rows(db, workspace_name, observer, observed, max_conclusions)
+    return build_graph_columns(rows, max_conclusions)
 
 
 async def get_graph_text(

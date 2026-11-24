@@ -388,11 +388,11 @@ async def _conclusion_delete(db: AsyncSession, source_id: str) -> list[Any]:
 
 
 async def _graph_read(db: AsyncSession, _source_id: str) -> list[Any]:
-    cols = await graph_crud.get_graph_columns(db, "w", None, None)
+    cols = await graph_crud.get_graph_columns(db, "w", None, None, 1_000)
     texts = await graph_crud.get_graph_text(db, "w", cols.ids)
     return [
         len(cols.ids),
-        len(cols.csr_targets),
+        len(cols.source_targets),
         sum(cols.unresolved_outside),
         sum(cols.unresolved_deleted),
         sum(cols.unresolved_unknown),

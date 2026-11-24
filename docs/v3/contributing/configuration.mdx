@@ -673,6 +673,14 @@ WEBHOOK_SECRET=your-webhook-signing-secret
 WEBHOOK_MAX_WORKSPACE_LIMIT=10
 ```
 
+### Conclusion Graph
+
+`GET /v3/workspaces/{workspace_id}/graph` refuses a graph with more conclusions than this limit. The error asks the caller to filter by observer or observed, and `GET /v3/workspaces/{workspace_id}/graph/overview` lists each observer and observed pair with its count.
+
+```bash
+GRAPH_MAX_CONCLUSIONS=1000000
+```
+
 ### Vector Store
 
 ```bash
@@ -891,6 +899,9 @@ model = "gpt-5.4-mini"
 
 [webhook]
 MAX_WORKSPACE_LIMIT = 10
+
+[graph]
+MAX_CONCLUSIONS = 1000000
 
 [metrics]
 ENABLED = false
