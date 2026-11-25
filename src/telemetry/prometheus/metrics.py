@@ -163,6 +163,39 @@ embed_now_tasks_in_flight_gauge = NamespacedGauge(
     ["namespace"],
 )
 
+# Sized against GRAPH_MAX_CONCLUSIONS; see docs/v3/contributing/configuration.mdx
+graph_conclusions = NamespacedHistogram(
+    "graph_conclusions",
+    "Conclusions in each graph that GET /graph built",
+    ["namespace"],
+    buckets=(
+        1_000,
+        10_000,
+        50_000,
+        100_000,
+        200_000,
+        300_000,
+        500_000,
+        750_000,
+        1_000_000,
+    ),
+)
+
+graph_stage_seconds = NamespacedHistogram(
+    "graph_stage_seconds",
+    "Seconds each stage of GET /graph took: probe (the size check), wait (for "
+    + "another graph build in this process), db, build and encode",
+    ["namespace", "stage"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120),
+)
+
+graph_refused_counter = NamespacedCounter(
+    "graph_refused",
+    "GET /graph requests refused because the graph has more than "
+    + "GRAPH_MAX_CONCLUSIONS conclusions",
+    ["namespace"],
+)
+
 dialectic_calls_counter = TenantScopedCounter(
     "dialectic_calls",
     "Total dialectic calls",
@@ -497,6 +530,22 @@ class PrometheusMetrics:
         except Exception as e:
             self._handle_metric_error("record_pagination_offset_shim", e)
 
+    def record_graph_built(
+        self, *, conclusions: int, stages: Mapping[str, float]
+    ) -> None:
+        try:
+            graph_conclusions.labels().observe(conclusions)
+            for stage, seconds in stages.items():
+                graph_stage_seconds.labels(stage=stage).observe(seconds)
+        except Exception as e:
+            self._handle_metric_error("record_graph_built", e)
+
+    def record_graph_refused(self) -> None:
+        try:
+            graph_refused_counter.labels().inc()
+        except Exception as e:
+            self._handle_metric_error("record_graph_refused", e)
+
     def set_embed_now_tasks_in_flight(self, count: int) -> None:
         try:
             embed_now_tasks_in_flight_gauge.labels().set(count)
@@ -767,6 +816,7 @@ class PrometheusMetrics:
                     )
             # ai: embed_now fast path runs as an API-process background task
             self._touch(embed_now_tasks_shed_counter)
+            self._touch(graph_refused_counter)
             # The ingest route runs in the API process: every outcome, and every
             # rejection reason for the rejected outcome.
             from src.schemas.api import IngestRejectionReason

@@ -323,6 +323,18 @@ def _b_peer_config_get(c: TestClient, ws: str, s: str, p: str):
     return c.get(f"/v3/workspaces/{ws}/sessions/{s}/peers/{p}/config")
 
 
+def _b_graph_observer(c: TestClient, ws: str, _s: str, p: str):
+    return c.get(
+        f"/v3/workspaces/{ws}/graph", params={"observer": p, "observed": _OTHER}
+    )
+
+
+def _b_graph_observed(c: TestClient, ws: str, _s: str, p: str):
+    return c.get(
+        f"/v3/workspaces/{ws}/graph", params={"observer": _OTHER, "observed": p}
+    )
+
+
 # A plain peer used for the *other* side of two-position routes, so the position
 # under test is the only scope in the request. Created by the fixtures below.
 _OTHER = "policy-counterparty"
@@ -484,6 +496,33 @@ POLICY: tuple[Case, ...] = (
             "so the list is empty."
         ),
         build=_b_dreams_observed,
+        allow_status=(200,),
+    ),
+    Case(
+        "GET",
+        f"{_W}/graph",
+        "observer",
+        False,
+        reason=(
+            "Observer position on a read-only route that only admin and workspace "
+            "keys reach. The whole-workspace graph already includes every "
+            "perspective and marks scope observers, so naming a scope here returns "
+            "a subset of what the same key can already read."
+        ),
+        build=_b_graph_observer,
+        allow_status=(200,),
+    ),
+    Case(
+        "GET",
+        f"{_W}/graph",
+        "observed",
+        False,
+        reason=(
+            "Filter only, on a read-only route that only admin and workspace keys "
+            "reach. It returns conclusion structure and creates nothing; no "
+            "conclusion is ever about a scope, so the graph is empty."
+        ),
+        build=_b_graph_observed,
         allow_status=(200,),
     ),
     # ---- peer identity / membership mutation: never a scope ----

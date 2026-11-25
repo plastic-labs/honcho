@@ -33,6 +33,7 @@ from sqlalchemy_utils import (
 from src import crud, models, schemas
 from src.cache.client import cache
 from src.config import settings
+from src.crud import graph as graph_crud
 from src.crud import ingest as ingest_crud
 from src.crud import ingest_link, ingest_status
 from src.crud.message import (
@@ -386,6 +387,24 @@ async def _conclusion_delete(db: AsyncSession, source_id: str) -> list[Any]:
     return list(deleted)
 
 
+async def _graph_read(db: AsyncSession, _source_id: str) -> list[Any]:
+    cols = await graph_crud.get_graph_columns(db, "w", None, None, 1_000)
+    texts = await graph_crud.get_graph_text(db, "w", cols.ids)
+    return [
+        len(cols.ids),
+        len(cols.source_targets),
+        sum(cols.unresolved_outside),
+        sum(cols.unresolved_deleted),
+        sum(cols.unresolved_unknown),
+        sorted(c for _, c, _ in texts),
+    ]
+
+
+async def _graph_overview(db: AsyncSession, _source_id: str) -> list[Any]:
+    overview = await graph_crud.get_graph_overview(db, "w")
+    return [(p.observer, p.observed, p.conclusions) for p in overview.perspectives]
+
+
 async def _session_delete(db: AsyncSession, _source_id: str) -> list[Any]:
     deleted = await crud.delete_session(db, "w", "s")
     return [deleted.messages_deleted, deleted.conclusions_deleted]
@@ -405,6 +424,8 @@ _CASES: dict[str, _Case] = {
     "ingest link and reset": _ingest_link_and_reset,
     "conclusion soft delete": _conclusion_delete,
     "session delete": _session_delete,
+    "conclusion graph read": _graph_read,
+    "conclusion graph overview": _graph_overview,
 }
 
 

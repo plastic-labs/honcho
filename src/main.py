@@ -36,6 +36,7 @@ from src.routers import (
     conclusions,
     deriver_metrics,
     dreams,
+    graph,
     ingest,
     keys,
     messages,
@@ -240,6 +241,7 @@ app.include_router(scopes.router, prefix="/v3")
 app.include_router(messages.router, prefix="/v3")
 app.include_router(ingest.router, prefix="/v3")
 app.include_router(conclusions.router, prefix="/v3")
+app.include_router(graph.router, prefix="/v3")
 app.include_router(dreams.router, prefix="/v3")
 app.include_router(keys.router, prefix="/v3")
 # The tenant registry is the hosting provisioner's API, not part of the public

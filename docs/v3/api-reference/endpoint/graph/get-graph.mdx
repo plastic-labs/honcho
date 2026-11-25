@@ -1,0 +1,53 @@
+---
+openapi: get /v3/workspaces/{workspace_id}/graph
+---
+
+The response is an [Arrow IPC stream](https://arrow.apache.org/docs/format/Columnar.html#ipc-streaming-format) with one row per live conclusion, ordered by creation time and then ID. It carries no conclusion text. Fetch text for the conclusions you show with `POST /graph/text`.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `id` | string | The conclusion's ID |
+| `level` | dictionary | `explicit`, `deductive`, `inductive` or `contradiction` |
+| `observer`, `observed` | dictionary | The peers whose perspective holds the conclusion |
+| `observer_kind` | dictionary | `scope` when the observer is a scope, otherwise `peer` |
+| `session` | dictionary, nullable | The session the conclusion came from |
+| `created_at` | timestamp (µs, UTC) | When the conclusion was created |
+| `times_derived` | uint32 | How many times the conclusion was derived. It starts at 1 and grows each time a duplicate reinforces it |
+| `sources` | list of uint32 | Row numbers of this conclusion's sources in the response, in source order |
+| `unresolved_outside` | uint32 | Sources that are live but outside the requested observer and observed |
+| `unresolved_deleted` | uint32 | Sources that were deleted |
+| `unresolved_unknown` | uint32 | Other missing sources, such as an ID with no row in this workspace |
+| `lineage` | dictionary | `not_applicable` for an explicit conclusion, `complete` when every source is in the response, `partial` when any is missing, `unknown` for an inference with no recorded sources |
+| `is_copy` | bool | A scope backfill copied this conclusion from another perspective |
+| `copied_from` | uint32, nullable | Row number of the original, when it is in the response |
+
+The schema metadata key `honcho.graph.version` changes when a column changes meaning or type. New columns don't change it.
+
+A graph with more conclusions than the server's `GRAPH_MAX_CONCLUSIONS` (150,000 by default, provisional) returns a 422. Filter by `observer` or `observed`, and use `GET /graph/overview` to see each pair's count.
+
+Each response carries an `ETag`. Send it back in `If-None-Match` to get a 304 when nothing changed. The server still runs the full query before it compares.
+
+In TypeScript, [flechette](https://idl.uw.edu/flechette/) or [apache-arrow](https://arrow.apache.org/js/) read the stream:
+
+```typescript
+import { tableFromIPC } from "@uwdata/flechette";
+
+const response = await fetch(`${baseUrl}/v3/workspaces/${workspaceId}/graph`, {
+  headers: { Authorization: `Bearer ${apiKey}` },
+});
+const graph = tableFromIPC(new Uint8Array(await response.arrayBuffer()));
+const ids = graph.getChild("id").toArray();
+```
+
+In Python, pyarrow, polars and DuckDB read it directly:
+
+```python
+import httpx
+import pyarrow as pa
+
+response = httpx.get(
+    f"{base_url}/v3/workspaces/{workspace_id}/graph",
+    headers={"Authorization": f"Bearer {api_key}"},
+)
+graph = pa.ipc.open_stream(response.content).read_all()
+```

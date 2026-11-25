@@ -548,6 +548,14 @@
             ]
           },
           {
+            "group": "graph",
+            "pages": [
+              "v3/api-reference/endpoint/graph/get-graph",
+              "v3/api-reference/endpoint/graph/get-graph-overview",
+              "v3/api-reference/endpoint/graph/get-graph-text"
+            ]
+          },
+          {
             "group": "webhooks",
             "pages": [
               "v3/api-reference/endpoint/webhooks/list-webhook-endpoints",

@@ -1366,6 +1366,13 @@ class WebhookSettings(HonchoSettings):
     MAX_WORKSPACE_LIMIT: int = 10
 
 
+class GraphSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="GRAPH_", extra="ignore")  # pyright: ignore
+
+    # Above this, GET /graph asks the caller to filter by observer or observed.
+    MAX_CONCLUSIONS: Annotated[int, Field(gt=0)] = 150_000
+
+
 class MetricsSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="METRICS_", extra="ignore")  # pyright: ignore
     ENABLED: bool = False
@@ -1786,6 +1793,7 @@ class AppSettings(HonchoSettings):
     PEER_CARD: PeerCardSettings = Field(default_factory=PeerCardSettings)
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
+    GRAPH: GraphSettings = Field(default_factory=GraphSettings)
     METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
     TELEMETRY: TelemetrySettings = Field(default_factory=TelemetrySettings)
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
