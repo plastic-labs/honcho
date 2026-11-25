@@ -104,6 +104,7 @@ async def run():
             yield db
         search.tracked_db = tracked_db
         search.settings.EMBED_MESSAGES = False
+        search.settings.DB.SEARCH_STATEMENT_TIMEOUT_MS = 0
         rows = await search.search('needle', filters={{'workspace_id': 'workspace'}})
     assert rows == []
     assert len(db.statements) == 1

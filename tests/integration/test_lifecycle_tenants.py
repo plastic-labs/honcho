@@ -496,6 +496,7 @@ async def test_observation_context_neighbours_cannot_cross_service_tenants(
         yield db
 
     monkeypatch.setattr("src.crud.message.tracked_db", service_reader)
+    monkeypatch.setattr("src.crud.message.search_db", service_reader)
     snippets = await crud.grep_messages("same-ws", None, "only A target")
     assert len(snippets) == 1
     assert {row.tenant_id for _, context in snippets for row in context} == {

@@ -1,5 +1,6 @@
 """search.message_text_condition, message_text_page and matching_messages."""
 
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -10,6 +11,7 @@ from sqlalchemy.dialects import postgresql
 from src import models
 from src.config import settings
 from src.db import tenant_context
+from src.exceptions import SearchTimeoutError
 from src.utils.search import (
     TEXT_MATCH_PAGE_SIZE,
     matching_messages,
@@ -222,3 +224,72 @@ async def test_matching_messages_keeps_the_page_order_and_the_limit(
     )
 
     assert [m.id for m in found] == [9, 8]
+
+
+class _BudgetedPages(_Pages):
+    """`_Pages` inside a search budget: records the per-statement caps and can
+    run the budget out after a number of statements."""
+
+    def __init__(
+        self, pages: list[list[int]], kept: set[int], expire_after: int | None
+    ) -> None:
+        super().__init__(pages, kept)
+        self.info: dict[str, Any] = {"search_deadline": time.monotonic() + 3600}
+        self.caps: int = 0
+        self.queries: int = 0
+        self._expire_after: int | None = expire_after
+
+    async def execute(self, stmt: Any) -> Any:
+        sql, _ = _compile(stmt)
+        if "set_config" in sql:
+            self.caps += 1
+            return _Result()
+        self.queries += 1
+        if self._expire_after is not None and self.queries >= self._expire_after:
+            self.info["search_deadline"] = time.monotonic() - 1
+        return await super().execute(stmt)
+
+
+@pytest.mark.asyncio
+async def test_matching_messages_caps_every_statement_at_the_remaining_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    full = list(range(1, TEXT_MATCH_PAGE_SIZE + 1))
+    db = _BudgetedPages(pages=[full, full, [1]], kept=set(), expire_after=None)
+
+    await _bound(
+        lambda: matching_messages(
+            db,  # pyright: ignore[reportArgumentType]
+            select(models.Message),
+            "w",
+            "x",
+            use_fts=False,
+            limit=3,
+        )
+    )
+
+    assert db.queries == 6  # three pages, each a page read and a row fetch
+    assert db.caps == db.queries
+
+
+@pytest.mark.asyncio
+async def test_matching_messages_stops_when_the_budget_runs_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "MULTI_TENANT", True)
+    full = list(range(1, TEXT_MATCH_PAGE_SIZE + 1))
+    db = _BudgetedPages(pages=[full] * 10, kept=set(), expire_after=3)
+
+    with pytest.raises(SearchTimeoutError):
+        await _bound(
+            lambda: matching_messages(
+                db,  # pyright: ignore[reportArgumentType]
+                select(models.Message),
+                "w",
+                "x",
+                use_fts=False,
+                limit=3,
+            )
+        )
+    assert db.queries == 3

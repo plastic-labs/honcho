@@ -43,6 +43,10 @@ TRACING = false
 # Per-connection establish timeout (seconds) so a single connection attempt
 # fails fast instead of hanging when the server/pooler is unreachable.
 CONNECT_TIMEOUT_SECONDS = 2
+# Time budget for each message search and grep (milliseconds; 0 disables).
+# Covers the whole search; a search that runs out returns 504. A lower
+# statement_timeout already set on the database or role is kept.
+SEARCH_STATEMENT_TIMEOUT_MS = 60000
 # Seconds a migrator waits for another migrator's lock before failing.
 MIGRATION_LOCK_WAIT_SECONDS = 300
 

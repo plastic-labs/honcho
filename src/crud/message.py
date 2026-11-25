@@ -19,7 +19,12 @@ from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
 from src.utils.path_params import schema_from_path
 from src.utils.scopes import is_scope_peer_name
-from src.utils.search import matching_messages, message_text_condition
+from src.utils.search import (
+    bound_search_statement,
+    matching_messages,
+    message_text_condition,
+    search_db,
+)
 from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
 
@@ -398,6 +403,7 @@ async def _build_merged_snippets(
         )
     )
 
+    await bound_search_statement(db)
     context_result = await db.execute(context_stmt)
     by_session: dict[tuple[str, str], list[models.Message]] = {}
     for msg in context_result.scalars().all():
@@ -1213,6 +1219,7 @@ async def _grep_messages_internal(
             .order_by(models.Message.created_at.desc())
             .limit(limit)
         )
+        await bound_search_statement(db)
         matched_messages = list((await db.execute(match_stmt)).scalars().all())
 
     return await _build_merged_snippets(
@@ -1265,7 +1272,7 @@ async def grep_messages(
     if deny:
         return []
 
-    async with tracked_db("message.grep_messages", read_only=True) as db:
+    async with search_db("message.grep_messages") as db:
         snippets = await _grep_messages_internal(
             db,
             workspace_name,
