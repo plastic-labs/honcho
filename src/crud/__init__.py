@@ -82,6 +82,7 @@ from .scope import (
     remove_sessions_from_scope,
     resolve_scope_peers,
     resolve_scope_session_union,
+    session_in_no_scope_clause,
     session_in_scope_clause,
     update_scope_backfill_status,
 )
@@ -204,6 +205,7 @@ __all__ = [
     "remove_sessions_from_scope",
     "resolve_scope_peers",
     "resolve_scope_session_union",
+    "session_in_no_scope_clause",
     "session_in_scope_clause",
     "update_scope_backfill_status",
     # Session

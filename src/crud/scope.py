@@ -402,8 +402,9 @@ def _active_scope_membership() -> ColumnElement[bool]:
     """Join condition: a ``SessionPeer`` row is an active membership of a scope.
 
     The one definition every scope membership read builds on: the member list,
-    the per-scope count, and the session list's ``scope`` filter,
-    ``in_no_scope`` and ``include_scopes``. It also joins the row to its
+    the per-scope count, and the session list's ``scope`` filter and
+    ``include_scopes``. (``in_no_scope`` has its own, cheaper to plan, form:
+    ``session_in_no_scope_clause``.) It also joins the row to its
     ``Session``, so it serves as a join's ON clause or as the WHERE of a
     subquery correlated to an outer ``Session``.
 
@@ -507,27 +508,68 @@ async def get_scope_sessions(
     return stmt.order_by(models.SessionPeer.joined_at.asc(), models.Session.id.asc())
 
 
-def session_in_scope_clause(scope_name: str | None) -> ColumnElement[bool]:
+def session_in_scope_clause(scope_name: str) -> ColumnElement[bool]:
     """Correlated EXISTS: the outer ``Session`` is an active member of a scope.
 
     Membership as ``_active_scope_membership`` defines it, like every other
     scope membership read.
 
     Args:
-        scope_name: Unprefixed scope name, or None to match membership of any
-            scope. Callers check a named scope exists (``get_scope_or_raise``).
+        scope_name: Unprefixed scope name. Callers check the scope exists
+            (``get_scope_or_raise``).
 
     Returns:
         A clause to put in the WHERE of a query over ``models.Session``
     """
-    stmt = (
+    return (
         select(models.SessionPeer.peer_name)
         .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
         .where(_active_scope_membership())
+        .where(models.SessionPeer.peer_name == scope_peer_name(scope_name))
+        .exists()
     )
-    if scope_name is not None:
-        stmt = stmt.where(models.SessionPeer.peer_name == scope_peer_name(scope_name))
-    return stmt.exists()
+
+
+def session_in_no_scope_clause(workspace_name: str) -> ColumnElement[bool]:
+    """The outer ``Session`` is an active member of no scope.
+
+    A NOT EXISTS correlated to the session by equality only, on
+    ``(tenant_id, workspace_name, name)``, so Postgres can plan it as a hash
+    anti join, which spills to disk when the member list outgrows ``work_mem``.
+    Built on ``_active_scope_membership`` it was planned as a nested loop that
+    re-read every membership in the workspace for each session. Don't write it
+    as ``NOT IN (subquery)`` either: that is hashed only while the list fits
+    in ``work_mem``, and past that the list is rescanned for each session. The
+    caller's query already requires an active,
+    live session in a live workspace, so only the membership and its scope peer
+    are checked here.
+
+    Args:
+        workspace_name: Name of the workspace the outer query lists
+
+    Returns:
+        A clause to put in the WHERE of a query over ``models.Session``
+    """
+    return ~(
+        select(models.SessionPeer.session_name)
+        .join(
+            models.Peer,
+            and_(
+                models.Peer.tenant_id == models.SessionPeer.tenant_id,
+                models.Peer.workspace_name == models.SessionPeer.workspace_name,
+                models.Peer.name == models.SessionPeer.peer_name,
+            ),
+        )
+        .where(models.SessionPeer.tenant_id == models.scoped_tenant_id())
+        .where(models.SessionPeer.workspace_name == workspace_name)
+        .where(models.SessionPeer.tenant_id == models.Session.tenant_id)
+        .where(models.SessionPeer.workspace_name == models.Session.workspace_name)
+        .where(models.SessionPeer.session_name == models.Session.name)
+        .where(models.SessionPeer.left_at.is_(None))
+        .where(models.Peer.deleted_at.is_(None))
+        .where(scope_peer_clause())
+        .exists()
+    )
 
 
 async def get_session_scopes(
