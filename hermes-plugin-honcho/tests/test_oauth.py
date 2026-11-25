@@ -137,13 +137,13 @@ class TestEnsureFreshToken:
 
 
 class TestInstallGrant:
-    def test_deep_merges_config_and_preserves_other_hosts(self, tmp_path):
+    def test_applies_config_to_its_block_only_and_signs_in_to_cloud(self, tmp_path):
         path = tmp_path / "honcho.json"
         _write(path, {
             "apiKey": "hch-v3-root",  # root static key preserved
             "hosts": {
                 "obsidian": {"workspace": "obsidian"},
-                "hermes": {"workspace": "hermes", "saveMessages": False},
+                "hermes": {"workspace": "hermes", "saveMessages": False, "baseUrl": "http://localhost:8000"},
             },
         })
         grant = {
@@ -153,6 +153,7 @@ class TestInstallGrant:
             "scope": "write",
             "config": {
                 "environment": "production",
+                "peerName": "user",
                 "hosts": {"hermes": {"saveMessages": True, "recallMode": "hybrid"}},
             },
         }
@@ -173,7 +174,9 @@ class TestInstallGrant:
         assert h["saveMessages"] is True  # grant config won the deep-merge
         assert h["recallMode"] == "hybrid"  # new key added
         assert h["workspace"] == "hermes"  # pre-existing key preserved
-        assert saved["environment"] == "production"  # root key from grant
+        assert h["peerName"] == "user"  # the config's top-level settings land in the block too
+        assert "baseUrl" not in h and "environment" not in h  # signing in makes Honcho cloud the server
+        assert "environment" not in saved and h["schemaVersion"] == 2
 
     def test_rejects_grant_without_tokens(self, tmp_path):
         path = tmp_path / "honcho.json"

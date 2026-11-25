@@ -614,18 +614,13 @@ class TestAuthNotice:
             def pop_auth_notice(self):
                 return self.notices.pop() if self.notices else None
 
-            def pop_context_result(self, session_key):
-                return {}
-
         provider = HonchoMemoryProvider()
         provider._manager = _FakeManager()
-        provider._config = SimpleNamespace(timeout=0.01, context_tokens=0)
+        provider._config = SimpleNamespace(timeout=0.01)
         provider._session_key = "k"
         provider._session_initialized = True
-        provider._recall_mode = "context"
         provider._turn_count = 2
         provider._last_dialectic_turn = 0
-        provider._base_context_cache = ""
 
         first = provider.prefetch("what did we decide about the schema?")
         assert "hermes honcho setup" in first
@@ -653,38 +648,41 @@ class TestBackoffExemption:
 
 
 # ---------------------------------------------------------------------------
-# session: context/search 401 recovery through _authed_call
+# session: representation/search 401 recovery through _authed_call
 # ---------------------------------------------------------------------------
 
 
-class _FlakyContextPeer:
-    """context() raises an auth error N times, then succeeds."""
+class _FlakyRepresentationPeer:
+    """representation() raises an auth error N times, then succeeds."""
 
-    def __init__(self, failures: int, representation: str = "knows Python"):
+    def __init__(self, failures: int, text: str = "knows Python"):
         self.failures = failures
-        self.representation = representation
+        self.text = text
         self.calls = 0
 
-    def context(self, **kw):
+    def representation(self, **kw):
         self.calls += 1
         if self.calls <= self.failures:
             raise Exception("Invalid or expired access token")
-        return SimpleNamespace(representation=self.representation, peer_card=["fact one"])
+        return self.text
+
+    def get_card(self, **kw):
+        return ["fact one"]
 
 
-class TestContextAuthRetry:
+class TestRepresentationAuthRetry:
     def test_401_forces_refresh_and_retries_once(self):
-        peer = _FlakyContextPeer(failures=1)
+        peer = _FlakyRepresentationPeer(failures=1)
         mgr = _make_manager(peer)
-        ctx = mgr.get_session_context("k")
-        assert ctx["representation"] == "knows Python"
+        rep = mgr.get_ai_representation("k")
+        assert rep["representation"] == "knows Python"
         assert peer.calls == 2  # original + one retry
 
     def test_persistent_401_records_failure_and_notices_once(self):
-        peer = _FlakyContextPeer(failures=99)
+        peer = _FlakyRepresentationPeer(failures=99)
         mgr = _make_manager(peer)
         with pytest.raises(HonchoAuthError):
-            mgr.get_session_context("k")
+            mgr.get_ai_representation("k")
         assert peer.calls == 2  # exactly one retry, no loop
         assert mgr._auth_failure is not None
         assert mgr.pop_auth_notice() is not None
@@ -704,13 +702,13 @@ class TestContextAuthRetry:
         assert _FlakyCardPeer.calls == 1
 
 
-class TestDeadGrantSkipsContextAndSearch:
-    def test_dead_grant_issues_no_context_call(self, tmp_path, monkeypatch):
+class TestDeadGrantSkipsReadsAndSearch:
+    def test_dead_grant_issues_no_representation_call(self, tmp_path, monkeypatch):
         _kill_grant(tmp_path, monkeypatch)
-        peer = _FlakyContextPeer(failures=0)
+        peer = _FlakyRepresentationPeer(failures=0)
         mgr = _make_manager(peer)
         with pytest.raises(HonchoAuthError):
-            mgr.get_session_context("k")
+            mgr.get_ai_representation("k")
         assert peer.calls == 0
 
     def test_dead_grant_issues_no_search_call(self, tmp_path, monkeypatch):
@@ -719,31 +717,19 @@ class TestDeadGrantSkipsContextAndSearch:
         _kill_grant(tmp_path, monkeypatch)
         client = MagicMock()
         monkeypatch.setattr(session_mod, "get_honcho_client", lambda *a, **k: client)
-        mgr = _make_manager(_FlakyContextPeer(failures=0))
+        mgr = _make_manager(_FlakyRepresentationPeer(failures=0))
         with pytest.raises(HonchoAuthError):
             mgr.search_context("k", "query")
         client.search.assert_not_called()
 
-    def test_dead_grant_prefetch_returns_empty_and_arms_notice(self, tmp_path, monkeypatch):
-        _kill_grant(tmp_path, monkeypatch)
-        peer = _FlakyContextPeer(failures=0)
-        mgr = _make_manager(peer)
-        assert mgr.get_prefetch_context("k") == {}
-        assert peer.calls == 0
-        assert mgr.pop_auth_notice() is not None
-
-
 class TestNonAuthFailuresNotRetried:
-    def test_context_timeout_fails_open_without_refresh(self):
+    def test_representation_timeout_fails_open_without_refresh(self):
         class _TimeoutPeer:
             calls = 0
 
             def _fail(self):
                 type(self).calls += 1
                 raise TimeoutError("request timed out")
-
-            def context(self, **kw):
-                self._fail()
 
             def representation(self, **kw):
                 self._fail()
@@ -756,9 +742,9 @@ class TestNonAuthFailuresNotRetried:
         reauths = []
         mgr._force_reauth = lambda **kw: reauths.append(1) or True
 
-        ctx = mgr.get_session_context("k")
-        assert ctx == {"representation": "", "card": []}
-        assert _TimeoutPeer.calls == 3  # context, representation, card — no retries
+        rep = mgr.get_ai_representation("k")
+        assert rep == {"representation": "", "card": ""}
+        assert _TimeoutPeer.calls == 2  # representation, card — no retries
         assert reauths == []
 
     def test_search_timeout_fails_open_without_refresh(self, monkeypatch):
@@ -841,14 +827,13 @@ class TestClientRebuildRetry:
         assert all(m["_synced"] for m in session.messages)
         assert mgr._auth_failure is None
 
-    def test_context_retry_uses_rebuilt_peer_not_stale(self, tmp_path, monkeypatch):
+    def test_representation_retry_uses_rebuilt_peer_not_stale(self, tmp_path, monkeypatch):
         stale_peer = MagicMock()
-        stale_peer.context.side_effect = Exception("Invalid or expired access token")
+        stale_peer.representation.side_effect = Exception("Invalid or expired access token")
 
         fresh_peer = MagicMock()
-        fresh_peer.context.return_value = SimpleNamespace(
-            representation="rep after rebuild", peer_card=["fact"]
-        )
+        fresh_peer.representation.return_value = "rep after rebuild"
+        fresh_peer.get_card.return_value = ["fact"]
         fresh_client = MagicMock()
         fresh_client.peer.return_value = fresh_peer
 
@@ -856,15 +841,15 @@ class TestClientRebuildRetry:
 
         cfg = HonchoClientConfig(host="hermes", api_key="hch-at-x", enabled=True)
         mgr = HonchoSessionManager(config=cfg)
-        mgr._peers_cache["u"] = stale_peer
+        mgr._peers_cache["a"] = stale_peer
         mgr._cache["k"] = HonchoSession(
             key="k", user_peer_id="u", assistant_peer_id="a", honcho_session_id="s"
         )
 
-        ctx = mgr.get_session_context("k")
-        assert ctx["representation"] == "rep after rebuild"
-        assert stale_peer.context.call_count == 1
-        assert fresh_peer.context.call_count == 1
+        rep = mgr.get_ai_representation("k")
+        assert rep["representation"] == "rep after rebuild"
+        assert stale_peer.representation.call_count == 1
+        assert fresh_peer.representation.call_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -880,13 +865,13 @@ class TestToolAuthVisibility:
         provider._session_initialized = True
         return provider
 
-    def test_context_tool_reports_auth_failure(self):
+    def test_chat_tool_reports_auth_failure(self):
         class _Mgr:
-            def get_session_context(self, key, peer="user"):
+            def dialectic_query(self, key, query, **kwargs):
                 raise HonchoAuthError("Honcho rejected our credentials")
 
-        out = self._provider(_Mgr()).handle_tool_call("honcho_context", {})
-        assert "No context available" not in out
+        out = self._provider(_Mgr()).handle_tool_call("honcho_chat", {"query": "what do I prefer?"})
+        assert "No result from Honcho" not in out
         assert "authentication failed" in out
 
     def test_search_tool_reports_auth_failure(self):
@@ -927,7 +912,7 @@ def _healthy_client():
     return client
 
 
-def _wire_init(tmp_path, monkeypatch, client, *, recall_mode="hybrid", dead_refresh=True):
+def _wire_init(tmp_path, monkeypatch, client, *, dead_refresh=True):
     """Route provider initialization through a real manager backed by ``client``."""
     from hermes_plugin_honcho import client as client_mod
     from hermes_plugin_honcho import session as session_mod
@@ -940,8 +925,7 @@ def _wire_init(tmp_path, monkeypatch, client, *, recall_mode="hybrid", dead_refr
     if dead_refresh:
         monkeypatch.setattr(oauth, "force_refresh_token", lambda p, h, **kw: None)
     cfg = HonchoClientConfig(
-        host="hermes", api_key="hch-at-old", enabled=True, recall_mode=recall_mode,
-        timeout=0.5, session_strategy="per-session", peer_name="operator",
+        host="hermes", api_key="hch-at-old", enabled=True, timeout=0.5, peer_name="operator",
     )
     monkeypatch.setattr(
         client_mod.HonchoClientConfig, "from_global_config", lambda *a, **k: cfg
@@ -958,7 +942,7 @@ def _initialized_provider():
 
 
 class TestInitAuthFailureNotice:
-    def test_peer_setup_401_in_hybrid_mode_produces_notice(self, tmp_path, monkeypatch):
+    def test_peer_setup_401_produces_notice(self, tmp_path, monkeypatch):
         client = MagicMock()
         client.peer.side_effect = Exception("HTTP 401 Unauthorized")
         _wire_init(tmp_path, monkeypatch, client)
@@ -1000,10 +984,10 @@ class TestInitAuthFailureNotice:
         notice = provider.prefetch("what happened before the grant died?")
         assert "hermes honcho setup" in notice
 
-    def test_tools_lazy_init_reports_auth_error(self, tmp_path, monkeypatch):
+    def test_tool_call_after_failed_init_reports_auth_error(self, tmp_path, monkeypatch):
         client = MagicMock()
         client.peer.side_effect = Exception("Invalid or expired access token")
-        _wire_init(tmp_path, monkeypatch, client, recall_mode="tools")
+        _wire_init(tmp_path, monkeypatch, client)
         provider = _initialized_provider()
 
         out = provider.handle_tool_call("honcho_profile", {})
@@ -1027,10 +1011,10 @@ class TestInitAuthFailureNotice:
         assert provider._manager is not None
         assert provider._init_auth_failure is None
 
-    def test_tools_relogin_resumes_without_restart(self, tmp_path, monkeypatch):
+    def test_tool_call_relogin_resumes_without_restart(self, tmp_path, monkeypatch):
         client = _healthy_client()
         client.peer.side_effect = Exception("Invalid or expired access token")
-        path = _wire_init(tmp_path, monkeypatch, client, recall_mode="tools")
+        path = _wire_init(tmp_path, monkeypatch, client)
         provider = _initialized_provider()
         assert "authentication failed" in provider.handle_tool_call("honcho_profile", {})
 
@@ -1055,10 +1039,10 @@ class TestInitAuthFailureNotice:
         assert provider.prefetch("a real question") == ""
         assert reauths == []
 
-    def test_non_auth_tools_init_failure_keeps_generic_error(self, tmp_path, monkeypatch):
+    def test_non_auth_init_failure_keeps_generic_tool_error(self, tmp_path, monkeypatch):
         client = MagicMock()
         client.peer.side_effect = TimeoutError("request timed out")
-        _wire_init(tmp_path, monkeypatch, client, recall_mode="tools", dead_refresh=False)
+        _wire_init(tmp_path, monkeypatch, client, dead_refresh=False)
         provider = _initialized_provider()
 
         out = provider.handle_tool_call("honcho_profile", {})

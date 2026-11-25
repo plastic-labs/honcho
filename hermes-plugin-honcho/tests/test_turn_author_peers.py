@@ -155,22 +155,18 @@ class TestFlushAttributesMessages:
         assert honcho_session.add_peers.call_count == 1
 
 
-    def test_author_join_uses_the_sessions_synced_observation_flags(self):
-        """The server's per-session config (synced at setup) drives the join, not the manager-wide snapshot,
-        so two sessions with different server settings do not share one join config (#98936)."""
+    def test_author_joins_observing_only_itself(self):
+        """Every peer in a session observes itself and nobody else, the author of a shared turn included."""
         mgr = _manager(_config(), runtime_id="7654321")
         session = self._session(mgr)
         honcho_session = MagicMock()
         mgr._sessions_cache[session.honcho_session_id] = honcho_session
-        mgr._session_observation[session.honcho_session_id] = {
-            "user_observe_me": False, "user_observe_others": False, "ai_observe_me": True, "ai_observe_others": True}
 
         session.add_message("user", "hello", author_peer_id="alice")
         assert mgr._flush_session(session) is True
 
         (_, join_config), = honcho_session.add_peers.call_args[0][0]
-        assert (join_config.observe_me, join_config.observe_others) == (False, False)
-        assert (mgr._user_observe_me, mgr._user_observe_others) != (False, False)
+        assert (join_config.observe_me, join_config.observe_others) == (True, False)
 
     def test_join_failure_still_writes_under_the_author(self):
         """A failed join loses the observe config, never the attribution."""

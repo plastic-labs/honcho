@@ -16,16 +16,7 @@ def _make_provider(**cfg_overrides) -> HonchoMemoryProvider:
     provider._session_initialized = True  # bypass the lazy _ensure_session() gate
     provider._cron_skipped = False
 
-    cfg = MagicMock()
-    # Defaults match HonchoClientConfig defaults
-    cfg.user_observe_me = cfg_overrides.get("user_observe_me", True)
-    cfg.user_observe_others = cfg_overrides.get("user_observe_others", True)
-    cfg.ai_observe_me = cfg_overrides.get("ai_observe_me", True)
-    cfg.ai_observe_others = cfg_overrides.get("ai_observe_others", True)
-    cfg.message_max_chars = 25000
-    provider._config = cfg
-
-    provider._dialectic_cadence = cfg_overrides.get("dialectic_cadence", 1)
+    provider._config = MagicMock()
     provider._turn_count = cfg_overrides.get("turn_count", 5)
     return provider
 
@@ -39,12 +30,12 @@ class TestEmptyProfileHint:
         assert "hint" in payload
         assert "not an error" in payload["hint"].lower()
 
-    def test_hint_mentions_warmup_when_turn_count_below_cadence(self):
-        provider = _make_provider(turn_count=1, dialectic_cadence=3)
+    def test_hint_mentions_warmup_on_an_early_turn(self):
+        provider = _make_provider(turn_count=1)
         raw = provider.handle_tool_call("honcho_profile", {})
         payload = json.loads(raw)
         assert "turn" in payload["hint"].lower()
-        assert "cadence" in payload["hint"].lower()
+        assert "accumulate" in payload["hint"].lower()
 
 
     def test_populated_card_returns_card_without_hint(self):

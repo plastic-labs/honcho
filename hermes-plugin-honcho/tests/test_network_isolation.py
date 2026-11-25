@@ -34,7 +34,7 @@ class TestConstructorRace:
         every flush; no real transport is ever touched (network guard active)."""
         fake = MagicMock()
         monkeypatch.setattr(session_module, "get_honcho_client", lambda *a, **k: fake)
-        cfg = HonchoClientConfig(write_frequency="async", api_key="test-key", enabled=True)
+        cfg = HonchoClientConfig(api_key="test-key", enabled=True)
         mgr = HonchoSessionManager(honcho=fake, config=cfg)
         try:
             sess = _session()
@@ -50,7 +50,7 @@ class TestConstructorRace:
 
     def test_construction_spawns_no_thread_and_no_network(self):
         """Constructing a manager (async mode) does nothing externally."""
-        cfg = HonchoClientConfig(write_frequency="async", api_key="test-key", enabled=True)
+        cfg = HonchoClientConfig(api_key="test-key", enabled=True)
         mgr = HonchoSessionManager(config=cfg)
         try:
             assert mgr._async_thread is None
@@ -72,7 +72,7 @@ class TestAmbientProductionConfig:
         monkeypatch.setenv("HERMES_HOME", str(home))
         fake = MagicMock()
         monkeypatch.setattr(session_module, "get_honcho_client", lambda *a, **k: fake)
-        cfg = HonchoClientConfig(write_frequency="async", api_key="live-looking-key", enabled=True)
+        cfg = HonchoClientConfig(api_key="live-looking-key", enabled=True)
         mgr = HonchoSessionManager(honcho=fake, config=cfg)
         try:
             sess = _session(sid="cli-test")
@@ -96,7 +96,7 @@ class TestThreadCleanup:
         """Regression 3: after shutdown - queue drained, thread stopped."""
         fake = MagicMock()
         monkeypatch.setattr(session_module, "get_honcho_client", lambda *a, **k: fake)
-        cfg = HonchoClientConfig(write_frequency="async", api_key="test-key", enabled=True)
+        cfg = HonchoClientConfig(api_key="test-key", enabled=True)
         mgr = HonchoSessionManager(honcho=fake, config=cfg)
         sess = _session()
         sess.add_message("user", "bye")

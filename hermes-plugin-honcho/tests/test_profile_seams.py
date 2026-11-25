@@ -33,22 +33,25 @@ def test_profile_create_rename_and_panel_round_trip():
     coder.mkdir(parents=True)
     with _profile_home(coder), mock.patch("hermes_plugin_honcho.cli._ensure_peer_exists", return_value=True):
         provider.on_profile_created("coder", str(coder))
-    # The block lands in the file the profile reads; the profile gets no copy of everyone's credentials.
-    assert not (coder / "honcho.json").exists()
-    block = json.loads(honcho_json.read_text())["hosts"]["hermes_coder"]
-    assert block == {"aiPeer": "coder", "workspace": "hermes", "peerName": "user", "recallMode": "tools", "enabled": True}
+    # The block lands in the profile's own file: what it read from the default profile's file until now (the
+    # top-level key), then the clone. No other host's block or credential comes with it.
+    coder_json = coder / "honcho.json"
+    assert json.loads(coder_json.read_text()) == {"hosts": {"hermes_coder": {
+        "apiKey": "hch-v3-root", "aiPeer": "coder", "workspace": "hermes", "peerName": "user",
+        "enabled": True, "schemaVersion": 2}}}
+    assert "hermes_coder" not in json.loads(honcho_json.read_text())["hosts"]
 
     writer = default_home / "profiles" / "writer"
     coder.rename(writer)
     with _profile_home(writer):
         provider.on_profile_renamed("coder", "writer", str(writer))
-    hosts = json.loads(honcho_json.read_text())["hosts"]
+    hosts = json.loads((writer / "honcho.json").read_text())["hosts"]
     assert "hermes_coder" not in hosts
     assert hosts["hermes_writer"]["aiPeer"] == "coder"  # the peer keeps its identity
 
     stored = provider.read_config_fields(str(default_home))
     assert stored["values"]["workspace"] == "hermes"
-    assert stored["values"]["apiKey"] == "hch-v3-root"  # host-scoped field falls back to the root
+    assert stored["values"]["apiKey"] == "hch-v3-root"  # the top-level key 1.1.0 read, now in the block
     assert stored["placeholders"] == {"workspace": "hermes", "aiPeer": "hermes"}
 
     provider.write_config_fields(
@@ -56,9 +59,9 @@ def test_profile_create_rename_and_panel_round_trip():
         str(default_home),
     )
     cfg = json.loads(honcho_json.read_text())
-    assert cfg["baseUrl"] == "http://localhost:8000"  # root-scoped
-    assert cfg["hosts"]["hermes"] == {"workspace": "ws2", "peerName": "user", "apiKey": "hch-v3-new"}
-    assert cfg["hosts"]["hermes_writer"] == hosts["hermes_writer"]  # other hosts untouched
+    assert cfg["hosts"]["hermes"] == {"workspace": "ws2", "peerName": "user", "apiKey": "hch-v3-new",
+                                      "baseUrl": "http://localhost:8000", "schemaVersion": 2}
+    assert "baseUrl" not in cfg  # every field is the block's
 
 
 def test_panel_refuses_to_overwrite_an_unparseable_config():

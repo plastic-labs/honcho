@@ -1,8 +1,7 @@
 """Honcho client construction and ``HonchoClientConfig`` resolution.
 
-Config file resolution: $HERMES_HOME/honcho.json -> ~/.honcho/config.json -> env vars
-(HONCHO_API_KEY, HONCHO_ENVIRONMENT). Within a file, host-block fields win over
-flat/global fields, which win over defaults.
+A profile's settings are ``hosts.<host>`` of ``$HERMES_HOME/honcho.json`` and nothing else in any file
+(see ``host_config``), then env vars (HONCHO_API_KEY, HONCHO_BASE_URL, HONCHO_TIMEOUT), then defaults.
 """
 
 from __future__ import annotations
@@ -29,14 +28,11 @@ from urllib.parse import urlparse
 
 from agent.memory_provider import spawn_context_thread as _spawn_context_thread
 from agent.secret_scope import get_secret
-from hermes_cli.profiles import _get_default_hermes_home
 from hermes_constants import get_hermes_home
-from hermes_state_common import TITLE_SOURCE_DERIVED, TITLE_SOURCE_LLM
 
 from .attribution import HONCHO_APP_URL, attribution_url
 from .client_cache import (
-    _DEFAULT_HTTP_TIMEOUT, _client_cache_key, _client_slots, _client_slots_lock,
-    _honcho_json_timeout_memo, _refresh_oauth, _slot_for,
+    _DEFAULT_HTTP_TIMEOUT, _client_cache_key, _client_slots, _client_slots_lock, _refresh_oauth, _slot_for,
 )
 
 if TYPE_CHECKING:
@@ -46,7 +42,6 @@ logger = logging.getLogger(__name__)
 
 HOST = "hermes"
 PLUGIN = "hermes-plugin-honcho"
-_AUTOMATIC_SESSION_TITLE_SOURCES = frozenset({TITLE_SOURCE_DERIVED, TITLE_SOURCE_LLM})
 
 
 def _sanitize_url(url: str | None) -> str | None:
@@ -90,7 +85,9 @@ def resolve_active_host() -> str:
         profile_host = HOST
     if profile_host == HOST:
         try:
-            default_host = str(_read_config(resolve_config_path()).get("defaultHost", "")).strip()
+            from .host_config import legacy_path
+            source = legacy_path(resolve_config_path())  # the profile's file, or until then the one 1.1.0 read
+            default_host = str(_read_config(source).get("defaultHost", "")).strip() if source else ""
         except Exception:
             default_host = ""
         if default_host:
@@ -109,42 +106,12 @@ def resolve_global_config_path() -> Path:
 
 
 def resolve_config_path() -> Path:
-    """Active Honcho config path: $HERMES_HOME/honcho.json -> default profile's honcho.json
-    (host blocks accumulate there via setup/clone) -> ~/.honcho/config.json (also the
-    first-time-setup write target when nothing exists)."""
-    local_path = get_hermes_home() / "honcho.json"
-    if local_path.exists():
-        return local_path
-    default_path = _get_default_hermes_home() / "honcho.json"
-    if default_path != local_path and default_path.exists():
-        return default_path
-    return resolve_global_config_path()
+    """The active profile's Honcho config: ``$HERMES_HOME/honcho.json``. Resolved per call, since one
+    gateway process serves several profiles."""
+    return get_hermes_home() / "honcho.json"
 
 
 # --- config coercion -------------------------------------------------------
-
-_RECALL_MODES = ({"auto": "hybrid"}, {"hybrid", "context", "tools"}, "hybrid")
-_OBSERVATION_MODES = (
-    {"shared": "unified", "separate": "directional", "cross": "directional"},
-    {"unified", "directional"},
-    "directional",
-)
-_VALID_REASONING_LEVELS = ("minimal", "low", "medium", "high", "max")
-
-# Granular observation booleans derived from the legacy string mode; explicit
-# per-peer config always wins over these presets.
-_OBSERVATION_PRESETS = {
-    "directional": {"user_observe_me": True, "user_observe_others": True, "ai_observe_me": True, "ai_observe_others": True},
-    "unified": {"user_observe_me": True, "user_observe_others": False, "ai_observe_me": False, "ai_observe_others": True},
-}
-
-
-def _normalize_choice(val: str, spec: tuple[dict, set, str]) -> str:
-    """Map aliases, then fall back to the default for unknown values."""
-    aliases, valid, default = spec
-    val = aliases.get(val, val)
-    return val if val in valid else default
-
 
 def _first_set(*vals, default):
     """First non-None value, else default."""
@@ -171,27 +138,6 @@ def _positive_float(value: Any) -> float:
 def _resolve_optional_float(*values: Any) -> float | None:
     """First value (blank strings included) that parses as a positive float, else None."""
     return _first_parsed(values, _positive_float, None)
-
-
-def _parse_dialectic_depth_levels(vals, depth: int) -> list[str] | None:
-    """First list value, validated and padded/truncated to ``depth``; None if unset."""
-    for val in vals:
-        if isinstance(val, list):
-            levels = [lvl if lvl in _VALID_REASONING_LEVELS else "low" for lvl in val[:depth]]
-            return levels + ["low"] * (depth - len(levels))
-    return None
-
-
-def _resolve_observation(mode: str, observation_obj: dict | None) -> dict:
-    """Per-peer observation booleans: ``observation`` object fields override the mode preset."""
-    preset = _OBSERVATION_PRESETS.get(mode, _OBSERVATION_PRESETS["directional"])
-    if not isinstance(observation_obj, dict) or not observation_obj:
-        return dict(preset)
-    return {
-        f"{kind}_observe_{who}": (observation_obj.get(kind) or {}).get(json_key, preset[f"{kind}_observe_{who}"])
-        for kind in ("user", "ai")
-        for who, json_key in (("me", "observeMe"), ("others", "observeOthers"))
-    }
 
 
 class _HostLookup:
@@ -266,76 +212,48 @@ def _env_base_url() -> str | None:
     return (get_secret("HONCHO_BASE_URL", "") or "").strip() or (get_secret("HONCHO_URL", "") or "").strip() or None
 
 
-def _connection_fields(look: _HostLookup, host: str, path: Path) -> dict[str, Any]:
-    """Resolve identity/credential/transport fields (host block -> root -> env)."""
-    raw, host_block = look.raw, look.host
+def _warn_default_key_not_inherited(host: str, path: Path) -> None:
+    """A named profile's block never takes the default profile's apiKey (profiles are credential-isolated).
+    The failure is silent 401s, so say so loudly when the default profile has a key."""
+    from hermes_cli.profiles import _get_default_hermes_home
+    from .host_config import effective_block, legacy_path
+
+    default_path = _get_default_hermes_home() / "honcho.json"
+    try:
+        has_key = legacy_path(default_path) is not None and bool(effective_block(default_path, HOST).get("apiKey"))
+    except (ValueError, OSError):
+        return
+    if has_key:
+        logger.warning("Honcho host block '%s' has no apiKey; the default '%s' host's key is NOT inherited "
+                       "(profiles are credential-isolated). Set apiKey on hosts.%s in %s or this profile "
+                       "runs unauthenticated.", host, HOST, host, path)
+
+
+def _connection_fields(look: _HostLookup, host: str) -> dict[str, Any]:
+    """Resolve identity/credential/transport fields (host block -> env -> default)."""
     api_key = look.pick("apiKey") or get_secret("HONCHO_API_KEY")
-    # Named-profile host blocks do NOT inherit the default host's apiKey (profiles
-    # are credential-isolated); the failure is silent 401s, so warn loudly.
-    if not api_key and host_block and host != HOST and _host_block(raw, HOST).get("apiKey"):
-        logger.warning("Honcho host block '%s' has no apiKey; the default '%s' host's key "
-                       "is NOT inherited (profiles are credential-isolated). Set apiKey on "
-                       "hosts.%s in %s or this profile runs unauthenticated.", host, HOST, host, path)
-    # The SDK's native format (and Claude Desktop) nests the URL at endpoint.baseUrl;
-    # read it before the flat Hermes spellings.
-    endpoint_block = raw.get("endpoint")
-    native_base_url = endpoint_block.get("baseUrl") if isinstance(endpoint_block, dict) else None
-    base_url = _sanitize_url(host_block.get("baseUrl") or host_block.get("base_url") or native_base_url
-                             or raw.get("baseUrl") or raw.get("base_url") or _env_base_url())
+    base_url = _sanitize_url(look.pick("baseUrl") or _env_base_url())
     return {
         "workspace_id": look.pick("workspace") or host,
         "ai_peer": look.pick("aiPeer") or host,
         "api_key": api_key,
-        "environment": look.pick("environment", "production"),
+        "environment": "production",  # the migration folded `environment: local` into baseUrl
         "base_url": base_url,
-        "timeout": _resolve_optional_float(*look.vals("timeout", "requestTimeout"), os.environ.get("HONCHO_TIMEOUT")),
+        "timeout": _resolve_optional_float(os.environ.get("HONCHO_TIMEOUT")),
         # Explicit enabled (host, then root) wins; else auto-enable on key/url.
         "enabled": _first_set(*look.vals("enabled"), default=bool(api_key or base_url)),
     }
 
 
-def _behavior_fields(look: _HostLookup, explicitly_configured: bool) -> dict[str, Any]:
-    """Resolve memory-behavior tuning fields (host block -> root -> defaults)."""
-    raw_wf = look.pick("writeFrequency") or "async"
-    write_frequency: str | int = _first_parsed([raw_wf], int, str(raw_wf))
-    depth = look.parsed("dialecticDepth", lambda v: max(1, min(int(v), 3)), 1)
-    # Migration guard: configs that predate observationMode keep the old
-    # "unified" default; fresh installs get "directional" (all observations on).
-    observation_mode = _normalize_choice(
-        look.pick("observationMode") or ("unified" if explicitly_configured else "directional"), _OBSERVATION_MODES)
+def _behavior_fields(look: _HostLookup) -> dict[str, Any]:
+    """Resolve the user peer and the gateway identity settings (host block -> defaults)."""
     return {
         "peer_name": look.pick("peerName"),
         # pinUserPeer is the clearer name; the original pinPeerName stays accepted.
         "pin_peer_name": look.flag("pinUserPeer", "pinPeerName", default=False),
         "user_peer_aliases": look.string_map("userPeerAliases"),
         "runtime_peer_prefix": look.string("runtimePeerPrefix"),
-        "save_messages": look.pick_set("saveMessages", True),
-        "write_frequency": write_frequency,
-        "context_tokens": look.parsed("contextTokens", int, None),
-        "dialectic_reasoning_level": look.pick("dialecticReasoningLevel") or "low",
-        "dialectic_dynamic": look.flag("dialecticDynamic", default=True),
-        "dialectic_max_chars": look.parsed("dialecticMaxChars", int, 600),
-        "dialectic_depth": depth,
-        "dialectic_depth_levels": _parse_dialectic_depth_levels(look.vals("dialecticDepthLevels"), depth),
-        "reasoning_heuristic": look.flag("reasoningHeuristic", default=True),
-        "reasoning_level_cap": look.pick("reasoningLevelCap") or "high",
-        "message_max_chars": look.parsed("messageMaxChars", int, 25000),
-        "dialectic_max_input_chars": look.parsed("dialecticMaxInputChars", int, 10000),
-        "recall_mode": _normalize_choice(look.pick("recallMode") or "hybrid", _RECALL_MODES),
-        "recall_sync": look.flag("recallSync", default=False),
-        "init_on_session_start": look.flag("initOnSessionStart", default=False),
-        "injection_frequency": look.pick("injectionFrequency", "every-turn"),
-        "context_cadence": look.parsed("contextCadence", int, 1),
-        "dialectic_cadence": look.parsed("dialecticCadence", int, 1),
-        "query_rewrite": look.flag("queryRewrite", default=False),
-        "first_turn_base_wait": look.parsed("firstTurnBaseWait", lambda v: max(0.0, float(v)), 3.0),
-        "first_turn_dialectic_wait": look.parsed("firstTurnDialecticWait", lambda v: max(0.0, float(v)), 2.0),
-        "observation_mode": observation_mode,
-        **_resolve_observation(observation_mode, look.pick("observation")),
-        "session_strategy": look.pick("sessionStrategy", "per-directory"),
-        "session_peer_prefix": look.pick_set("sessionPeerPrefix", False),
         "a2a_sessions": look.flag("a2aSessions", default=True),
-        "session_ai_peer_prefix": look.pick_set("sessionAiPeerPrefix", False),
     }
 
 
@@ -361,51 +279,12 @@ class HonchoClientConfig:
     # Gateway runtime user id -> stable Honcho peer; host map replaces root map.
     user_peer_aliases: dict[str, str] = field(default_factory=dict)
     runtime_peer_prefix: str = ""  # prefix for unknown runtime user ids, e.g. "telegram_"
-    # Toggles
     enabled: bool = False
-    save_messages: bool = True
-    write_frequency: str | int = "async"  # "async" | "turn" | "session" | every-N-turns int
-    context_tokens: int | None = None  # prefetch budget; None = uncapped
-    # Dialectic (peer.chat) settings
-    dialectic_reasoning_level: str = "low"  # minimal | low | medium | high | max
-    dialectic_dynamic: bool = True  # model may override the level via honcho_reasoning
-    dialectic_max_chars: int = 600  # auto-injection cap; explicit calls bypass it
-    dialectic_depth: int = 1  # .chat() passes per cycle (1-3): audit / synthesis / reconcile
-    dialectic_depth_levels: list[str] | None = None  # per-pass levels; None = proportional defaults
-    reasoning_heuristic: bool = True  # scale auto-injected level up on longer queries
-    reasoning_level_cap: str = "high"
-    # Honcho API limits (Honcho cloud: 25000 / 10000) — configurable for self-hosts
-    message_max_chars: int = 25000
-    dialectic_max_input_chars: int = 10000
-    # "hybrid" (context + tools) | "context" (no tools) | "tools" (no auto context)
-    recall_mode: str = "hybrid"
-    recall_sync: bool = False  # bounded current-query automatic recall
-    init_on_session_start: bool = False  # tools mode: init eagerly instead of on first tool call
-    injection_frequency: str = "every-turn"  # or "first-turn"
-    context_cadence: int = 1  # min turns between peer.context() calls
-    dialectic_cadence: int = 1  # min turns between dialectic prefetches
-    query_rewrite: bool = False  # rewrite the user message into a retrieval query (one aux LLM call)
-    # Bounded synchronous waits on turn 1, seconds; 0 = fully async first turn.
-    first_turn_base_wait: float = 3.0
-    first_turn_dialectic_wait: float = 2.0
-    # Legacy string shorthand; the granular per-peer booleans below are preferred
-    # and map 1:1 to Honcho's SessionPeerConfig.
-    observation_mode: str = "directional"
-    user_observe_me: bool = True
-    user_observe_others: bool = True
-    ai_observe_me: bool = True
-    ai_observe_others: bool = True
-    # Session resolution
-    session_strategy: str = "per-directory"
-    session_peer_prefix: bool = False
     # Bot-authored DMs write into their own session per sender bot.
     a2a_sessions: bool = True
-    # Prefixes every resolved session name with ``{ai_peer}-``. The gateway_session_key branch is
-    # AI-peer-agnostic, so several AI peers sharing one workspace + peerName + chat key would collide.
-    session_ai_peer_prefix: bool = False
-    sessions: dict[str, str] = field(default_factory=dict)
+    # {"hosts": {host: block}}: the block as read, so nothing downstream can reach the file's top level.
     raw: dict[str, Any] = field(default_factory=dict)
-    # A hosts.<host> block or explicit enabled flag, vs auto-enabled from a stray env key.
+    # The block holds a setting, vs auto-enabled from a stray env key.
     explicitly_configured: bool = False
     # Provenance captured at resolution time; bound consumers use these instead of
     # re-resolving (the resolvers read a ContextVar background threads can't see).
@@ -437,39 +316,32 @@ class HonchoClientConfig:
 
     @classmethod
     def from_global_config(cls, host: str | None = None, config_path: Path | None = None) -> HonchoClientConfig:
-        """Config from the resolved Honcho config path, falling back to env. ``host=None``
-        derives it from the active Hermes profile."""
+        """Config from the profile's host block, falling back to env when no config file exists.
+        ``host=None`` derives it from the active Hermes profile. ``raw`` holds only that block, so
+        nothing downstream can read the file's top level."""
+        from .host_config import effective_block, legacy_path
+
         resolved_host = host or resolve_active_host()
         path = config_path or resolve_config_path()
-        if not path.exists():
-            logger.debug("No global Honcho config at %s, falling back to env", path)
+        if legacy_path(path) is None:
+            logger.debug("No Honcho config at %s, falling back to env", path)
             return cls.from_env(host=resolved_host)
         try:
-            raw = _read_config(path)
-        except (json.JSONDecodeError, OSError) as e:
+            block = effective_block(path, resolved_host)
+        except (ValueError, OSError) as e:
             logger.warning("Failed to read %s: %s, falling back to env", path, e)
             return cls.from_env(host=resolved_host)
 
-        host_block = _host_block(raw, resolved_host)
-        explicitly_configured = bool(host_block) or raw.get("enabled") is True
-        look = _HostLookup(host_block, raw)
-        return cls(
-            host=resolved_host, **_connection_fields(look, resolved_host, path), **_behavior_fields(look, explicitly_configured),
-            sessions=raw.get("sessions", {}), raw=raw, explicitly_configured=explicitly_configured,
+        look = _HostLookup(block, {})
+        cfg = cls(
+            host=resolved_host, **_connection_fields(look, resolved_host), **_behavior_fields(look),
+            raw={"hosts": {resolved_host: block}},
+            explicitly_configured=any(k != "schemaVersion" for k in block),
             config_path=path, hermes_home=get_hermes_home(),
         )
-
-    @staticmethod
-    def _git_repo_name(cwd: str) -> str | None:
-        """Return the git repo root directory name, or None if not in a repo."""
-        import subprocess
-
-        try:
-            root = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, encoding='utf-8',
-                                  errors='replace', cwd=cwd, timeout=5, stdin=subprocess.DEVNULL)
-        except (OSError, subprocess.TimeoutExpired):
-            return None
-        return Path(root.stdout.strip()).name if root.returncode == 0 else None
+        if not cfg.api_key and resolved_host != HOST and cfg.explicitly_configured:
+            _warn_default_key_not_inherited(resolved_host, path)
+        return cfg
 
     # Honcho rejects session IDs over 100 chars; long gateway keys (Matrix
     # rooms + thread ids, Slack threads) overflow after sanitization.
@@ -487,15 +359,12 @@ class HonchoClientConfig:
         prefix = sanitized[: max_len - hash_len - 1].rstrip("-")
         return f"{prefix}-{digest}"
 
-    def _with_peer_prefix(self, name: str) -> str:
-        return f"{self.peer_name}-{name}" if self.session_peer_prefix and self.peer_name else name
-
     # ``Platform.LOCAL.value`` in ``gateway.config``: the platform slot of a session key for a
     # Hermes CLI, TUI, Desktop or ACP chat routed through the gateway runtime.
     _LOCAL_GATEWAY_PLATFORM = "local"
 
     @classmethod
-    def _is_local_gateway_key(cls, key: str) -> bool:
+    def is_local_gateway_key(cls, key: str) -> bool:
         """``agent:<ns>:local:...`` — a Hermes-surface (CLI/TUI/Desktop/ACP) chat keyed by the gateway.
 
         ``gateway.session.build_session_key`` lays a key out as ``agent:<ns>:<platform>:<chat_type>...``;
@@ -504,64 +373,47 @@ class HonchoClientConfig:
         parts = key.split(":")
         return len(parts) >= 3 and parts[0] == "agent" and parts[2] == cls._LOCAL_GATEWAY_PLATFORM
 
-    def resolve_session_name(
-        self, cwd: str | None = None, session_title: str | None = None,
-        session_id: str | None = None, gateway_session_key: str | None = None,
-        session_title_source: str | None = None,
-    ) -> str | None:
-        """Resolve the Honcho session name; with ``session_ai_peer_prefix`` the result is prefixed
-        ``{ai_peer}-`` on every path, including the AI-peer-agnostic gateway session key."""
+    @classmethod
+    def resolve_session_name(cls, session_id: str | None = None, gateway_session_key: str | None = None) -> str | None:
+        """One Honcho session per Hermes chat: the gateway's key for a chat the gateway routes (a Telegram or
+        Discord chat or thread, or a Desktop/TUI chat it carries), which stays put across /new, compression and
+        restarts; else the Hermes session id. None when there is neither."""
         import re
 
-        result = self._resolve_session_name_base(cwd=cwd, session_title=session_title,
-                                                 session_id=session_id, gateway_session_key=gateway_session_key,
-                                                 session_title_source=session_title_source)
-        if result and self.session_ai_peer_prefix and self.ai_peer:
-            ai = re.sub(r'[^a-zA-Z0-9_-]+', '-', self.ai_peer).strip('-')
-            if ai:
-                prefixed = f"{ai}-{result}"
-                return self._enforce_session_id_limit(prefixed, prefixed)
-        return result
+        key = gateway_session_key or session_id or ""
+        slug = re.sub(r'[^a-zA-Z0-9_-]+', '-', key).strip('-')
+        return cls._enforce_session_id_limit(slug, key) if slug else None
 
-    def _resolve_session_name_base(
-        self, cwd: str | None = None, session_title: str | None = None,
-        session_id: str | None = None, gateway_session_key: str | None = None,
-        session_title_source: str | None = None,
-    ) -> str | None:
-        """Order: messaging-platform gateway session key (per-chat isolation no cwd/strategy gives:
-        every Telegram or Discord chat shares the gateway's launch directory) -> per-session
-        strategy's session_id (authoritative, so a generated title never remaps a live conversation)
-        -> sessions map override -> /title -> per-repo (git root name) -> per-directory (basename)
-        -> global (workspace).
 
-        A LOCAL gateway key (``agent:<ns>:local:...``) is skipped: it names a Hermes CLI/TUI/Desktop/ACP
-        chat that runs inside the gateway runtime but has its own frozen workspace, so the configured
-        strategy applies to it as it did before those chats were routed through the gateway. Honoring
-        the key opened one Honcho session per chat regardless of ``sessionStrategy``; ``per-session``
-        still isolates them through ``session_id``."""
-        import re
+def _repo_name(cwd: str) -> str:
+    """Repository name for ``cwd``, shared by every linked worktree (``--git-common-dir`` is the main
+    repo's ``.git``, or a bare repo); the directory name when ``cwd`` is not in a git repository."""
+    import subprocess
 
-        def _slug(text: str) -> str:
-            return re.sub(r'[^a-zA-Z0-9_-]+', '-', text).strip('-')
+    try:
+        out = subprocess.run(["git", "rev-parse", "--git-common-dir"], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", cwd=cwd, timeout=5, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        out = None
+    if out is None or out.returncode != 0 or not out.stdout.strip():
+        return Path(cwd).resolve().name
+    common = (Path(cwd) / out.stdout.strip()).resolve()
+    return common.parent.name if common.name == ".git" else common.name.removesuffix(".git")
 
-        cwd = cwd or os.getcwd()
-        if (gateway_session_key and _slug(gateway_session_key)
-                and not self._is_local_gateway_key(gateway_session_key)):
-            return self._enforce_session_id_limit(_slug(gateway_session_key), gateway_session_key)
-        if self.session_strategy == "per-session" and session_id:
-            return self._with_peer_prefix(session_id)
-        manual = self.sessions.get(cwd)
-        if manual:
-            return manual
-        # Absent provenance retains the legacy explicit-title override. Generated
-        # display titles must not change a strategy-selected memory identity.
-        if session_title and session_title_source not in _AUTOMATIC_SESSION_TITLE_SOURCES and _slug(session_title):
-            return self._with_peer_prefix(_slug(session_title))
-        if self.session_strategy == "per-repo":
-            return self._with_peer_prefix(self._git_repo_name(cwd) or Path(cwd).name)
-        if self.session_strategy in {"per-directory", "per-session"}:
-            return self._with_peer_prefix(Path(cwd).name)
-        return self.workspace_id
+
+def session_scopes(cwd: str | None) -> list[str]:
+    """Honcho scopes a new session joins: its repository, when the chat has a working directory, and this
+    machine's short hostname. Lowercased, anything outside ``[a-z0-9_-]`` turned into ``-``."""
+    import re
+    import socket
+
+    names = ([_repo_name(cwd)] if cwd else []) + [socket.gethostname().split(".")[0]]
+    scopes: list[str] = []
+    for name in names:
+        scope = re.sub(r"[^a-z0-9_-]", "-", name.lower())
+        if re.search(r"[a-z0-9]", scope) and scope not in scopes:
+            scopes.append(scope)
+    return scopes
 
 
 # Threads keyed by the provider or manager that owns them, so shutdown never waits on another agent's work.
@@ -762,7 +614,6 @@ def reset_honcho_client() -> None:
     """Reset all cached Honcho clients (tests, OAuth re-login)."""
     with _client_slots_lock:
         _client_slots.clear()
-    _honcho_json_timeout_memo.clear()
 
 
 # ---- BEGIN PLUGIN-COMPAT (revert-scheduled; see COMPAT_MANIFEST.md) ----
