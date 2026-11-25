@@ -70,7 +70,7 @@ def etag_matches(if_none_match: str | None, etag: str) -> bool:
     )
 
 
-# a build holds about 1.1 KB per conclusion, so one at a time keeps the process
+# a build holds about 1 KB per conclusion, so one at a time keeps the process
 # inside its memory limit; the lock is per process, so shared-pool tenants share it
 _build_slot = asyncio.Semaphore(1)
 
@@ -113,7 +113,8 @@ async def graph(
             rows = await get_graph_rows(db, workspace_id, observer, observed, limit)
         queried = time.perf_counter()
         try:
-            # in threads, so other requests on this worker run between GIL switches
+            # the thread keeps the loop from blocking outright, but the build holds the
+            # GIL, so other requests on this process mostly wait until it finishes
             cols = await asyncio.to_thread(build_graph_columns, rows, limit)
         except ValidationException:
             prometheus_metrics.record_graph_refused()

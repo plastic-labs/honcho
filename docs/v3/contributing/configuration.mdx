@@ -678,10 +678,10 @@ WEBHOOK_MAX_WORKSPACE_LIMIT=10
 `GET /v3/workspaces/{workspace_id}/graph` refuses a graph with more conclusions than this limit. The error asks the caller to filter by observer or observed, and `GET /v3/workspaces/{workspace_id}/graph/overview` lists each observer and observed pair with its count.
 
 ```bash
-GRAPH_MAX_CONCLUSIONS=300000
+GRAPH_MAX_CONCLUSIONS=150000
 ```
 
-While it builds a graph, the API process holds about 1.1 KB per conclusion, and each process builds one graph at a time. Set the limit so that 1.1 KB times the limit fits in the memory the API process has free when idle. For example, 300,000 conclusions take about 330 MB, which leaves room in a 1000 MiB container. The default is provisional: it hasn't been measured on a pool of processes shared by many tenants, where a long build also slows every other tenant's requests on that process.
+While it builds a graph, the API process holds about 1 KB per conclusion, and each process builds one graph at a time. Other requests on that process wait for most of the build: on an M4 laptop, about 280 ms at 150,000 conclusions and 760 ms at 400,000. The default keeps that wait under the 500 ms p95 the shared pool is held to. It is provisional until it's measured on the shared pool itself. A deployment that runs one tenant per process can raise the limit, as long as 1 KB times the limit fits in the memory the process has free when idle.
 
 These metrics show whether the limit fits:
 
@@ -910,7 +910,7 @@ model = "gpt-5.4-mini"
 MAX_WORKSPACE_LIMIT = 10
 
 [graph]
-MAX_CONCLUSIONS = 300000
+MAX_CONCLUSIONS = 150000
 
 [metrics]
 ENABLED = false

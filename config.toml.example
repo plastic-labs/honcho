@@ -278,7 +278,7 @@ MAX_WORKSPACE_LIMIT = 10
 
 # Conclusion graph settings
 [graph]
-MAX_CONCLUSIONS = 300000
+MAX_CONCLUSIONS = 150000
 
 # Prometheus metrics settings (pull-based metrics)
 [metrics]
