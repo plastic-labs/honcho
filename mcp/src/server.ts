@@ -9,7 +9,15 @@ import { register as registerSystemTools } from "./tools/system.js";
 import instructions from "../instructions.md";
 import pkg from "../package.json";
 
-export function createServer(ctx: ToolContext): McpServer {
+export interface ServerOptions {
+  /** Register only the tools annotated `readOnlyHint: true`. */
+  readOnly?: boolean;
+}
+
+export function createServer(
+  ctx: ToolContext,
+  options: ServerOptions = {},
+): McpServer {
   const server = new McpServer(
     {
       name: "Honcho MCP Server",
@@ -17,6 +25,16 @@ export function createServer(ctx: ToolContext): McpServer {
     },
     { instructions },
   );
+
+  if (options.readOnly) {
+    // Every tool declares a read/write hint (see server.test.ts), so the
+    // annotation is a complete list of what may run on a read-only server.
+    const register = server.registerTool.bind(server);
+    server.registerTool = ((name, config, handler) =>
+      config.annotations?.readOnlyHint === true
+        ? register(name, config, handler)
+        : undefined) as typeof server.registerTool;
+  }
 
   registerWorkspaceTools(server, ctx);
   registerPeerTools(server, ctx);

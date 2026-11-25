@@ -16,20 +16,24 @@
     "typecheck": "tsc --noEmit",
     "check:deploy": "bun install --frozen-lockfile && tsc --noEmit",
     "deploy": "bun run check:deploy && wrangler deploy",
-    "deploy:staging": "bun run check:deploy && wrangler deploy --env staging"
+    "deploy:staging": "bun run check:deploy && wrangler deploy --env staging",
+    "dev:codemode": "wrangler dev -c wrangler.codemode.toml",
+    "deploy:codemode": "bun run check:deploy && wrangler deploy -c wrangler.codemode.toml"
   },
   "dependencies": {
+    "@cloudflare/codemode": "0.5.6",
     "@honcho-ai/sdk": "^2.9.0",
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@modelcontextprotocol/server": "2.4.0",
     "@sentry/bun": "^11.1.0",
     "@sentry/cloudflare": "^11.1.0",
-    "agents": "^0.4.0",
+    "agents": "0.33.0",
     "nanoid": "^5.1.7",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241002.0",
+    "@cloudflare/workers-types": "^5.20261116.1",
     "typescript": "^5.3.3",
-    "wrangler": "^4.24.3"
+    "wrangler": "4.163.0"
   }
 }

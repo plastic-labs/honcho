@@ -187,3 +187,30 @@ bunx mcp-remote http://localhost:8787 \
 bun run deploy              # production
 bun run deploy:staging      # staging
 ```
+
+## Code Mode (experimental)
+
+A second Worker, `honcho-codemode-mcp`, serves the read-only Honcho tools behind one tool, `execute`. The model writes a JavaScript function that chains them, for example several searches at once followed by reads of the sessions they hit, and only what the function returns enters the conversation.
+
+- **Sign-in** is the same as the main server: Honcho OAuth, or a Honcho API key as the bearer token.
+- **Read-only.** Only the tools annotated `readOnlyHint: true` are registered, so a script cannot record messages or change memory. The underlying reads still get-or-create the workspace, session or peer they name, so a guessed ID can create an empty one.
+- **Sandboxed.** Each script runs in its own isolate ([Worker Loader](https://developers.cloudflare.com/dynamic-workers/)) with no network, filesystem or credentials. Tool calls go back to this Worker over RPC, so the token never enters the script.
+- **Limits.** 50 Honcho calls and 5 minutes per script, about 6,000 tokens of output, and 60 scripts a minute per caller address.
+
+| File | What it holds |
+|---|---|
+| `src/codemode.ts` | The Worker: auth passthrough, the `execute` tool, the sandbox |
+| `src/codemode-tools.ts` | The functions a script can call and their one-line listing |
+| `codemode.md` | The tool description, with examples |
+| `wrangler.codemode.toml` | Worker config: the Worker Loader and rate-limit bindings |
+
+```bash
+bun run dev:codemode       # http://localhost:8799, against api.honcho.dev
+bun run deploy:codemode    # needs the Workers Paid plan
+```
+
+Both read `api.honcho.dev` unless given another Honcho:
+
+```bash
+bun run deploy:codemode --var HONCHO_API_URL:https://honcho.example.com
+```

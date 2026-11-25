@@ -1,0 +1,30 @@
+# Honcho Code Mode: the read-only Honcho tools behind one script-running tool.
+# A second Worker built from this package; see src/codemode.ts.
+name = "honcho-codemode-mcp"
+main = "src/codemode.ts"
+compatibility_date = "2026-03-10"
+compatibility_flags = ["nodejs_compat"]
+
+# Bundle Markdown (the tool description) as text strings so it can be imported.
+rules = [
+  { type = "Text", globs = ["**/*.md"], fallthrough = true },
+]
+
+# Reads api.honcho.dev, which is also where callers sign in. To use another
+# Honcho, pass --var HONCHO_API_URL:<url> to `wrangler dev` or `wrangler deploy`.
+
+# Runs each script in its own isolate. Needs the Workers Paid plan.
+[[worker_loaders]]
+binding = "LOADER"
+
+# Script runs per caller address per minute.
+[[ratelimits]]
+name = "SCRIPT_LIMITER"
+namespace_id = "1001"
+simple = { limit = 60, period = 60 }
+
+[dev]
+port = 8799
+
+[observability.logs]
+enabled = true
