@@ -11,6 +11,7 @@ import os
 import re
 from contextlib import suppress
 from dataclasses import dataclass, replace
+from typing import Any
 
 from honcho_cli.local import (
     DEFAULT_API_PORT,
@@ -61,7 +62,10 @@ def list_profile_names() -> list[str]:
         if (
             path.is_dir()
             and _PROFILE_NAME.match(path.name)
-            and (path / "docker-compose.yml").exists()
+            and (
+                (path / "docker-compose.yml").exists()
+                or (path / "native.json").exists()
+            )
         ):
             names.append(path.name)
     return names
@@ -76,6 +80,7 @@ class LocalProfile:
     db_port: int = DEFAULT_DB_PORT
     redis_port: int = DEFAULT_REDIS_PORT
     image: str = DEFAULT_IMAGE
+    backend: str = "compose"
 
     @property
     def project_name(self) -> str:
@@ -108,7 +113,7 @@ class LocalProfile:
             "redis": f"redis://127.0.0.1:{self.redis_port}/0",
         }
 
-    def overlay(self, **fields) -> LocalProfile:
+    def overlay(self, **fields: Any) -> LocalProfile:
         return replace(self, **{k: v for k, v in fields.items() if v is not None})
 
 
@@ -130,6 +135,7 @@ def load_profile(name: str) -> LocalProfile:
         db_port=_port(data.get("dbPort"), profile.db_port),
         redis_port=_port(data.get("redisPort"), profile.redis_port),
         image=image if isinstance(image, str) and image else profile.image,
+        backend="native" if data.get("backend") == "native" else "compose",
     )
 
 
@@ -144,14 +150,16 @@ def save_profile(profile: LocalProfile) -> None:
         "redisPort": profile.redis_port,
         "image": profile.image,
     }
+    if profile.backend == "native":
+        payload["backend"] = profile.backend
     profile.profile_file().write_text(json.dumps(payload, indent=2) + "\n")
 
 
 def _port(value: object, default: int) -> int:
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, str | int | float):
         return default
     try:
-        parsed = int(value)  # type: ignore[arg-type]
+        parsed = int(value)
     except (TypeError, ValueError):
         return default
     return parsed if 1 <= parsed <= 65535 else default
