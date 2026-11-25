@@ -669,11 +669,9 @@ def test_openai_reasoning_models_use_max_completion_tokens(model: str) -> None:
     """Reasoning model families (gpt-5+ incl. x.y versions, gpt-6, o1/o3/o4)
     must send max_completion_tokens, not max_tokens — OpenAI rejects
     max_tokens for them with 400 unsupported_parameter."""
-    from src.llm.backends.openai import (
-        _uses_max_completion_tokens,  # pyright: ignore[reportPrivateUsage]
-    )
+    from src.llm.capabilities import capabilities_for
 
-    assert _uses_max_completion_tokens(model) is True
+    assert capabilities_for("openai", model).max_tokens_param == "max_completion_tokens"
 
 
 @pytest.mark.parametrize(
@@ -689,11 +687,9 @@ def test_openai_reasoning_models_use_max_completion_tokens(model: str) -> None:
 def test_openai_classic_models_use_max_tokens(model: str) -> None:
     """Non-reasoning OpenAI and OpenAI-compatible proxy models stay on
     the classic max_tokens parameter."""
-    from src.llm.backends.openai import (
-        _uses_max_completion_tokens,  # pyright: ignore[reportPrivateUsage]
-    )
+    from src.llm.capabilities import capabilities_for
 
-    assert _uses_max_completion_tokens(model) is False
+    assert capabilities_for("openai", model).max_tokens_param == "max_tokens"
 
 
 @pytest.mark.asyncio

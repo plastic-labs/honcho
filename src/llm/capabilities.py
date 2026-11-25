@@ -2,26 +2,29 @@
 
 Model generations differ in which request shapes they accept: how thinking is
 configured, whether an assistant prefill is allowed, whether a forced
-tool_choice is accepted, and whether replayed thinking blocks are bound to the
-conversation that produced them. Backends and the tool loop read those
+tool_choice is accepted, whether replayed thinking blocks are bound to the
+conversation that produced them, and which field carries the output token cap. Backends and the tool loop read those
 differences from here instead of matching model names inline.
+
+A model in the `MODELS` catalog gets its profile from its entry, for every
+request to that transport and model. Any other model's profile is inferred
+from its name and transport.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Literal
 
-from src.config import ModelTransport
-
-ThinkingMode = Literal["budget", "adaptive"]
-
-# How a model treats a forced tool_choice ({"type": "any"} / {"type": "tool"}):
-# - "conflicts_with_thinking": accepted, but not alongside extended thinking
-# - "skips_thinking": accepted with thinking on; that turn simply skips thinking
-# - "rejected": a 400 whether or not thinking is on
-ForcedToolChoice = Literal["conflicts_with_thinking", "skips_thinking", "rejected"]
+from src import config
+from src.config import (
+    ForcedToolChoice,
+    MaxTokensParam,
+    ModelCatalogEntry,
+    ModelTransport,
+    ThinkingMode,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +46,10 @@ class ModelCapabilities:
     models are trained only on tool results followed by an assistant turn or
     another result, and their servers reject a request that has a user turn
     there or that ends on an assistant turn."""
+    max_tokens_param: MaxTokensParam = "max_tokens"
+    """The request field the OpenAI transport puts the output token cap in.
+    OpenAI's reasoning models reject `max_tokens` with a 400 and take
+    `max_completion_tokens`."""
 
 
 # Claude 3 and other models this table doesn't recognize.
@@ -130,24 +137,104 @@ _MISTRAL_MODEL = re.compile(
 _STRICT_TOOL_ROLE_ORDER = replace(_LEGACY, user_after_tool=False)
 
 
-def capabilities_for(transport: ModelTransport, model: str) -> ModelCapabilities:
-    """Capabilities of `model` on `transport`.
+def _takes_max_completion_tokens(model: str) -> bool:
+    """Whether the id names an OpenAI reasoning model.
 
-    The Anthropic transport has a row per Claude generation. Other transports
-    get the legacy row, except Mistral models, which need strict role order
-    after tool results.
+    Matches gpt-5 and gpt-6 with any `-` or `.` suffix (gpt-5.4-mini,
+    gpt-6-astra) and the o1, o3 and o4 families. Anything else (gpt-4.x,
+    gpt-4o, a proxy alias) is not recognized.
     """
-    if transport == "anthropic":
+    m = model.lower()
+    for base in ("gpt-5", "gpt-6"):
+        if m == base or m.startswith(base + "-") or m.startswith(base + "."):
+            return True
+    for prefix in ("o1", "o3", "o4"):
+        if m == prefix or m.startswith(prefix + "-"):
+            return True
+    return False
+
+
+def _with_max_tokens_param(row: ModelCapabilities, model: str) -> ModelCapabilities:
+    if _takes_max_completion_tokens(model):
+        return replace(row, max_tokens_param="max_completion_tokens")
+    return row
+
+
+def _row_for_model_id(model: str) -> ModelCapabilities:
+    if _CLAUDE_MODEL.search(model):
         return anthropic_capabilities(model)
     if _MISTRAL_MODEL.search(model):
         return _STRICT_TOOL_ROLE_ORDER
     return _LEGACY
 
 
+def model_capabilities(model: str) -> ModelCapabilities:
+    """Capabilities inferred from a model id alone, whatever the transport.
+
+    A Claude model gets its generation's row whether it is reached directly or
+    through an OpenAI-compatible proxy.
+    """
+    return _with_max_tokens_param(_row_for_model_id(model), model)
+
+
+def catalog_entry_capabilities(entry: ModelCatalogEntry) -> ModelCapabilities:
+    """The profile a `MODELS` entry declares: inferred, then overridden."""
+    profile = entry.capabilities
+    inferred = model_capabilities(profile.infer_from or entry.model)
+    return replace(
+        inferred, **profile.model_dump(exclude={"infer_from"}, exclude_none=True)
+    )
+
+
+_catalog_index_cache: (
+    tuple[Mapping[str, ModelCatalogEntry], dict[tuple[str, str], ModelCapabilities]]
+    | None
+) = None
+
+
+def _catalog_capabilities() -> dict[tuple[str, str], ModelCapabilities]:
+    """Declared profiles by (transport, model), rebuilt when the catalog changes."""
+    global _catalog_index_cache
+    catalog = config.settings.MODELS
+    cached = _catalog_index_cache
+    if cached is not None and cached[0] is catalog:
+        return cached[1]
+    index = {
+        (entry.transport, entry.model): catalog_entry_capabilities(entry)
+        for entry in catalog.values()
+    }
+    _catalog_index_cache = (catalog, index)
+    return index
+
+
+def capabilities_for(transport: ModelTransport, model: str) -> ModelCapabilities:
+    """Capabilities of `model` on `transport`.
+
+    A `MODELS` catalog entry for this transport and model decides. Otherwise
+    the Anthropic transport has a row per Claude generation, and other
+    transports get the legacy row, except Mistral models, which need strict
+    role order after tool results. On any transport, an OpenAI reasoning
+    model id takes `max_completion_tokens`.
+    """
+    declared = _catalog_capabilities().get((transport, model))
+    if declared is not None:
+        return declared
+    if transport == "anthropic":
+        row = anthropic_capabilities(model)
+    elif _MISTRAL_MODEL.search(model):
+        row = _STRICT_TOOL_ROLE_ORDER
+    else:
+        row = _LEGACY
+    return _with_max_tokens_param(row, model)
+
+
 __all__ = [
     "ForcedToolChoice",
+    "MaxTokensParam",
     "ModelCapabilities",
     "ThinkingMode",
     "anthropic_capabilities",
     "capabilities_for",
+    "catalog_entry_capabilities",
+    "model_capabilities",
 ]

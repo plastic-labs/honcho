@@ -16,7 +16,7 @@ from pydantic import BaseModel, ValidationError
 
 from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
-from src.llm.capabilities import anthropic_capabilities
+from src.llm.capabilities import capabilities_for
 from src.llm.request_builder import (
     apply_sdk_passthroughs,
     request_timeout_from_extra_params,
@@ -422,7 +422,7 @@ class AnthropicBackend:
                 model,
                 "at least one replayed block has no signature",
             )
-        if anthropic_capabilities(model).thinking == "adaptive":
+        if capabilities_for("anthropic", model).thinking == "adaptive":
             return thinking_budget_tokens
 
         extra_body = as_dict(params.get("extra_body"))
@@ -462,7 +462,7 @@ class AnthropicBackend:
 
         https://platform.claude.com/docs/en/build-with-claude/thinking#thinking-with-tool-use
         """
-        caps = anthropic_capabilities(model)
+        caps = capabilities_for("anthropic", model)
         tool_choice = params.get("tool_choice")
         forced = tool_choice is not None and tool_choice.get("type") in {"any", "tool"}
 
@@ -527,7 +527,7 @@ class AnthropicBackend:
 
     @staticmethod
     def _supports_assistant_prefill(model: str) -> bool:
-        return anthropic_capabilities(model).supports_prefill
+        return capabilities_for("anthropic", model).supports_prefill
 
     @classmethod
     def _add_schema_instruction(cls, params: dict[str, Any], instruction: str) -> None:
