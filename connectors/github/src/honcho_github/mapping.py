@@ -179,13 +179,18 @@ def person(actor: Any) -> Person | None:
     """An author or participant: the numeric ID, the login as the name.
 
     None for a deleted account (GitHub's ghost). The numeric ID survives a
-    rename; the login is what GitHub shows on every comment.
+    rename; the login is what GitHub shows on every comment, and also its
+    handle. The profile name, when the account set one, is an alias: ingest
+    uses both to suggest which accounts are one person.
     """
     actor = obj(actor)
     name = clean_name(actor.get("login"))
     if name is None:
         return None
-    found: Person = {"name": name}
+    found: Person = {"name": name, "handle": name}
+    profile = clean_name(actor.get("name"))
+    if profile and profile != name:
+        found["aliases"] = [profile]
     if actor.get("databaseId") is not None:
         found["id"] = str(actor["databaseId"])
     if is_bot(actor):

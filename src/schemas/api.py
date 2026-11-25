@@ -548,6 +548,31 @@ class MessageUploadCreate(BaseModel):
 # refused (422) rather than stripped into a different key.
 _ExternalId = Annotated[str, StorableOnly, Field(min_length=1, max_length=512)]
 _DisplayName = Annotated[str, NulStripped, Field(min_length=1, max_length=512)]
+_EMAIL = re.compile(r"[^@\s]+@[^@\s]+")
+# NUL and lone surrogates: what Postgres can't store in text.
+_UNSTORABLE_TEXT = re.compile("[\x00\ud800-\udfff]")
+
+
+def _email_or_none(value: Any) -> str | None:
+    """An email address, trimmed; anything that isn't one is ignored, not refused.
+
+    A placeholder ("N/A", blank) would make unrelated accounts match, and a
+    value Postgres can't store would fail the whole batch, so both become
+    None. An ignored value is never stored or echoed back.
+    """
+    if not isinstance(value, str):
+        return None
+    address = value.strip()
+    if (
+        len(address) > 320
+        or not _EMAIL.fullmatch(address)
+        or _UNSTORABLE_TEXT.search(address)
+    ):
+        return None
+    return address
+
+
+_Email = Annotated[str | None, BeforeValidator(_email_or_none)]
 
 
 class IngestParticipant(BaseModel):
@@ -557,6 +582,24 @@ class IngestParticipant(BaseModel):
         default=None, description="The person's ID in the source, if it has one"
     )
     name: _DisplayName = Field(..., description="The person's display name")
+    handle: _DisplayName | None = Field(
+        default=None,
+        description="The account's username in the source, unique there: a GitHub"
+        + " login, a Discord username. Used only to suggest which accounts are one"
+        + " person.",
+    )
+    aliases: list[_DisplayName] = Field(
+        default_factory=list,
+        max_length=10,
+        description="Other names the account goes by, such as a profile name or a"
+        + " server nickname. Used only to suggest which accounts are one person.",
+    )
+    email: _Email = Field(
+        default=None,
+        description="The account's email address. Ingest keeps only a digest of it,"
+        + " scoped to the workspace, to suggest which accounts are one person; the"
+        + " address itself is not stored. A value that isn't an address is ignored.",
+    )
     bot: bool = Field(
         default=False,
         description="The source marks this account as a bot or an integration. "
@@ -704,6 +747,23 @@ class IngestRecordCounts(BaseModel):
     queued: int = Field(..., description="Queued for derivation, or derived")
 
 
+class IngestSuggestionStageCounts(BaseModel):
+    """Open suggestions one stage made, by confidence."""
+
+    high: int = 0
+    low: int = 0
+
+
+class IngestSuggestionCounts(BaseModel):
+    """The workspace's open suggestions by stage, and whether a refresh is under way."""
+
+    rules: IngestSuggestionStageCounts = Field(
+        default_factory=IngestSuggestionStageCounts,
+        description="Made by the identity rules",
+    )
+    refreshing: bool = False
+
+
 class IngestStatus(BaseModel):
     """What the workspace's imports produced, for review before deriving."""
 
@@ -727,6 +787,10 @@ class IngestStatus(BaseModel):
         default=0,
         description="Sessions a reset marked for deletion that still hold imported"
         + " records; 0 once the deletion has finished",
+    )
+    suggestions: IngestSuggestionCounts = Field(
+        default_factory=IngestSuggestionCounts,
+        description="Open suggested links between accounts, by stage and confidence",
     )
 
 
@@ -824,6 +888,85 @@ class IngestUnlinkResult(BaseModel):
 
     peer_id: str
     account: IngestAccount
+
+
+class IngestSuggestionAccount(BaseModel):
+    """One account of a suggestion, as it was when the suggestion was made."""
+
+    source: str
+    source_instance: str
+    id: str | None = Field(
+        default=None, description="The account's ID in the source, when it has one"
+    )
+    display_name: str | None = None
+    handle: str | None = Field(
+        default=None, description="Its username in the source, when the source sent one"
+    )
+    peer_id: str | None = Field(
+        default=None, description="The person it maps to now; null if it's gone"
+    )
+    records: int = Field(
+        ..., description="Records it had written when the suggestion was made"
+    )
+
+
+class IngestSuggestionEvidence(BaseModel):
+    """One reason for a suggestion."""
+
+    signal: Literal["email", "names", "shared_work", "self_reference", "conflict"]
+    level: Literal["strong", "medium", "weak"]
+    detail: str
+
+
+class IngestSuggestion(BaseModel):
+    """Two accounts that look like one person, and why. Nothing is linked until accepted."""
+
+    id: str
+    kind: Literal["same_person"]
+    stage: Literal["rules"] = Field(
+        ...,
+        description="What made it: `rules`, the identity rules. With `confidence`,"
+        + " it names a group of suggestions, such as `rules:high`",
+    )
+    confidence: Literal["high", "low"] = Field(
+        ...,
+        description="`high`: evidence to accept at a glance. `low`: needs a closer"
+        + " look",
+    )
+    score: float = Field(..., description="Orders suggestions; higher is stronger")
+    status: Literal["open", "accepted", "dismissed"]
+    linked: bool = Field(
+        ..., description="The two accounts map to one person now, however it happened"
+    )
+    accounts: list[IngestSuggestionAccount]
+    evidence: list[IngestSuggestionEvidence]
+    refreshed_at: datetime.datetime = Field(
+        ..., description="When a refresh last made it"
+    )
+
+
+class IngestSuggestionAccept(BaseModel):
+    """Which person to keep when accepting a suggestion."""
+
+    keep: str | None = Field(
+        default=None,
+        max_length=512,
+        description="The peer to keep. By default an explicit peer, else the account"
+        + " with more records when the suggestion was made",
+    )
+
+
+class IngestSuggestionAccepted(BaseModel):
+    """The accepted suggestion and the link it made (null when already one person)."""
+
+    suggestion: IngestSuggestion
+    link: IngestLinkResult | None
+
+
+class IngestSuggestionsRefresh(BaseModel):
+    """Whether a refresh was queued; one already waiting covers this request."""
+
+    queued: bool
 
 
 class IngestResetResponse(BaseModel):

@@ -16,12 +16,20 @@ from collections.abc import Awaitable, Callable, Iterable
 from functools import partial
 from typing import Any, TypeVar
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Path
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    Depends,
+    HTTPException,
+    Path,
+    Query,
+)
 from fastapi_pagination.bases import AbstractParams
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import schemas
+from src import models, schemas
 from src.cache.client import safe_cache_delete
 from src.config import settings
 from src.crud.ingest import (
@@ -39,9 +47,17 @@ from src.crud.ingest_status import (
     session_summaries,
     sessions_query,
 )
+from src.crud.ingest_suggestions import (
+    accept_suggestion,
+    current_peers,
+    dismiss_suggestion,
+    suggestions_query,
+    to_schema,
+)
 from src.crud.peer import peer_cache_key
 from src.crud.session import session_cache_key
 from src.dependencies import db, read_db
+from src.deriver.enqueue import insert_organize_task
 from src.deriver.ingest_enqueue import enqueue_session
 from src.dreamer.dream_scheduler import get_dream_scheduler
 from src.reconciler.embed_now import embed_task_gate
@@ -464,3 +480,179 @@ async def reset(
     for name in sessions:
         await safe_cache_delete(session_cache_key(workspace_id, name))
     return schemas.IngestResetResponse(sessions=sessions)
+
+
+# ---------------------------------------------------------------------------
+# Suggested links
+# ---------------------------------------------------------------------------
+
+_SUGGESTION_RESPONSES: dict[int | str, dict[str, Any]] = {
+    404: {
+        "model": schemas.ErrorResponse,
+        "description": "Workspace, suggestion or one of its accounts not found",
+    },
+    409: {
+        "model": schemas.ErrorResponse,
+        "description": "Not an auto workspace; the suggestion was already decided the"
+        + " other way; or the people have imported messages: reset the import first",
+    },
+    503: _LINK_RESPONSES[503],
+}
+
+
+@router.post(
+    "/suggestions/refresh",
+    response_model=schemas.IngestSuggestionsRefresh,
+    status_code=202,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    responses={
+        404: {"model": schemas.ErrorResponse, "description": "Workspace not found"},
+        409: {"model": schemas.ErrorResponse, "description": "Not an auto workspace"},
+    },
+)
+async def refresh_suggestions(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    db: AsyncSession = db,
+) -> schemas.IngestSuggestionsRefresh:
+    """Queue a refresh of the suggested links between the workspace's accounts.
+
+    The refresh runs in the background and reads the imports as they are when
+    it runs: `GET /ingest/status` says `refreshing` until it's done. It adds new
+    suggestions and updates open ones; it never reopens one a person accepted or
+    dismissed. Run it after importing and before a reset: the evidence comes
+    from the imported records. Only workspace and admin keys may call it.
+
+    Experimental: ingest may change or stop working without notice.
+    """
+    await require_auto_workspace(db, workspace_id)
+    queued = await insert_organize_task(db, workspace_id)
+    await db.commit()
+    return schemas.IngestSuggestionsRefresh(queued=queued)
+
+
+@router.get(
+    "/suggestions",
+    response_model=Page[schemas.IngestSuggestion]
+    | CursorPage[schemas.IngestSuggestion],
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    responses={
+        404: {"model": schemas.ErrorResponse, "description": "Workspace not found"},
+        409: {"model": schemas.ErrorResponse, "description": "Not an auto workspace"},
+    },
+)
+async def list_suggestions(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    status: str = Query(
+        "open",
+        pattern="^(open|accepted|dismissed|all)$",
+        description="Only suggestions in this state, or `all`",
+    ),
+    confidence: str | None = Query(
+        None, pattern="^(high|low)$", description="Only `high` or only `low`"
+    ),
+    stage: str | None = Query(
+        None,
+        pattern="^(rules)$",
+        description="Only suggestions this stage made: `rules`",
+    ),
+    params: AbstractParams = Depends(pagination_params),
+    db: AsyncSession = read_db,
+):
+    """Accounts that look like one person, strongest first, with the evidence.
+
+    Each suggestion names its two accounts as they were when it was made and
+    the person each maps to now (`linked` once they're one). Nothing is linked
+    until a suggestion is accepted. The evidence can reveal that two accounts
+    are one person, so only workspace and admin keys may call it.
+
+    Experimental: ingest may change or stop working without notice.
+    """
+    await require_auto_workspace(db, workspace_id)
+
+    async def resolve(
+        rows: list[models.IngestSuggestion],
+    ) -> list[schemas.IngestSuggestion]:
+        subjects = {a["subject"] for row in rows for a in row.accounts}
+        peers = await current_peers(db, workspace_id, subjects)
+        return [to_schema(row, peers) for row in rows]
+
+    return await paginate_offset_or_cursor(
+        db,
+        suggestions_query(
+            workspace_id,
+            status=None if status == "all" else status,
+            confidence=confidence,
+            stage=stage,
+        ),
+        params,
+        transformer=resolve,
+    )
+
+
+@router.post(
+    "/suggestions/{suggestion_id}/accept",
+    response_model=schemas.IngestSuggestionAccepted,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    responses=_SUGGESTION_RESPONSES,
+)
+async def accept(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    suggestion_id: str = Path(..., description="ID of the suggestion"),
+    body: schemas.IngestSuggestionAccept = Body(
+        default_factory=schemas.IngestSuggestionAccept
+    ),
+    db: AsyncSession = db,
+) -> schemas.IngestSuggestionAccepted:
+    """Accept a suggestion: link its two accounts into one person.
+
+    This is `POST /ingest/link` for the suggestion's two people, keeping an
+    explicit peer, else the one with more records (or `keep`), and it is
+    refused the same way: the people must have no imported messages yet, so
+    reset the import first, accept, then import again. Accepting a pair that
+    is already one person just marks it accepted. Only workspace and admin keys
+    may call it.
+
+    Experimental: ingest may change or stop working without notice.
+    """
+    await require_auto_workspace(db, workspace_id)
+    row, link_result = await _with_retries(
+        db,
+        workspace_id,
+        lambda: accept_suggestion(db, workspace_id, suggestion_id, body.keep),
+    )
+    peers = await current_peers(db, workspace_id, [a["subject"] for a in row.accounts])
+    accepted = to_schema(row, peers)
+    await db.commit()
+    touched = {*peers.values(), *(a["subject"] for a in row.accounts)}
+    if link_result is not None:
+        touched.update((link_result.peer_id, *link_result.merged))
+    for name in touched:
+        await safe_cache_delete(peer_cache_key(workspace_id, name))
+    return schemas.IngestSuggestionAccepted(suggestion=accepted, link=link_result)
+
+
+@router.post(
+    "/suggestions/{suggestion_id}/dismiss",
+    response_model=schemas.IngestSuggestion,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+    responses=_SUGGESTION_RESPONSES,
+)
+async def dismiss(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    suggestion_id: str = Path(..., description="ID of the suggestion"),
+    db: AsyncSession = db,
+) -> schemas.IngestSuggestion:
+    """Dismiss a suggestion: the accounts stay apart, and a refresh won't bring it back.
+
+    Only workspace and admin keys may call it.
+
+    Experimental: ingest may change or stop working without notice.
+    """
+    await require_auto_workspace(db, workspace_id)
+    row = await _with_retries(
+        db, workspace_id, lambda: dismiss_suggestion(db, workspace_id, suggestion_id)
+    )
+    peers = await current_peers(db, workspace_id, [a["subject"] for a in row.accounts])
+    dismissed = to_schema(row, peers)
+    await db.commit()
+    return dismissed

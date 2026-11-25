@@ -191,4 +191,25 @@ describe('ingest', () => {
     expect(status.records).toEqual({ deferred: 0, pending: 0, queued: 0 })
     expect(status.sessions).toBe(0)
   })
+
+  test('a suggestions refresh is queued once and shows in status', async () => {
+    const client = sdk(generateWorkspaceId('ingest-suggest'), true)
+    await client.ingest(records(4), { derive: 'later' })
+
+    // The deriver runs the refresh; this test server has none, so it waits.
+    expect(await client.ingestRefreshSuggestions()).toBe(true)
+    expect(await client.ingestRefreshSuggestions()).toBe(false)
+    const status = await client.ingestStatus()
+    expect(status.suggestions).toEqual({
+      rules: { high: 0, low: 0 },
+      refreshing: true,
+    })
+    expect((await client.ingestSuggestions()).items).toEqual([])
+    await expect(
+      client.ingestAcceptSuggestion('missing')
+    ).rejects.toBeInstanceOf(NotFoundError)
+    await expect(
+      client.ingestDismissSuggestion('missing')
+    ).rejects.toBeInstanceOf(NotFoundError)
+  })
 })

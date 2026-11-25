@@ -25,7 +25,7 @@ The format is published as a JSON Schema: [`ingest-record.v0.json`](https://gith
 | `revised_at` | | When the source last changed the record |
 | `created_at` | required | When it was written, ISO 8601 |
 | `container` | | Where it lives: `{id, name, parent_id}`. One container becomes one session |
-| `author` | | Who wrote it: `{id, name, bot}`. Accounts are matched across records by `id` within the source and instance |
+| `author` | | Who wrote it: `{id, name, handle, aliases, email, bot}`. Accounts are matched across records by `id` within the source and instance |
 | `participants` | | Others it's addressed to or mentions, in the same shape |
 | `content` | required | The text, as it should be read |
 | `metadata` | | Anything else to keep. Two keys have a meaning: `reply_to` (the `source_id` replied to) and `thread` (a narrower conversation inside a container, such as `pr:12`) |
@@ -37,9 +37,11 @@ A record already stored that comes again with a newer `revised_at` is rejected a
 ## What makes a clean import
 
 - **Stable IDs.** Use the source's own IDs for `source_id`, containers and accounts, never something that changes between runs, like a position or a display name.
-- **Accounts by ID, not by name.** Names change and collide; an `id` keeps one person one account. Linking one person's accounts across sources is done after the import, with `honcho ingest link`.
+- **Accounts by ID, not by name.** Names change and collide; an `id` keeps one person one account. Linking one person's accounts across sources is done after the import, with `honcho ingest link` or by accepting a suggestion (`honcho ingest suggestions`).
+- **Say what you know about each account.** `handle` is its username in the source (a GitHub login, a Discord username); `aliases` are the other names it goes by (a profile name, a server nickname); `email` is its address when the source has one. They are used only to suggest which accounts are one person, and only a workspace-scoped digest of the email is stored. A record's own address in its source belongs in `metadata.url`: someone posting a link to it elsewhere is evidence too.
 - **Mark bots.** Set `bot: true` on accounts the source flags as bots or integrations. Nothing is derived about them, and `honcho ingest import` holds back bot records no person replied to or mentioned (`--bots`).
 - **Fill `reply_to` and `thread`** when the source has them: they decide which bot records a person interacted with.
+- **Name the source as people write it.** A `source` like `github` or `discord` is also what someone types when they say "I'm alexdev on GitHub", which is how a suggestion finds them.
 - **Clean the text.** Remove text a person didn't write, such as a bot's summary quoted into their post or signature footers, so it isn't attributed to them.
 - **Oldest first within a container.**
 - **No secrets.** Records are stored and read by models: leave tokens and keys out of `content` and `metadata`.

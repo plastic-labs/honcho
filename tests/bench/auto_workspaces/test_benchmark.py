@@ -17,11 +17,12 @@ from tests.bench.auto_workspaces import baseline, fixtures
 from tests.bench.auto_workspaces.model import (
     BenchRecord,
     Dataset,
+    Prediction,
     Profile,
     account_key,
     record_accounts,
 )
-from tests.bench.auto_workspaces.run import main
+from tests.bench.auto_workspaces.run import main, organize_each_team
 from tests.bench.auto_workspaces.scoring import (
     count_tokens,
     score,
@@ -327,6 +328,28 @@ def test_the_runner_scores_both_splits(capsys: pytest.CaptureFixture[str]) -> No
         assert main(["--split", split]) == 0
         out = capsys.readouterr().out
         assert "identity  F0.5" in out and "shared_handle" in out
+    assert main(["--one-workspace"]) == 0
+
+
+def test_each_team_is_organized_alone_and_blind(dataset: Dataset) -> None:
+    seen: list[Dataset] = []
+
+    def one_person(blind: Dataset) -> Prediction:
+        """Everyone is one person: only a team boundary can split them."""
+        seen.append(blind)
+        return Prediction(person_of={k: "everyone" for k in blind.accounts()})
+
+    prediction = organize_each_team(one_person, dataset)
+
+    units = {r.unit for r in dataset.records}
+    assert len(seen) == len(units)
+    assert all(r.unit == "" and r.case == "" for d in seen for r in d.records)
+    # One person per team, never across two.
+    unit_of = dataset.truth.unit_of_account
+    people = {prediction.person_of[k] for k in unit_of}
+    assert len(people) == len(set(unit_of.values()))
+    for key, person in prediction.person_of.items():
+        assert person == f"{unit_of[key]}/everyone"
 
 
 # ---------------------------------------------------------------------------

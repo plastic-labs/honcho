@@ -17,6 +17,7 @@ from src.deriver.scope_backfill import (
 from src.dreamer import process_dream
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.models import Message
+from src.organizer.run import refresh_suggestions
 from src.reconciler.backfill import resolve_backfill, run_backfill_cycle
 from src.reconciler.queue_cleanup import cleanup_queue_items
 from src.reconciler.sync_vectors import run_vector_reconciliation_cycle
@@ -34,6 +35,7 @@ from src.utils.queue_payload import (
     RETRY_ATTEMPTS_PAYLOAD_KEY,
     DeletionPayload,
     DreamPayload,
+    OrganizePayload,
     ReconcilerPayload,
     ScopeBackfillPayload,
     ScopeRemovalPayload,
@@ -198,6 +200,19 @@ async def process_item(queue_item: models.QueueItem) -> None:
                 )
                 raise ValueError(f"Invalid payload structure: {str(e)}") from e
             await process_scope_removal(validated, workspace_name)
+
+    elif task_type == "organize":
+        with sentry_sdk.start_transaction(name="process_organize_task", op="deriver"):
+            try:
+                OrganizePayload(**queue_payload)
+            except ValidationError as e:
+                logger.error(
+                    "Invalid organize payload received: %s. Payload: %s",
+                    str(e),
+                    queue_payload,
+                )
+                raise ValueError(f"Invalid payload structure: {str(e)}") from e
+            await refresh_suggestions(workspace_name)
 
     else:
         raise ValueError(f"Invalid task type: {task_type}")

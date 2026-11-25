@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import exists, insert, select
+from sqlalchemy import exists, func, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +19,7 @@ from src.utils.config_helpers import get_configuration
 from src.utils.queue_payload import (
     create_deletion_payload,
     create_dream_payload,
+    create_organize_payload,
     create_payload,
     create_scope_task_payload,
 )
@@ -1035,3 +1036,51 @@ async def enqueue_deletion(
 
             sentry_sdk.capture_exception(e)
         raise
+
+
+async def insert_organize_task(db_session: AsyncSession, workspace_name: str) -> bool:
+    """Queue a refresh of the workspace's suggestions, in the caller's transaction.
+
+    One refresh waiting is enough: the organizer reads the workspace as it is
+    when it runs, so a second request while one is waiting adds nothing. A
+    refresh already running doesn't count: it may have read the workspace
+    before the change this request is about, so one more is queued behind it.
+    A running refresh's item stays unprocessed until it finishes, so "waiting"
+    is one unprocessed item with no refresh running, or two with one running.
+
+    Does not commit.
+
+    Returns:
+        Whether a task was inserted
+    """
+    payload = create_organize_payload()
+    work_unit_key = construct_work_unit_key(workspace_name, payload)
+    # Running first, then the count: a refresh that finishes in between leaves
+    # a lower count, so this errs toward queueing one more, never toward none.
+    running = await db_session.scalar(
+        select(
+            exists(
+                select(models.ActiveQueueSession.id).where(
+                    models.ActiveQueueSession.work_unit_key == work_unit_key
+                )
+            )
+        )
+    )
+    unprocessed = await db_session.scalar(
+        select(func.count(QueueItem.id)).where(
+            QueueItem.work_unit_key == work_unit_key,
+            QueueItem.processed == False,  # noqa: E712
+        )
+    )
+    if (unprocessed or 0) >= (2 if running else 1):
+        return False
+    record = {
+        "work_unit_key": work_unit_key,
+        "payload": payload,
+        "session_id": None,
+        "task_type": "organize",
+        "workspace_name": workspace_name,
+        "message_id": None,
+    }
+    await db_session.execute(insert(QueueItem), _stamp_tenant_id([record]))
+    return True

@@ -101,6 +101,16 @@ class ScopeRemovalPayload(BasePayload):
     session_name: str
 
 
+class OrganizePayload(BasePayload):
+    """Payload for organize tasks: refresh the suggestions about a workspace's imports.
+
+    workspace_name lives in the QueueItem's dedicated column; there is nothing
+    else to say: the organizer reads the workspace as it is when it runs.
+    """
+
+    task_type: Literal["organize"] = "organize"
+
+
 class DeletionPayload(BasePayload):
     """Payload for deletion tasks."""
 
@@ -175,6 +185,11 @@ def create_scope_task_payload(
     return ScopeRemovalPayload(
         scope_peer=scope_peer, session_name=session_name
     ).model_dump(mode="json", exclude_none=True)
+
+
+def create_organize_payload() -> dict[str, Any]:
+    """Create an organize payload."""
+    return OrganizePayload().model_dump(mode="json", exclude_none=True)
 
 
 def create_deletion_payload(

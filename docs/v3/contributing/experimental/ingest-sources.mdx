@@ -1,0 +1,95 @@
+---
+title: One Workspace from Several Sources
+description: Import a team's Discord and GitHub into one auto workspace, with one person per teammate
+icon: 'users'
+---
+
+<Warning>
+Ingest is experimental and available only on self-hosted Honcho for now: the record format, the commands and the suggestions described here may change or stop working without notice. The CLI's ingest commands run only with `HONCHO_EXPERIMENTAL=1` set. See [Auto Workspaces](/v3/contributing/experimental/auto-workspaces) for what works today and the server it needs.
+</Warning>
+
+A team's history is spread over several tools: its chat, its code review, its tracker. Each source has its own accounts, so the same teammate arrives as several people: `Alex` on Discord and `alexdev` on GitHub. Before anything is derived, you tell Honcho which accounts are one person, and every source's records then build one memory of them.
+
+This page walks through Discord and GitHub. Any two sources work the same way.
+
+## The workflow
+
+1. **Export each source** to a file. Connectors fill in each account's handle and other names, which is what the suggestions match on.
+
+   ```bash
+   export HONCHO_EXPERIMENTAL=1
+   honcho-discord export --token-file ~/.discord.token --guild GUILD_ID --out ~/discord-export
+   honcho-github export --token-file ~/.github.token --repo acme/web --out ~/github-export
+   ```
+
+   `honcho ingest from discord` and `honcho ingest from github` import straight from the source instead. A file is better here: linking means importing again, and a file doesn't read the source twice.
+
+2. **Import both without deriving.** This is the dry run: nothing is derived, so every fix is free.
+
+   ```bash
+   honcho workspace create acme-team --auto
+   honcho ingest import ~/discord-export/records.jsonl -w acme-team
+   honcho ingest import ~/github-export/records.jsonl -w acme-team
+   honcho ingest status -w acme-team
+   ```
+
+   Each account is its own person for now: the people list shows Alex once per source.
+
+3. **Review the suggested links.** Honcho reads the import and suggests which accounts are one person, with the evidence. Run it before any reset: the evidence comes from the imported records.
+
+   ```bash
+   honcho ingest suggestions -w acme-team
+   ```
+
+   ```text
+   #  label       accounts                                       why
+   1  rules:high  discord Alex (alex_d) + github alexdev         discord account alex_d gives alexdev on github as its own
+   2  rules:high  discord Sam (samk) + github samk-dev            same name: samkowalski; discord account samk linked 4 github records the other created, 3 within 6 h of their creation
+   3  rules:low   discord Riley (rokafor) + github rokafor        same name: rokafor
+   ```
+
+   Each suggestion's label is what made it and how sure it is. `rules:high` suggestions have evidence from the identity rules that you can accept at a glance. `rules:low` ones need a closer look: the same handle on two platforms, for instance, can belong to two people. `--only rules:low` lists just those. Dismiss any that are wrong; a dismissed suggestion never comes back.
+
+   ```bash
+   honcho ingest suggestions dismiss 3 -w acme-team
+   ```
+
+4. **Accept, reset and import again.** Accepting links the accounts' people, which applies from the next import on: `--reset` deletes the imported sessions first (nothing is derived yet, so this costs nothing). Name suggestions by number, or by label to take every one with it.
+
+   ```bash
+   honcho ingest suggestions accept rules:high --reset -w acme-team
+   honcho ingest import ~/discord-export/records.jsonl -w acme-team
+   honcho ingest import ~/github-export/records.jsonl -w acme-team
+   honcho ingest status -w acme-team        # Alex now has accounts on discord and github
+   ```
+
+   Link anyone the suggestions missed yourself: `honcho ingest link N M --reset`, with the numbers from `honcho ingest status`.
+
+5. **Exclude what shouldn't be modeled, then derive.** Do this after the last reset: a reset deletes sessions, and a session's exclusion goes with it.
+
+   ```bash
+   honcho peer exclude "Usage Stats" -w acme-team
+   honcho session exclude random -w acme-team
+   honcho ingest derive -w acme-team --watch
+   ```
+
+## What the suggestions look at
+
+Each suggestion pairs two accounts and lists its evidence:
+
+| Evidence | Example | Needs from the source |
+|---|---|---|
+| The same email | A Slack account and a GitHub commit author with one address | `email` on the account |
+| A self-reference | "I'm alexdev on GitHub", "my GitHub is alexdev", "I'm on GitHub as alexdev" | The other account's `handle`, and its source's name as people write it |
+| Names only the two share | Handle `thrialectics` on both; or `VVoruganti` and "Vineeth Voruganti" | `handle`, `aliases` |
+| Linking your own work | Posting your pull request in Discord right after opening it | Records with their own address in `metadata.url` |
+
+Some evidence keeps two people apart. A handle alone is never enough, since a username is unique only on its own platform. Two accounts in one source are suggested only on an email or a self-reference. Someone who posts a colleague's pull requests links to work that isn't theirs, so shared work alone is never enough either. And accepting every `rules:high` suggestion never joins two accounts of one source without direct evidence between them.
+
+Nothing is linked until you accept. The rules are cheap and explainable; what they can't settle stays `rules:low` for a person to judge.
+
+## Not yet
+
+- **Linking after deriving.** A link applies to records imported after it. Once a workspace is derived, changing who is who needs the rebuild engine that is still to come.
+- **People who appear later.** During live sync, a new account becomes its own person as soon as it posts.
+- **A model to judge the unclear cases.** The `rules:low` suggestions are left to a person for now.

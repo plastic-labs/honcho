@@ -404,8 +404,12 @@ def test_export_writes_a_repo_as_one_session_in_time_order(tmp_path: Path) -> No
     # The commit with no account is skipped and counted.
     assert stats.skipped["commit_without_account"] == 1
     # Mentions resolve through a lookup; an unknown login isn't a participant.
-    assert by_id["IC_2"]["participants"] == [{"name": "newbie", "id": "33"}]
-    assert by_id["RC_2"]["participants"] == [{"name": "sam", "id": "22"}]
+    assert by_id["IC_2"]["participants"] == [
+        {"name": "newbie", "handle": "newbie", "aliases": ["New"], "id": "33"}
+    ]
+    assert by_id["RC_2"]["participants"] == [
+        {"name": "sam", "handle": "sam", "id": "22"}
+    ]
     assert by_id["PRR_1"]["configuration"] == NO_REASONING
     assert by_id["PC_1"]["author"]["bot"] is True
     assert "machinery" not in by_id["PC_1"]["content"]
@@ -414,7 +418,7 @@ def test_export_writes_a_repo_as_one_session_in_time_order(tmp_path: Path) -> No
     assert by_id["C_old"]["created_at"] == "2026-10-01T09:00:00Z"
     # `@coderabbitai` is the app; `@sam[bot]` is no one known, and never `sam`.
     assert by_id["PC_2"]["participants"] == [
-        {"name": "coderabbitai", "id": "99", "bot": True}
+        {"name": "coderabbitai", "handle": "coderabbitai", "id": "99", "bot": True}
     ]
     # Neither a bot nor a pending draft's mention is looked up.
     assert "sam[bot]" not in fake.looked_up
@@ -443,7 +447,9 @@ def test_a_person_comes_before_an_app_with_the_same_login(tmp_path: Path) -> Non
 
     by_id = {r["source_id"]: r for r in _read(out, "records.jsonl")}
     assert "coderabbitai" in fake.looked_up
-    assert by_id["PC_2"]["participants"] == [{"name": "coderabbitai", "id": "77"}]
+    assert by_id["PC_2"]["participants"] == [
+        {"name": "coderabbitai", "handle": "coderabbitai", "id": "77"}
+    ]
 
 
 def test_a_commits_text_doesnt_depend_on_since(tmp_path: Path) -> None:
