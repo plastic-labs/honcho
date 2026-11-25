@@ -681,7 +681,7 @@ WEBHOOK_MAX_WORKSPACE_LIMIT=10
 GRAPH_MAX_CONCLUSIONS=300000
 ```
 
-While it builds a graph, the API process holds about 1.1 KB per conclusion, and each process builds one graph at a time. Set the limit so that 1.1 KB times the limit fits in the memory the API process has free when idle. For example, 300,000 conclusions take about 330 MB, which leaves room in a 1000 MiB container.
+While it builds a graph, the API process holds about 1.1 KB per conclusion, and each process builds one graph at a time. Set the limit so that 1.1 KB times the limit fits in the memory the API process has free when idle. For example, 300,000 conclusions take about 330 MB, which leaves room in a 1000 MiB container. The default is provisional: it hasn't been measured on a pool of processes shared by many tenants, where a long build also slows every other tenant's requests on that process.
 
 These metrics show whether the limit fits:
 
