@@ -32,6 +32,20 @@ def _stub(
     return module
 
 
+def _noop(*args: Any, **kwargs: Any) -> None:
+    del args, kwargs
+    return None
+
+
+def _noop_positional(*args: Any) -> None:
+    del args
+    return None
+
+
+def _authed_call(_label: str, fn: Callable[[], Any]) -> Any:
+    return fn()
+
+
 @pytest.fixture
 def plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     """Load the plugin against narrow Hermes API stubs; no network or Hermes install is needed."""
@@ -57,6 +71,17 @@ def plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     def is_trivial_prompt(_text: str) -> bool:
         return False
 
+    def identity(text: str) -> str:
+        return text
+
+    def read_json_or_empty(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        return {}
+
+    def cfg_get(config: Any, key: Any, default: Any = None) -> Any:
+        del config, key
+        return default
+
     stub_modules: dict[str, dict[str, Any]] = {
         "agent.memory_manager": {"sanitize_context": sanitize_context},
         "agent.memory_provider": {
@@ -66,7 +91,7 @@ def plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
         },
         "agent.coding_context": {"INTERACTIVE_CODING_PLATFORMS": frozenset()},
         "agent.skill_commands": {
-            "extract_user_instruction_from_skill_message": lambda text: text
+            "extract_user_instruction_from_skill_message": identity
         },
         "agent.turn_author": {"a2a_key": a2a_key},
         "agent.secret_scope": {"get_secret": get_secret},
@@ -79,14 +104,14 @@ def plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     _stub(
         monkeypatch,
         "utils",
-        read_json_or_empty=lambda *args, **kwargs: {},
-        atomic_json_write=lambda *args, **kwargs: None,
+        read_json_or_empty=read_json_or_empty,
+        atomic_json_write=_noop,
     )
     _stub(monkeypatch, "hermes_cli", package=True)
     _stub(
         monkeypatch,
         "hermes_cli.config",
-        cfg_get=lambda config, key, default=None: default,
+        cfg_get=cfg_get,
     )
     profiles = _stub(
         monkeypatch,
@@ -98,7 +123,7 @@ def plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
         monkeypatch,
         "hermes_constants",
         get_hermes_home=lambda: Path.home() / ".hermes",
-        mkdir_under_hermes_home=lambda *args, **kwargs: None,
+        mkdir_under_hermes_home=_noop,
     )
     _stub(
         monkeypatch,
@@ -126,8 +151,8 @@ def plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     _stub(
         monkeypatch,
         f"{_PLUGIN_NAME}.config_panel",
-        read_fields=lambda *args: None,
-        write_fields=lambda *args: None,
+        read_fields=_noop_positional,
+        write_fields=_noop_positional,
     )
     spec = importlib.util.spec_from_file_location(
         _PLUGIN_NAME,
@@ -357,8 +382,12 @@ def test_rejected_opt_out_batch_never_retries_unflagged_and_stays_unsynced(
     }
     remote = MagicMock()
     remote.add_messages.side_effect = ValueError("server rejected configuration")
-    manager._get_or_create_peer = lambda peer_id: peers[peer_id]
-    manager._authed_call = lambda _label, fn: fn()
+
+    def get_peer(peer_id: str) -> Peer:
+        return peers[peer_id]
+
+    manager._get_or_create_peer = get_peer
+    manager._authed_call = _authed_call
     manager._sessions_cache["s"] = remote
 
     assert manager._flush_session(session) is False
@@ -391,12 +420,19 @@ def test_successful_opt_out_batch_builds_real_sdk_messages_and_syncs_cursor(
     }
     uploaded: list[list[Any]] = []
     joined: list[Any] = []
-    honcho_session = SimpleNamespace(
-        add_messages=lambda messages: uploaded.append(messages),
-        add_peers=lambda peers_and_configs: joined.extend(peers_and_configs),
-    )
-    manager._get_or_create_peer = lambda peer_id: peers[peer_id]
-    manager._authed_call = lambda _label, fn: fn()
+
+    def add_messages(messages: list[Any]) -> None:
+        uploaded.append(messages)
+
+    def add_peers(peers_and_configs: list[Any]) -> None:
+        joined.extend(peers_and_configs)
+
+    def get_peer(peer_id: str) -> Peer:
+        return peers[peer_id]
+
+    honcho_session = SimpleNamespace(add_messages=add_messages, add_peers=add_peers)
+    manager._get_or_create_peer = get_peer
+    manager._authed_call = _authed_call
     manager._sessions_cache["s"] = honcho_session
 
     assert manager._flush_session(session) is True
