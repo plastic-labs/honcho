@@ -26,6 +26,7 @@ LATENCY = 0.3
 
 def _provider(context_queries: list[str], *, save_messages: bool = False, prewarm_latency: float = LATENCY,
               prewarm_answer: str = "Generic prewarm summary.", init_kwargs: dict | None = None,
+              blocked: threading.Event | None = None,
               **cfg_overrides) -> HonchoMemoryProvider:
     """A provider over a Honcho that answers slowly and holds the earlier turn only if it saved it."""
     manager = MagicMock()
@@ -34,9 +35,15 @@ def _provider(context_queries: list[str], *, save_messages: bool = False, prewar
     )
     manager.pop_context_result.return_value = {}
 
+    def _wait(seconds):
+        if blocked is None:
+            time.sleep(seconds)
+        else:
+            blocked.wait()
+
     def _context(_key, query=None, **_kwargs):
         context_queries.append(query)
-        time.sleep(LATENCY)
+        _wait(LATENCY)
         return {"representation": f"conclusions recalled for: {query}"}
 
     manager.dialectic_threads = []
@@ -44,9 +51,9 @@ def _provider(context_queries: list[str], *, save_messages: bool = False, prewar
     def _dialectic(*_args, **_kwargs):
         manager.dialectic_threads.append(threading.current_thread().name)
         if threading.current_thread().name == "honcho-prewarm-dialectic":
-            time.sleep(prewarm_latency)
+            _wait(prewarm_latency)
             return prewarm_answer
-        time.sleep(LATENCY)
+        _wait(LATENCY)
         return DIALECTIC_ANSWER
 
     manager.get_prefetch_context.side_effect = _context
@@ -111,14 +118,69 @@ def test_first_turn_waits_outlast_the_memory_managers_prefetch_timeout():
     ids=["new-session", "resumed"],
 )
 def test_first_turn_waits_are_bounded_by_the_first_turn_knobs(turn, turn_start_kwargs):
-    memory = _memory(_provider([], first_turn_base_wait=0.05, first_turn_dialectic_wait=0.05))
+    blocked = threading.Event()
+    joins = []
+    timed_out = threading.Event()
 
-    started = time.monotonic()
-    memory.on_turn_start(turn, CURRENT, **turn_start_kwargs)
-    elapsed = time.monotonic() - started
+    def release_on_timeout():
+        timed_out.set()
+        blocked.set()
 
-    assert elapsed < LATENCY
-    assert "conclusions recalled for" not in memory.prefetch_all(CURRENT)
+    watchdog = threading.Timer(5.0, release_on_timeout)
+    watchdog.start()
+    original_join = threading.Thread.join
+
+    def record_join(thread, timeout=None):
+        if thread.name in {"honcho-base-first", "honcho-prewarm-dialectic", "honcho-resume-dialectic"}:
+            joins.append((thread.name, timeout))
+            assert timeout is not None and 0 <= timeout <= 0.05
+            original_join(thread, timeout)
+            assert thread.is_alive(), "blocked worker finished before its wait expired"
+            return
+        return original_join(thread, timeout)
+
+    try:
+        memory = _memory(_provider([], blocked=blocked, first_turn_base_wait=0.05, first_turn_dialectic_wait=0.05))
+        with patch.object(threading.Thread, "join", record_join):
+            memory.on_turn_start(turn, CURRENT, **turn_start_kwargs)
+            injected = memory.prefetch_all(CURRENT)
+            assert not timed_out.is_set(), "first-turn wait exceeded watchdog"
+            assert not blocked.is_set()
+            assert "conclusions recalled for" not in injected
+            assert DIALECTIC_ANSWER not in injected
+            assert "Generic prewarm summary." not in injected
+        dialectic = "honcho-prewarm-dialectic" if turn == 1 else "honcho-resume-dialectic"
+        assert [name for name, _ in joins] == ["honcho-base-first", dialectic]
+        assert all(timeout is not None and 0 <= timeout <= 0.05 for _, timeout in joins)
+    finally:
+        blocked.set()
+        watchdog.cancel()
+        watchdog.join()
+    assert not timed_out.is_set(), "first-turn wait exceeded watchdog"
+
+
+def test_first_recall_bounds_in_flight_initialization():
+    provider = _provider([], first_turn_base_wait=0.05)
+    blocked = threading.Event()
+    init_thread = threading.Thread(target=blocked.wait, name="honcho-session-init", daemon=True)
+    init_thread.start()
+    watchdog = threading.Timer(5.0, blocked.set)
+    watchdog.start()
+    provider._init_thread = init_thread
+    provider._session_initialized = False
+    try:
+        with patch.object(provider, "_start_session_init_background"), patch.object(
+            init_thread, "join", wraps=init_thread.join
+        ) as join:
+            assert not provider._wait_for_first_recall(CURRENT, resumed=False)
+            assert join.call_count == 1
+            assert 0 <= join.call_args.kwargs["timeout"] <= 0.05
+            assert init_thread.is_alive()
+    finally:
+        blocked.set()
+        watchdog.cancel()
+        watchdog.join()
+        init_thread.join(timeout=1)
 
 
 def test_late_prewarm_does_not_replace_the_resumed_dialectic():
